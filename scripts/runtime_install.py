@@ -434,21 +434,21 @@ try:
     os.lstat(str(database))
 except FileNotFoundError:
     print(json.dumps({"readable": True, "present": False, "dbPath": str(database),
-                      "tables": None, "detail": None}))
+                      "objects": None, "detail": None}))
     raise SystemExit(0)
 except OSError as error:
     print(json.dumps({"readable": False, "present": None, "dbPath": str(database),
-                      "tables": None,
+                      "objects": None,
                       "detail": type(error).__name__ + ": " + str(error)}))
     raise SystemExit(0)
 answer = read_only_rows(selection, """ + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """)
 if not answer["readable"] or answer["detail"]:
     print(json.dumps({"readable": False, "present": True, "dbPath": str(database),
-                      "tables": None,
+                      "objects": None,
                       "detail": answer["detail"] or "the store could not be read"}))
     raise SystemExit(0)
 print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
-                  "tables": {row["object"]: row["sql"] for row in answer["rows"]},
+                  "objects": {row["object"]: row["sql"] for row in answer["rows"]},
                   "detail": None}))
 """
 
@@ -462,7 +462,7 @@ from codex_session_relay import store
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
 rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
-print(json.dumps({"readable": True, "tables": {row[0]: row[1] for row in rows},
+print(json.dumps({"readable": True, "objects": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
 """
 
@@ -472,13 +472,13 @@ def _asked(argv, what, timeout=120):
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
-        return {"readable": False, "command": argv, "tables": None, "present": None,
+        return {"readable": False, "command": argv, "objects": None, "present": None,
                 "detail": what + " could not be asked: " + type(error).__name__ + ": "
                           + error.__str__()}
     try:
         answer = json.loads(done.stdout)
     except ValueError:
-        return {"readable": False, "command": argv, "tables": None, "present": None,
+        return {"readable": False, "command": argv, "objects": None, "present": None,
                 "detail": what + " did not answer with JSON: "
                           + (done.stderr or done.stdout).strip()[-400:]}
     answer["command"] = argv
@@ -2476,8 +2476,19 @@ def cmd_install(args):
         return EXIT_REFUSED
     try:
         if environment.exists():
-            protected, protection = protected_environment(record, environment, destination,
-                                                          data)
+            # Asked about the RECORDED pointer's own directory, not about --dest. This call
+            # decides whether a directory may be RECLAIMED, and protected_environment derives
+            # the pointer it reads from the destination it is handed: cmd_install deliberately
+            # reuses a previously recorded pointer across a destination change, so handing it
+            # --dest asked about a pointer this host does not use. An environment the real
+            # pointer still reaches, under a record that does not select it, then reached the
+            # one decision in this file that deletes.
+            #
+            # Fixed here on the coordinator's instruction rather than left to the
+            # pointer-ownership lane: diagnosis already asks the right question, and a class
+            # closed at one of its two sites is the shape CRW-87 spent an issue removing.
+            protected, protection = protected_environment(record, environment,
+                                                          pointer_path.parent, data)
             decision, why = staging.decide(
                 staging.read_claim(environment),
                 staging.owner_liveness(environment)[0],
@@ -3241,7 +3252,7 @@ def _swap_gate(data, record, *, environment, python, socket_path=None, state=Non
         "inFlight": swapgate.inflight_cell(
             scope.relay(["doctor"], executable=executable, socket=socket_path, state=state),
             store_presence(interpreter, state, socket_path)),
-        "storeTables": swapgate.tables_cell(
+        "storeSchema": swapgate.schema_cell(
             store_tables(interpreter, state, socket_path), candidate_tables(python)),
     })
 

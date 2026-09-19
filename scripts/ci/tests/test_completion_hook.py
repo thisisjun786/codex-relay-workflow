@@ -2561,6 +2561,26 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "one journal was counted as two and reported as possibly disagreeing"
                          " with itself")
 
+    def test_an_unjudged_peer_sharing_one_journal_cannot_disagree_with_itself(self):
+        """An unjudged peer only matters to this cause when it could be a SECOND journal. One
+        sharing the journal its neighbour already named cannot disagree with itself, however
+        its startability reads."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            second_registration(temporary, "journal")  # the SAME journal as the first
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # The second registration's interpreter is relative, so it is unjudged.
+            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "one journal was reported as possibly disagreeing with itself because"
+                         " a peer naming it could not be judged")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

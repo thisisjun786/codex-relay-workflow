@@ -279,7 +279,11 @@ def _recorded_on_another_path(observed):
         return ESTABLISHED, ("this hook has recorded into " + _named(holding) + " while "
                              + _named(empty) + " holds nothing, so a reading of the latter"
                              " alone would report an absence for a hook that has fired")
-    unjudged = _unjudged_peer(observed)
+    # An unjudged peer only matters here when it could be a SECOND journal: this cause is two
+    # journals disagreeing, and a peer sharing the one journal its neighbour already named
+    # cannot disagree with itself however its startability reads.
+    unjudged = [entry for entry in _unjudged_peer(observed)
+                if _distinct_journals([entry]) - _distinct_journals(holding + empty + unread)]
     if unjudged:
         return NOT_RULED_OUT, ("a registration whose startability was never established names "
                                + _named(unjudged) + ", so whether its journal counts toward"

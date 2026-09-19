@@ -5381,16 +5381,16 @@ class SwapGateTests(unittest.TestCase):
     def _cells(self, *, running=False, open_attempts=0, store=None, candidate=None):
         same = {"a": "CREATE TABLE a (x TEXT)", "b": "CREATE TABLE b (y TEXT)"}
         store = store if store is not None else {"readable": True, "present": True,
-                                                 "tables": dict(same), "dbPath": "/d"}
+                                                 "objects": dict(same), "dbPath": "/d"}
         candidate = candidate if candidate is not None else {"readable": True,
-                                                             "tables": dict(same)}
+                                                             "objects": dict(same)}
         return {
             "daemon": swapgate.daemon_cell(
                 {"ok": True, "payload": {"running": running}, "command": ["service", "status"]}),
             "inFlight": swapgate.inflight_cell(
                 {"ok": True, "command": ["doctor"],
                  "payload": {"contents": {"available": True, "openAttempts": open_attempts}}}),
-            "storeTables": swapgate.tables_cell(store, candidate),
+            "storeSchema": swapgate.schema_cell(store, candidate),
         }
 
     def test_a_stopped_daemon_with_nothing_in_flight_and_agreeing_tables_is_allowed(self):
@@ -5408,16 +5408,16 @@ class SwapGateTests(unittest.TestCase):
 
     def test_a_store_holding_tables_the_candidate_does_not_declare_blocks(self):
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)",
                                               "b": "CREATE TABLE b (y TEXT)",
                                               "verdicts": "CREATE TABLE verdicts (v TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                       "objects": {"a": "CREATE TABLE a (x TEXT)",
                                                   "b": "CREATE TABLE b (y TEXT)"}})
         answer = swapgate.decide(cells)
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.NARROWS)
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.NARROWS)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
-        self.assertIn("verdicts", cells["storeTables"]["detail"],
+        self.assertIn("verdicts", cells["storeSchema"]["detail"],
                       "the refusal names the table that would be stranded")
 
     def test_a_candidate_that_adds_tables_refuses_and_says_which_tables(self):
@@ -5425,37 +5425,37 @@ class SwapGateTests(unittest.TestCase):
         so allowing this would have the new daemon perform the migration OPS-4.5 reserves for
         its own issue with its own backup."""
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                       "objects": {"a": "CREATE TABLE a (x TEXT)",
                                                   "b": "CREATE TABLE b (y TEXT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.EXTENDS)
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.EXTENDS)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
-        self.assertIn("b", cells["storeTables"]["detail"])
-        self.assertNotEqual(cells["storeTables"]["answer"], swapgate.NARROWS,
+        self.assertIn("b", cells["storeSchema"]["detail"])
+        self.assertNotEqual(cells["storeSchema"]["answer"], swapgate.NARROWS,
                             "adding is reported as its own answer, not as a downgrade")
 
     def test_a_table_defined_differently_refuses_even_though_the_names_agree(self):
         """Names alone agreed while a column differed, which is the schema change a name
         comparison cannot see."""
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT, y INT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.DIFFERS)
+                                       "objects": {"a": "CREATE TABLE a (x TEXT, y INT)"}})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.DIFFERS)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
 
     def test_whitespace_is_not_a_schema_change(self):
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE  TABLE   a (x TEXT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.AGREES)
+                                       "objects": {"a": "CREATE  TABLE   a (x TEXT)"}})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.AGREES)
 
     def test_no_store_is_absence_and_not_agreement(self):
         cells = self._cells(store={"readable": True, "present": False, "dbPath": "/d",
-                                   "tables": None})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.NO_STORE)
+                                   "objects": None})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.NO_STORE)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.ALLOWED)
 
     def test_each_cell_that_cannot_be_read_keeps_the_installation(self):
@@ -5465,11 +5465,11 @@ class SwapGateTests(unittest.TestCase):
             "inFlight contents": {"inFlight": swapgate.inflight_cell(
                 {"ok": True, "payload": {"contents": {"available": False,
                                                       "detail": "not readable"}}})},
-            "storeTables": {"storeTables": swapgate.tables_cell(
+            "storeSchema": {"storeSchema": swapgate.schema_cell(
                 {"readable": False, "detail": "denied"},
-                {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}})},
-            "candidate tables": {"storeTables": swapgate.tables_cell(
-                {"readable": True, "present": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                {"readable": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}})},
+            "candidate tables": {"storeSchema": swapgate.schema_cell(
+                {"readable": True, "present": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                 {"readable": False, "detail": "the candidate could not be asked"})},
         }
         for label, override in unreadable.items():
@@ -5488,9 +5488,9 @@ class SwapGateTests(unittest.TestCase):
 
     def test_an_established_refusal_is_named_even_when_another_cell_was_unread(self):
         cells = dict(self._cells(running=True),
-                     storeTables=swapgate.tables_cell(
+                     storeSchema=swapgate.schema_cell(
                          {"readable": False, "detail": "denied"},
-                         {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}}))
+                         {"readable": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}}))
         answer = swapgate.decide(cells)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
         self.assertTrue(answer["blockedBy"], "the actionable blocker is still named")
@@ -5820,7 +5820,7 @@ class UpdateRecoveryTests(unittest.TestCase):
         schema = {"relationships": "CREATE TABLE relationships (relationship_id TEXT PRIMARY KEY)",
                   "attempts": "CREATE TABLE attempts (event_id TEXT)"}
         tables = {"readable": True, "present": not clean_store,
-                  "tables": None if clean_store else dict(schema),
+                  "objects": None if clean_store else dict(schema),
                   "dbPath": str(host.store)}
         if gate == "running daemon":
             def fake_relay(command, **kwargs):                        # noqa: F811
@@ -5881,7 +5881,7 @@ class UpdateRecoveryTests(unittest.TestCase):
                                   probes.append(str(interpreter)) if probes is not None else None,
                                   tables)[1]),
             mock.patch.object(runtime_install, "candidate_tables",
-                              return_value={"readable": True, "tables": candidate_declares}),
+                              return_value={"readable": True, "objects": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
                               side_effect=fake_classification),
         ]
@@ -6482,9 +6482,9 @@ class SchemaComparisonTests(unittest.TestCase):
     in, so normalisation stops exactly where meaning starts."""
 
     def _answer(self, store, candidate):
-        return swapgate.tables_cell(
-            {"readable": True, "present": True, "tables": store, "dbPath": "/d"},
-            {"readable": True, "tables": candidate})["answer"]
+        return swapgate.schema_cell(
+            {"readable": True, "present": True, "objects": store, "dbPath": "/d"},
+            {"readable": True, "objects": candidate})["answer"]
 
     def test_a_literal_that_differs_only_in_case_is_a_difference(self):
         self.assertEqual(
@@ -6505,9 +6505,9 @@ class SchemaComparisonTests(unittest.TestCase):
             swapgate.AGREES, "SQLite keeps the original text, so formatting drifts")
 
     def test_a_reading_carrying_only_names_cannot_answer_this_cell(self):
-        cell = swapgate.tables_cell(
-            {"readable": True, "present": True, "tables": ["a"], "dbPath": "/d"},
-            {"readable": True, "tables": ["a"]})
+        cell = swapgate.schema_cell(
+            {"readable": True, "present": True, "objects": ["a"], "dbPath": "/d"},
+            {"readable": True, "objects": ["a"]})
         self.assertFalse(cell["readable"],
                          "two name-only readings agree while a column differs, so answering on"
                          " names is answering a different question")
@@ -6517,7 +6517,7 @@ class SchemaComparisonTests(unittest.TestCase):
                  "inFlight": swapgate.inflight_cell(
                      {"ok": True, "payload": {"contents": {"available": True,
                                                            "openAttempts": 0}}}),
-                 "storeTables": cell})["verdict"],
+                 "storeSchema": cell})["verdict"],
             swapgate.UNESTABLISHED)
 
 
@@ -6650,7 +6650,7 @@ class SchemaDepthTests(unittest.TestCase):
         self.assertTrue(reading.get("readable"), str(reading.get("detail")))
         self.assertGreater(len({key.split(" ", 1)[0] for key in droppable}), 1,
                            "a fixture holding one kind cannot show a comparison losing kinds")
-        self.assertEqual(set(reading["tables"]), droppable,
+        self.assertEqual(set(reading["objects"]), droppable,
                          "the store reading and the objects this database actually owns are"
                          " different sets, so the comparison is being made on a schema the"
                          " store does not have")
@@ -6700,7 +6700,7 @@ class SchemaDepthTests(unittest.TestCase):
         reading = runtime_install.candidate_tables(RELAY_RUNTIME)
 
         self.assertTrue(reading.get("readable"), str(reading.get("detail")))
-        self.assertEqual(set(reading["tables"]), droppable,
+        self.assertEqual(set(reading["objects"]), droppable,
                          "the candidate declares objects this reading never reports, so an"
                          " update compares against a schema the runtime would not install")
         self.assertTrue(all(name.startswith("sqlite_") for name in
@@ -6737,7 +6737,7 @@ class SchemaDepthTests(unittest.TestCase):
             state = Path(temporary) / "intact"
             _built_store(state, ddl)
             whole = runtime_install.store_tables(RELAY_RUNTIME, str(state))
-        self.assertEqual(swapgate.tables_cell(whole, candidate)["answer"], swapgate.AGREES,
+        self.assertEqual(swapgate.schema_cell(whole, candidate)["answer"], swapgate.AGREES,
                          "the control: an untouched store must agree, or every refusal below is"
                          " a refusal of the fixture rather than of the missing object")
 
@@ -6747,8 +6747,8 @@ class SchemaDepthTests(unittest.TestCase):
                     state = Path(temporary) / "missing"
                     _built_store(state, ddl, drop=key)
                     reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
-                cell = swapgate.tables_cell(reading, candidate)
-                self.assertIn(cell["answer"], swapgate.TABLES_BLOCKING,
+                cell = swapgate.schema_cell(reading, candidate)
+                self.assertIn(cell["answer"], swapgate.SCHEMA_BLOCKING,
                               "a store missing " + key + " answered " + str(cell["answer"])
                               + ", so the new daemon would re-create it on its first write-open")
                 self.assertIn(key, cell["detail"], "the refusal has to name what went")
@@ -6759,7 +6759,7 @@ class SchemaDepthTests(unittest.TestCase):
                     "inFlight": swapgate.inflight_cell(
                         {"ok": True, "payload": {"contents": {"available": True,
                                                               "openAttempts": 0}}}),
-                    "storeTables": cell})["verdict"]
+                    "storeSchema": cell})["verdict"]
                 self.assertEqual(verdict, swapgate.BLOCKED,
                                  "the existing installation is kept rather than replaced over a"
                                  " store whose schema the candidate does not match")
@@ -6793,9 +6793,9 @@ class SchemaDepthTests(unittest.TestCase):
         """
         held = {"table kept": "CREATE TABLE kept (a TEXT)"}
         declared = dict(held, **{"index kept_a": "CREATE INDEX kept_a ON kept (a)"})
-        cell = swapgate.tables_cell(
-            {"readable": True, "present": True, "dbPath": "/d", "tables": held},
-            {"readable": True, "tables": declared})
+        cell = swapgate.schema_cell(
+            {"readable": True, "present": True, "dbPath": "/d", "objects": held},
+            {"readable": True, "objects": declared})
 
         self.assertEqual(cell["answer"], swapgate.EXTENDS)
         self.assertEqual(cell["evidence"]["onlyInCandidate"], ["index kept_a"])
@@ -7281,7 +7281,7 @@ class CleanHostFirstInstallTests(unittest.TestCase):
         self.assertEqual(code, 0, json.dumps(payload)[:1200])
         self.assertTrue(payload["promoted"])
         self.assertEqual(payload["swapGate"]["verdict"], swapgate.ALLOWED)
-        self.assertEqual(payload["swapGate"]["cells"]["storeTables"]["answer"],
+        self.assertEqual(payload["swapGate"]["cells"]["storeSchema"]["answer"],
                          swapgate.NO_STORE)
         self.assertEqual(reached, str(host.candidate))
 
@@ -10067,6 +10067,50 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertNotEqual(entries[host.pointer_path.name]["decision"], residue.NOT_SCANNED,
                             "a local child was skipped because a pointer recorded under another"
                             " destination happens to share its name")
+
+    def test_the_installer_asks_about_the_pointer_the_host_uses(self):
+        """The sibling call site, fixed on the coordinator's instruction. cmd_install reuses a
+        previously recorded pointer across a destination change, so handing protected_environment
+        --dest asked about a pointer this host does not use -- and unlike the diagnosis site,
+        this one feeds the decision that DELETES. An environment the real pointer still reaches,
+        under a record that does not select it, reached RECLAIM."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "old-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            # The pointer this host reaches a runtime through lives under the OLD destination
+            # and names the staging under the new one; the record does not select it.
+            pointer.place(far, host.candidate)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+
+            seen = {}
+            real = runtime_install.protected_environment
+
+            def watching(record_, environment, destination, data):
+                answer = real(record_, environment, destination, data)
+                if Path(environment) == host.candidate:
+                    seen["destination"] = str(destination)
+                    seen["protected"] = answer[0]
+                return answer
+
+            with mock.patch.object(runtime_install, "protected_environment",
+                                   side_effect=watching):
+                UpdateRecoveryTests()._run(host)
+
+        self.assertEqual(seen.get("destination"), str(elsewhere),
+                         "the installer asked about a pointer under the destination it was"
+                         " invoked with rather than the one the host record names")
+        self.assertTrue(seen.get("protected"),
+                        "an environment the recorded pointer still reaches was not protected"
+                        " from the decision that deletes")
 
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer

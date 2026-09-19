@@ -759,7 +759,7 @@ reconciled. Three readings answer that, each filling only its own cell:
 | --- | --- |
 | `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
 | `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
-| `storeTables` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows` |
+| `storeSchema` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows`. Keyed by kind AND name, so its evidence lists carry `index sync_ready` rather than `sync_ready`: a trigger may share a table's name, and an object whose kind changed is one object lost and a different one gained rather than one redefinition. The key was `storeTables` while it already held all of that, which named it narrower than its contents |
 
 The in-flight cell reads twice, and the order is the point. The relay reports contents
 unavailable both for a store that is missing and for one it cannot read, and those are opposite
