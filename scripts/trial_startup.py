@@ -1239,7 +1239,38 @@ def witness_counter(value):
     return value if finite(value) else None
 
 
+# What each process state letter means for a poller, enumerated from the state field proc(5)
+# defines rather than from the states that happened to be reported. A supervisor that has exited
+# and not been reaped, one stopped by a signal, one stopped by a tracer, one being killed and one
+# parked all answer a signal and report a session exactly as a running one does, and none of them
+# advances anything. Sleeping and an uninterruptible wait are what a poller between ticks looks
+# like, and both historical meanings of W, paging and waking, are a process that is executing or
+# about to.
+PROCESS_RUNNING = ("D", "I", "R", "S", "W")
+PROCESS_STOPPED = ("K", "P", "T", "X", "Z", "t", "x")
+
+
+def running_state(letter):
+    """Whether this state letter is a process that can still make progress.
+
+    None for a letter this decision does not cover. A state nobody classified is not thereby a
+    running one, and answering that it is would be the same mistake as reading the signal alone.
+    """
+    if letter in PROCESS_RUNNING:
+        return True
+    if letter in PROCESS_STOPPED:
+        return False
+    return None
+
+
 def alive(pid):
+    """Whether this pid is a process that can still make progress.
+
+    The signal cannot answer that on its own. A process that has exited and has not been reaped
+    answers it, and so does one stopped by a signal, and both report a session; neither polls
+    anything. Every liveness decision in this module comes through here, so the decision is made
+    once and in one place rather than per caller and per state letter.
+    """
     try:
         os.kill(int(pid), 0)
     except ProcessLookupError:
@@ -1247,11 +1278,12 @@ def alive(pid):
     except (PermissionError, OverflowError, TypeError, ValueError):
         # A process this user may not signal still exists; anything unreadable is not an answer.
         return None
-    # A process that has exited and has not been reaped still answers that signal and still
-    # reports a session, so both of those call a zombie alive. It polls nothing, so it is not
-    # the supervisor this reading is looking for. Where the host cannot say, the signal is the
-    # only answer there is and it stands.
-    return process_state(pid) != "Z"
+    letter = process_state(pid)
+    if letter is None:
+        # No /proc, which is most hosts that are not Linux. The signal is the only answer there
+        # is and it stands, rather than refusing every trial on such a host.
+        return True
+    return running_state(letter)
 
 
 def process_state(pid):

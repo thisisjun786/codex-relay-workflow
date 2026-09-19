@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -4350,6 +4351,102 @@ class FortyFifthHostedRound(TrialCase):
         cell = cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]
         self.assertEqual(cell["value"], NOT_APPLICABLE)
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def stopped_supervisor(self):
+        """A real supervisor stopped by a signal, continued again before the world reaps it.
+
+        Registered after the world's own cleanup and so run before it: SIGTERM does not reach a
+        stopped process, and leaving one behind would outlive this suite.
+        """
+        pid = self.world.supervisor.pid
+        self.addCleanup(self.let_it_run_again, pid)
+        os.kill(pid, signal.SIGSTOP)
+        deadline = time.time() + 5
+        while time.time() < deadline and process_state_of(pid) != "T":
+            time.sleep(0.02)
+        return pid
+
+    @staticmethod
+    def let_it_run_again(pid):
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except OSError:                                              # pragma: no cover
+            pass
+
+    def test_a_stopped_supervisor_is_not_a_running_one_at_the_gate(self):
+        # A supervisor stopped by a signal answers kill(pid, 0) and reports a detached session
+        # exactly as a zombie does, and with an advance interval longer than the rest of the pass
+        # its unchanged counter is not a regression either. Refusing the zombie by its own letter
+        # closed that state and left this one.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = startup.ADVANCE_CEILING
+        self.world.flush()
+        original = startup.reading_lifecycle
+
+        def stop_the_supervisor_then_read(record):
+            self.stopped_supervisor()
+            return original(record)
+
+        startup.reading_lifecycle = stop_the_supervisor_then_read
+        self.addCleanup(setattr, startup, "reading_lifecycle", original)
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "readiness was published for a supervisor stopped by a signal")
+        self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
+
+    def test_the_first_reading_refuses_a_supervisor_that_is_not_running(self):
+        # The control over the other liveness site, driven with each state the decision calls
+        # stopped that a case can actually produce. Neither may answer alive.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        self.world.start_supervisor()
+        pid = self.stopped_supervisor()
+        self.assertEqual(process_state_of(pid), "T")
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "processPersistence")["alive"]["value"], NOT_VERIFIED)
+        self.assertFalse(document["readyToStart"])
+
+        self.let_it_run_again(pid)
+        self.world.supervisor.terminate()
+        deadline = time.time() + 5
+        while time.time() < deadline and process_state_of(pid) != "Z":
+            time.sleep(0.02)
+        self.assertEqual(process_state_of(pid), "Z")
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "processPersistence")["alive"]["value"], NOT_VERIFIED)
+        self.assertFalse(document["readyToStart"])
+
+    def test_every_state_the_kernel_defines_is_decided_once(self):
+        # The letters proc(5) defines for the state field. They are written out here because that
+        # definition is not in this repository to derive them from, and the point of writing them
+        # is that the decision covers all of them rather than the two a review happened to report.
+        defined = {"R", "S", "D", "Z", "T", "t", "W", "X", "x", "K", "P", "I"}
+        running, stopped = set(startup.PROCESS_RUNNING), set(startup.PROCESS_STOPPED)
+        self.assertEqual(running | stopped, defined, "a state the kernel defines is undecided")
+        self.assertEqual(running & stopped, set(), "a state is decided both ways")
+        for letter in sorted(stopped):
+            self.assertIs(startup.running_state(letter), False, letter + " answered running")
+        for letter in sorted(running):
+            self.assertIs(startup.running_state(letter), True, letter + " did not answer running")
+        # A letter nobody classified is not thereby a running one. Unreadable refuses the start.
+        self.assertIsNone(startup.running_state("q"))
+
+    def test_liveness_is_decided_in_one_place(self):
+        # The sweep: every place in this module that decides a process is running goes through
+        # alive(), which is enforced by there being nowhere else that asks the kernel.
+        tree = ast.parse((ROOT / "scripts" / "trial_startup.py").read_text(encoding="utf-8"))
+        asked = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for call in ast.walk(node):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "kill" and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == "os"):
+                    asked.add(node.name)
+        self.assertEqual(asked, {"alive"}, "a liveness decision is made outside alive()")
 
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the

@@ -125,7 +125,11 @@ the first observed failure arriving as a pass. Its counter is held there to the 
 declares for it once that long has passed, and to not going backwards when it has not, because a
 poller that has not ticked yet is not a stopped one. Liveness there is the kernel's own state
 letter rather than a signal alone: a process that has exited and has not been reaped answers a
-signal and still reports a detached session, and it polls nothing. All three
+signal and still reports a detached session, and it polls nothing. So does one stopped by a
+signal, one stopped by a tracer, one being killed and one parked: the decision covers every
+state letter the kernel defines rather than the ones a review happened to report, a letter it
+does not cover is unreadable rather than running, and it is made in one place that every
+liveness reading here goes through. All three
 observed failures were checks made too early, or not made.
 
 **Then dispatch.** The window opens here.
