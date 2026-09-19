@@ -1,8 +1,10 @@
 # Plugin packaging
 
-This repository publishes its skills as a versioned Codex plugin. The package is
-instructions only: the task bridge, the session relay, the Python runtime and the
-completion hook keep their own installer and are not bundled here.
+This repository publishes its skills as a versioned Codex plugin. The package also
+declares the task-bridge MCP server and the completion Stop hook, and ships the two
+small launchers that start them. It carries no runtime: the bridge, the session
+relay, the Python environment and the completion adapter keep their own installer,
+and the launchers only point at what that installer left behind.
 
 ## What the package is
 
@@ -11,7 +13,7 @@ completion hook keep their own installer and are not bundled here.
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
-| `plugins/crw/skills/` | The seven skills, the only declared component |
+| `plugins/crw/skills/` | The seven skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
@@ -105,8 +107,9 @@ not carry, and each needs a step the installation cannot take for you.
 1. Install the runtime, if this host has none:
    `python3 scripts/runtime_install.py install --dest <destination> --apply`.
 2. Write the two records the launchers read. Neither registers anything itself:
-   `register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply`
-   and `hook --adapter completion --owner plugin --dest <destination> --apply`.
+   `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply`
+   and
+   `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply`.
    Each refuses when the same surface is already registered the other way, because the
    two together would run two bridges, or two hooks on every Stop.
 3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
