@@ -69,6 +69,14 @@ costs a window in which the old registration runs against settings that are no l
 it answers by releasing in silence, and costs no window in which two adapters run, because the
 plugin-owned settings are not installed until step 3.
 
+Every step decides from the host as it stands at that step, not from the snapshot the run opened
+with. The bridge surface is re-read inside the ownership lock, the hook file is re-read and its
+registrations re-proved inside the hook lock, the bridge table's span and its proof are re-derived
+before a byte is removed, and the skills directory is inventoried again at step 7 and once more
+after it. That last one is a weaker guarantee than the other two and is named as such: the
+directory has no lock, so a link arriving during the removals is reported rather than prevented,
+and the run refuses instead of reporting success over it.
+
 Three windows follow, and all three are printed by the run:
 
 - between 1 and 2 the old registration runs with no settings to read and releases without recording;

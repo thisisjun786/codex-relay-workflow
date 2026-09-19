@@ -882,17 +882,29 @@ def plugin_refusals(host):
 
 def skill_unlink(host, options, *, apply=False):
     owned = host["skills"]["crwOwned"]
-    if not owned:
-        return _answer("skill unlink", ALREADY, "no CRW-owned links are there")
     if not apply:
+        if not owned:
+            return _answer("skill unlink", ALREADY, "no CRW-owned links are there")
         return _answer("skill unlink", WOULD, "would remove "
                        + ", ".join(item["path"] for item in owned),
                        paths=[item["path"] for item in owned])
     changed = plugin_refusals(host)
     if changed:
         return _answer("skill unlink", REFUSED, "; ".join(changed))
+    # Both sets, because they answer different questions. The snapshot's links have to be VISITED
+    # even when they stopped being ours, or a link replaced since then is passed over in silence
+    # instead of reported. The directory is also re-inventoried, because it has no lock the way
+    # the bridge record has one and had no recheck the way the hook file has one: a manual install
+    # that landed a link after the snapshot would otherwise survive a run that reported success,
+    # still exposing the installation this was removing.
+    fresh = inventory.read_skill_links(host["codexHome"], host["repoRoot"])
+    known = {item["path"] for item in owned}
+    candidates = list(owned) + [item for item in fresh["crwOwned"]
+                                if item["path"] not in known]
+    if not candidates:
+        return _answer("skill unlink", ALREADY, "no CRW-owned links are there")
     removed, left = [], []
-    for item in owned:
+    for item in candidates:
         path = Path(item["path"])
         # Re-established here rather than trusted from the inventory: a link replaced since then is
         # somebody else's, and "is a symlink" is not the question ownership was decided on.
@@ -908,9 +920,20 @@ def skill_unlink(host, options, *, apply=False):
                        "these links are no longer the ones ownership was established on, so they"
                        " were left: " + ", ".join(left),
                        removed=removed, applied=bool(removed), wrote=bool(removed))
+    # Read once more, for the same reason the hook file is: what is in reach is not preventing a
+    # link that arrives during the removals, but refusing to report success over one.
+    again = inventory.read_skill_links(host["codexHome"], host["repoRoot"])["crwOwned"]
+    if again:
+        return _answer("skill unlink", REFUSED,
+                       "a CRW-owned link is in the destination again ("
+                       + ", ".join(item["path"] for item in again) + "). Another install added it"
+                       " while these were being removed, so the manual installation is still"
+                       " exposed through it. Rerun this transition to remove it",
+                       removed=removed, applied=bool(removed), wrote=bool(removed),
+                       paths=[item["path"] for item in again])
     return _answer("skill unlink", SETTLED, "removed " + ", ".join(removed), applied=True,
                    wrote=True, removed=removed,
-                   foreignLeft=[item["path"] for item in host["skills"]["foreign"]])
+                   foreignLeft=[item["path"] for item in fresh["foreign"]])
 
 
 # Retire before standdown. The custom settings path is recorded only in the hook command, so

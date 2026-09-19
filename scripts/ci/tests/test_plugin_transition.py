@@ -1675,6 +1675,24 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("no longer this repository's own adapter", answer["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    def test_a_link_that_appeared_after_the_snapshot_is_removed_too(self):
+        """The skills directory has no lock and had no recheck, so it is read again at the step."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        late = host.home / "skills" / "crw-late"
+        late.symlink_to(ROOT / "plugins" / "crw" / "skills" / "crw-run")
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:600])
+        self.assertIn(str(late), answer["removed"])
+        self.assertFalse(late.is_symlink())
+        left = [p.name for p in (host.home / "skills").iterdir()
+                if p.name.startswith("crw-")]
+        self.assertEqual(left, [], json.dumps(left))
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
