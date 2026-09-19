@@ -1163,7 +1163,20 @@ TRACED_CALLS = {
 OPEN_FLAGS = {"open": 1, "openat": 2, "openat2": 2}
 
 # An open is a write when it can change the file. O_RDONLY is the absence of all of these.
+#
+# Deliberately the wider set, and the direction is the point. An open that merely COULD change
+# the file has not changed it yet, and the call that would - write - carries a descriptor and
+# no path, so it is not in this table and cannot be. Counting only the flags that change the
+# file at open time would miss every write into a file that already existed outside the root,
+# which is a false clean bill. Counting the capability reports a write that may not have
+# happened, which is a false alarm somebody can explain. Only one of those two errors is the
+# kind this file exists to refuse. Which one an entry is sits beside it as changedTheFile, so
+# the difference is data rather than a silence.
 WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_TMPFILE")
+
+# The flags that change the file at the moment it is opened, as against the ones that only ask
+# for the right to change it later.
+CHANGING_FLAGS = ("O_CREAT", "O_TRUNC", "O_TMPFILE")
 
 # What the witness must find, fixed before any subprocess starts, and compared against the path
 # strings the KERNEL recorded rather than against what they resolve to afterwards. A resolution
@@ -1199,6 +1212,10 @@ WITNESS_DOES_NOT_COVER = (
     " received over a unix socket, taken with pidfd_getfd or opened by handle - and the calls that"
     " write through one rather than through a path: write, pwrite, copy_file_range, splice,"
     " sendfile, a shared mapping, and io_uring, which can open and write with no syscall here",
+    "whether a path opened in a way that could change it was actually changed. The call that"
+    " would do it carries a descriptor and no path, so this reading counts the open instead."
+    " It errs towards reporting a write that may not have happened rather than towards"
+    " missing one, and changedTheFile beside each entry says which of the two it is",
     "a filesystem socket created by bind, which makes a path without any call in this table",
     "ownership, timestamps, extended attributes and access control lists. They are not in the"
     " traced set, so they are not in the trace at all, and no row says anything about them",
@@ -1486,8 +1503,10 @@ def parse_trace(text, cwd):
             if not any(flag in arguments[flags] for flag in WRITE_FLAGS):
                 continue
             answer["writeCalls"] += 1
-            answer["writes"].append({"line": number, "pid": pid, "call": name,
-                                     "path": _resolved_descriptor(result) or path})
+            answer["writes"].append({
+                "line": number, "pid": pid, "call": name,
+                "path": _resolved_descriptor(result) or path,
+                "changedTheFile": any(flag in arguments[flags] for flag in CHANGING_FLAGS)})
             continue
         answer["writeCalls"] += 1
         for position, directory in positions:
@@ -1495,7 +1514,8 @@ def parse_trace(text, cwd):
             if path is None:
                 answer["unreadable"].append({"line": number, "text": line[:200], "why": why})
                 continue
-            answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path})
+            answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path,
+                                     "changedTheFile": True})
     for pid, name in sorted(unfinished):
         answer["unreadable"].append({"line": None, "text": name,
                                      "why": "a call interrupted in process " + str(pid) + " and"
@@ -1780,6 +1800,9 @@ def witness_payload(arm, fired):
             "rootPid": seen["rootPid"], "traceLines": seen["lines"],
             "writeCalls": seen["writeCalls"], "writesSeen": len(seen["writes"]),
             "writesInsideRoot": len(seen["writes"]) - len(outside) - len(unresolved),
+            # How many of those changed a file outright, as against how many only opened one
+            # able to change it. Both count as writes here, and a reader can tell them apart.
+            "changedAFile": len([one for one in seen["writes"] if one["changedTheFile"]]),
             "failedAttempts": seen["failedAttempts"], "restarted": seen["restarted"],
             "tracePath": fired.get("tracePath"), "tracerArgv": fired.get("tracerArgv"),
             "tracerSaid": fired.get("tracerSaid") or "",

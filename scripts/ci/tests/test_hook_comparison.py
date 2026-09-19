@@ -1284,6 +1284,20 @@ class TheTraceParserCases(unittest.TestCase):
         self.assertEqual(seen["writes"], [])
         self.assertEqual(seen["unreadable"], [])
 
+    def test_an_open_that_could_change_a_file_is_a_write_and_says_it_changed_nothing_yet(self):
+        """The wider reading, and the flag that keeps it from overstating.
+
+        Counting only the flags that change a file at open time would miss every write into
+        a file that already existed, because the call that does it carries a descriptor and
+        no path. So the capability counts, and which of the two it was travels with it.
+        """
+        seen = self.parse('11 openat(AT_FDCWD</w>, "/a", O_WRONLY|O_CLOEXEC) = 3</a>',
+                          '11 openat(AT_FDCWD</w>, "/b", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4</b>')
+        self.assertEqual([(one["path"], one["changedTheFile"]) for one in seen["writes"]],
+                         [("/a", False), ("/b", True)],
+                         "an open able to change a file was dropped, or one that changed a"
+                         " file was reported as only able to")
+
     def test_a_relative_path_after_a_change_of_directory_is_unread(self):
         seen = self.parse('11 chdir("/elsewhere")                   = 0',
                           '11 mkdir("under-here", 0777)             = 0')
