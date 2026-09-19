@@ -104,23 +104,31 @@ def cmd_transition(args):
 def cmd_disable(args):
     host = host_of(args)
     results = steps.disable(host, options_of(args), apply=bool(args.apply))
+    claims = steps.stop_claims(results)
     emit({"command": "disable", "applied": bool(args.apply), "results": results,
-          "stops": ["new adapter invocations, because the packaged launcher finds no settings and"
-                    " returns without running anything",
-                    "new bridge starts, because the packaged launcher has no record to read"],
+          "stops": claims["stopped"],
+          "wouldStop": claims["wouldStop"],
+          "stillLive": claims["stillLive"],
           "doesNotStop": ["a bridge already spawned in a running session",
                           "a turn already inside the adapter",
                           "the relay service, if one runs. Excluding a shared service is the"
                           " operator's own action and this tool never performs or claims it"],
           "preserved": steps.preserved_paths(host),
-          "note": "nothing was deleted. Every path under preserved was left exactly as it is."})
+          "note": "nothing was deleted. Every path under preserved was left exactly as it is."
+                  " stops names only what is in effect on this host now; wouldStop is what an"
+                  " --apply would stop and stillLive is every surface a reader must not read as"
+                  " stopped, with the reason it is not."})
     return verdict(results)
 
 
 def cmd_remove(args):
     host = host_of(args)
     results = steps.remove(host, options_of(args), apply=bool(args.apply))
+    claims = steps.stop_claims(results)
     emit({"command": "remove", "applied": bool(args.apply), "results": results,
+          "stops": claims["stopped"],
+          "wouldStop": claims["wouldStop"],
+          "stillLive": claims["stillLive"],
           "outOfScope": ["the plugin cache and its config.toml entry, which codex plugin remove"
                          " owns", "the marketplace registration",
                          "the runtime installation under the destination",

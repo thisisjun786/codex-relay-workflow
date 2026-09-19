@@ -1375,6 +1375,111 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(custom.is_file())
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_a_plugin_removed_after_preflight_stops_the_first_removal_too(self):
+        """The earlier steps take things away as well, so the check is asked before each of them."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        # Disabled rather than deleted, so preflight's own payload check -- which runs live -- is
+        # not what catches it: the point is the guard in front of each destructive step.
+        text = host.config().replace('[plugins."crw@crw"]\nenabled = true',
+                                     '[plugins."crw@crw"]\nenabled = false')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        before = (host.hooks_document(), host.settings(), host.record(), host.config())
+        results = steps.transition(snapshot, {"accept_hook_renumbering": False,
+                                              "accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "refused", json.dumps(results)[:700])
+        refusal = [item for item in results if item["step"] == "settings retire"][0]
+        self.assertIn("disabled", refusal["detail"])
+        self.assertEqual(outcomes["hook standdown"], "not_reached")
+        self.assertEqual(outcomes["skill unlink"], "not_reached")
+        self.assertEqual((host.hooks_document(), host.settings(), host.record(), host.config()),
+                         before)
+        self.assertEqual(sorted(host.home.glob("*.superseded-*")), [])
+
+    def test_a_record_that_became_user_owned_after_the_snapshot_is_not_retired(self):
+        """disable decides the bridge record from the record it is about to move, not a snapshot."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        self.assertEqual(host.transition("--apply")[0], 0)
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(snapshot["mcp"]["recordOwner"], "plugin")
+        # A supported register-mcp --owner user landing between the snapshot and the retire.
+        path = host.home / "crw-bridge-mcp.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["owner"] = "user"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        before = path.read_text(encoding="utf-8")
+        # The transition's own retire of the manual record already archived one, so the question
+        # is whether THIS call archived another, not whether the home is free of archives.
+        archives = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        results = steps.disable(snapshot, {}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["bridge record"], "refused", json.dumps(results)[:700])
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertEqual(sorted(host.home.glob("crw-bridge-mcp.json.superseded-*")), archives)
+
+    def test_disable_takes_the_lock_register_mcp_takes(self):
+        """Which lock, by path: a held ownership lock makes the bridge record answer busy.
+
+        The record file's own lock would not catch this. The user-owned side writes the Codex
+        configuration, so the lock that serialises the two owners is the shared one, and this is
+        the check that says the shared one is the lock this command actually takes.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import bridgerecord, hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        self.assertEqual(host.transition("--apply")[0], 0)
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        path = host.home / "crw-bridge-mcp.json"
+        before = path.read_text(encoding="utf-8")
+        held = Path(str(bridgerecord.ownership_lock_path(host.home)) + hostrecord.LOCK_SUFFIX)
+        held.write_text("1", encoding="utf-8")
+        self.addCleanup(held.unlink, missing_ok=True)
+        # Shrunk the way the constant's own comment invites, so the case costs a fraction of a
+        # second rather than the ten this would otherwise wait.
+        original = hostrecord.LOCK_TIMEOUT_SECONDS
+        hostrecord.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, hostrecord, "LOCK_TIMEOUT_SECONDS", original)
+        results = steps.disable(snapshot, {}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["bridge record"], "busy", json.dumps(results)[:700])
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_a_dry_run_does_not_report_a_surface_as_stopped(self):
+        """The receipt separates what is in effect from what an --apply would do."""
+        host = self.ready()
+        self.assertEqual(host.transition("--apply")[0], 0)
+        code, answer = host.call("disable")
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["stops"], [])
+        self.assertEqual(len(answer["wouldStop"]), 2, json.dumps(answer["wouldStop"]))
+        self.assertEqual(answer["stillLive"], [])
+        self.assertIsNotNone(host.settings())
+        self.assertIsNotNone(host.record())
+
+    def test_a_refused_retire_leaves_its_claim_under_still_live(self):
+        """A manual install owns both records, so disable stops nothing and never says it did."""
+        host = self.ready()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 1)
+        self.assertFalse([item for item in answer["stops"] if "adapter invocations" in item],
+                         json.dumps(answer["stops"]))
+        self.assertTrue([item for item in answer["stillLive"] if "adapter invocations" in item],
+                        json.dumps(answer["stillLive"]))
+        self.assertTrue(all("NOT stopped" in item for item in answer["stillLive"]))
+        self.assertIsNotNone(host.settings())
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

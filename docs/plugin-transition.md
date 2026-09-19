@@ -141,11 +141,19 @@ touches the store.
     python3 scripts/plugin_transition.py disable --apply
     python3 scripts/plugin_transition.py remove --apply
 
-`disable` retires the two records the packaged launchers read. New adapter invocations stop, because
-the launcher finds no settings and returns; new bridge starts stop, because the launcher has no
-record. What does not stop: a bridge already spawned in a running session, a turn already inside the
-adapter, and the relay service if one runs. Excluding a shared service is the operator's own action,
-and this tool never performs or claims it.
+`disable` retires the two records the packaged launchers read, and decides each one under the lock
+that serialises its own write: the settings under that file's lock, and the bridge record under the
+same ownership lock `register-mcp` takes. Both owners are read again inside the lock, so a record
+that became user-owned while this command ran is refused rather than archived as if it were ours.
+
+The receipt reports what is in effect, not what was intended. `stops` names only the surfaces this
+run actually left unable to serve a new call, `wouldStop` is what an `--apply` would stop on a dry
+run, and `stillLive` names every surface a reader must not read as stopped, carrying the reason it
+is not. A stopped settings record means new adapter invocations stop, because the launcher finds no
+settings and returns; a stopped bridge record means new bridge starts stop, because the launcher has
+no record. What does not stop: a bridge already spawned in a running session, a turn already inside
+the adapter, and the relay service if one runs. Excluding a shared service is the operator's own
+action, and this tool never performs or claims it.
 
 `remove` additionally removes the CRW-owned skill links. Out of its scope, and printed as such: the
 plugin cache and its `config.toml` entry, which `codex plugin remove` owns; the marketplace

@@ -858,6 +858,12 @@ ORDER = (("settings retire", settings_retire), ("hook standdown", hook_standdown
 # record back, refuse the plugin record, and leave the host with no bridge.
 MCP_STEPS = ("mcp record retire", "mcp table standdown", "mcp record install")
 
+# The steps that take something away. preflight reads the replacement once and these run afterwards,
+# so the plugin's readiness is asked again before each of them: a plugin disabled or removed while
+# this was running leaves a host losing its manual surfaces with nothing to serve them.
+DESTRUCTIVE = ("settings retire", "hook standdown", "mcp record retire", "mcp table standdown",
+               "skill unlink")
+
 
 def hook_recheck(host):
     """Whether a registration of this adapter is in the hook file after the sequence ran.
@@ -917,6 +923,14 @@ def transition(host, options, *, apply=False):
                         results.append(_answer(remaining, NOT_REACHED,
                                                "the bridge surface changed while this ran"))
                     break
+            if apply and name in DESTRUCTIVE:
+                changed = plugin_refusals(host)
+                if changed:
+                    results.append(_answer(name, REFUSED, "; ".join(changed)))
+                    results += [_answer(other, NOT_REACHED,
+                                        "the plugin stopped being able to serve what this removes")
+                                for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
+                    break
             answer = step(host, options, apply=apply) if name != "settings install" \
                 else step(host, options, apply=apply, previous=previous)
             results.append(answer)
@@ -938,6 +952,12 @@ def transition(host, options, *, apply=False):
     return results
 
 
+def _settings_owner(path):
+    """The owner named by the document at this exact path, read now rather than from a snapshot."""
+    document, _outcome, _detail, _found = completion.read_configuration(Path(path))
+    return completion.owner_of(document) if document else None
+
+
 def disable(host, options, *, apply=False):
     """Stop new calls by retiring the two records the packaged launchers read.
 
@@ -945,37 +965,69 @@ def disable(host, options, *, apply=False):
     hold the user-owned manual settings and bridge record, and retiring those would stop the
     manual installation while claiming to have disabled the plugin -- a different operation than
     the one asked for, performed on somebody else's registration.
+
+    Each owner is read again inside the lock that serialises the move, because an owner read
+    before the lock is the owner of a file that may have been replaced since. For the bridge
+    record that lock is the shared ownership lock register-mcp takes, not the record file's own:
+    the two owners write different files, so a user-owned record arriving through the
+    configuration side is not serialised by locking this one, and a cached owner would have this
+    command archive a registration that became somebody else's while it ran.
     """
+    home = Path(host["codexHome"])
     results = []
+
+    def decide(step, path, owner):
+        """Every answer that needs no write. None means the move is this command's to make."""
+        if not Path(path).exists():
+            return _answer(step, ALREADY, str(path) + " is not there")
+        if owner != completion.OWNER_PLUGIN:
+            return _answer(step, REFUSED,
+                           str(path) + " does not name " + completion.OWNER_PLUGIN
+                           + " as the owner of that registration (" + str(owner)
+                           + "), so it is not this command's to retire. A malformed or"
+                           " unreadable record owns nothing and is left where it is;"
+                           " a user-owned one belongs to the manual install")
+        if not apply:
+            return _answer(step, WOULD, "would retire " + str(path))
+        return None
+
     # Read from the paths being retired, not from the reading that honours the settings override:
     # with the override set, the owner of some other document would decide the fate of this one,
     # and a refusal on that basis leaves the bridge record retired and the hook settings in place.
-    settings_here, _outcome, _detail, _found = completion.read_configuration(
-        Path(host["codexHome"]) / completion.CONFIG_NAME)
-    owners = {"hook settings": completion.owner_of(settings_here) if settings_here else None,
-              "bridge record": host["mcp"]["recordOwner"]}
+    #
     # The fixed path, for the same reason the install writes it: the packaged launcher reads that
     # one file and ignores the settings override, so retiring whatever an override happens to name
     # would leave the document the launcher actually reads in place and stop nothing.
-    for step, path in (("hook settings", Path(host["codexHome"]) / completion.CONFIG_NAME),
-                       ("bridge record", Path(host["mcp"]["recordPath"]))):
-        if not Path(path).exists():
-            results.append(_answer(step, ALREADY, str(path) + " is not there"))
-            continue
-        if owners.get(step) != completion.OWNER_PLUGIN:
-            results.append(_answer(step, REFUSED,
-                                   str(path) + " does not name " + completion.OWNER_PLUGIN
-                                   + " as the owner of that registration (" + str(owners.get(step))
-                                   + "), so it is not this command's to retire. A malformed or"
-                                   " unreadable record owns nothing and is left where it is;"
-                                   " a user-owned one belongs to the manual install"))
-            continue
-        if not apply:
-            results.append(_answer(step, WOULD, "would retire " + str(path)))
-            continue
-        with hostrecord.Locked(Path(path)):
-            results.append(_answer(step, SETTLED, "retired " + str(path), applied=True,
-                                   wrote=True, retired=retire(path)))
+    settings = home / completion.CONFIG_NAME
+    try:
+        answer = decide("hook settings", settings, _settings_owner(settings))
+        if answer is None:
+            with hostrecord.Locked(settings):
+                answer = decide("hook settings", settings, _settings_owner(settings))
+                if answer is None:
+                    answer = _answer("hook settings", SETTLED, "retired " + str(settings),
+                                     applied=True, wrote=True, retired=retire(settings))
+        results.append(answer)
+    except hostrecord.Busy as error:
+        results.append(_answer("hook settings", BUSY, str(error)))
+
+    if not apply:
+        record = Path(host["mcp"]["recordPath"])
+        results.append(decide("bridge record", record, host["mcp"]["recordOwner"]))
+        return results
+    try:
+        with hostrecord.Locked(bridgerecord.ownership_lock_path(home)):
+            # Re-read inside the lock, the way register-mcp decides its own write: the owner that
+            # authorises this move has to be the owner of the record the move will take.
+            mcp = inventory.read_mcp(home)
+            record = Path(mcp["recordPath"])
+            answer = decide("bridge record", record, mcp["recordOwner"])
+            if answer is None:
+                answer = _answer("bridge record", SETTLED, "retired " + str(record), applied=True,
+                                 wrote=True, retired=retire(record))
+            results.append(answer)
+    except hostrecord.Busy as error:
+        results.append(_answer("bridge record", BUSY, str(error)))
     return results
 
 
@@ -990,6 +1042,40 @@ def preserved_paths(host):
         "runtimeInstallation": host.get("destination"),
         "pluginCache": host["plugin"].get("cacheVersion"),
     }.items() if v}
+
+
+# Each stop claim names the step that has to have settled for it to be true. Emitting them as a
+# fixed list said "new adapter invocations are stopped" on a dry run that wrote nothing and on a
+# run whose retire refused, so the receipt claimed an effect the host did not have and no reader
+# could tell an intended effect from an applied one.
+STOP_CLAIMS = (
+    ("hook settings", "new adapter invocations, because the packaged launcher finds no settings"
+                      " and returns without running anything"),
+    ("bridge record", "new bridge starts, because the packaged launcher has no record to read"),
+)
+
+
+def stop_claims(results):
+    """The stop claims split by what this run actually did to each surface.
+
+    settled and already_done are both true of the host now: one because this run moved the record,
+    the other because there was none there to move. would_change is what an --apply would do and
+    nothing more. Every other outcome leaves the surface live, and the reason travels with it
+    rather than being left for a reader to infer from the step list.
+    """
+    answers = {item["step"]: item for item in results}
+    stopped, projected, live = [], [], []
+    for step, claim in STOP_CLAIMS:
+        item = answers.get(step)
+        if item is None:
+            live.append(claim + " -- NOT stopped: " + step + " did not run")
+        elif item["outcome"] in (SETTLED, ALREADY):
+            stopped.append(claim)
+        elif item["outcome"] == WOULD:
+            projected.append(claim)
+        else:
+            live.append(claim + " -- NOT stopped: " + str(item.get("detail")))
+    return {"stopped": stopped, "wouldStop": projected, "stillLive": live}
 
 
 def remove(host, options, *, apply=False):
