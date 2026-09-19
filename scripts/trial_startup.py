@@ -172,7 +172,12 @@ class Refused(Exception):
     def __init__(self, reason, **detail):
         super().__init__(reason)
         self.reason = reason
-        self.detail = detail
+        # MISSING is an object, so json.dumps raises on it. A refusal built from a field that was
+        # absent carried the sentinel into its own detail, and the dumps in the handler then
+        # raised inside the handler: the command printed a traceback and lost both the refusal it
+        # had correctly produced and the exit status that reports one. The sentinel is stripped
+        # here, at the one place every refusal passes through.
+        self.detail = {key: shown(value) for key, value in detail.items()}
 
     def to_record(self):
         return {"source": SOURCE, "checkerVersion": CHECKER_VERSION, "refused": self.reason,
@@ -1769,7 +1774,16 @@ def criteria_summary(payload):
             "count": len(registered) if isinstance(registered, list) else None}
 
 
-def gate_reads_held(record, relay, rows, criteria):
+def assignment_summary(payload, entry):
+    """The values the assignment cell and the gate are decided on, for comparing two reads."""
+    return {"responsible": shown(field(payload, "responsibleRelationship")),
+            "status": shown(field(entry, "relationshipStatus")),
+            "child": shown(field(entry, "childTaskId")),
+            "parent": shown(field(entry, "parentTaskId")),
+            "generation": shown(field(entry, "executionGeneration"))}
+
+
+def gate_reads_held(record, relay, rows, criteria, assignment_read, assignment_entry):
     """The gate's own reads, taken once more after the last of them.
 
     These are separate relay processes and not one store transaction, so a settings row approved
@@ -1777,6 +1791,10 @@ def gate_reads_held(record, relay, rows, criteria):
     report it current. The relay exposes no revision to bind to and adding one would be a new
     delivery layer this issue forbids, so the reads are taken again after the last of them and
     required to be unchanged.
+
+    Every one of them, the assignment included. A confirmation that re-read the settings and the
+    criteria but not the relationship left the one value the gate compares against unguarded
+    while it ran, which is the same hole one field over.
 
     That does not make the block atomic, and this cell does not claim it does. What remains is
     the gap between this confirmation and the dispatch itself, which every reading here has and
@@ -1799,6 +1817,19 @@ def gate_reads_held(record, relay, rows, criteria):
         unread.append("the registered criteria")
     elif criteria_summary(payload) != criteria_summary(criteria):
         moved.append("the registered criteria")
+    probe = relay.relay("assignment-find", "--issue", assignment.get("issueKey"))
+    payload = probe["payload"] or {}
+    entries = field(payload, "assignments")
+    entry = MISSING
+    if isinstance(entries, list):
+        entry = next((e for e in entries
+                      if isinstance(e, dict)
+                      and e.get("relationshipId") == assignment.get("relationshipId")), MISSING)
+    if field(payload, "responsibleRelationship") is MISSING or entry is MISSING:
+        unread.append("the responsible relationship")
+    elif assignment_summary(payload, entry) != assignment_summary(assignment_read,
+                                                                  assignment_entry):
+        moved.append("the responsible relationship")
     return graded("gateReadsHeld", MISSING if unread else len(rows) + 1, not moved, probe=probe,
                   provenance=EXECUTED,
                   unreadable="a read the gate was graded from could not be taken again: "
@@ -2283,7 +2314,8 @@ def preflight(record, *, sleeper=time.sleep):
     assignment_cells.append(current)
     # Taken once more after the last of them, because these are separate processes rather than
     # one transaction and the order alone cannot make every earlier read current.
-    assignment_cells.append(gate_reads_held(record, relay, settings_rows, criteria_payload))
+    assignment_cells.append(gate_reads_held(record, relay, settings_rows, criteria_payload,
+                                            store_payload, entry))
 
     assembled = {}
     for name, cells in readings.items():

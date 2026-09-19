@@ -2953,7 +2953,9 @@ class TwentyNinthHostedRound(TrialCase):
         self.world.preflight()
         asked = [line for line in self.world.calls.read_text().splitlines()
                  if line.strip() and json.loads(line)["subcommand"] == "assignment-find"]
-        self.assertEqual(len(asked), 2,
+        # Once by the reading, once for the gate, and once by the confirmation a later round
+        # added after it. What this case is about is that the reading's answer is not reused.
+        self.assertEqual(len(asked), 3,
                          "the store was asked once and the gate reused that answer")
 
     def test_an_absent_field_is_unknown_rather_than_a_disagreement(self):
@@ -3226,16 +3228,44 @@ class ThirtyFourthHostedRound(TrialCase):
         self.world.start_supervisor()
         self.world.preflight()
         asked = self.asked()
-        self.assertEqual(asked.count("assignment-find"), 2)
-        last = len(asked) - 1 - asked[::-1].index("assignment-find")
-        before, after = asked[:last], asked[last + 1:]
+        # Once by the reading, once for the gate, once by the confirmation that follows it.
+        self.assertEqual(asked.count("assignment-find"), 3)
+        graded_at = [i for i, name in enumerate(asked) if name == "assignment-find"][1]
+        before, after = asked[:graded_at], asked[graded_at + 1:]
         # Four participants read twice, and the criteria read twice, all before the answer the
         # gate compares against rather than after it.
         self.assertEqual(before.count("settings-show"), 8,
                          "the gate's settings pass did not precede the answer it compares")
         self.assertEqual(before.count("criteria-show"), 2)
-        # And everything after it is the confirmation that those reads did not move while it ran.
-        self.assertEqual(sorted(set(after)), ["criteria-show", "settings-show"])
+        # And everything after it is the confirmation that no read moved while it ran, the
+        # relationship included: leaving that one out left the value the gate compares unguarded.
+        self.assertEqual(sorted(set(after)),
+                         ["assignment-find", "criteria-show", "settings-show"])
+
+    def test_a_relationship_archived_during_the_confirmation_is_caught(self):
+        # Two assignment asks happen before the confirmation's own, so the third is its.
+        archived = json.loads(json.dumps(self.world.payloads["assignment-find"]["payload"]))
+        archived["assignments"][0]["relationshipStatus"] = "archived"
+        self.world.payloads["after"] = {"subcommand": "assignment-find", "calls": 2,
+                                        "payloads": {"assignment-find": {"payload": archived}}}
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "assignmentState")["gateReadsHeld"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("the responsible relationship", cell["evidence"])
+        self.assertFalse(document["readyToStart"])
+
+    def test_a_refusal_built_from_an_absent_field_still_prints_as_a_refusal(self):
+        # MISSING is an object, so a refusal carrying it raised inside the handler that serialises
+        # it: the command printed a traceback and lost both the refusal and its exit status.
+        del self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["path"]
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertEqual(code, 2, stderr)
+        self.assertIsNotNone(payload, stderr)
+        self.assertIn("refused", payload)
+        self.assertNotIn("Traceback", stderr)
 
     def test_a_read_that_moves_while_the_last_one_runs_is_caught(self):
         # Eight settings-show asks happen before the assignment read, so the ninth is the
