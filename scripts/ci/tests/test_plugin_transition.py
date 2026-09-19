@@ -3121,6 +3121,22 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("as written", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    def test_a_quoted_mcp_argument_is_a_filename_with_quotes_in_it(self):
+        """No shell runs an MCP argument, so the quotes stay part of the path."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "mcp.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["mcpServers"]["codex-thread-bridge"]
+        entry["args"] = ["'" + entry["args"][0] + "'"]
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("as written", answer["results"][0]["detail"])
+        self.assertIn("The replacement has to be that same map", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

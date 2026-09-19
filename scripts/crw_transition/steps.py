@@ -473,6 +473,10 @@ def _declared(root, repo_root):
             words = [str(entry.get("command") or "")]
             words += [str(word) for word in (entry.get("args") or [])]
             shape = _shape(words) or ("a command this cannot read: " + repr(" ".join(words)))
+            # The argv as written, beside the shape. No shell runs these, so a quote inside an
+            # argument is part of the filename: "'./wiring/crw_bridge_mcp.py'" tokenises to the
+            # same shape as the launcher this package declares and names a file that does not
+            # exist. The shape says what it means to run; this says what is actually passed.
             # Everything else the entry carries, compared rather than enumerated. required moved
             # from false to true turns a bridge that may fail to start into one whose failure
             # ends the session, and cwd decides what the relative launcher path in args resolves
@@ -481,7 +485,8 @@ def _declared(root, repo_root):
             # are compared for the same reason: what makes the cache the replacement is that it
             # declares THIS entry, not one that merely starts the same program.
             rest = {key: value for key, value in entry.items() if key not in ("command", "args")}
-            servers[name] = shape + " with " + json.dumps(rest, sort_keys=True, default=repr)
+            servers[name] = (shape + " as written " + json.dumps(words)
+                             + " with " + json.dumps(rest, sort_keys=True, default=repr))
     return events, servers, unread
 
 
