@@ -197,6 +197,11 @@ TEXT_EVIDENCE = {
         " object: one that reads a statement's whole value and one that reads the pairs answer"
         " identically for every binding that is not an unpacking. Reading the file is the only"
         " way to see which question was put.",
+    "test_every_argument_form_outside_the_seating_grammar_is_declared":
+        "which argument forms this module writes is a property of the text: the object has"
+        " already seated every call by the time it could be asked, and a call it could not"
+        " seat looks the same as one it never made. Reading the file is the only way to find"
+        " an arrival outside the grammar.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -1049,6 +1054,28 @@ REFUSAL_OUT_OF_REACH = {
 # really does reach the declared thing, why). The fourth column is Python's answer, not this
 # reader's, which is the whole point of writing it down.
 REFUSAL, TEXT = "refusal", "text"
+
+# The grammar this reader seats an argument in: a written argument, a keyword, a written tuple
+# or list unpacking, a written mapping. Outside it there is no seating to derive, so nothing is
+# seated and the occurrence is REPORTED -- an undeclared one fails acceptance rather than being
+# guessed at or dropped. Each entry carries the sample its control plants, so an entry cannot
+# outlive the form it describes.
+ARGUMENT_FORM_NOT_SEATED = {
+    "a set unpacking":
+        ("helper(*{ONE, TWO})",
+         "a set has no order. Which element fills which slot is not a fact this text holds, and"
+         " reading it off the order the source happens to list is an answer taken from"
+         " something that is not there -- the same call answered differently depending on which"
+         " element was typed first. There is no correct seating to derive, so none is."),
+    "an unpacking this text cannot read":
+        ("helper(*supplied)",
+         "how many values it carries, and which, is a fact about the run. The positional count"
+         " stops at it rather than guessing how far it reaches."),
+    "a mapping this text cannot read":
+        ("helper(**supplied)",
+         "which names it carries is the same question, asked of the keywords. A mapping written"
+         " out names its own slots and IS seated; one handed over whole does not."),
+}
 
 # Where the thing is handed on through a TRANSFORMATION rather than as itself. This reader
 # follows names and the pass-through vocabulary; reading .strip() off a refusal or
@@ -4423,6 +4450,56 @@ RESOLVES_LIKE_PYTHON = {
          "SUPPORT, green at the parent, and the pair that keeps the correction above honest:"
          " an ordinary method reached through its class really does write its receiver, so the"
          " slots must not move for it."),
+    "a carrier unpacked from a tuple written second":
+        (REFUSAL,
+         ("def identity(first, second):",
+          "    return first",
+          "",
+          "def helper():",
+          "    return identity(*(\"fine\", reading.UNREADABLE))",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "SUPPORT, green at the parent, and the form INSIDE the seating grammar that keeps the"
+         " declared boundary from creeping: a tuple IS ordered, so the second element really"
+         " does fill the second slot and the function returning the first never sees the"
+         " refusal. Declining to seat an unordered unpacking must not have stopped seating an"
+         " ordered one. The unordered form is not an entry here at all, because Python may"
+         " answer either way and this table records the answer Python gives -- it is declared"
+         " in ARGUMENT_FORM_NOT_SEATED with a control on each side instead."),
+    "a method reached through a class alias":
+        (REFUSAL,
+         ("class Holder:",
+          "    def identity(self, answer):",
+          "        return answer",
+          "",
+          "Alias = Holder",
+          "",
+          "def helper(obj):",
+          "    return Alias.identity(obj, reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", True,
+         "Alias = Holder makes Alias.identity(obj, x) the same unbound call, and the receiver"
+         " seating read the class spelling table alone. An alias was taken for an instance, so"
+         " a slot the call had written itself was moved and the argument behind it landed one"
+         " place over. The alias table was already derived here and beside it."),
+    "a method reached through its own class":
+        (REFUSAL,
+         ("class Holder:",
+          "    def identity(self, answer):",
+          "        return answer",
+          "",
+          "def helper(obj):",
+          "    return Holder.identity(obj, reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", True,
+         "SUPPORT, green at the parent: reading the alias table beside the spelling one must"
+         " not have changed what the plain spelling answers."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5566,6 +5643,38 @@ def _bound_names(tree, places):
                         + ([args.kwarg] if args.kwarg else [])):
                 binds.setdefault(at, set()).add(arg.arg)
     return binds
+
+
+def _seating_not_established(tree):
+    """Every call argument whose seating is outside the grammar this reader supports.
+
+    Seating an argument means saying which parameter it fills. The forms that answer that are
+    a written argument, a keyword, a written tuple or list unpacking, and a written mapping.
+    A SET unpacking is not one of them: a set has no order, so which element fills which slot
+    is not a fact the text holds, and reading it off the order the source happens to list
+    would be an answer taken from something that is not there. An unpacking or a mapping this
+    text cannot read is outside for the plainer reason.
+
+    Reported rather than guessed at AND rather than dropped. Nothing is seated past one of
+    these, so the claim matches what was verified; and the occurrence is emitted here so an
+    undeclared one fails acceptance instead of passing quietly. That is the whole of what this
+    reader offers outside its grammar: not an answer, and not silence either.
+    """
+    outside = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for given in node.args:
+            if not isinstance(given, ast.Starred) or isinstance(
+                    given.value, (ast.Tuple, ast.List)):
+                continue
+            outside.setdefault("a set unpacking" if isinstance(given.value, ast.Set)
+                               else "an unpacking this text cannot read",
+                               set()).add(given.lineno)
+        for word in node.keywords:
+            if word.arg is None and not isinstance(word.value, ast.Dict):
+                outside.setdefault("a mapping this text cannot read", set()).add(node.lineno)
+    return {form: sorted(lines) for form, lines in outside.items()}
 
 
 def _declared_owner(tree, places):
@@ -7366,7 +7475,12 @@ def _hands_on(tree, spelled):
                             through_a_class = False
                             while True:
                                 at = ".".join(reach) if reach else MODULE_LEVEL
-                                if owner in by_spelling.get(at, {}):
+                                # Through an alias as well as the spelling: Alias = Holder makes
+                                # Alias.identity(obj, x) the same unbound call, and reading the
+                                # class table alone took the alias for an instance and moved a
+                                # slot the call had written itself.
+                                if (owner in by_spelling.get(at, {})
+                                        or owner in alias_of.get(at, {})):
                                     through_a_class = True
                                     break
                                 if not reach:
@@ -7380,15 +7494,27 @@ def _hands_on(tree, spelled):
                         # hands x over, and zipping the Starred node itself binds a slot to a
                         # syntax node rather than to what was passed. One this text cannot read
                         # stops the positional count rather than guessing how far it reaches.
-                        written = []
+                        #
+                        # A SET is not ordered, so there is no seating to derive from one at
+                        # all: reading it off the order the source happens to list would be an
+                        # answer taken from something that is not there. It is outside the
+                        # grammar this seating supports, so nothing is seated past it and the
+                        # occurrence is reported by _seating_not_established instead, where an
+                        # undeclared one fails acceptance rather than passing quietly.
+                        filling = 0
                         for given in node.args:
+                            if filling >= len(standing):
+                                break
                             if not isinstance(given, ast.Starred):
-                                written.append(given)
-                            elif isinstance(given.value, (ast.Tuple, ast.List, ast.Set)):
-                                written.extend(given.value.elts)
+                                handed.append((standing[filling], given))
+                                filling += 1
+                            elif isinstance(given.value, (ast.Tuple, ast.List)):
+                                for element in given.value.elts:
+                                    if filling < len(standing):
+                                        handed.append((standing[filling], element))
+                                        filling += 1
                             else:
                                 break
-                        handed += list(zip(standing, written))
                         # And a written mapping names its own slots, the same way a keyword
                         # written out does.
                         for word in node.keywords:
@@ -8912,6 +9038,52 @@ class SevenReadingsTests(unittest.TestCase):
                 self.assertEqual([row for row in found if row[1] == "a_place_outside_the_reach"],
                                  [], form + " is inside the reach now, so delete the entry")
 
+    def test_every_argument_form_outside_the_seating_grammar_is_declared(self):
+        """The boundary of argument seating, held closed rather than claimed away.
+
+        Ground 1 asks that a member arriving in a form the detector cannot see goes RED, not
+        that the detector resolve every form. So outside the seating grammar this reader gives
+        neither an answer nor silence: nothing is seated, and the occurrence is emitted. An
+        undeclared one fails here.
+
+        Four things are asserted, because any one of them alone would rot. Each declared form
+        is planted and has to be reported, so an entry cannot outlive its form. The ordered
+        forms are planted and have to be reported as NOTHING, so the boundary cannot creep over
+        what is supported. Every occurrence in this module is declared, which is the gate going
+        red on an arrival nobody wrote down. And the reach matches the claim: with a set
+        unpacking in the call the argument is not seated, so the inventory does not quietly
+        answer a question it just said it cannot.
+        """
+        for form, (sample, why) in sorted(ARGUMENT_FORM_NOT_SEATED.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                self.assertIn(form, _seating_not_established(ast.parse(sample)),
+                              form + ": its own sample is not reported, so this entry describes"
+                              " a form the derivation no longer meets")
+        for supported in ("helper(*(ONE, TWO))", "helper(*[ONE, TWO])",
+                          "helper(**{\"answer\": ONE})", "helper(ONE, answer=TWO)"):
+            with self.subTest(supported):
+                self.assertEqual(_seating_not_established(ast.parse(supported)), {},
+                                 supported + " is inside the grammar and was reported as"
+                                 " outside it, so the boundary has crept over supported work")
+        arrived = sorted(set(_seating_not_established(ast.parse(
+            HERE.read_text(encoding="utf-8")))) - set(ARGUMENT_FORM_NOT_SEATED))
+        self.assertEqual(arrived, [],
+                         "an argument form outside the seating grammar arrived in this module"
+                         " and nobody wrote it down, so what it hands over is nobody's answer: "
+                         + json.dumps(arrived))
+        # And the claim equals the reach: the unordered form really is left unseated.
+        self.assertNotIn("consumer", places_reached(REFUSAL, "\n".join((
+            "def identity(first, second):",
+            "    return first",
+            "",
+            "def helper():",
+            "    return identity(*{\"fine\", reading.UNREADABLE})",
+            "",
+            "def consumer():",
+            "    return helper()"))),
+            "a set unpacking is declared unseatable and the seating answered anyway")
+
     def test_each_transformation_boundary_is_still_where_it_says(self):
         """Support: the declared transformation boundary, held at both ends.
 
@@ -10184,6 +10356,7 @@ HANDED = {
     "_defaults": NOTHING,
     "_default_applies": NOTHING,
     "_declared_owner": NOTHING,
+    "_seating_not_established": NOTHING,
     "_bound_names": NOTHING,
     "_lambda_named": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
@@ -10193,6 +10366,7 @@ HANDED = {
     "test_every_placement_site_here_honours_a_declared_owner": NOTHING,
     "test_every_statement_reader_here_pairs_an_unpacking_off": NOTHING,
     "test_each_transformation_boundary_is_still_where_it_says": NOTHING,
+    "test_every_argument_form_outside_the_seating_grammar_is_declared": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
