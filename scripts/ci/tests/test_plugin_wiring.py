@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
-from crw_runtime import bridgerecord, completion, hooks
+from crw_runtime import bridgerecord, completion, hooks, reading
 
 import plugin
 
@@ -202,6 +202,48 @@ class OwnershipTest(unittest.TestCase):
         self.assertNotEqual(status, 0, output)
         self.assertFalse(self.home.settings.exists(),
                          "a refused run writes nothing: " + output)
+
+    # ------------------------------------------------------------ what hook-status can say
+
+    def status(self):
+        _, emitted, output = run("hook-status", "--codex-home", str(self.home.codex_home))
+        self.assertIsNotNone(emitted, output)
+        return emitted
+
+    def test_status_probes_both_programs_the_launcher_starts(self):
+        """A plugin-owned hook has no hook-file entry, so the registration cells answer about
+        a file and say nothing about this host. Either recorded program can go missing alone."""
+        self.assertEqual(self.home.hook("--owner", "plugin", "--apply")[0], 0)
+        answer = self.status()
+        self.assertEqual(answer["adapterEntryPoint"]["value"], reading.PRESENT, answer)
+        self.assertEqual(answer["adapterInterpreter"]["value"], reading.PRESENT, answer)
+
+    def test_status_names_a_recorded_interpreter_that_is_gone(self):
+        self.assertEqual(self.home.hook("--owner", "plugin", "--apply")[0], 0)
+        document = json.loads(self.home.settings.read_text(encoding="utf-8"))
+        document["adapterInterpreter"] = str(self.home.codex_home / "removed-venv" / "python")
+        self.home.settings.write_text(json.dumps(document), encoding="utf-8")
+        answer = self.status()
+        self.assertNotEqual(answer["adapterInterpreter"]["value"], reading.PRESENT, answer)
+
+    def test_status_reports_the_owner_without_claiming_a_registration(self):
+        """Writing the settings registers nothing, and this command reads no installed package,
+        so it must not name one as the place the hook is registered."""
+        self.assertEqual(self.home.hook("--owner", "plugin", "--apply")[0], 0)
+        answer = self.status()
+        self.assertEqual(answer["registrationOwner"]["value"], completion.OWNER_PLUGIN, answer)
+        self.assertIsNone(answer["registrationOwner"]["registeredWhere"], answer)
+        self.assertIn(completion.OWNER_PLUGIN, answer["registrationOwner"]["note"], answer)
+        # The hook-file cell keeps answering about the hook file, which holds nothing.
+        self.assertNotEqual(answer["registration"]["value"], reading.PRESENT, answer)
+
+    def test_status_still_points_the_user_owner_at_the_hook_file(self):
+        self.assertEqual(self.home.hook("--apply")[0], 0)
+        answer = self.status()
+        self.assertEqual(answer["registrationOwner"]["value"], completion.OWNER_USER, answer)
+        self.assertEqual(answer["registrationOwner"]["registeredWhere"],
+                         str(self.home.codex_home / "hooks.json"), answer)
+
 
     def test_the_same_budget_is_still_accepted_for_the_user_owner(self):
         """The ceiling belongs to the packaged launcher, which the user owner does not run."""

@@ -1429,6 +1429,26 @@ def _interpreter_cell(ours):
                  interpreters=[one["resolved"] for one in checked])
 
 
+def _recorded_program_cell(named, label):
+    """A program these settings name, probed the way a registered one is.
+
+    A plugin-owned hook has no entry in the hook file, so the cell above receives nothing and
+    answers that no registration named a program. That is true about the hook file and useless
+    about this host: the launcher starts the two programs recorded here, and if either is gone
+    every Stop is released without a word. Same probe, different source.
+    """
+    if not named:
+        return None
+    if not os.path.isabs(str(named)):
+        return _cell(WORKSPACE_DEPENDENT, "these settings name " + label + " with the relative"
+                     " path " + str(named) + ", which resolves differently in every workspace;"
+                     " it was not probed here", path=str(named))
+    probe = presence(named, label)
+    if probe["value"] == reading.PRESENT and not os.access(str(named), os.X_OK):
+        return _cell(reading.UNREADABLE, label + " is not executable", path=str(named))
+    return probe
+
+
 def _journal_cell(config):
     """What this hook recorded about its own invocations."""
     root = (config or {}).get("journalRoot")
@@ -1558,6 +1578,8 @@ def status(codex_home=None, environ=None, event=EVENT):
         offers = _cell(NOT_READ, "no usable configuration names a runtime")
         marker = _cell(NOT_READ, "no usable configuration names a marker root")
         adapter = _cell(NOT_READ, "no usable configuration names an adapter")
+        adapter_interpreter = _cell(NOT_READ, "no usable configuration names an adapter"
+                                              " interpreter")
         # Asked separately from the cell below, because settings that could not be read and
         # settings that deliberately configure no journal are different answers. Reporting the
         # first as an empty journal would say this hook has recorded nothing, when what
@@ -1581,6 +1603,15 @@ def status(codex_home=None, environ=None, event=EVENT):
                    else _cell(NOT_READ, "these settings record no adapter entry point, which is"
                                         " the " + OWNER_USER + " owner's shape: its registered"
                                         " command line carries the adapter instead"))
+        # The launcher starts two programs and either one can go missing on its own. A virtual
+        # environment removed after installation leaves the script in place and the interpreter
+        # gone, and then nothing runs at all: the same outage, a different repair.
+        adapter_interpreter = (
+            _recorded_program_cell(config.get("adapterInterpreter"),
+                                   "the recorded adapter interpreter")
+            or _cell(NOT_READ, "these settings record no adapter interpreter, which is the "
+                     + OWNER_USER + " owner's shape: its registered command line carries the"
+                     " interpreter instead"))
         offers = (_offers_guard(executable, config.get("timeoutSeconds")
                                 or DEFAULT_TIMEOUT_SECONDS)
                   if relay["value"] == reading.PRESENT
@@ -1597,15 +1628,23 @@ def status(codex_home=None, environ=None, event=EVENT):
         # the hook file. A plugin-owned hook is registered in the package's manifest, so that
         # cell says nothing is registered and is right about the file and wrong about the host.
         # This names the owner the settings recorded, so the two readings stay distinguishable.
+        # The owner these settings record, and nothing more. Writing the settings is not
+        # registering anything -- the plugin owner deliberately registers nothing here -- so
+        # naming the package manifest as the place it is registered would report an
+        # installation this command never looked for. Where a plugin-owned registration lives,
+        # and whether it exists at all, is a separate reading nothing here makes.
         "registrationOwner": (
             _cell(owner_of(config), "the owner recorded in these settings",
-                  registeredWhere=("the plugin package's manifest, which this command does not"
-                                   " read" if owner_of(config) == OWNER_PLUGIN
-                                   else str(home / "hooks.json")))
+                  registeredWhere=(str(home / "hooks.json")
+                                   if owner_of(config) == OWNER_USER else None),
+                  note=("these settings name the " + OWNER_PLUGIN + " as the owner, so the"
+                        " registration is the package's to declare and no installed package"
+                        " was read here" if owner_of(config) == OWNER_PLUGIN else None))
             if config else
             _cell(NOT_READ, "the settings were not read, so the owner was not established")),
         "registration": registration,
         "adapterEntryPoint": adapter,
+        "adapterInterpreter": adapter_interpreter,
         "registeredCommandTarget": target,
         "registeredInterpreter": interpreter,
         "hostTrust": _cell(NOT_READ, "whether the host loads and trusts these identities is"
