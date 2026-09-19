@@ -2083,7 +2083,15 @@ def gate_reads_held(record, relay, rows, criteria, assignment_read, assignment_e
     the gap between this confirmation and the dispatch itself, which every reading here has and
     which the stand-ins name: the order narrows it and the relay's own refusal at delivery is
     what closes it.
+
+    The reads inside this pass are sequential too, so a row read first can be replaced while the
+    rest of the pass runs and this will not see it. No finite number of passes closes that; only
+    one transaction across the store would, and the relay exposes none. So the span this pass
+    covers is measured and reported rather than argued away, and the claim stays what it can
+    support: these values were unchanged when they were read again, over an interval of this
+    length.
     """
+    began = time.time()
     moved, unread = [], []
     for name in participants_of(record):
         probe = relay.relay("settings-show", "--task", name)
@@ -2119,7 +2127,10 @@ def gate_reads_held(record, relay, rows, criteria, assignment_read, assignment_e
                              + ", ".join(unread),
                   evidence=("every read the gate was graded from is unchanged when taken again"
                             " after the last of them. They are separate processes and not one"
-                            " transaction, so this bounds the window rather than removing it"
+                            " transaction, and this pass reads them in sequence over "
+                            + str(round(time.time() - began, 3)) + " seconds, so a row read at"
+                            " its start could still be replaced before its end. This bounds the"
+                            " window and does not remove it"
                             if not moved else
                             ", ".join(moved) + " changed between the gate's own reads, so the"
                             " document would have reported a value the dispatch will not use"))
@@ -2674,8 +2685,12 @@ def preflight(record, *, sleeper=time.sleep):
             "storeSnapshot": "one transaction across the store. These readings are taken at"
                              " moments, and the last of them is the assignment the gate compares"
                              " against, so what remains between that read and the dispatch is"
-                             " unread. The order is what narrows it and the relay's own refusal"
-                             " at delivery is what closes it; this does not stand in for that",
+                             " unread, as is anything that changes inside the confirmation pass"
+                             " after its own read of that value. No finite number of passes"
+                             " closes that and the relay exposes no revision to bind to. The"
+                             " order narrows it, the measured span says how far, and the relay's"
+                             " own refusal at delivery is what closes it; this does not stand in"
+                             " for that",
             "peerAttribution": "a doctor payload that names the participant that ran it. It does"
                                " not, so a peer capture is the operator's attribution: what this"
                                " establishes is that the peers are distinct readings, not that"

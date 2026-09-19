@@ -3991,5 +3991,26 @@ class FortySecondHostedRound(TrialCase):
                          {kind: set(names) for kind, names in theirs.items()})
 
 
+class FortyThirdHostedRound(TrialCase):
+    """What the confirmation pass can and cannot say, stated in the document rather than implied."""
+
+    def test_the_confirmation_reports_the_span_it_covered(self):
+        # The pass reads sequentially, so a row read at its start can be replaced before its end
+        # and this will not see it. No finite number of passes closes that; the span is measured
+        # and reported so the unguarded interval is a number rather than an assumption.
+        self.world.start_supervisor()
+        cell = cells_of(self.world.preflight(), "assignmentState")["gateReadsHeld"]
+        self.assertEqual(cell["value"], VERIFIED)
+        self.assertIn("reads them in sequence over", cell["evidence"])
+        self.assertIn("bounds the window and does not remove it", cell["evidence"])
+
+    def test_the_document_names_what_no_pass_can_close(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        snapshot = document["standIns"]["storeSnapshot"]
+        self.assertIn("No finite number of passes", snapshot)
+        self.assertIn("relay exposes no revision", snapshot)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
