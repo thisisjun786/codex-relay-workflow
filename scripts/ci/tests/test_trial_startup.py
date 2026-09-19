@@ -4524,6 +4524,56 @@ class FortyFifthHostedRound(TrialCase):
         document = self.world.preflight()
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
 
+    def test_a_receipt_whose_creation_names_another_thread_is_spliced(self):
+        # The receipt carries the response it is a receipt for, and the settings and the
+        # environment this reading grades come out of that response. A top-level id that agrees
+        # while the response inside names somebody else is a receipt no bridge wrote, and reading
+        # only the outer one graded this participant on another participant's creation.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            other = World.CHILD_A if task != World.CHILD_A else World.PARENT_A
+            self.world.captures["receipt-" + task + ".json"]["creation"]["thread"]["id"] = other
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt whose own creation names another thread was read as evidence")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_the_bridge_derives_the_receipts_id_from_the_created_thread(self):
+        # Support, and the reason the nested id is an identity at all rather than a field that
+        # happens to sit there: both creation paths write the top-level id out of the created
+        # response, read as the expressions those paths build.
+        source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
+                              "bridge.py")
+        tree = ast.parse(source)
+
+        def created_thread_id(node):
+            return (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+                    and node.slice.value == "id" and isinstance(node.value, ast.Subscript)
+                    and isinstance(node.value.slice, ast.Constant)
+                    and node.value.slice.value == "thread"
+                    and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id == "created")
+
+        for name in ("create_thread", "create_worktree_thread"):
+            node = next(n for n in ast.walk(tree)
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and n.name == name)
+            derived = {target.id for assign in ast.walk(node)
+                       if isinstance(assign, ast.Assign) and created_thread_id(assign.value)
+                       for target in assign.targets if isinstance(target, ast.Name)}
+            written = [word.value for call in ast.walk(node)
+                       if isinstance(call, ast.Call)
+                       for word in call.keywords if word.arg == "threadId"]
+            self.assertTrue(written, name + " writes no threadId")
+            for value in written:
+                self.assertTrue(
+                    created_thread_id(value)
+                    or (isinstance(value, ast.Name) and value.id in derived),
+                    name + " no longer writes the created thread's own id")
+
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the
         # identity recheck reads answers both again, and a path that stopped answering leaves

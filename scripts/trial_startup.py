@@ -148,6 +148,13 @@ REQUESTABLE_SETTINGS = ("cwd", "model", "reasoningEffort", "runtimeWorkspaceRoot
 # nothing in the path would keep.
 DECLARABLE_SETTINGS = REQUESTABLE_SETTINGS + ("approvalPolicy",)
 
+# Where a creation receipt names the thread it is about. The bridge derives the top-level id from
+# the created response on both of its creation paths and keeps that response beside it, so those
+# are the same string in any receipt a bridge wrote. A receipt whose nested response names another
+# participant is spliced, and the settings and the environment this reading grades come out of
+# that nested response rather than out of the top-level id.
+RECEIPT_IDENTITIES = ("threadId", "taskId", ("creation", "thread", "id"))
+
 
 def blank_settings(values):
     """Which of those settings are present and are not a non-empty string, in a stable order."""
@@ -484,12 +491,15 @@ def same(left, right):
 
 
 def identities_in(payload, *keys):
-    """Every identity this capture carries, under either spelling, absent ones dropped.
+    """Every identity this capture carries, under any spelling or nesting, absent ones dropped.
 
     Two spellings reach these captures. The host names the thread it created at threadId, and the
     relay's own word for the same participant is taskId, and they are the same string.
+    A key may be a path, because a creation receipt also carries the created thread inside the
+    response it is a receipt for, and an identity a reading never looks at is one a spliced
+    capture can disagree with freely.
     """
-    found = [field(payload, key) for key in keys]
+    found = [field(payload, *(key if isinstance(key, tuple) else (key,))) for key in keys]
     return [value for value in found if value is not MISSING and value is not None]
 
 
@@ -1594,9 +1604,9 @@ def reading_capability(record, relay):
                 # unreadable, and an unreadable cell refuses the start: a check meant to refuse
                 # one bad arrangement would have refused every good one. Every spelling the
                 # payload carries has to agree, so one capture cannot answer for two.
-                carried = identities_in(found["payload"], "threadId", "taskId")
+                carried = identities_in(found["payload"], *RECEIPT_IDENTITIES)
                 identifies = carried[0] if carried else MISSING
-                names = names_participant(found["payload"], task, "threadId", "taskId")
+                names = names_participant(found["payload"], task, *RECEIPT_IDENTITIES)
                 verified = field(found["payload"], "settings", "verified")
                 if not isinstance(verified, list):
                     # A list is the only shape this answer takes. Anything else is a reading
