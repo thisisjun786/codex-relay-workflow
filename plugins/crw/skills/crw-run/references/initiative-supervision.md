@@ -33,6 +33,12 @@ status-only, plan-only, no-create, no-goal and narrower delivery limits survive 
 exactly as they survive it in Run, and they travel down without widening
 ([OPS-7.3](operations.md#ops-73-isolation-between-parents)).
 
+Those limits bind every outward step this entry takes, not just the run as a whole. Creating a
+task to hold the supervision, delivering a designation to an existing supervisor, and handing a
+project to its parent are each contact, each gated on the limits in force at that moment, and each
+returned prepared and unsent, named as unsent, where a limit forbids it. The gate is per action and
+per project, so a limit that stops one of them does not hold back the rest.
+
 ## What the binding fixes
 
 Bind three things together, because a supervision missing any of them has no boundary:
@@ -66,8 +72,9 @@ where there is one, and the designation is routed there: to an existing supervis
 in the reuse order below, and otherwise to a task created for it the way this workflow creates any
 independent task, under
 [Independent implementation tasks](../SKILL.md#independent-implementation-tasks) for creation
-authority and capability, carrying the designation itself as its first prompt. Where creation is
-not authorized, or no creation path is available, say exactly that and bind nothing: a designation
+authority and capability, carrying the designation itself as its first prompt. Creating that task is itself
+contact and is gated like every other outward step above. Where creation is not authorized, a limit
+forbids it, or no creation path is available, say exactly that and bind nothing: a designation
 reported unbound is better than a parent quietly repurposed. A user who does want that task to stop
 being a parent is making an ownership change, recorded and completed first rather than produced as
 a side effect of binding. Where an
@@ -108,8 +115,14 @@ assumes the earlier one was checked:
    parent's record; read it there rather than asking for a new one or opening a second.
 
 Repeating the designation, and resuming after an interruption, run this same order and converge on
-the same tasks. Reuse is the first move and creation is what remains after it, so a supervision
-that starts twice does not produce two of anything. A busy parent, an unreachable record or an
+the same tasks wherever this order can observe them. Reuse is the first move and creation only what
+remains after it. Where nothing records these relationships that convergence is a read rather than
+a guarantee, so a task that had to create the supervision reads the initiative record once more
+before its first handoff. If another supervisor recorded itself for the same initiative, the
+earlier recorded binding stands, and the later one stops there: it sends nothing, preserves its own
+record and hands over the briefs it has not sent. Reconciling a duplicate before any handoff is
+what keeps one initiative from splitting across two owners, because a parent that has accepted a
+handoff has already begun work for whoever sent it. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
 
 ## Hand a project to its parent
@@ -127,12 +140,9 @@ existing parent gets it as a [Coordination message](task-packet.md#coordination-
 project handoff, carrying the [restoration block](task-packet.md#restoration-block) whether that
 parent is running or idle.
 
-Both carriers contact another task, so both are gated on the limits in force. Where the
-designation forbids contact, or forbids the creation a project without a parent would need, the
-brief is prepared and returned unsent, and named as unsent rather than delivered quietly. That is
-the same rule the read-only and no-create cases below apply to a whole run, and it holds for each
-project separately: a limit that blocks one handoff does not hold back the projects it does not
-touch.
+Both carriers contact another task, so both fall under the gate above: where the designation
+forbids contact, or forbids the creation a project without a parent would need, that brief is
+prepared and returned unsent rather than delivered quietly.
 
 A handoff sent is not a parent bound. The transport accepting it, the parent binding the project,
 and the parent returning a result are three facts recorded separately, and the first does not
