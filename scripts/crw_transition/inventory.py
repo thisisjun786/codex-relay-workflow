@@ -250,8 +250,19 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
             and declared.startswith("./") else None
         answer["payload"]["skills"] = bool(root and root.is_dir())
         if root and root.is_dir():
-            answer["skills"] = sorted(p.name for p in root.iterdir()
-                                      if (p / "SKILL.md").is_file())
+            try:
+                answer["skills"] = sorted(p.name for p in root.iterdir()
+                                          if (p / "SKILL.md").is_file())
+            except OSError as error:
+                # The version cache is replaced wholesale by an install, so it can go away
+                # between these two calls. Raising here left transition() with no step results
+                # at all -- not even the warning that the completion registration is already
+                # gone -- because the readiness recheck runs after the standdown. It is a
+                # payload this run could not read, which the refusal path already handles.
+                answer["payload"]["skills"] = False
+                answer["skills"] = []
+                answer["detail"] = ("the cached skills at " + str(root) + " could not be listed ("
+                                    + type(error).__name__ + ": " + str(error) + ")")
         answer["payload"]["hookDocument"] = (version / HOOK_DOCUMENT).is_file()
         answer["payload"]["mcpDocument"] = (version / "wiring" / "mcp.json").is_file()
     return answer

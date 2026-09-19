@@ -3226,6 +3226,31 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
                          before)
 
+    @needs_reader
+    def test_a_cache_whose_skills_cannot_be_listed_is_a_reading_not_a_crash(self):
+        """The version cache is replaced wholesale, so it can go away between two calls."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        skills = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                  / "skills")
+        skills.chmod(0o000)
+        self.addCleanup(skills.chmod, 0o755)
+        if os.access(str(skills), os.R_OK):
+            self.skipTest("this user can list a directory with no permissions")
+        answer = inventory.read_plugin(host.home)
+        self.assertFalse(answer["payload"]["skills"])
+        self.assertEqual(answer["skills"], [])
+        self.assertIn("could not be listed", answer["detail"])
+        # And the command refuses with its step list rather than failing out of the reading.
+        before = host.hooks_document()
+        code, seen = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(seen)[:700])
+        self.assertTrue(seen.get("results"), json.dumps(seen)[:700])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
