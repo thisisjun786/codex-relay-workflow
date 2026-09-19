@@ -36,6 +36,13 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 # EXIT_REFUSED says nothing was replaced, about a host that has already moved; reporting it as
 # EXIT_OK says bookkeeping landed that did not. Nothing before the claim exits this way: every
 # earlier failure leaves the previous runtime selected and reachable, which is a refusal.
+#
+# A WRAPPER MUST NOT READ THIS AS A FREE DESTINATION. Non-zero here means the opposite of what
+# it means everywhere else in this command: the candidate was promoted, it is selected, the
+# owned pointer names it, and a host is running out of it. A caller that treats every non-zero
+# install status as "nothing happened, clean it up" would delete the runtime in service. The
+# release path is reached only by EXIT_REFUSED; these two statuses keep the environment
+# deliberately, which is why they are declared together and why the result says 'promoted'.
 EXIT_INCOMPLETE = 3
 
 # The two components, named once. The MCP server name spells the bridge's component name, and
@@ -3094,13 +3101,16 @@ def _settle_claim(environment, state, *, issue, run):
         record_requires = None
     elif left.usable:
         record_requires = (
-            "run install again against the same destination. The replacement itself finished:"
-            " this environment is selected and the owned pointer names it, so there is nothing"
-            " to rebuild and nothing to undo. What is missing is only the claim that records"
-            " it, which the next run writes -- it reads a selected environment whose claim"
-            " never settled as an interrupted promotion and finishes the bookkeeping. Until"
-            " then this destination carries a runtime that is in service and a claim that does"
-            " not say so.")
+            "clear whatever stopped the write at " + str(path) + " -- the error is in"
+            " 'detail' -- and then run install again against the same destination. The"
+            " replacement itself finished: this environment is selected and the owned pointer"
+            " names it, so there is nothing to rebuild and nothing to undo, and what is"
+            " missing is only the claim that records it. A rerun writes that claim: it reads a"
+            " selected environment whose claim never settled as an interrupted promotion and"
+            " finishes the bookkeeping. BUT ONLY ONCE THE WRITE CAN SUCCEED -- rerunning while"
+            " the same thing stops it reaches the same failure and returns this same result,"
+            " without rebuilding or removing anything. Until it settles, this destination"
+            " carries a runtime that is in service and a claim that does not say so.")
     else:
         record_requires = (
             "make the claim at " + str(path) + " readable or remove it, then run install"

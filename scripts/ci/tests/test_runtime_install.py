@@ -6311,6 +6311,40 @@ class SettledRecordTests(unittest.TestCase):
                             "so it must not be given the advice that fits the case a rerun"
                             " does repair")
 
+    def test_rerunning_while_the_write_still_fails_loses_nothing(self):
+        """The advice names a precondition, and the case where it is not met is safe.
+
+        If whatever stopped the claim write is still there, a rerun reaches the same failure
+        and returns the same answer. That has to be harmless and it has to be visible: the
+        result says the rerun only settles the record once the write can succeed, and the rerun
+        itself rebuilds nothing, removes nothing and leaves the runtime in service.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            first_code, first = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+            before = host.snapshot()
+            again_code, again = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+            after = host.snapshot()
+            still_built = sorted(p.name for p in host.candidate.iterdir())
+            predecessor_survived = host.previous.is_dir()
+
+        self.assertEqual(again_code, first_code,
+                         "the same cause gives the same answer rather than degrading")
+        self.assertIs(again.get("claimSettled"), False)
+        self.assertEqual(again["stagingDecision"], staging.RESUME,
+                         "the rerun is the interrupted-promotion repair, attempted again")
+        self.assertEqual(after["selected"], before["selected"],
+                         "and it undoes nothing it cannot finish")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the runtime stays in service across the retry")
+        self.assertIn("site", still_built, "nothing is rebuilt")
+        self.assertTrue(predecessor_survived, "and nothing is removed")
+        self.assertIn("only once the write can succeed",
+                      (first["claim"]["recoveryRequires"] or "").lower(),
+                      "the result states the precondition rather than prescribing a loop")
+
     def test_the_three_outcomes_are_three_exit_statuses(self):
         """A caller reading only the status still has to be able to tell them apart.
 
