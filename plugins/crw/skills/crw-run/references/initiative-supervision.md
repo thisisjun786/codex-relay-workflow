@@ -344,10 +344,10 @@ recorded binding stands, because a supervisor recording itself preserves the ent
 Each supervisor reads the initiative record again before its next handoff and at each returned
 result, so the second is found within a step or two. The later one then sends no further handoffs,
 withdraws the ones it made and names the owner. Each parent re-reads the initiative record itself
-and applies the transfer rule above rather than adopting the winner outright: it takes the recorded
-owner and carries on untouched where that owner's approved set contains its project, and where the
-set excludes it or narrows its limits it records no supervisor, preserves the work done, stops what
-now falls outside and raises both.
+and applies the transfer rule above in full, including its comparison of the rest of that owner's
+scope for this project. This case deliberately does not restate those outcomes: a summary here
+drifted from the rule twice while the rule was being sharpened, and one of the two had to be the
+only statement of it.
 Preserved: one owner per initiative once it is found, the work already started by either side, and
 an honest account of the window, which closes properly only when a store records the relationship
 and refuses the second.
