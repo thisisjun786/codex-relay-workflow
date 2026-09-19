@@ -176,6 +176,22 @@ def _startable(probe):
     return _halves(probe) == {reading.PRESENT}
 
 
+def _settled_limit(settled):
+    """What answering from the settled reading does NOT establish.
+
+    These settings really are the ones this command settled on and they really are rejected or
+    gone. What is not established is that anything reads them: the registration they record
+    lives in a package manifest this command does not open, and an installed package may not be
+    there at all. Said in the answer rather than left for the operator to infer, because a
+    repair presented as the settled cause of an absence is a claim about the absence too.
+    """
+    if settled is None:
+        return ""
+    return (". Whether anything reads them was not established here: the registration these"
+            " settings record lives in a package manifest this command does not open, and"
+            " whether such a package is installed at all is not read either")
+
+
 def _settled_settings(observed):
     """The settings this command settled on, where they are the only ones in scope.
 
@@ -224,7 +240,7 @@ def _settings_absent(observed):
     if gone:
         return ESTABLISHED, ("these settings files are established absent, so whatever reads"
                              " them is told nothing about where to record and keeps no"
-                             " journal: " + ", ".join(gone))
+                             " journal: " + ", ".join(gone) + _settled_limit(settled))
     if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
         # A permission failure HERE says nothing about what the hook can open in a session.
         return NOT_RULED_OUT, ("a settings file could not be reached from here, which does not"
@@ -252,7 +268,7 @@ def _settings_unusable(observed):
     if unusable:
         return ESTABLISHED, ("these settings files are ones this hook's own reader rejects ("
                              + ", ".join(unusable) + "), so every invocation that reads them"
-                             " releases without recording")
+                             " releases without recording" + _settled_limit(settled))
     if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
         # No bytes were read, so nothing establishes that the hook's own reader rejects it.
         # Calling that unusable would recommend repairing a file this process merely could not
@@ -434,7 +450,14 @@ def _nothing_recorded(observed):
     holding, empty, _off, unread = _record_answers(observed)
     if holding:
         return RULED_OUT, "a named journal holds records this hook wrote"
-    unjudged = _unjudged_peer(observed)
+    # An unjudged peer only reopens this count when its journal is one nobody has read. A peer
+    # sharing a journal already read and found EMPTY cannot change that observation: if the
+    # host can start it, it writes into the very directory this command listed; if it cannot,
+    # it is out of the journal question entirely. Counted anyway, the answer reported an
+    # unsettled count for a directory it had just listed, and hid an established
+    # nothing_recorded behind uncertainty about a peer that shares its reading.
+    unjudged = [entry for entry in _unjudged_peer(observed)
+                if _distinct_journals([entry]) - _distinct_journals(empty)]
     if unjudged:
         return NOT_RULED_OUT, ("a registration whose startability was never established names "
                                + _named(unjudged) + ", so whether its journal counts toward"

@@ -2976,6 +2976,56 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         self.assertEqual(standings.get(firing.SETTINGS_ABSENT), firing.NOT_EVALUATED,
                          "the settled reading answered a question this host does not have")
 
+    def test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count(self):
+        """A peer sharing a journal already read and found EMPTY cannot change that reading.
+        If the host can start it, it writes into the very directory this command listed; if it
+        cannot, it is out of the journal question entirely. Counted as uncertainty anyway, the
+        answer reported an unsettled count for a directory it had just listed, and hid an
+        established nothing_recorded behind a peer that shares its reading.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            second_registration(temporary, "journal")  # the SAME journal as the first
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # The second registration's interpreter is relative, so it is unjudged.
+            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(document), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual(len({entry.get("journalRoot") for entry in named}), 1,
+                         "the fixture did not build the one-journal host this case is about")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.NOTHING_RECORDED), firing.ESTABLISHED,
+                         "the journal was read and holds nothing, and a peer sharing that very"
+                         " directory left the count unsettled")
+
+    def test_a_settled_settings_repair_names_what_it_did_not_establish(self):
+        """The settings really are rejected. What is NOT established is that anything reads
+        them: the registration they record lives in a manifest this command does not open, and
+        whether such a package is installed at all is not read either. A repair presented as
+        the settled cause of an absence is a claim about the absence too.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
+            cell = why_no_record(temporary)
+        detail = next((one["detail"] for one in cell.get("candidates") or []
+                       if one["cause"] == firing.SETTINGS_UNUSABLE), None)
+        self.assertIsNotNone(detail,
+                             "the fixture did not put the settings repair on the table, so"
+                             " there is nothing here to qualify")
+        self.assertIn("not established", detail,
+                      "the repair was presented without the registration it never read: "
+                      + repr(detail))
+
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
         identity from the spelling afterwards answered about whatever it named by then, so a
