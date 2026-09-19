@@ -1664,6 +1664,34 @@ class AReadFailureCannotBeUsedAsAValueTests(unittest.TestCase):
                             "the refusal names the line it was raised on, which is the same"
                             " line for every refusal and says nothing about the site")
 
+    def test_a_command_that_ran_out_of_time_is_not_a_command_that_could_not_be_run(self):
+        """Review found this. fire() keeps the two apart and the provenance readings did not.
+
+        A command that could not be started was never asked, and a command that started and
+        exceeded its bound was asked and did not answer. Both git calls caught the two together
+        and reported the second as the first, which is the same collapse read() was making at
+        the door - one state standing in for two answers.
+        """
+        def raising(error):
+            def run(*_args, **_kwargs):
+                raise error
+            return run
+
+        ran_out = subprocess.TimeoutExpired(cmd="git", timeout=60)
+        could_not_start = OSError("no git on this host")
+        for what, ask in (("the commit", lambda: harness.repository_commit()),
+                          ("the working tree",
+                           lambda: harness.source_identity()["workingTree"])):
+            with self.subTest(reading=what):
+                with mock.patch.object(harness.subprocess, "run", raising(ran_out)):
+                    self.assertEqual(state_of(ask()), harness.reading.UNREADABLE,
+                                     "a git call that started and ran out of time reported "
+                                     + what + " as a question that could not be asked")
+                with mock.patch.object(harness.subprocess, "run", raising(could_not_start)):
+                    self.assertEqual(state_of(ask()), harness.reading.ACCESS_ERROR,
+                                     "a git call that could not be started reported " + what
+                                     + " as a reading that was made and could not be read")
+
     def test_a_new_consumption_site_that_treats_it_as_a_value_is_revealed(self):
         """A new site, written here the careless way, and driven. Measured rather than claimed.
 
@@ -2040,9 +2068,9 @@ UNREADABLE_PRODUCERS = {
     "journal_payload": ("UNREADABLE",),
     "_faulted": (CARRIED,),
     "_there": ("ACCESS_ERROR",),
-    "source_identity": ("ACCESS_ERROR", "UNREADABLE"),
+    "working_tree": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
     "_digest": ("UNREADABLE", "ACCESS_ERROR"),
-    "repository_commit": ("ACCESS_ERROR", "UNREADABLE"),
+    "repository_commit": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
     "owned": ("ACCESS_ERROR",),
 }
 

@@ -1437,23 +1437,7 @@ def source_identity():
     which identifies them whether or not anything is committed.
     """
     identity = {"repositoryCommit": repository_commit(),
-                "workingTree": Unreadable("git status could not be run, so whether the working"
-                                          " tree was clean is not established",
-                                          state=reading.ACCESS_ERROR)}
-    try:
-        done = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
-                              capture_output=True, text=True, timeout=60)
-        if done.returncode == 0:
-            identity["workingTree"] = "dirty" if done.stdout.strip() else "clean"
-        else:
-            # Asked, and answered with a failure. That is a different answer from never having
-            # been able to ask, and the two are not interchangeable.
-            identity["workingTree"] = Unreadable("git status exited " + str(done.returncode)
-                                                 + ", so whether the working tree was clean is"
-                                                 " not established")
-    except (OSError, subprocess.TimeoutExpired):
-        # Left unreadable rather than guessed at: a tree nobody could look at is not a clean one.
-        pass
+                "workingTree": working_tree()}
     digests = {}
     for name, target in (("harness", Path(__file__).resolve()),
                          ("installer", RUNTIME),
@@ -1463,6 +1447,29 @@ def source_identity():
         digests[name] = _digest(target)
     identity["sourceDigests"] = digests
     return identity
+
+
+def working_tree():
+    """Whether the checkout had edits in it, as a reading rather than as a guess.
+
+    Three ways not to know and they are not one answer: git could not be run at all, it ran and
+    did not answer in time, and it answered with a failure. Left unread in every one of them,
+    because a tree nobody could look at is not a clean one - and kept apart, because only the
+    first of the three is a question that could not be asked.
+    """
+    try:
+        done = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
+                              capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return Unreadable("git status did not answer within its timeout, so whether the working"
+                          " tree was clean is not established")
+    except OSError:
+        return Unreadable("git status could not be run, so whether the working tree was clean"
+                          " is not established", state=reading.ACCESS_ERROR)
+    if done.returncode != 0:
+        return Unreadable("git status exited " + str(done.returncode) + ", so whether the"
+                          " working tree was clean is not established")
+    return "dirty" if done.stdout.strip() else "clean"
 
 
 def _digest(target):
@@ -1490,9 +1497,13 @@ def repository_commit():
     try:
         done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT), capture_output=True,
                               text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
-        # A timeout is as ordinary here as a missing git, and letting it escape would end the
-        # command with no document at all over a question about provenance.
+    except subprocess.TimeoutExpired:
+        # A timeout is as ordinary here as a missing git, and letting either escape would end
+        # the command with no document at all over a question about provenance. They are caught
+        # separately because they are different answers: this one was asked and did not answer.
+        return Unreadable("git rev-parse did not answer within its timeout, so the commit is"
+                          " not established")
+    except OSError:
         return Unreadable("git rev-parse could not be run, so the commit is not established",
                           state=reading.ACCESS_ERROR)
     if done.returncode != 0:
@@ -1638,7 +1649,14 @@ def stability(earlier, later):
             "met": judged(lambda: earlier.get("sourceDigests") == later.get("sourceDigests")
                           and bool(earlier.get("sourceDigests")), unread),
             "what": "every source whose contents decide a run was readable and had the same digest"
-                    " before the first subprocess and after the last"}
+                    " before the first subprocess and after the last",
+            "doesNotCover": "the repository commit and the working tree. They are recorded"
+                            " beside the digests as context and are not what identifies the"
+                            " bytes: a commit names bytes only in a clean checkout, and anyone"
+                            " developing this runs it in a dirty one, which is why the digests"
+                            " are the claim here. Both are readings, so one that could not be"
+                            " taken is visible in the document rather than missing from it,"
+                            " and it does not decide this judgment."}
 
 
 def compare(root):
