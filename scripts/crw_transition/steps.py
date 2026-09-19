@@ -685,7 +685,12 @@ def settings_retire(host, options, *, apply=False):
     # De-duplicated keeping the LAST occurrence, so a path that is both the fixed one and the one
     # the registration names is archived in the registered position rather than the earlier one.
     paths = [path for index, path in enumerate(paths) if path not in paths[index + 1:]]
-    if not paths:
+    if not paths and not (apply and watched):
+        # Nothing here to archive and nothing worth holding a lock over. With watched paths and
+        # an apply, the run continues into the lock below: the interrupted state, where every
+        # candidate is absent, is exactly when a supported installer is most likely to write one
+        # back, and this step answering already_done sends the standdown over a registration
+        # whose settings arrived a moment later.
         return _answer("settings retire", ALREADY, "no settings file is there to retire")
     # Asked before the dry run answers too, so an operator learns the layout is unsupported from
     # the run that changes nothing rather than from the one that was going to change everything.
@@ -706,6 +711,8 @@ def settings_retire(host, options, *, apply=False):
         return _answer("settings retire", ALREADY,
                        "every settings document here already names the plugin as the owner")
     if not apply:
+        if not paths:
+            return _answer("settings retire", ALREADY, "no settings file is there to retire")
         return _answer("settings retire", WOULD, "would retire " + ", ".join(paths), paths=paths)
     home = Path(host["codexHome"])
     known = ((host.get("registered") or {}).get("conflict") or {}).get("documents") or {}
@@ -726,6 +733,10 @@ def settings_retire(host, options, *, apply=False):
                                " now, so a registration's settings appeared while this ran and"
                                " nothing here proved them. Nothing was archived; rerun to decide"
                                " against the settings as they now stand", retired=[])
+        if not paths:
+            # Nothing to archive after all, answered from inside the lock so the check above is
+            # the one that decided it rather than a reading taken before anything was held.
+            return _answer("settings retire", ALREADY, "no settings file is there to retire")
         for candidate in paths:
             # The snapshot proved what this file said; the lock only serialises the rename. A
             # writer that finished in between has settings this command never read, and archiving
@@ -750,8 +761,21 @@ def settings_retire(host, options, *, apply=False):
                                " against the settings as they now stand",
                                retired=[])
         for candidate in paths:
-            moved.append({"from": candidate,
-                          "to": retire(candidate, into=home, stem=completion.CONFIG_NAME)})
+            try:
+                moved.append({"from": candidate,
+                              "to": retire(candidate, into=home, stem=completion.CONFIG_NAME)})
+            except OSError as error:
+                # A failure here leaves the earlier documents already archived, and this answer
+                # is not SETTLED, so the rollback at the end of the run -- which acts on a
+                # settled retire -- would never learn of them. They go back from here, under the
+                # locks this block already holds.
+                restored, kept = _restore_moved(moved, locked=True)
+                return _answer("settings retire", REFUSED,
+                               "archiving " + str(candidate) + " failed ("
+                               + type(error).__name__ + ": " + str(error) + "), so the documents"
+                               " already archived were put back and nothing was left half"
+                               " retired", retired=[], settingsRestored=restored,
+                               settingsLeftArchived=kept)
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
                    applied=True, wrote=True, retired=moved)
 
@@ -1190,27 +1214,25 @@ def hook_recheck(host):
                    "no registration of this adapter is in the hook file")
 
 
-def _restore_retired(results):
-    """Put the settings back when the standdown they were retired for refused.
+def _restore_moved(moved, *, locked=False):
+    """Put archived documents back at the paths they came from.
 
-    The retire goes first on purpose: a custom settings path lives only in the hook command, so
-    removing the command first leaves a file the next run cannot rediscover. The cost is this
-    case -- a hook file that changed in between makes the standdown ask a consent question again
-    and refuse, with the settings already archived, so the still-registered adapter releases in
-    silence and the next run needs a flag the operator has not agreed to yet. The archive is moved
-    back. Never over a file that appeared at the original path meanwhile: that one belongs to
-    whoever wrote it, and the archive stays where the recovery can still find it.
+    Never over a file that appeared at the original path meanwhile: that one belongs to whoever
+    wrote it, and the archive stays where the recovery can still find it.
+
+    The locked flag is for the caller that already holds these paths' locks -- the retire undoing
+    its own half-finished loop -- because taking them again in the same process would wait out
+    the timeout and answer Busy about a lock this very run is holding.
     """
-    retire = next((item for item in results if item["step"] == "settings retire"), None)
     restored, kept = [], []
-    for moved in (retire or {}).get("retired") or []:
-        origin, archive = Path(moved["from"]), Path(moved["to"])
+    for item in moved:
+        origin, archive = Path(item["from"]), Path(item["to"])
         try:
             # The same lock the writer of that path takes, held across the question and the
             # answer. Asking whether the path is free and then writing it without the lock is a
             # race with a supported installer, and losing it means replacing that installation's
             # configuration with a document from before it existed.
-            with hostrecord.Locked(origin):
+            with contextlib.nullcontext() if locked else hostrecord.Locked(origin):
                 if origin.exists() or not archive.is_file():
                     kept.append(str(archive))
                     continue
@@ -1242,6 +1264,19 @@ def _restore_retired(results):
         except (OSError, hostrecord.Busy) as error:
             kept.append(str(archive) + " (" + type(error).__name__ + ": " + str(error) + ")")
     return restored, kept
+
+
+def _restore_retired(results):
+    """Put the settings back when the standdown they were retired for refused.
+
+    The retire goes first on purpose: a custom settings path lives only in the hook command, so
+    removing the command first leaves a file the next run cannot rediscover. The cost is this
+    case -- a hook file that changed in between makes the standdown ask a consent question again
+    and refuse, with the settings already archived, so the still-registered adapter releases in
+    silence and the next run needs a flag the operator has not agreed to yet.
+    """
+    retire = next((item for item in results if item["step"] == "settings retire"), None)
+    return _restore_moved((retire or {}).get("retired") or [])
 
 
 def _rollback_if_unfinished(results):

@@ -2278,6 +2278,72 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.settings(), settings)
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_an_interrupted_host_still_watches_for_settings_coming_back(self):
+        """Every candidate absent is exactly when a writer is most likely to write one back."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        document = json.loads(custom.read_text(encoding="utf-8"))
+        custom.unlink()
+        fixed.unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        original = hostrecord.Locked
+        made = []
+
+        class Arriving(original):
+            """The installer that owns the registration, writing its settings back right here."""
+
+            def __init__(self, target, timeout=None):
+                if not made:
+                    made.append(1)
+                    custom.write_text(json.dumps(document), encoding="utf-8")
+                super().__init__(target, timeout)
+
+        hostrecord.Locked = Arriving
+        self.addCleanup(setattr, hostrecord, "Locked", original)
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        hostrecord.Locked = original
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("was absent when this host was read", answer["detail"])
+        self.assertEqual(json.loads(custom.read_text(encoding="utf-8")), document)
+
+    def test_an_archive_that_fails_halfway_puts_the_earlier_ones_back(self):
+        """A later move failing must not leave the earlier registrations without settings."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        before = (json.loads(fixed.read_text(encoding="utf-8")),
+                  json.loads(custom.read_text(encoding="utf-8")))
+        genuine = steps.retire
+        done = []
+
+        def failing(path, into=None, stem=None):
+            if done:
+                raise OSError(errno.ENOSPC, "No space left on device")
+            done.append(str(path))
+            return genuine(path, into=into, stem=stem)
+
+        steps.retire = failing
+        self.addCleanup(setattr, steps, "retire", genuine)
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        steps.retire = genuine
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("already archived were put back", answer["detail"])
+        self.assertEqual(answer["settingsRestored"], done)
+        self.assertEqual((json.loads(fixed.read_text(encoding="utf-8")),
+                          json.loads(custom.read_text(encoding="utf-8"))), before)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
