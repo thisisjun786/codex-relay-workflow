@@ -5984,6 +5984,47 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=busy_after_moving_on))
+        if breaking == "supersede after the claim becomes unreadable":
+            # Ownership cannot be established AND the environment is superseded. decide()
+            # answers KEEP for every unreadable claim, so the guard must agree.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def corrupt_and_supersede(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_and_supersede))
+        if breaking == "settle the staging claim with a record this command accepts":
+            # A host record that passes hostrecord.shape() -- it checks that 'selected' is a
+            # table, not what its values are -- carrying a truthy non-path in an unrelated
+            # entry. protected_environment hands each value to Path(), which raises TypeError
+            # rather than OSError.
+            #
+            # The entries this run selected are removed as well, and that is not decoration:
+            # protected_environment folds them with any(), which short-circuits on the first
+            # match, so a selection that still names this environment never reaches the bad
+            # value at all. Only a superseded one does.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def poison_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    loaded = hostrecord.load(host.record_path,
+                                             host.data["definitionVersion"]).value
+                    loaded["selected"] = {"some-other-component": 17}
+                    hostrecord.save(host.record_path, loaded)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=poison_then_fail))
         if breaking == "supersede after the claim settles":
             # The claim lands, and a competing install promotes its own environment before the
             # snapshot takes the promotion lock. Nothing raises: this is a SUCCESSFUL update
@@ -6544,6 +6585,58 @@ class SettledRecordTests(unittest.TestCase):
         self.assertIs(superseded.get("inService"), False,
                       "and one a later promotion superseded is not, whatever this run did: "
                       + json.dumps(superseded.get("claim") or {})[:400])
+
+    def test_the_keep_guard_is_decides_own_answer(self):
+        """Every case this cell got wrong was the rule restated instead of consulted.
+
+        staging.decide() is what removes directories, and the documented contract points a
+        wrapper at inService, so any disagreement between them is a wrapper deleting what this
+        command refuses to. The guard is decide()'s answer now, so the two are checked against
+        each other rather than against a restatement.
+        """
+        cases = {
+            "settled then superseded": "supersede after the claim settles",
+            "unreadable then superseded": "supersede after the claim becomes unreadable",
+            "snapshot unavailable": "settle the staging claim with the promotion lock unusable",
+            "still ours": "settle the staging claim",
+        }
+        for label, breaking in cases.items():
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as temporary:
+                    host = _Host(temporary)
+                    code, payload = UpdateRecoveryTests()._run(host, breaking=breaking)
+                    decision, why = staging.decide(
+                        staging.read_claim(host.candidate), staging.DEAD,
+                        occupied=staging.directory_occupied(host.candidate)[0],
+                        protected=True, selected=None)
+                self.assertNotIn(decision, staging.REMOVES,
+                                 label + ": this command keeps it (" + why + ")")
+                self.assertIs(payload.get("inService"), True,
+                              label + ": so the result must not say it may be released: "
+                              + json.dumps(payload.get("claim") or {})[:400])
+
+    def test_a_record_shape_this_command_accepts_cannot_erase_the_promotion(self):
+        """The snapshot handler caught OSError only.
+
+        A host record that passes the shape check can still carry a truthy non-path in an
+        unrelated selected entry, and reading it raises TypeError -- which escaped into the
+        generic failure path and reported exit 1 for a promotion whose selection, pointer and
+        claim had all landed.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with a record this command accepts")
+            after = host.snapshot()
+
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not a refusal: "
+                            + json.dumps(payload)[:400])
+        self.assertIs(payload.get("promoted"), True)
+        self.assertIs(payload.get("inService"), True, "and it is kept")
+        self.assertTrue(((payload.get("claim") or {}).get("selection") or {}).get("detail"),
+                        "with the shape failure named rather than raised")
+        self.assertEqual(after["pointerTarget"], str(host.candidate))
 
     def test_a_settled_claim_keeps_the_destination_after_supersession(self):
         """staging.decide() never reclaims a COMPLETE claim, and this cell must agree.

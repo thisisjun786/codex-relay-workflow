@@ -3187,33 +3187,42 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             else:
                 protected, selected = None, None
             names = None if not current.ok else protection["pointerNamesIt"]
-    except OSError as error:
+    except reading.READ_FAILURES as error:
+        # Not OSError alone. A host record this command ACCEPTS can carry a truthy non-path in
+        # an unrelated 'selected' entry, and protected_environment hands it to Path(), which
+        # raises TypeError -- escaping into cmd_install's generic handler and reporting exit 1
+        # for a promotion whose selection, pointer and claim had all landed. Every shape a
+        # reading can fail in belongs here, which is the set reading already declares.
         current, protected, selected, names = None, None, None, None
-        snapshot_detail = ("the promotion lock could not be taken to read a consistent"
-                           " snapshot: " + type(error).__name__ + ": " + error.__str__())
+        snapshot_detail = ("a consistent snapshot of what this host selects could not be"
+                           " taken: " + type(error).__name__ + ": " + error.__str__())
     else:
         snapshot_detail = None
 
     absent = current is not None and current.state == reading.ABSENT
 
-    # Whether a consumer must keep this destination. Read from the snapshot and never asserted
-    # -- a promotion another run superseded between the lock releasing and this line is exactly
-    # the case that makes it false -- but FALSE ONLY WHERE THE READINGS SAY SO.
+    # Whether a consumer must keep this destination -- ASKED OF THE ANSWER SET THAT DECIDES IT
+    # rather than reconstructed from its inputs.
     #
-    # A three-valued answer was wrong here in the one direction that matters. This cell is
-    # exported as "do not release this destination", JSON null is falsey in most things that
-    # will read it, and an unreadable snapshot does not establish that an environment is out
-    # of service: the promotion placed and read back its pointer before this function ran. So
-    # a snapshot nobody could take keeps the environment, which is the same shape
-    # protected_environment itself uses and for the same reason -- the cost of keeping a
-    # directory is a report, and the cost of releasing a live one is the accident.
+    # Every case this cell got wrong was the same mistake in a new place: a settled claim, an
+    # unreadable claim, a snapshot nobody could take. Each time the rule was restated here and
+    # each time it disagreed with staging.decide(), which is what actually removes directories
+    # -- and the documented contract points a wrapper at this cell, so every disagreement was
+    # a wrapper deleting something this command refuses to. Restating it once more would only
+    # move the disagreement, so the guard is decide()'s own answer instead: REMOVES is the
+    # declared set of decisions that remove anything, and this is its complement. The two
+    # cannot drift apart again, and where they still disagree the disagreement is in decide()
+    # where it can be argued about.
     #
-    # A SETTLED CLAIM KEEPS IT TOO, however the selection has moved. staging.decide() answers
-    # KEEP for every COMPLETE claim and says why: it is a runtime that was promoted once, and
-    # a process started from it may still be running out of it. This cell is what the
-    # documented contract points a wrapper at for that decision, so leaving it to 'protected'
-    # alone would have a compliant wrapper delete exactly what this command refuses to.
-    in_service = settled or protected is not False
+    # DEAD, because the question is what a LATER run finds. This process is the only thing
+    # holding the staging lock, and it is the only liveness that permits a removal at all.
+    # An unread protection is a protection, which is protected_environment's own rule, so the
+    # conservative value goes in even though the reported cell keeps saying it was not read.
+    occupied, _occupied_detail = staging.directory_occupied(environment)
+    decision, _why_kept = staging.decide(
+        left, staging.DEAD, occupied=occupied,
+        protected=True if protected is None else protected, selected=selected)
+    in_service = decision not in staging.REMOVES
 
     # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
     # an unreadable claim is answered before the state is consulted at all, and only then does
