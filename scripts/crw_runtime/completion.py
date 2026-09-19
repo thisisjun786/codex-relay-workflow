@@ -1718,14 +1718,23 @@ def _one_source_each(spellings):
 
     A spelling nobody could open or identify keeps its own place rather than being merged on a
     guess, because describing two files as one is what this check exists to prevent.
+
+    Returns the spellings that keep a place, and the identity each identified spelling was
+    judged under, so a caller that goes on to READ one can tell whether it read the object the
+    judgement was made about.
     """
     seen, kept, held = {}, [], []
+    judged = {}
     try:
         for spelling in spellings:
             try:
                 # NONBLOCK so a named pipe at a settings path cannot stall this command.
                 descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError is a spelling the kernel is never asked about at all -- an
+                # embedded NUL, which a registration can carry. It is a path this command
+                # cannot identify, which is a reading, and letting it out of here ended the
+                # whole status payload in a traceback over one malformed registration.
                 kept.append(spelling)
                 continue
             mine = reading.descriptor_identity(descriptor)
@@ -1736,8 +1745,11 @@ def _one_source_each(spellings):
                     pass
                 if mine is None:
                     kept.append(spelling)
+                else:
+                    judged[spelling] = mine
                 continue
             seen[mine] = spelling
+            judged[spelling] = mine
             held.append(descriptor)
             kept.append(spelling)
     finally:
@@ -1746,7 +1758,7 @@ def _one_source_each(spellings):
                 os.close(descriptor)
             except OSError:
                 pass
-    return kept
+    return kept, judged
 
 
 def _journal_answer(cell):
@@ -1925,7 +1937,9 @@ def status(codex_home=None, environ=None, event=EVENT):
     # spellings keep their own places rather than being merged on a guess: describing two files
     # as one is the error this check exists to prevent, and a second entry is the cheaper cost.
     absolute = sorted({str(_settled(named)) for named in carried if named not in relative})
-    distinct = sorted(set(_one_source_each(absolute)) | set(relative))
+    named_once, judged = _one_source_each(absolute)
+    collapsed = len(named_once) < len(absolute)
+    distinct = sorted(set(named_once) | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
@@ -1956,6 +1970,20 @@ def status(codex_home=None, environ=None, event=EVENT):
         # key is recyclable, and a file deleted in between would hand it to whatever is created
         # next. Released immediately after that call, which is the only thing that uses it.
         config, failed, detail, found = read_configuration(path, hold=True)
+        # The merge above was judged on descriptors this call no longer holds, and this read is
+        # a fresh lookup of the spelling. Where the two spellings were collapsed into one
+        # source and the object read is NOT the one that judgement was made about -- a symlink
+        # retargeted in between -- the single source was never established, and reporting the
+        # reading as it would describe one file while two registrations run. Said as the
+        # unsettled reading it is rather than presented as settled.
+        was = judged.get(str(path))
+        if (collapsed and was is not None and found is not None
+                and found.identity is not None and found.identity != was):
+            reading.release(found)
+            config, failed, found = None, REGISTRATION_AMBIGUOUS, None
+            detail = ("the registrations' settings spellings were read as one file and the"
+                      " file at " + str(path) + " changed before it could be read, so no"
+                      " single source was established and none was read")
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")

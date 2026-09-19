@@ -3535,12 +3535,74 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
             arrives = temporary / "an-unrelated-file.json"
             arrives.write_text("{}", encoding="utf-8")
             recycled = arrives.stat().st_ino == vacated
-            kept = completion._one_source_each([str(gone), str(arrives)])
+            kept, _judged = completion._one_source_each([str(gone), str(arrives)])
         self.assertIn(str(arrives), kept,
                       "a settings file was collapsed into a deleted one whose inode it"
                       " inherited, so it was never read as its own source"
                       + ("" if recycled else " (note: the inode was NOT reused on this run, so"
                                              " the collision was never built)"))
+
+    def test_a_settings_path_the_kernel_is_never_asked_about_is_a_reading(self):
+        """A registration can carry a spelling no syscall will accept.
+
+        An embedded NUL makes os.open raise ValueError rather than OSError, and the collapse
+        only caught OSError -- so one malformed registration ended the whole status payload in
+        a traceback. A path this command cannot identify is a reading like any other, and it
+        keeps its own place.
+        """
+        nul = "/a-path-with-a\x00-nul.json"
+        try:
+            kept, judged = completion._one_source_each([nul, "/an-ordinary-path.json"])
+        except ValueError as raised:
+            self.fail("a spelling the kernel is never asked about ended the read in a"
+                      " traceback instead of answering: " + repr(raised))
+        self.assertIn(nul, kept,
+                      "a spelling the kernel is never asked about was dropped instead of"
+                      " keeping its own place")
+        self.assertNotIn(nul, judged,
+                         "a spelling nothing could identify was recorded as judged")
+
+    def test_a_source_read_after_it_changed_is_not_the_one_that_was_merged(self):
+        """Collapsing two spellings and then reading one are two lookups.
+
+        The merge is judged on descriptors the collapse holds and then releases; the read that
+        follows opens the retained spelling again. Retarget that symlink in between and the
+        payload describes a file the merge was never about, while both registrations still run
+        -- one source claimed on a judgement that no longer holds. The reading says it did not
+        settle instead.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            named = completion.configuration_path(host)
+            alias = host / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = dict(written["hooks"][completion.EVENT][0]["hooks"][0])
+            entry["command"] = entry["command"].replace(str(named), str(alias))
+            written["hooks"][completion.EVENT][0]["hooks"].append(entry)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+
+            elsewhere = host / "a-different-settings-file.json"
+            elsewhere.write_text(named.read_text(encoding="utf-8"), encoding="utf-8")
+            real = completion._one_source_each
+
+            def retargeted_after_the_merge(spellings):
+                answer = real(spellings)
+                moved = host / "moved-settings.json"
+                named.rename(moved)
+                named.symlink_to(elsewhere)
+                return answer
+
+            with mock.patch.object(completion, "_one_source_each",
+                                   side_effect=retargeted_after_the_merge):
+                found = completion.status(codex_home=temporary, environ={})
+
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
+                         "two registrations were reported as one source on a judgement about a"
+                         " file that is no longer the one read")
 
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
