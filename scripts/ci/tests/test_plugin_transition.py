@@ -759,6 +759,72 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(sorted(host.home.glob("*.superseded-*")), [])
         self.assertTrue(elsewhere.is_file())
 
+    def test_settings_registered_at_a_custom_path_are_recoverable_after_the_standdown(self):
+        """A manual install made with the override records that path in its command forever.
+
+        The variable need not still be set when the transition runs, so the archive has to land
+        where the recovery looks. Archived beside itself, a rerun could not carry the marker root,
+        the database or the journal forward and refused with the hook already removed.
+        """
+        host = self.host
+        host.link_skills()
+        custom = host.root / "custom-settings.json"
+        host.register_hook()
+        (host.home / "crw-completion-hook.json").rename(custom)
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(custom)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.register_mcp()
+        host.install_plugin()
+        wanted = json.loads(custom.read_text(encoding="utf-8"))
+
+        # --dest, because the default settings are absent: that is the operator position this
+        # finding describes, and it is where preflight accepts and the sequence proceeds.
+        code, answer = host.call("--dest", str(host.destination), "transition", "--apply",
+                                 "--accept-hook-trust-gap")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertFalse(custom.exists())
+        archives = sorted(host.home.glob("crw-completion-hook.json.superseded-*"))
+        self.assertTrue(archives, "the archive did not land where the recovery looks")
+        retire = [r for r in answer["results"] if r["step"] == "settings retire"][0]
+        self.assertEqual(retire["retired"][0]["from"], str(custom))
+        for field in ("markerRoot", "dbPath", "journalRoot"):
+            self.assertEqual(host.settings()[field], wanted[field], field)
+
+    def test_a_record_and_a_table_that_disagree_are_refused_rather_than_chosen_between(self):
+        host = self.ready()
+        # A real, runnable program at another path: without the comparison the record is simply
+        # believed, a plugin record naming THIS is installed, and the table that current sessions
+        # actually run is removed. An unrunnable path would only prove the executable check fires.
+        other = host.root / "another-bridge"
+        other.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        other.chmod(0o755)
+        record = host.record()
+        record["bridgeExecutable"] = str(other)
+        (host.home / "crw-bridge-mcp.json").write_text(json.dumps(record), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("disagree about bridgeExecutable", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
+    def test_disable_reads_ownership_from_the_file_it_retires(self):
+        """With the override set, the owner of another document decided this one's fate."""
+        host = self.ready()
+        host.transition("--apply")
+        elsewhere = host.root / "elsewhere.json"
+        elsewhere.write_text(json.dumps(
+            {**host.settings(), "owner": "user", "adapterInterpreter": None,
+             "adapterEntryPoint": None}), encoding="utf-8")
+        done = run([CLI, "--codex-home", host.home, "disable", "--apply"],
+                   env={**os.environ, "CRW_COMPLETION_HOOK_CONFIG": str(elsewhere)})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 0, json.dumps(answer["results"], indent=2)[:1200])
+        self.assertEqual([r["outcome"] for r in answer["results"]], ["settled", "settled"])
+        self.assertIsNone(host.settings())
+        self.assertIsNone(host.record())
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

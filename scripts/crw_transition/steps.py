@@ -32,8 +32,15 @@ def stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def retire(path):
+def retire(path, into=None, stem=None):
     """Move a record aside under a name nothing reads, and never delete it.
+
+    into/stem exist for one case: a manual install created with CRW_COMPLETION_HOOK_CONFIG records
+    that custom path in its hook command permanently, and the variable need not still be set when
+    this runs. Archiving such a file beside itself puts it somewhere the recovery does not look --
+    and the recovery is what a later run needs to carry the marker root, the database and the
+    journal forward. The archive of a document proven to be ours therefore goes to the Codex home
+    under the name the recovery globs, with the original path recorded in the receipt.
 
     Retiring rather than deleting is the whole difference between a transition and a data loss: the
     old settings carry the marker root, the database and the journal an operator may still need to
@@ -42,7 +49,8 @@ def retire(path):
     # Second granularity is not enough on its own: two retirements of the same path within one
     # second would name the same archive and os.replace would delete the first one. The name is
     # taken with O_EXCL, so an existing archive is never the destination.
-    base = str(path) + ".superseded-" + stamp()
+    base = str(Path(into) / (stem + ".superseded-" + stamp())) if into \
+        else str(path) + ".superseded-" + stamp()
     target, suffix = base, 0
     while True:
         try:
@@ -248,6 +256,26 @@ def preflight(host, options):
                         " read (" + str(mcp["table"]) + ": " + str(mcp["detail"]) + "), so"
                         " whether this host registers " + inventory.SERVER_NAME + " was not"
                         " established")
+    record = mcp.get("record") or {}
+    registration = mcp.get("registration") or {}
+    if mcp.get("recordOwner") == bridgerecord.OWNER_USER and registration:
+        # The table is what current sessions actually run and the record is what the plugin launcher
+        # would run. Choosing between them silently would replace a working table with a record that
+        # starts something else, so a disagreement is reported rather than resolved here.
+        divergent = [field for field, mine, theirs in (
+            ("bridgeExecutable", record.get("bridgeExecutable"), registration.get("command")),
+            ("args", list(record.get("args") or []), list(registration.get("args") or [])),
+            ("serverName", record.get("serverName"), inventory.SERVER_NAME))
+            if mine != theirs]
+        if divergent:
+            refusals.append("the bridge record at " + mcp["recordPath"] + " and the "
+                            + inventory.SERVER_NAME + " table in " + mcp["configPath"]
+                            + " disagree about " + ", ".join(divergent)
+                            + " (record " + repr(record.get("bridgeExecutable")) + " "
+                            + repr(record.get("args") or []) + ", table "
+                            + repr(registration.get("command")) + " "
+                            + repr(registration.get("args") or []) + "). This command does not"
+                            " choose between them: settle which one this host runs first")
     for alias in mcp.get("aliases") or []:
         refusals.append("the table [mcp_servers." + str(alias["name"]) + "] in "
                         + mcp["configPath"] + " starts the same bridge under another name ("
@@ -366,10 +394,12 @@ def settings_retire(host, options, *, apply=False):
                        "the settings already name the plugin as the owner")
     if not apply:
         return _answer("settings retire", WOULD, "would retire " + ", ".join(paths), paths=paths)
+    home = Path(host["codexHome"])
     moved = []
     for candidate in paths:
         with hostrecord.Locked(Path(candidate)):
-            moved.append({"from": candidate, "to": retire(candidate)})
+            moved.append({"from": candidate,
+                          "to": retire(candidate, into=home, stem=completion.CONFIG_NAME)})
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
                    applied=True, wrote=True, retired=moved)
 
@@ -626,7 +656,12 @@ def disable(host, options, *, apply=False):
     the one asked for, performed on somebody else's registration.
     """
     results = []
-    owners = {"hook settings": host["settings"]["owner"],
+    # Read from the paths being retired, not from the reading that honours the settings override:
+    # with the override set, the owner of some other document would decide the fate of this one,
+    # and a refusal on that basis leaves the bridge record retired and the hook settings in place.
+    settings_here, _outcome, _detail, _found = completion.read_configuration(
+        Path(host["codexHome"]) / completion.CONFIG_NAME)
+    owners = {"hook settings": completion.owner_of(settings_here) if settings_here else None,
               "bridge record": host["mcp"]["recordOwner"]}
     # The fixed path, for the same reason the install writes it: the packaged launcher reads that
     # one file and ignores the settings override, so retiring whatever an override happens to name
