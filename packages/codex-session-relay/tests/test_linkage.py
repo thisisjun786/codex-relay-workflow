@@ -1422,7 +1422,8 @@ class TheTenthRoundFoundTheseToo(LinkageTestCase):
         self.assertIsNone(answer["link"])
         self.assertIn("link_contention", answer["findings"])
         self.assertEqual(len(answer["candidates"]), 2)
-        self.assertIn(stray, answer["candidates"])
+        self.assertIn(stray, [c["linkId"] for c in answer["candidates"]])
+        self.assertEqual({c["scopeKey"] for c in answer["candidates"]}, {PROJECT})
 
     def test_a_settled_directive_is_not_re_decided_by_the_next_caller(self):
         """settle_directive overwrote the disposition and the decider, so a second decision
@@ -1470,6 +1471,149 @@ class TheTenthRoundFoundTheseToo(LinkageTestCase):
         held = self.linkage.owner(linkage.ISSUE, ISSUE)
         self.assertIsNotNone(
             held, "a late write from an already-released relationship took the new claim")
+        self.assertEqual(held["taskId"], CHILD)
+
+
+THIRD_PARENT = "01parent-three"
+
+
+class TheEleventhRoundFoundTheseToo(LinkageTestCase):
+    def stray_link(self, kind, initiative, *, revision, upper_task):
+        """Write an edge the API now refuses to create, the way an older writer could have."""
+        lid = link_id(kind, linkage.INITIATIVE, initiative, linkage.PROJECT, PROJECT)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key,"
+                " upper_task_id, lower_kind, lower_key, lower_task_id, status, revision,"
+                " superseded_by, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,'active',?,NULL,?,?)",
+                (lid, kind, linkage.INITIATIVE, initiative, upper_task, linkage.PROJECT,
+                 PROJECT, PARENT, revision, "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        return lid
+
+    def test_two_live_supervisions_of_one_project_are_reported_not_walked(self):
+        """up() took the highest revision and called the result resolved, so a caller got one
+        arbitrary hierarchy and no sign that another initiative claimed the same project. The
+        stray edge here carries the HIGHER revision, so the old code would have returned it."""
+        self.supervise()
+        stray = self.stray_link(linkage.EXECUTION, OTHER_INITIATIVE,
+                                revision=2, upper_task=OTHER_SUPERVISOR)
+        answer = self.linkage.up(task_id=PARENT)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertIs(answer["readable"], True)
+        competing = [c for c in answer["contention"]
+                     if c["contention"] == "competing_parents"]
+        self.assertEqual(len(competing), 1)
+        self.assertIn(stray, competing[0]["candidates"])
+        self.assertEqual(len(competing[0]["candidates"]), 2)
+
+    def test_a_task_with_two_historical_scopes_is_not_answered_about_one_of_them(self):
+        """counterpart stopped at the first candidate pair that had any link. Bindings outlive
+        a handover on purpose, so a task accumulates archived scopes, and two historical pairs
+        can both be joined by a live edge - whereupon the one that sorted first was answered
+        about as though the other did not exist."""
+        self.supervise()
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="the first project moved on", actor="test")
+        self.supervise(project=OTHER_PROJECT)
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=OTHER_PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(THIRD_PARENT), acknowledged=[],
+            evidence="and so did the second", actor="test")
+        answer = self.linkage.counterpart(SUPERVISOR_TASK, PARENT)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertIsNone(answer["link"])
+        self.assertIn("link_contention", answer["findings"])
+        self.assertEqual({c["scopeKey"] for c in answer["candidates"]},
+                         {PROJECT, OTHER_PROJECT})
+        # Naming the scope the message is about is how a caller resolves it, which is what
+        # OPS-7.4 says a message carries in the first place.
+        narrowed = self.linkage.counterpart(
+            SUPERVISOR_TASK, PARENT, quoted_scope=OTHER_PROJECT)
+        self.assertEqual(narrowed["state"], "linked")
+        self.assertEqual(narrowed["counterpart"]["scopeKey"], OTHER_PROJECT)
+
+    def test_a_refused_settlement_is_retained_as_a_contest(self):
+        """The refusal raised from inside the transaction, so the rollback took the evidence
+        with it: the disagreement this module exists to preserve was the one thing the refusal
+        destroyed."""
+        execution = self.supervise()
+        directive = self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+        self.linkage.settle_directive(
+            directive["directiveId"], "chosen", decided_by="alice")
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.linkage.settle_directive,
+            directive["directiveId"], "superseded", decided_by="bob")
+        contests = [c for c in self.linkage.conflicts(linkage.PROJECT, PROJECT)
+                    if c["reason"] == RefusalReason.LINK_CONFLICT]
+        self.assertEqual(len(contests), 1)
+        self.assertEqual(contests[0]["incumbent"], "alice")
+        self.assertEqual(contests[0]["challenger"], "bob")
+        # And the decision itself still stands.
+        settled = [d for d in self.linkage.directives(linkage.PROJECT, PROJECT)
+                   if d["directiveId"] == directive["directiveId"]][0]
+        self.assertEqual(settled["disposition"], "chosen")
+        self.assertEqual(settled["decidedBy"], "alice")
+
+    def test_an_owner_that_gets_a_scope_back_reports_where_it_is_running_now(self):
+        """Reactivation moved status and nothing else, so a returning owner kept reporting the
+        cwd and CXC session of its previous tenure - metadata that had not been true since the
+        handover that took the scope away."""
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT,
+            endpoint=Endpoint(PARENT, HOST, cwd="/first", cxc_session="cxc-first"))
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="handed away", actor="test")
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=OTHER_PARENT,
+            endpoint=Endpoint(PARENT, HOST, cwd="/second", cxc_session="cxc-second"),
+            acknowledged=[], evidence="and taken back, from a new checkout", actor="test")
+        owner = self.linkage.owner(linkage.PROJECT, PROJECT)
+        self.assertEqual(owner["taskId"], PARENT)
+        self.assertEqual(owner["cwd"], "/second")
+        self.assertEqual(owner["_bindings"]["cxcSession"], "cxc-second")
+
+    def test_a_reclaimed_issue_refuses_a_successor_rather_than_breaking_the_index(self):
+        """supersedes excused the predecessor's child from the rival check even after that
+        predecessor had died and the same task had reclaimed the issue directly. The successor
+        was then inserted beside a live owner and met the one-live-owner index - a database
+        error where the caller was owed a refusal it could act on."""
+        self.supervise()
+        first = self.register()
+        rid = first["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, HOST))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.register,
+            parent=self.parent(), child=Endpoint("01child-two", HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-successor", dispatch_turn_id="turn-successor",
+            supersedes=rid, project_key=PROJECT)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+
+    def test_superseding_a_dead_relationship_leaves_a_reclaimed_issue_alone(self):
+        """The decision supersede takes - whether this relationship is still releasing its
+        scope - is now read under the same lock as the write. This pins the decision itself;
+        the interleaving that made reading it early wrong is a window, not a state a test can
+        reach without an injection point this suite does not have."""
+        self.supervise()
+        first = self.register()
+        rid = first["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, HOST))
+        self.registry.supersede(rid, new_relationship_id="rel-elsewhere")
+        held = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertIsNotNone(held, "supersession took a claim it had already released")
         self.assertEqual(held["taskId"], CHILD)
 
 if __name__ == "__main__":

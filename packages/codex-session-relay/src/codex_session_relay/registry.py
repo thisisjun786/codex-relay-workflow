@@ -189,12 +189,6 @@ class Registry:
             return self.get(rid)
         now = self.clock.iso()
         self._raced = None
-        outgoing = None
-        if supersedes:
-            previous = self.store.one(
-                "SELECT child_task_id FROM relationships WHERE relationship_id = ?",
-                (supersedes,))
-            outgoing = previous["child_task_id"] if previous else None
         if project_key is not None:
             # Decide the lower level BEFORE anything is inserted, in a transaction that writes
             # only the contest if there is one. Inserting the relationship first and then
@@ -205,6 +199,11 @@ class Registry:
             # anyone ELSE holding the scope is still a refusal.
             pending = None
             with self.store.transaction() as db:
+                # Decided under the same lock as the write it authorizes, and only when the
+                # predecessor is still live and still holds the binding. Read beforehand, it
+                # could name a child that had already released the issue and reclaimed it
+                # directly, which excuses the wrong rival.
+                outgoing = self.linkage.replaceable_child_in(db, supersedes)
                 candidate = {
                     "relationship_id": rid, "issue_key": issue_key, "status": ACTIVE,
                     "superseded_by": None, "parent_task_id": parent.task_id,
@@ -223,7 +222,7 @@ class Registry:
         try:
             return self._register_in_transaction(
                 rid, parent, child, issue_key, roots, recipients, scope_ref,
-                dispatch_request_id, dispatch_turn_id, supersedes, project_key, now, outgoing)
+                dispatch_request_id, dispatch_turn_id, supersedes, project_key, now)
         except RelayError:
             raced = getattr(self, "_raced", None)
             if raced is not None:
@@ -234,8 +233,12 @@ class Registry:
 
     def _register_in_transaction(self, rid, parent, child, issue_key, roots, recipients,
                                  scope_ref, dispatch_request_id, dispatch_turn_id,
-                                 supersedes, project_key, now, outgoing):
+                                 supersedes, project_key, now):
         with self.store.transaction() as db:
+            # Re-decided inside THIS transaction rather than carried in: the pre-check ran in
+            # its own, and between them the predecessor can have been cancelled and its issue
+            # claimed directly.
+            outgoing = self.linkage.replaceable_child_in(db, supersedes)
             # One issue, one responsible child, decided in the SAME transaction as the insert.
             # Checked beforehand, two connections could both see no rival and then insert
             # different children; BEGIN IMMEDIATE serialises writers, so the second one sees
@@ -643,16 +646,24 @@ class Registry:
         return self.get(rid)
 
     def supersede(self, old_rid: str, *, new_relationship_id: str) -> None:
-        before = self.get(old_rid)["status"]
+        self.get(old_rid)
         now = self.clock.iso()
         with self.store.transaction() as db:
+            # Inside the transaction, immediately before the write. Read outside it, another
+            # writer could cancel this relationship - releasing its issue - and the same child
+            # could reclaim that issue directly, while this call still believed it was moving a
+            # live assignment and archived the new claim on its way past.
+            before = db.execute(
+                "SELECT status FROM relationships WHERE relationship_id = ?", (old_rid,)
+            ).fetchone()
             db.execute(
                 "UPDATE relationships SET superseded_by = ?, status = 'archived', updated_at = ?"
                 " WHERE relationship_id = ?",
                 (new_relationship_id, now, old_rid),
             )
             self.linkage.apply_relationship_status_in(
-                db, old_rid, "archived", previous_status=before)
+                db, old_rid, "archived",
+                previous_status=before["status"] if before is not None else None)
             self.store.journal("superseded", old_rid, {"by": new_relationship_id}, at=now)
 
     # ---------------------------------------------------------------- records

@@ -232,10 +232,12 @@ they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
 | I-158 | An issue has one live assignment, decided on the relationship rather than on the child task | `registry._register_in_transaction` → `duplicate_assignment`; `linkage._owns_its_issue` for the lower level | implemented |
 | I-159 | A replacement owner restates the outgoing owner and the unfinished work, and a handover that cannot move the whole endpoint refuses and names what it could not move | `linkage.handover` with `attached(other_than=...)` → `handover_unconfirmed`, `handover_would_strand` | implemented |
 | I-160 | Reactivating an assignment cannot install a stale owner: the project must still be parented by the task that assignment names | `linkage.apply_relationship_status_in` → `foreign_scope`, covering both `resume` and `set_status` | implemented |
-| I-161 | A settled directive is not re-decided; restating the same disposition converges and a different one refuses | `linkage.settle_directive` → `link_conflict` | implemented |
-| I-162 | A read reports ambiguity rather than choosing a row | `linkage.up` and `counterpart` answer `ambiguous` with the candidates | implemented |
+| I-161 | A settled directive is not re-decided; restating the same disposition converges, a different one refuses, and the contest is retained rather than rolled back with the refusal | `linkage.settle_directive` → `link_conflict`, recorded through `_record_conflict_in` before the error is raised | implemented |
+| I-162 | A read reports ambiguity rather than choosing a row, whether the ambiguity is two edges for one scope pair, two execution edges into one scope, or two candidate pairs for one message | `linkage.up` and `counterpart` answer `ambiguous` with the candidates, and neither uses `LIMIT 1` to settle a contest | implemented |
 | I-163 | A lookup failure is never reported as absence or as completion | `up`, `down` and `counterpart` carry `readable` and a `detail`, and answer `unreadable` rather than empty | implemented |
 | I-164 | A relationship releases its issue scope once, when it stops being live, so a later write from an already-dead row cannot take a scope claimed directly in the meantime | `linkage.apply_relationship_status_in` compares the status the relationship held BEFORE the write | implemented |
+| I-165 | A task that takes a scope back carries the endpoint it is running from now, not the one from its previous tenure | `apply_binding_plan` and `handover` write `host_id`, `cwd` and `cxc_session` on reactivation, not only the status | implemented |
+| I-166 | A replacement takes the issue binding only from a predecessor that is still live and still holds it, so a reclaimed issue produces a refusal rather than an index violation | `linkage.replaceable_child_in`, decided inside each write transaction | implemented |
 
 ## Recorded limits, so a row above is not read as more than it is
 

@@ -184,6 +184,15 @@ separate three answers:
 | `readable: true`, something found | the hierarchy, as recorded |
 | `readable: true`, nothing found | the store answered, and there is nothing |
 | `readable: true`, state `ambiguous` | the store answered with more than one candidate, and the reader will not choose between them. The candidates are returned |
+
+Three things make an answer ambiguous: one scope pair joined by several live edges, one scope
+with several live execution edges into it, and one message whose two endpoints can be paired in
+more than one way because a task keeps the bindings of scopes it used to hold. `up()` reports
+the second as a `competing_parents` entry in `contention` and stops the walk there rather than
+following the highest revision. `counterpart()` reports the first and the third in
+`candidates`, each entry naming a `linkId`, its `kind` and the counterpart `scopeKey`; quoting
+`from_scope` or `quoted_scope` is how a caller resolves it, which is what OPS-7.4 already says
+a message carries.
 | `readable: false` | the store did not answer |
 
 The last is never reported as the second, and neither is reported as completion. An unreadable
@@ -198,9 +207,7 @@ An unscoped assignment is the compatibility case and is reported, never dropped.
 `counterpart()` findings are independent, so one message can carry several: `wrong_role`,
 `foreign_scope`, `foreign_sender_scope`, `stale_owner` with `currentOwner`, `stale_sender`,
 `stale_revision`, `owner_drift`, `instruction_conflict`, `unregistered_link` and
-`link_contention`. The last accompanies state `ambiguous`: one scope pair holds more than one
-live edge, so which relationship the message is about has no single answer. Registration refuses
-to create that state, but a store written before it did can hold it, and answering `unlinked`
+`link_contention`. The last accompanies state `ambiguous`, and answering `unlinked` instead
 would deny a linkage that demonstrably exists.
 
 ## Refusals

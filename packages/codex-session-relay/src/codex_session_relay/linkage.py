@@ -261,9 +261,15 @@ class Linkage:
             self._insert_binding(db, bid, role, scope_kind, scope_key, endpoint, status,
                                  revision=1, at=at)
         elif action == "reactivate":
+            # The endpoint comes with it. A task that gets a scope back is not the task that
+            # left it: a replacement was in between, and the returning one is running from
+            # whatever cwd and CXC session it has NOW. Moving only the status kept the
+            # metadata from its previous tenure, so routing and audit read a cwd and a session
+            # that no longer existed while the binding said it was live.
             db.execute(
-                "UPDATE scope_bindings SET status = ?, updated_at = ? WHERE binding_id = ?",
-                (ACTIVE, at, bid),
+                "UPDATE scope_bindings SET status = ?, updated_at = ?, host_id = ?,"
+                "  cwd = ?, cxc_session = ? WHERE binding_id = ?",
+                (ACTIVE, at, endpoint.host_id, endpoint.cwd, endpoint.cxc_session, bid),
             )
             self.store.journal("scope_rebound", bid, {"scopeKey": scope_key}, at=at)
         return bid
@@ -620,6 +626,30 @@ class Linkage:
             (issue_key,),
         ).fetchone()
         return live is None or live["relationship_id"] == relationship_id
+
+    def replaceable_child_in(self, db, supersedes):
+        """The outgoing child a replacement may take the issue binding from, or None.
+
+        Only a LIVE predecessor that STILL HOLDS that binding qualifies. A predecessor which
+        was cancelled or archived released its scope already, and naming its child as the
+        outgoing owner then excused a rival that was not the predecessor at all: the same task
+        can have claimed the issue directly in the meantime, and the successor's insert met
+        the one-live-owner index - a database error - instead of the domain refusal the caller
+        was owed. Read on the caller's connection so the answer is taken under the same lock
+        as the write it authorizes.
+        """
+        if not supersedes:
+            return None
+        row = db.execute(
+            "SELECT r.child_task_id AS child_task_id FROM relationships r"
+            "  JOIN scope_bindings b ON b.scope_kind = ? AND b.scope_key = r.issue_key"
+            "   AND b.role = ? AND b.task_id = r.child_task_id"
+            " WHERE r.relationship_id = ? AND r.status IN ('active','paused')"
+            "   AND r.superseded_by IS NULL"
+            "   AND b.status IN ('active','paused') AND b.superseded_by IS NULL",
+            (ISSUE, CHILD, supersedes),
+        ).fetchone()
+        return row["child_task_id"] if row else None
 
     def attach_in(self, db, relationship_row, project_key, *, at=None, replacing=None):
         """The ONE path that writes the lower level. Returns a refusal or None.
@@ -1044,6 +1074,7 @@ class Linkage:
             )
         now = self.clock.iso()
         already = None
+        refusal = None
         with self.store.transaction() as db:
             # Read the disposition inside the write transaction. Read before it, two deciders
             # could both see an unsettled directive and the second would still overwrite the
@@ -1062,15 +1093,25 @@ class Linkage:
                 # disagreed, which is the opposite of retaining a contested instruction.
                 # Restating the SAME disposition converges, like every other registration
                 # here; changing it is refused.
+                #
+                # Refused AND retained. Raising from inside the transaction rolled it back and
+                # took the evidence with it, so the disagreement this module exists to preserve
+                # was the one thing the refusal destroyed. The contest is written first and the
+                # error is raised after the commit, which is what every other write path here
+                # does.
                 if row["disposition"] != disposition:
-                    raise LinkageError(
+                    refusal = _Refusal(
                         RefusalReason.LINK_CONFLICT,
                         "directive " + repr(directive_id_value) + " was already settled as "
                         + repr(row["disposition"]) + " by " + repr(row["decided_by"])
                         + " at " + str(row["decided_at"]) + "; the decision stands and a "
                         "later instruction is recorded as its own directive",
+                        scope_kind=row["scope_kind"], scope_key=row["scope_key"],
+                        incumbent=row["decided_by"] or "", challenger=decided_by,
                     )
-                already = row
+                    self._record_conflict_in(db, refusal, at=now)
+                else:
+                    already = row
             else:
                 db.execute(
                     "UPDATE scope_directives SET disposition = ?, decided_by = ?,"
@@ -1082,6 +1123,8 @@ class Linkage:
                     {"disposition": disposition, "decidedBy": decided_by, "reason": reason},
                     at=now,
                 )
+        if refusal is not None:
+            raise refusal.error()
         if already is not None:
             return self._directive_record(already)
         return self._directive_record(self.store.one(
@@ -1226,24 +1269,34 @@ class Linkage:
             sender = senders[0] if senders else None
             recipient = recipients[0] if recipients else None
             edge = None
-            # Set when one scope pair holds more than one live edge. The answer is then which
-            # relationship the message is about, and this cannot tell, so it says so instead
-            # of choosing. Reporting it as unlinked would be worse than either edge: it would
-            # deny a linkage that demonstrably exists.
-            contention = None
+            # EVERY candidate pair is evaluated before anything is chosen. Stopping at the
+            # first pair that had a link was its own arbitrary pick: a task accumulates
+            # archived bindings for the scopes it used to hold, so two historical pairs can
+            # both be joined by a live edge, and the one that sorted first was answered about
+            # as though the other did not exist. Contention covers both shapes - several
+            # edges for one pair, and several pairs - because the question is the same one:
+            # which relationship is this message about.
+            matches = []
             for candidate_sender in senders:
                 for candidate_recipient in recipients:
                     joined = self._joining_links(candidate_sender, candidate_recipient)
-                    if len(joined) > 1:
-                        contention = [record["linkId"] for record in joined]
-                        sender, recipient = candidate_sender, candidate_recipient
-                        break
                     if joined:
-                        edge = joined[0]
-                        sender, recipient = candidate_sender, candidate_recipient
-                        break
-                if edge is not None or contention is not None:
-                    break
+                        matches.append((candidate_sender, candidate_recipient, joined))
+            contention = None
+            if len(matches) == 1 and len(matches[0][2]) == 1:
+                sender, recipient = matches[0][0], matches[0][1]
+                edge = matches[0][2][0]
+            elif matches:
+                # Reporting it as unlinked would be worse than any single answer: it would
+                # deny a linkage that demonstrably exists. from and counterpart stay as the
+                # endpoints' own live-first bindings so the staleness findings still apply;
+                # what is withheld is the claim that one particular edge is the answer.
+                contention = [
+                    {"linkId": record["linkId"], "kind": record["kind"],
+                     "scopeKey": candidate_recipient["scopeKey"]}
+                    for _s, candidate_recipient, joined in matches
+                    for record in joined
+                ]
             current = None
             if recipient is not None and (recipient["status"] not in LIVE
                                           or recipient["supersededBy"]):
@@ -1496,13 +1549,26 @@ class Linkage:
                                        "directiveId": directive["directiveId"],
                                        "fromScopeKey": directive["fromScopeKey"],
                                        "digest": directive["digest"]})
-                row = self.store.one(
+                incoming = self.store.all(
                     "SELECT * FROM scope_links"
                     "  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"
                     "    AND status IN ('active','paused') AND superseded_by IS NULL"
-                    "  ORDER BY revision DESC LIMIT 1",
+                    "  ORDER BY revision DESC, link_id",
                     (scope_kind, scope_key),
                 )
+                if len(incoming) > 1:
+                    # Several live execution edges INTO one scope. Registration refuses to
+                    # create that, but this reader answers about stores older writers or a
+                    # hand edit produced, and taking the highest revision would walk one
+                    # arbitrary hierarchy and call it resolved. Same rule as the ambiguous
+                    # start above: report the competing edges, do not choose a parent.
+                    contention.append(
+                        {"contention": "competing_parents", "scopeKind": scope_kind,
+                         "scopeKey": scope_key,
+                         "candidates": sorted(link["link_id"] for link in incoming)})
+                    return {"state": "ambiguous", "readable": True, "levels": levels,
+                            "gaps": gaps, "contention": contention}
+                row = incoming[0] if incoming else None
                 if row is None:
                     if scope_kind == PROJECT:
                         gaps.append({"gap": "no_supervisor", "scopeKind": PROJECT,
@@ -1755,12 +1821,18 @@ class Linkage:
                         supersedes=current["bindingId"], note=evidence,
                     )
                 else:
+                    # The endpoint comes with it, exactly as it does on the insert branch. A
+                    # task taking a scope BACK is not the task that left it: a replacement was
+                    # in between and the returning one is running from whatever cwd and CXC
+                    # session it has now. Moving only the status kept the metadata from its
+                    # previous tenure, which routing and audit then read as current.
                     db.execute(
                         "UPDATE scope_bindings SET status = ?, revision = ?, supersedes = ?,"
-                        " handover_note = ?, superseded_by = NULL, updated_at = ?"
+                        " handover_note = ?, superseded_by = NULL, updated_at = ?,"
+                        " host_id = ?, cwd = ?, cxc_session = ?"
                         "  WHERE binding_id = ?",
                         (ACTIVE, current["revision"] + 1, current["bindingId"], evidence,
-                         now, new_id),
+                         now, endpoint.host_id, endpoint.cwd, endpoint.cxc_session, new_id),
                     )
                 db.execute(
                     "UPDATE scope_links SET lower_task_id = ?, revision = revision + 1,"
