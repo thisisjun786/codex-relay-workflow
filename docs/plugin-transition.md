@@ -209,6 +209,11 @@ Every step decides from what is on disk, so nothing depends on a previous step's
 second run reports `already_done` for each step, writes nothing, and exits zero. A run interrupted
 anywhere converges on the next run.
 
+That is a claim about interruption, not about writers running beside this one. What another writer
+can do while this runs is bounded by the locks named above: excluded where the lock is shared,
+detected and refused where the artifact is re-read under one, and reported rather than prevented
+where no shared lock exists at all, which is the plugin entry and the skills directory.
+
 Convergence after the bridge table is removed depends on the identity surviving it. A legacy
 install can have a `config.toml` table and no ownership record, and then the table is the only
 durable copy of the bridge executable and its arguments. The table standdown archives that identity
