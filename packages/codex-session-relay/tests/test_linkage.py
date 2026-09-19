@@ -1376,5 +1376,75 @@ class TheNinthRoundFoundTheseToo(LinkageTestCase):
             expect_allowed_recipients=[PARENT], actor="test")
         self.assertEqual(self.registry.get(rid)["status"], "archived")
 
+
+class TheTenthRoundFoundTheseToo(LinkageTestCase):
+    def test_the_supervising_initiative_cannot_also_reference_its_own_project(self):
+        """A reference and an execution edge for ONE scope pair are both live at once.
+
+        The unique index is per kind, so it permits that, and the reference check only asked
+        whether a reference named the execution parent - never whether it came from the
+        initiative that already supervises. Two live edges then answer the same message
+        differently about the one thing a reference exists to say: that it carries no
+        directive authority.
+        """
+        execution = self.supervise()
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.supervise, kind=linkage.REFERENCE)
+        live = self.store.all(
+            "SELECT link_id FROM scope_links WHERE lower_key = ?"
+            "  AND status IN ('active','paused')", (PROJECT,))
+        self.assertEqual([row["link_id"] for row in live], [execution["linkId"]])
+        # A DIFFERENT initiative may still reference it. That is the whole point of the kind.
+        self.supervise(initiative=OTHER_INITIATIVE, supervisor=self.supervisor(
+            OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+
+    def test_two_live_edges_for_one_pair_are_reported_rather_than_chosen(self):
+        """Registration refuses to create this now, so the state is written directly - a store
+        that predates the refusal can hold it. The reader must not pick: taking the highest
+        revision answered about whichever edge sorted first, and equal revisions made that
+        arbitrary. Reporting it as unlinked would be worse still, denying a link that exists.
+        """
+        self.supervise()
+        stray = link_id(linkage.REFERENCE, linkage.INITIATIVE, INITIATIVE,
+                        linkage.PROJECT, PROJECT)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key,"
+                " upper_task_id, lower_kind, lower_key, lower_task_id, status, revision,"
+                " superseded_by, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,'active',1,NULL,?,?)",
+                (stray, linkage.REFERENCE, linkage.INITIATIVE, INITIATIVE, SUPERVISOR_TASK,
+                 linkage.PROJECT, PROJECT, PARENT, "2026-09-19T00:00:00Z",
+                 "2026-09-19T00:00:00Z"))
+        answer = self.linkage.counterpart(SUPERVISOR_TASK, PARENT)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertIs(answer["readable"], True)
+        self.assertIsNone(answer["link"])
+        self.assertIn("link_contention", answer["findings"])
+        self.assertEqual(len(answer["candidates"]), 2)
+        self.assertIn(stray, answer["candidates"])
+
+    def test_a_settled_directive_is_not_re_decided_by_the_next_caller(self):
+        """settle_directive overwrote the disposition and the decider, so a second decision
+        took the record from the first and left nothing saying the two disagreed - the
+        opposite of retaining a contested instruction."""
+        execution = self.supervise()
+        directive = self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+        self.linkage.settle_directive(
+            directive["directiveId"], "chosen", decided_by="the parent that ruled")
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.linkage.settle_directive,
+            directive["directiveId"], "superseded", decided_by="somebody later")
+        settled = [d for d in self.linkage.directives(linkage.PROJECT, PROJECT)
+                   if d["directiveId"] == directive["directiveId"]][0]
+        self.assertEqual(settled["disposition"], "chosen")
+        self.assertEqual(settled["decidedBy"], "the parent that ruled")
+        # Restating the same decision converges and keeps the ORIGINAL decider.
+        again = self.linkage.settle_directive(
+            directive["directiveId"], "chosen", decided_by="a replaying caller")
+        self.assertEqual(again["decidedBy"], "the parent that ruled")
+
 if __name__ == "__main__":
     unittest.main()

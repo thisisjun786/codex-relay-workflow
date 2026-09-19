@@ -494,6 +494,21 @@ class Linkage:
                 incumbent=owning["upper_key"], challenger=initiative_key,
             )
         if link_kind == REFERENCE and owning is not None \
+                and owning["upper_key"] == initiative_key:
+            # The initiative that SUPERVISES this project cannot also merely reference it.
+            # Both edges would be live for one scope pair - the unique index is per kind, so
+            # it permits that - and a message between the two would then have two answers to
+            # "what relationship is this", differing in the one thing a reference exists to
+            # say: that it carries no directive authority.
+            return _Refusal(
+                RefusalReason.LINK_CONFLICT,
+                "initiative " + repr(initiative_key) + " already supervises project "
+                + repr(project_key) + " under " + owning["link_id"] + ", so it cannot also "
+                "reference it; a reference is how a DIFFERENT initiative reads this outcome",
+                scope_kind=PROJECT, scope_key=project_key,
+                incumbent=owning["upper_key"], challenger=initiative_key,
+            )
+        if link_kind == REFERENCE and owning is not None \
                 and owning["lower_task_id"] != parent.task_id:
             return _Refusal(
                 RefusalReason.DUPLICATE_SCOPE_OWNER,
@@ -1013,23 +1028,48 @@ class Linkage:
                 RefusalReason.LINK_NOT_ACTIVE,
                 "a disposition is " + " or ".join(DISPOSITIONS) + ", not " + repr(disposition),
             )
-        row = self.store.one(
-            "SELECT * FROM scope_directives WHERE directive_id = ?", (directive_id_value,))
-        if row is None:
-            raise LinkageError(
-                RefusalReason.UNREGISTERED_SCOPE, "no directive " + repr(directive_id_value))
         now = self.clock.iso()
+        already = None
         with self.store.transaction() as db:
-            db.execute(
-                "UPDATE scope_directives SET disposition = ?, decided_by = ?, decided_at = ?"
-                "  WHERE directive_id = ?",
-                (disposition, decided_by, now, directive_id_value),
-            )
-            self.store.journal(
-                "directive_settled", directive_id_value,
-                {"disposition": disposition, "decidedBy": decided_by, "reason": reason},
-                at=now,
-            )
+            # Read the disposition inside the write transaction. Read before it, two deciders
+            # could both see an unsettled directive and the second would still overwrite the
+            # first; BEGIN IMMEDIATE serialises them so the second one sees the decision here.
+            row = db.execute(
+                "SELECT * FROM scope_directives WHERE directive_id = ?",
+                (directive_id_value,),
+            ).fetchone()
+            if row is None:
+                raise LinkageError(
+                    RefusalReason.UNREGISTERED_SCOPE,
+                    "no directive " + repr(directive_id_value))
+            if row["disposition"] is not None:
+                # A settlement that can be silently overwritten is not a decision. The second
+                # writer would take the record from the first and leave nothing saying the two
+                # disagreed, which is the opposite of retaining a contested instruction.
+                # Restating the SAME disposition converges, like every other registration
+                # here; changing it is refused.
+                if row["disposition"] != disposition:
+                    raise LinkageError(
+                        RefusalReason.LINK_CONFLICT,
+                        "directive " + repr(directive_id_value) + " was already settled as "
+                        + repr(row["disposition"]) + " by " + repr(row["decided_by"])
+                        + " at " + str(row["decided_at"]) + "; the decision stands and a "
+                        "later instruction is recorded as its own directive",
+                    )
+                already = row
+            else:
+                db.execute(
+                    "UPDATE scope_directives SET disposition = ?, decided_by = ?,"
+                    "  decided_at = ? WHERE directive_id = ?",
+                    (disposition, decided_by, now, directive_id_value),
+                )
+                self.store.journal(
+                    "directive_settled", directive_id_value,
+                    {"disposition": disposition, "decidedBy": decided_by, "reason": reason},
+                    at=now,
+                )
+        if already is not None:
+            return self._directive_record(already)
         return self._directive_record(self.store.one(
             "SELECT * FROM scope_directives WHERE directive_id = ?", (directive_id_value,)))
 
@@ -1172,13 +1212,23 @@ class Linkage:
             sender = senders[0] if senders else None
             recipient = recipients[0] if recipients else None
             edge = None
+            # Set when one scope pair holds more than one live edge. The answer is then which
+            # relationship the message is about, and this cannot tell, so it says so instead
+            # of choosing. Reporting it as unlinked would be worse than either edge: it would
+            # deny a linkage that demonstrably exists.
+            contention = None
             for candidate_sender in senders:
                 for candidate_recipient in recipients:
-                    edge = self._joining_link(candidate_sender, candidate_recipient)
-                    if edge is not None:
+                    joined = self._joining_links(candidate_sender, candidate_recipient)
+                    if len(joined) > 1:
+                        contention = [record["linkId"] for record in joined]
                         sender, recipient = candidate_sender, candidate_recipient
                         break
-                if edge is not None:
+                    if joined:
+                        edge = joined[0]
+                        sender, recipient = candidate_sender, candidate_recipient
+                        break
+                if edge is not None or contention is not None:
                     break
             current = None
             if recipient is not None and (recipient["status"] not in LIVE
@@ -1192,6 +1242,15 @@ class Linkage:
                 findings.append("stale_sender")
             if wrong_scope is not None:
                 findings.append(wrong_scope)
+            if contention is not None:
+                findings.append("link_contention")
+                if self._role_pair_is_wrong(sender, recipient):
+                    findings.append("wrong_role")
+                return {
+                    "state": "ambiguous", "readable": True, "link": None,
+                    "from": sender, "counterpart": recipient, "currentOwner": current,
+                    "candidates": contention, "findings": sorted(set(findings)),
+                }
             if sender is None or recipient is None:
                 if recipient is None:
                     findings.append("unregistered_link")
@@ -1257,19 +1316,30 @@ class Linkage:
             )
         ]
 
-    def _joining_link(self, sender, recipient):
-        row = self.store.one(
-            "SELECT * FROM scope_links"
-            "  WHERE status IN ('active','paused') AND superseded_by IS NULL"
-            "    AND ((upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?)"
-            "      OR (upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?))"
-            "  ORDER BY revision DESC LIMIT 1",
-            (sender["scopeKind"], sender["scopeKey"],
-             recipient["scopeKind"], recipient["scopeKey"],
-             recipient["scopeKind"], recipient["scopeKey"],
-             sender["scopeKind"], sender["scopeKey"]),
-        )
-        return self._link_record(row) if row else None
+    def _joining_links(self, sender, recipient):
+        """EVERY live link joining these two scopes, in either direction.
+
+        A list rather than one row. The partial unique index allows one live edge per KIND,
+        so one scope pair can still hold an execution edge and a reference edge at once -
+        register_supervision now refuses to create that, but a store written before it did,
+        or by hand, can contain it. Taking the highest revision answered a message about
+        whichever relationship sorted first, and equal revisions made that an arbitrary pick
+        between two different meanings. The caller reports the contention instead.
+        """
+        return [
+            self._link_record(row)
+            for row in self.store.all(
+                "SELECT * FROM scope_links"
+                "  WHERE status IN ('active','paused') AND superseded_by IS NULL"
+                "    AND ((upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?)"
+                "      OR (upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?))"
+                "  ORDER BY revision DESC, link_id",
+                (sender["scopeKind"], sender["scopeKey"],
+                 recipient["scopeKind"], recipient["scopeKey"],
+                 recipient["scopeKind"], recipient["scopeKey"],
+                 sender["scopeKind"], sender["scopeKey"]),
+            )
+        ]
 
     @staticmethod
     def _role_pair_is_wrong(sender, recipient):

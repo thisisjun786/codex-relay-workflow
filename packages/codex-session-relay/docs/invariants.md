@@ -214,10 +214,35 @@ exists before the relationship and is answerable without asking the relay anythi
 | A fact that names nothing has registered nothing | the relationship record was tested for truthiness rather than for its identity, so one carrying a blank or missing relationshipId read as registered; the receipt lookup then refused the unnamed id and the turn landed on receipt_missing, telling the child to emit a receipt that nothing could satisfy. The identity is what is tested, the same way the bind record has always been |
 | A failed publication leaves no litter | the temp is this call's own, so a write or fsync failure removes it; leaving it turned a transient fault into an unbounded pile of orphans in a directory every reader walks |
 
+## Three-level linkage and execution ownership
+
+The records these rows constrain are described in [linkage.md](linkage.md); the role contract
+they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-150 | A scope has one live owner per role | partial unique index on `scope_bindings`, and `linkage._binding_refusal` before it | implemented |
+| I-151 | A task holds one live scope per role; a second live binding of the same role is refused rather than silently tie-broken | `linkage._binding_refusal` → `role_already_bound` | implemented |
+| I-152 | Only `(initiative, project)` and `(project, issue)` are execution edges, so a reference or a peer row can neither lengthen a chain nor add an owner | every walk filters `link_kind = 'execution'` in SQL: `linkage.down`, `_descend`, `up` | implemented |
+| I-153 | A project has at most one live execution supervision, whichever initiative asks | `linkage._supervision_refusal` → `duplicate_scope_owner` | implemented |
+| I-154 | A reference carries no directive authority and cannot be a project's first link | `linkage._supervision_refusal` → `unregistered_scope`; `record_directive` refuses a directive arriving on a reference edge | implemented |
+| I-155 | The initiative that supervises a project cannot also reference it, so one scope pair never holds two live edges | `linkage._supervision_refusal` → `link_conflict` | implemented |
+| I-156 | A peer link between two parents introduces no cycle and no second execution owner | `linkage.register_peer` and the `_reaches` walk | implemented |
+| I-157 | An issue is attached only by the project's live parent, or by a genuine successor of an assignment itself scoped to that project | `linkage.attach_refusal` → `foreign_scope` | implemented |
+| I-158 | An issue has one live assignment, decided on the relationship rather than on the child task | `registry._register_in_transaction` → `duplicate_assignment`; `linkage._owns_its_issue` for the lower level | implemented |
+| I-159 | A replacement owner restates the outgoing owner and the unfinished work, and a handover that cannot move the whole endpoint refuses and names what it could not move | `linkage.handover` with `attached(other_than=...)` → `handover_unconfirmed`, `handover_would_strand` | implemented |
+| I-160 | Reactivating an assignment cannot install a stale owner: the project must still be parented by the task that assignment names | `linkage.apply_relationship_status_in` → `foreign_scope`, covering both `resume` and `set_status` | implemented |
+| I-161 | A settled directive is not re-decided; restating the same disposition converges and a different one refuses | `linkage.settle_directive` → `link_conflict` | implemented |
+| I-162 | A read reports ambiguity rather than choosing a row | `linkage.up` and `counterpart` answer `ambiguous` with the candidates | implemented |
+| I-163 | A lookup failure is never reported as absence or as completion | `up`, `down` and `counterpart` carry `readable` and a `detail`, and answer `unreadable` rather than empty | implemented |
+
 ## Recorded limits, so a row above is not read as more than it is
 
 | Limit | Consequence |
 |---|---|
+| Linkage records levels; it does not carry a peer MESSAGE | a registered peer link is a record, not a channel. Delivery, acknowledgement and shared merge order between parents belong to their own issues, and nothing in the rows above shows a message was transported between two parents |
+| These rows are proved against a temporary store | the evidence is `packages/codex-session-relay/tests/test_linkage*.py`. Whether an installed relay on a real host records any of this is separate evidence, and a green suite is not an installed runtime |
+| Codex native parentage is untouched | these are relay-owned records. Nothing here writes or reads a Codex native `parentThreadId`, so a claim that a thread is registered in the host's own hierarchy or its UI needs host evidence and cannot be read off these rows |
 | Ordering is not lineage | a later turn is admitted only by an explicit continuation record; host ordering corroborates and can contradict, never admits |
 | Byte stability is enforced only under a read lease | the lease is opt-in because holding one blocks writers for the kernel lease-break timeout; otherwise each detector has a named evasion |
 | Inode ownership is not proven | a hardlink or bind mount can expose the same bytes under another authorized path, which the contract permits because it authorizes paths |

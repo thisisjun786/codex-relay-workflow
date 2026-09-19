@@ -183,9 +183,10 @@ separate three answers:
 |---|---|
 | `readable: true`, something found | the hierarchy, as recorded |
 | `readable: true`, nothing found | the store answered, and there is nothing |
+| `readable: true`, state `ambiguous` | the store answered with more than one candidate, and the reader will not choose between them. The candidates are returned |
 | `readable: false` | the store did not answer |
 
-The third is never reported as the second, and neither is reported as completion. An unreadable
+The last is never reported as the second, and neither is reported as completion. An unreadable
 answer carries empty `levels`, `gaps` and `contention`, because a store that could not be read
 has no findings to report. This is the shape `intent.dispatch_generation_state` already uses to
 separate stale from absent.
@@ -195,8 +196,12 @@ separate stale from absent.
 An unscoped assignment is the compatibility case and is reported, never dropped.
 
 `counterpart()` findings are independent, so one message can carry several: `wrong_role`,
-`foreign_scope`, `stale_owner` with `currentOwner`, `stale_revision`, `owner_drift`,
-`instruction_conflict` and `unregistered_link`.
+`foreign_scope`, `foreign_sender_scope`, `stale_owner` with `currentOwner`, `stale_sender`,
+`stale_revision`, `owner_drift`, `instruction_conflict`, `unregistered_link` and
+`link_contention`. The last accompanies state `ambiguous`: one scope pair holds more than one
+live edge, so which relationship the message is about has no single answer. Registration refuses
+to create that state, but a store written before it did can hold it, and answering `unlinked`
+would deny a linkage that demonstrably exists.
 
 ## Refusals
 
@@ -205,10 +210,12 @@ An unscoped assignment is the compatibility case and is reported, never dropped.
 | `unregistered_scope` | the scope, or the link a caller named, does not exist or is not live |
 | `scope_role_mismatch` | a task already holds another role, or a pair may not address each other |
 | `scope_cycle` | a self-link at either edge, or a chain that reaches itself |
-| `foreign_scope` | an issue whose parent does not own the project, or an issue already scoped elsewhere |
+| `foreign_scope` | an issue whose parent does not own the project, an issue already scoped elsewhere, or an assignment reactivated into a project its parent no longer holds |
 | `duplicate_scope_owner` | a second owner for one scope, or a second execution edge for one project |
+| `role_already_bound` | one task asked for a second live scope of a role it already holds |
 | `handover_unconfirmed` | no evidence, the wrong outgoing owner, or an outstanding set that does not match |
-| `link_conflict` | the same link or binding asserted with different endpoints or another host |
+| `handover_would_strand` | live work the handover cannot carry across, named row by row in the refusal |
+| `link_conflict` | the same link or binding asserted with different endpoints or another host; a supervising initiative also referencing its own project; a settled directive decided again differently |
 | `link_not_active` | a status or disposition outside its vocabulary |
 
 ## What this is not
