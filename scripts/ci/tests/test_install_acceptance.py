@@ -2043,6 +2043,53 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", False,
          "del makes the name local for the whole function, so the later read raises rather than"
          " reaching the module's. A binding is not only a Store."),
+    "a base named by its qualified owner":
+        (REFUSAL,
+         ("class First:",
+          "    class Base:",
+          "        bad = str",
+          "",
+          "class Second:",
+          "    class Base:",
+          "        def bad(self):",
+          "            return reading.UNREADABLE",
+          "",
+          "class Child(Second.Base):",
+          "    def consumer(self):",
+          "        return self.bad()"),
+         "consumer", True,
+         "Second.Base is that class and not whichever Base is found first. Stripping the owner"
+         " sends the line to a different class of the same terminal name, which is what keying"
+         " classes by scope was for and has to reach the base list too."),
+    "an attribute read through a qualified class owner":
+        (REFUSAL,
+         ("class Outer:",
+          "    class Inner:",
+          "        unread = reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    return Outer.Inner.unread"),
+         "consumer", True,
+         "the reading side of the owner the assignment side already resolved. Reduced to Inner"
+         " it looks up a key the held table does not have, and the consumer goes unreported"
+         " while the attribute itself is."),
+    "a qualified attribute an unrelated module exports":
+        (REFUSAL,
+         ("import innocent",
+          "",
+          "def consumer():",
+          "    return innocent.NOT_READ"),
+         "consumer", False,
+         "the owner has to be a module that really exports an answer. Matching the attribute"
+         " name alone makes any object with a same-named attribute hold one, which is the"
+         " direct-import case over again on the qualified side."),
+    "a qualified attribute the answers really come from":
+        (REFUSAL,
+         ("def consumer():",
+          "    return completion.NOT_READ"),
+         "consumer", True,
+         "its pair: the ordinary qualified spelling has to keep being read, so validating the"
+         " owner must not have narrowed it to nothing."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -3037,6 +3084,24 @@ def _class_named(by_spelling, spelled_as, scope):
     return by_spelling.get(MODULE_LEVEL, {}).get(spelled_as, spelled_as)
 
 
+def _base_key(by_spelling, known_keys, alias_of, spelled_as, scope):
+    """The scoped class key a base expression names, qualified spellings included.
+
+    Second.Base is that class and not whichever Base is found first: stripping the owner sends
+    the line to a different class of the same terminal name, and the inheritance below it with
+    that.
+    """
+    if spelled_as in known_keys:
+        return spelled_as
+    parts = [part for part in (spelled_as or "").split(".") if part]
+    if not parts:
+        return spelled_as
+    key = _class_named(by_spelling, _base_named(alias_of, parts[0], scope), scope)
+    for part in parts[1:]:
+        key = key + "." + part
+    return key if key in known_keys else parts[-1]
+
+
 def _class_spellings(tree, places):
     """How a class spelling reaches its table key, per scope it is written in."""
     by_spelling = {}
@@ -3278,7 +3343,8 @@ def _held_by_class(tree, spelled, over=None):
     # that class, and the same name bound inside a method is that method's local.
     in_class_body = _owned_by_a_class(tree)
     by_spelling = _class_spellings(tree, places)
-    known_keys = {key for scopes in by_spelling.values() for key in scopes.values()}
+    known_keys = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
+                  if isinstance(node, ast.ClassDef)}
 
     def owner_key(dotted, scope):
         """The scoped class key a dotted owner names.
@@ -3368,11 +3434,13 @@ def _held_by_class(tree, spelled, over=None):
     alias_of = _class_aliases(tree)
     written = _written_in(tree, places)
     by_spelling = _class_spellings(tree, places)
+    # Every class, not one per spelling: the by-spelling table keeps the first of a name and
+    # the whole point here is that the second exists too.
+    every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
+                 if isinstance(node, ast.ClassDef)}
     parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
-               [_class_named(by_spelling,
-                             _base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
-                                         written.get(id(node), MODULE_LEVEL)),
-                             written.get(id(node), MODULE_LEVEL))
+               [_base_key(by_spelling, every_key, alias_of, _dotted(base) or "",
+                          written.get(id(node), MODULE_LEVEL))
                 for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
@@ -3411,11 +3479,11 @@ def _hands_on(tree, spelled):
     alias_of = _class_aliases(tree)
     written = _written_in(tree, places)
     by_spelling = _class_spellings(tree, places)
+    every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
+                 if isinstance(node, ast.ClassDef)}
     parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
-               [_class_named(by_spelling,
-                             _base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
-                                         written.get(id(node), MODULE_LEVEL)),
-                             written.get(id(node), MODULE_LEVEL))
+               [_base_key(by_spelling, every_key, alias_of, _dotted(base) or "",
+                          written.get(id(node), MODULE_LEVEL))
                 for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
@@ -4268,7 +4336,7 @@ def refusal_spellings():
                 is_answer(item) for item in value.values())
         return False
 
-    attributes, mine, held = set(), set(), set()
+    attributes, mine, held, owners = set(), set(), set(), set()
     for name, value in list(vars(sys.modules[__name__]).items()):
         if isinstance(value, types.ModuleType):
             for attribute, inner in list(vars(value).items()):
@@ -4276,14 +4344,19 @@ def refusal_spellings():
                     continue
                 if is_answer(inner):
                     attributes.add(attribute)
+                    # And which module binds it, so a same-named attribute on an unrelated
+                    # object is not read as this answer.
+                    owners.add(name)
                 elif collects(inner):
                     held.add(attribute)
+                    owners.add(name)
         elif is_answer(value):
             mine.add(name)
         elif collects(value):
             held.add(name)
     return {"answer": answers, "module attribute": frozenset(attributes),
-            "own global": frozenset(mine), "collection": frozenset(held)}
+            "own global": frozenset(mine), "collection": frozenset(held),
+            "owner": frozenset(owners)}
 
 
 def source_spellings(tree):
@@ -4447,11 +4520,12 @@ def source_spellings(tree):
 
 
 def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), built=(),
-                     imported_answers=()):
+                     imported_answers=(), known_keys=()):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
     names = spellings["own global"] | spellings["collection"] | frozenset(imported_answers)
+    owners = spellings.get("owner", frozenset())
 
     def spelled(node, klass):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -4460,6 +4534,10 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             through = _dotted(node.value)
             reader = (klass if through in ("self", "cls")
                       else (through or "").rpartition(".")[2] or None)
+            # A qualified owner names the class it spells out: Outer.Inner is the inner class,
+            # and the held table is keyed that way.
+            if through in known_keys:
+                reader = through
             if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
                     and id(node.value) in shadowed and id(node.value) not in built):
                 # The scope binds that qualifier itself, so neither an imported module nor an
@@ -4477,7 +4555,11 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                 # class with an attribute spelled like an answer would hold one -- a spurious
                 # declaration owed for a value that is not a refusal.
                 return None
-            return "." + node.attr if node.attr in attributes else None
+            # The owner has to be a module that really exports one. Matching the attribute name
+            # alone makes any object with a same-named attribute hold an answer.
+            if node.attr in attributes and (through or "").rpartition(".")[2] in owners:
+                return (through or "") + "." + node.attr
+            return None
         if isinstance(node, ast.Name) and node.id in names:
             # Unless the scope binds that name itself, in which case the global of that
             # spelling is not what this reads.
@@ -4713,6 +4795,8 @@ def refusals_reached(source):
     classes, as_class, built = _instance_classes(tree)
     shadowed = _shadowing_names(tree)
     places = _places(tree)
+    known_keys = frozenset(places.get(id(node), (MODULE_LEVEL, None))[1]
+                           for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
     # A refusal imported by name is that answer under a bare name: from completion import
     # NOT_READ makes the constant readable here without an attribute to match.
     answers_here = spellings["module attribute"] | spellings["collection"]
@@ -4739,11 +4823,11 @@ def refusals_reached(source):
     while growing:
         wider = _held_by_class(
             tree, _refusal_spelled(spellings, held, classes, as_class, shadowed, built,
-                                   imported_answers), held)
+                                   imported_answers, known_keys), held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed,
-                                                built, imported_answers)),
+                                                built, imported_answers, known_keys)),
             spellings)
 
 
@@ -6101,6 +6185,7 @@ HANDED = {
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
+    "_base_key": NOTHING,
     "_instance_classes": NOTHING,
     "_shadowing_names": NOTHING,
     "places_reached": NOTHING,
