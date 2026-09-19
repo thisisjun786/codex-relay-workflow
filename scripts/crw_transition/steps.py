@@ -406,6 +406,19 @@ def hook_standdown(host, options, *, apply=False):
                            " nothing was removed; rerun to decide against the file as it stands",
                            wanted=sorted(item["identity"] for item in entries),
                            found=sorted(item["identity"] for item in current))
+        # The consent question is asked again here, against the file being written. The list the
+        # snapshot carried was computed before anything was locked, so a foreign hook that landed
+        # in the same group since then would have its index moved, and its recorded trust detached,
+        # without anyone having agreed to it.
+        shifted_now = inventory.shifted_identities(hooks.inventory(again.value), current)
+        if shifted_now and not options.get("accept_hook_renumbering"):
+            return _answer("hook standdown", REFUSED,
+                           "removing " + ", ".join(item["identity"] for item in current)
+                           + " shifts the index of " + ", ".join(shifted_now)
+                           + ", and Codex recorded trust against those positions. This changed"
+                           " after the file was first read, so it is asked again rather than"
+                           " assumed: pass --accept-hook-renumbering to do it knowingly",
+                           shiftedIdentities=shifted_now)
         for entry in sorted(current, key=position, reverse=True):
             matcher, index = position(entry)
             if matcher < len(groups) and index < len(groups[matcher].get("hooks") or []):

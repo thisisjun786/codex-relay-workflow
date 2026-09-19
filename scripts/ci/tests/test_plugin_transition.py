@@ -927,6 +927,27 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("in the hook file again", answer["detail"])
         self.assertEqual(answer["identities"], ["user:Stop:0:0"])
 
+    def test_consent_is_asked_again_for_a_hook_that_landed_after_the_reading(self):
+        """The file is not locked when the first reading is taken."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        stale = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(stale["hook"]["later"], [])
+        document = host.hooks_document()
+        document["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "/bin/true"})
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        answer = steps.hook_standdown(stale, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:400])
+        self.assertEqual(answer["shiftedIdentities"], ["user:Stop:0:1"])
+        self.assertEqual(host.hooks_document(), document)
+        answer = steps.hook_standdown(stale, {"accept_hook_renumbering": True}, apply=True)
+        self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:400])
+        self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"],
+                         [{"type": "command", "command": "/bin/true"}])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

@@ -311,22 +311,34 @@ def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
     # later in the SAME group take a new index. A flattened list also counted a foreign hook in a
     # later group, which refused a transition that shifts nothing and claimed a trust was detached
     # when it was not.
-    def position(identity):
-        parts = identity.split(":")
-        return int(parts[-2]), int(parts[-1])
+    answer["later"] = shifted_identities(inventory_all, answer["entries"])
+    return answer
 
-    ours = {entry["identity"] for entry in answer["entries"]}
-    removed = [position(identity) for identity in ours]
+
+def identity_position(identity):
+    parts = identity.split(":")
+    return int(parts[-2]), int(parts[-1])
+
+
+def shifted_identities(inventory_all, entries):
+    """Which recorded identities take a new index when these entries are removed.
+
+    Removal pops out of its own matcher group and an emptied group is left in place, so matcher
+    indices never move: only hooks later in the SAME group shift. Computed from a document rather
+    than remembered, because the file is not locked when the first reading is taken and a hook that
+    lands in between shifts without anyone having consented to it.
+    """
+    ours = {entry["identity"] for entry in entries}
+    removed = [identity_position(identity) for identity in ours]
     shifted = []
     for item in inventory_all:
         if item["identity"] in ours:
             continue
-        matcher, index = position(item["identity"])
+        matcher, index = identity_position(item["identity"])
         if any(matcher == cut_matcher and index > cut_index
                for cut_matcher, cut_index in removed):
             shifted.append(item["identity"])
-    answer["later"] = shifted
-    return answer
+    return shifted
 
 
 def archive_order(path, stem):
