@@ -657,6 +657,26 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(code, 1)
         self.assertIn("journalPolicy", answer["results"][0]["detail"])
 
+    def test_ten_archives_in_one_second_still_recover_the_newest(self):
+        """The archives are recovered by sorting their names, so -10 must not sort before -9."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        host.transition("--apply")
+        path = host.home / "crw-completion-hook.json"
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        for index in range(12):
+            # retire() MOVES the file, so each round writes a fresh one, which is also what a host
+            # being transitioned repeatedly would present.
+            settings["markerRoot"] = str(host.marker / ("round%d" % index))
+            path.write_text(json.dumps(settings), encoding="utf-8")
+            steps.retire(path)
+        document, name = inventory.newest_retired(host.home)
+        self.assertEqual(document["markerRoot"], str(host.marker / "round11"),
+                         "recovered " + str(name))
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

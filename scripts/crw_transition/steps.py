@@ -49,7 +49,9 @@ def retire(path):
             handle = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             suffix += 1
-            target = base + "-" + str(suffix)
+            # Zero-padded, because the archives are recovered by sorting their names: an unpadded
+            # -10 sorts before -9 and the recovery would read a stale document as the newest one.
+            target = base + "-%03d" % suffix
             continue
         os.close(handle)
         break
