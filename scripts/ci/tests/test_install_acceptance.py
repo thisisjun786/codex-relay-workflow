@@ -2597,10 +2597,105 @@ RESOLVES_LIKE_PYTHON = {
         (REFUSAL,
          ("def consumer():",
           "    answer = object()",
-          "    return answer"),
+         "    return answer"),
+        "consumer", False,
+        "its pair: a local binding that is not that import is still something wearing the"
+        " spelling, so the exemption has to be for the import rather than for the scope."),
+    "a decorator an imported module owns through a path":
+        (REFUSAL,
+         ("import innocent.decorators",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @innocent.decorators.staticmethod",
+          "    def answer(self):",
+          "        return self.carrier()"),
+         "answer", True,
+         "the owner is a path through an imported module, not a name of its own. Reduced to its"
+         " last part it matches nothing here and the terminal name is read as the builtin it is"
+         " spelled like, which removes a receiver the method really has."),
+    "the decorator that really is the builtin":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @staticmethod",
+          "    def answer(self):",
+          "        return self.carrier()"),
+         "answer", False,
+         "its pair: a plain @staticmethod really does take the receiver away, so resolving the"
+         " owner must not have stopped the bare spelling from being recognised."),
+    "a property read through an instance the scope built":
+        (REFUSAL,
+         ("class Holder:",
+          "    @property",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    holder = Holder()",
+          "    return holder.carrier"),
+         "consumer", True,
+         "the receiver table holds the spellings a method was given, and a constructed instance"
+         " is not one of them. The class is already known, and reading a property on it runs"
+         " the getter exactly as self.carrier does -- the one case where a property read is"
+         " reached through no call at all."),
+    "a parameter spelled like an instance the module built":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer(holder):",
+          "    return holder.carrier()"),
          "consumer", False,
-         "its pair: a local binding that is not that import is still something wearing the"
-         " spelling, so the exemption has to be for the import rather than for the scope."),
+         "the instance table is consulted before the lexical one on the call path, so a"
+         " parameter inherits the class of the module-level name it is spelled like. Which"
+         " object it holds is a fact about the caller, and a declaration is owed for a call"
+         " that never happens."),
+    "an instance the module built and a scope really reads":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer():",
+          "    return holder.carrier()"),
+         "consumer", True,
+         "its pair: with nothing taking the name, the module's instance really is what the"
+         " scope reads, so consulting the lexical binding first must not have stopped the"
+         " instance table from answering at all."),
+    "a refusal carried past a parameter in between":
+        (REFUSAL,
+         ("def outer():",
+          "    accepted = reading.UNREADABLE",
+          "    def middle(accepted):",
+          "        def consumer():",
+          "            return accepted",
+          "        return consumer",
+          "    return middle"),
+         "outer.middle.consumer", False,
+         "the carrier side of the receiver alias already fixed: checking only the reading"
+         " scope's own bindings carries the outer refusal through a parameter that took the"
+         " name, and the grandchild closes over its caller's object."),
+    "a refusal nothing in between takes":
+        (REFUSAL,
+         ("def outer():",
+          "    accepted = reading.UNREADABLE",
+          "    def middle():",
+          "        def consumer():",
+          "            return accepted",
+          "        return consumer",
+          "    return middle"),
+         "outer.middle.consumer", True,
+         "its pair: with no parameter taking the name the grandchild really does read what the"
+         " outer scope bound, so stopping at intervening scopes must not have stopped"
+         " inheritance itself."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4083,7 +4178,7 @@ def _hands_on(tree, spelled):
     mro = _linearised(parents)
     # An instance answers to its class here too: holder = Holder() makes holder.carrier() the
     # same call as Holder.carrier(), which the qualifier alone cannot say.
-    _classes_here, holds_an, _built_here = _instance_classes(tree)
+    _classes_here, holds_an, built_here = _instance_classes(tree)
     # A class body is a scope of its own, and it is not the module: a class written inside a
     # function has one too, and two class bodies do not share their names.
     class_scope = {}
@@ -4258,6 +4353,14 @@ def _hands_on(tree, spelled):
         if owner and held_by in imported:
             module = sys.modules.get(imported_from.get(held_by, ""))
             return module is not None and getattr(module, last, None) in the_objects(seed)
+        if owner and owner.split(".")[0] in imported:
+            # import innocent.decorators binds innocent, so innocent.decorators names a path
+            # through that module rather than a name of its own. Reduced to its last part the
+            # owner matches nothing here, and the terminal name is then read as the builtin it
+            # is spelled like -- which removes a receiver the method really has. A module this
+            # process cannot read answers no rather than answering the builtin.
+            module = sys.modules.get(owner)
+            return module is not None and getattr(module, last, None) in the_objects(seed)
         if owner and (held_by in parents
                       or any(bound == held_by for _line, bound, _value in module_bindings)):
             return False
@@ -4419,6 +4522,17 @@ def _hands_on(tree, spelled):
                 if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
                     receiver_alias.setdefault(where, {}).setdefault(
                         value.id, set()).add(inner.id)
+
+    def its_own(node, function):
+        """Whether the instance table's answer for this name is this scope's to read.
+
+        A name built in the scope that reads it IS the instance. Otherwise a scope between the
+        construction and the read may have taken the name -- a parameter spelled like a
+        module-level instance holds whatever its caller passed, and inheriting the class would
+        oblige a declaration for a call that never happens.
+        """
+        return (id(node) in built_here
+                or not _bound_around(taken_names, function, node.id))
 
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
@@ -4766,10 +4880,18 @@ def _hands_on(tree, spelled):
                 and _dotted(node.value.func) == "super"):
             reached = a_property(klass, node.attr, after=True)
             return {reached} if reached else set()
-        if _dotted(node.value) not in instance(function):
-            return set()
-        reached = a_property(klass, node.attr)
-        return {reached} if reached else set()
+        if _dotted(node.value) in instance(function):
+            reached = a_property(klass, node.attr)
+            return {reached} if reached else set()
+        if (isinstance(node.value, ast.Name) and id(node.value) in holds_an
+                and its_own(node.value, function)):
+            # holder = Holder() and then holder.carrier: the name's class is already known, and
+            # reading a property on it runs the getter exactly as self.carrier does. The
+            # receiver table holds only the spellings a method was given, so without this the
+            # constructed instance is the one case where a property read is not a call.
+            reached = a_property(holds_an[id(node.value)], node.attr)
+            return {reached} if reached else set()
+        return set()
 
     def called(node, function):
         """Every place this call may reach."""
@@ -4792,7 +4914,8 @@ def _hands_on(tree, spelled):
                        if named_class else None)
             aliased = (_class_named(by_spelling, aliased, function)
                        if aliased is not None else None)
-            if isinstance(node.func.value, ast.Name) and id(node.func.value) in holds_an:
+            if (isinstance(node.func.value, ast.Name) and id(node.func.value) in holds_an
+                    and its_own(node.func.value, function)):
                 # A name holding an instance names its class, whatever it is spelled.
                 named_class = holds_an[id(node.func.value)]
             elif aliased is not None and aliased != named_class and aliased in parents:
@@ -4839,11 +4962,13 @@ def _hands_on(tree, spelled):
                 scope.append(part)
                 scopes.append(".".join(scope))
             seen = set()
-            for here in scopes:
+            for index, here in enumerate(scopes):
                 for name in bound.get(here, ()):
-                    # A scope that binds the name itself reads its own, not the one the scope
-                    # around it holds: an inner parameter beats an enclosing local.
-                    if here != function and name in taken_names.get(function, set()):
+                    # Any scope between the one that binds the name and the one reading it
+                    # takes it: an inner parameter beats an enclosing local, and a parameter on
+                    # a function in the middle takes it from the grandchild just as surely.
+                    if any(name in taken_names.get(scopes[deeper], set())
+                           for deeper in range(index + 1, len(scopes))):
                         continue
                     seen.add(name)
             return seen
