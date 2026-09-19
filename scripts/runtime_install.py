@@ -1088,12 +1088,23 @@ def cmd_diagnose(args):
     # residualPaths from an installation the operator never named, inside the same answer
     # that reported the destination they did name as unreadable. The pointer is the fallback
     # for a missing --dest, never for an unusable one.
+    # And only an ABSOLUTE recorded pointer names a destination at all. hostrecord.shape
+    # accepts any string for it, and a relative one resolves against THIS process's working
+    # directory: the survey then described wherever the diagnosis happened to be run from, and
+    # a staging claim sitting under that directory could be published in residualPaths as
+    # another installation's residue.
+    recorded_names_a_destination = bool(owned_pointer) and Path(owned_pointer).is_absolute()
+    if owned_pointer and not recorded_names_a_destination:
+        unreadable_destination = ("the host record's pointer path is not absolute ("
+                                  + str(owned_pointer) + "), so it names no destination this"
+                                  " command can survey and nothing was scanned for one")
     residue_root = (settled_destination if destination is not None
-                    else (Path(owned_pointer).parent if owned_pointer else None))
+                    else (Path(owned_pointer).parent if recorded_names_a_destination else None))
     # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
     # through is the recorded one, and it does not have to sit under the destination this run
     # was invoked with.
-    pointer_home = Path(owned_pointer).parent if owned_pointer else residue_root
+    pointer_home = (Path(owned_pointer).parent if recorded_names_a_destination
+                    else residue_root)
 
     def ownership_of(environment):
         """The caller's ownership reading, which residue never takes for itself.

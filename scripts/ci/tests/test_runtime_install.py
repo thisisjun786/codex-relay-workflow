@@ -9800,6 +9800,39 @@ class DiagnosisReportsResidue(unittest.TestCase):
                         "the destination could not be settled and the survey did not say so: "
                         + repr((found.get("residue") or {}).get("unreadable")))
 
+    def test_a_recorded_pointer_that_is_not_absolute_names_no_destination(self):
+        """hostrecord.shape accepts any string for the pointer path. A relative one resolves
+        against THIS process's working directory, so with no --dest the survey described
+        wherever the diagnosis happened to be run from -- and a staging claim sitting under
+        that directory could be published as another installation's residue.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-that-is-not-a-destination"
+            abandoned = here / "env-1-abandoned"
+            abandoned.mkdir(parents=True)
+            staging.write_claim(abandoned, staging.STAGING, issue="CRW-100")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=None)
+            finally:
+                os.chdir(entered)
+        survey = found.get("residue") or {}
+        self.assertIsNone(survey.get("destination"),
+                          "a relative recorded pointer was resolved against the working"
+                          " directory and that directory was surveyed as a destination")
+        self.assertNotIn(str(abandoned), found.get("residualPaths") or [],
+                         "a staging under the caller's working directory was published as an"
+                         " installation's residue")
+        self.assertTrue(any("not absolute" in one for one in survey.get("unreadable") or []),
+                        "the recorded pointer named no destination and the survey did not say"
+                        " so: " + repr(survey.get("unreadable")))
+
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):
     """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the
