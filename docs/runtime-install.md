@@ -1632,8 +1632,17 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 
 # The receipt directory has to exist before the first write, or the baseline redirect and the
 # install redirect below both fail -- and the second of those stops the install from running at
-# all rather than merely losing a file.
-mkdir -p <receipt>
+# all rather than merely losing a file. It has to be a NEW one. Every reading below is written
+# under a fixed name, and two of them are pairs where one run writes only one of the two names,
+# so a directory still holding an earlier run's files is two runs wearing one name: a guard
+# further down would find that run's snapshot and report a comparison this run never took.
+# mkdir without -p is the check, because it fails rather than adopting a directory already
+# there. It ends the procedure rather than reporting and continuing, because a shell without
+# set -e would run every step below into the directory mkdir just refused, and the mixing works
+# in both directions: an older run's snapshot read as this run's preservation, and an older
+# run's absence marker read as a side this run did not have. Name the receipt under a parent
+# that exists, and a new one for every run.
+mkdir <receipt> || exit 1
 
 # One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
 # configuration and they do not fail alike without a reader, so naming the interpreter once is
@@ -1707,7 +1716,12 @@ printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagno
 "$controller" scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
 
 # hook-status names the journal it counted; the records in it name the turn they belong to.
-"$controller" - <receipt>/hook.json <session-id> <turn-id> <<'PY'
+# This is the ONLY turn-specific reading in the block, and it is the one hook.json above cannot
+# supply: that file carries the cumulative cell and nothing about which turn moved it. So this
+# reading goes to the receipt with its exit status, like the install and the diagnosis did.
+# Printed to a terminal it is gone, and a receipt left holding only the cumulative count cannot
+# say that the named session and turn are the ones that fired.
+"$controller" - <receipt>/hook.json <session-id> <turn-id> > <receipt>/hook.turn.json <<'PY'
 import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1748,25 +1762,61 @@ mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") 
 print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
                   "recordsForThisTurn": len(mine), "record": mine[:1]}, indent=2))
 PY
+printf 'hook turn exit=%s\n' "$?" > <receipt>/hook.turn.exit; cat <receipt>/hook.turn.json
 
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
 # is this procedure's own doing and would report it whether or not anything was preserved.
-# Run this only if there was a baseline to compare against. If <receipt>/config.before.absent
-# is what the step above wrote, there were no model or permission keys to preserve and the row
-# is recorded as that absence -- not as a preservation.
+#
+# The post-install side becomes a file first, beside the baseline. Preservation is a comparison
+# between two moments, and a receipt holding only the earlier one cannot substantiate it once
+# <codex-home>/config.toml has moved on. An absence is recorded here the way the baseline
+# branch recorded one, rather than being failed on.
+if [ -f <codex-home>/config.toml ]; then
+    cp <codex-home>/config.toml <receipt>/config.after.toml
+else
+    printf 'no configuration exists after this run\n' > <receipt>/config.after.absent
+fi
+
+# The comparison reads the two snapshots the receipt now holds, so a later reader can re-take
+# exactly this reading from the receipt alone. Which branch runs is decided by what THIS run
+# recorded, and the absence markers are read first for that reason. On a fresh Codex home the
+# branch before the install wrote config.before.absent and no config.before.toml at all, and
+# this reader opens its inputs by name: a comparison that ran anyway would end in
+# FileNotFoundError with no reading written, or -- in a receipt carrying an older run's files
+# -- would compare that run's snapshot and record it as this run's preservation. Where a side
+# was absent there were no model or permission keys to preserve on that side, and the row is
+# recorded as that absence, not as a preservation and not as a failure. Which side it was is
+# not guessed here: the config.before.* and config.after.* names in the receipt already say it.
 # Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
 # is the 3.10 floor this command exits before it reads anything, and the receipt then records
 # what the suite records on that interpreter: the reading was not made, and the row is
-# unreadable rather than preserved. Do not substitute a pattern match for it -- a value guessed
-# out of TOML is a value whose wrongness is invisible.
-"$controller" -c 'import sys, tomllib
+# unreadable rather than preserved. The exit line and the captured stderr beside it are what
+# say so. Do not substitute a pattern match for it -- a value guessed out of TOML is a value
+# whose wrongness is invisible.
+if [ -f <receipt>/config.before.absent ] || [ -f <receipt>/config.after.absent ]; then
+    printf '%s\n%s\n' \
+        'no comparison was made: a side of it was absent during this run' \
+        'config.before.* and config.after.* in this receipt name which side' \
+        > <receipt>/config.preservation.absent
+    cat <receipt>/config.preservation.absent
+elif [ -f <receipt>/config.before.toml ] && [ -f <receipt>/config.after.toml ]; then
+    "$controller" -c 'import sys, tomllib
 keys = ("model", "approval_policy", "sandbox_mode")
 for path in sys.argv[1:]:
     with open(path, "rb") as handle:
         document = tomllib.load(handle)
     print(path, {key: document.get(key) for key in keys})' \
-    <receipt>/config.before.toml <codex-home>/config.toml
+        <receipt>/config.before.toml <receipt>/config.after.toml \
+        > <receipt>/config.preservation.txt 2> <receipt>/config.preservation.err
+    printf 'preservation exit=%s\n' "$?" > <receipt>/config.preservation.exit
+    cat <receipt>/config.preservation.txt
+else
+    printf '%s\n' \
+        'no comparison was made: a side of it has neither a snapshot nor an absence here' \
+        > <receipt>/config.preservation.absent
+    cat <receipt>/config.preservation.absent
+fi
 
 # If an update has failed here, it has already restored what it found. Read that back rather
 # than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is what
