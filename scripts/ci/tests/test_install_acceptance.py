@@ -240,6 +240,7 @@ SOURCE_UNDECIDED_CALLS = {
     "KeyError": (EVERY_INTERPRETER, "a builtin exception being raised"),
     "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
+    "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
 }
 
 # What this derivation still cannot see, as data rather than as a sentence. Each form is planted
@@ -1548,7 +1549,7 @@ def _held_by_class(tree, spelled, over=None):
             elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
                 held.setdefault(klass, set()).add(target.id)
     # An attribute declared on a base is held by everything under it, the way a method is.
-    parents = {node.name: [_dotted(base) for base in node.bases]
+    parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     growing = True
     while growing:
@@ -1627,9 +1628,16 @@ def _hands_on(tree, spelled):
         """
         chain = [] if function == MODULE_LEVEL else function.split(".")
         while chain:
-            spelled = receivers.get(".".join(chain))
+            scope = ".".join(chain)
+            spelled = receivers.get(scope)
             if spelled:
                 return {spelled, "cls"}
+            # A scope of its own that binds the same name is where the search stops: a nested
+            # parameter called self is that function's, not the method's around it.
+            taken_here = taken_names.get(scope, set())
+            outer = receivers.get(".".join(chain[:-1])) if len(chain) > 1 else None
+            if outer and outer in taken_here:
+                return {"cls"}
             chain.pop()
         return {"cls"}
 
@@ -1726,7 +1734,7 @@ def _hands_on(tree, spelled):
         which = declared_global if isinstance(node, ast.Global) else declared_nonlocal
         which.setdefault(where, set()).update(node.names)
 
-    def outwards(caller, named, aliases=None):
+    def outwards(caller, named, aliases=None, klass=None):
         """Every place this name may reach, innermost scope first.
 
         A set, not one place. A name can be assigned twice and this reader does not decide which
@@ -1738,7 +1746,10 @@ def _hands_on(tree, spelled):
         the same name is a fact about the text, so the search stops there.
         """
         if named in declared_global.get(caller, ()):
-            # global says the module, not the next scope out that happens to share the name.
+            # global says the module, not the next scope out that happens to share the name,
+            # and what the module holds under it may be an alias rather than a def.
+            if aliases and named in aliases.get(MODULE_LEVEL, {}):
+                return set(aliases[MODULE_LEVEL][named])
             return {named} if named in plain else set()
         outer = list(scopes(caller))
         if named in declared_nonlocal.get(caller, ()):
@@ -1752,7 +1763,10 @@ def _hands_on(tree, spelled):
                 return {candidate}
             if named in taken_names.get(scope, ()):
                 return set()
-        return set()
+        # A class body executes with the names it has already bound, so a default or a
+        # decorator written there reaches a method defined above it.
+        reached = methods.get((klass, named))
+        return {reached} if reached else set()
 
     # A name bound to a function, kept for the whole scope that binds it and visible to the
     # scopes inside it, the way a closure sees one. Chains are followed to a fixpoint, because
@@ -1808,13 +1822,28 @@ def _hands_on(tree, spelled):
 
             # One traversal for every shape a right-hand side can take: a name, a bound
             # method, a lambda, a conditional, a named expression, or one wrapped in another.
-            targets = names(answer)
-            if not targets:
-                continue
-            for named in holders:
-                if not isinstance(named, ast.Name):
+            # Unpacking is paired off first, so alias, other = carrier, str gives each name
+            # what it is actually given rather than the union of both.
+            paired = []
+            for holder in holders:
+                if (isinstance(holder, (ast.Tuple, ast.List))
+                        and isinstance(answer, (ast.Tuple, ast.List))
+                        and len(holder.elts) == len(answer.elts)):
+                    paired += list(zip(holder.elts, answer.elts))
+                else:
+                    paired.append((holder, answer))
+            for named, value in paired:
+                targets = names(value)
+                if not targets or not isinstance(named, ast.Name):
                     continue
-                known = aliases.setdefault(function, {}).setdefault(named.id, set())
+                # global and nonlocal say which scope the name belongs to, so the alias is
+                # recorded there rather than here, where the lookup would never consult it.
+                holder_scope = function
+                if named.id in declared_global.get(function, ()):
+                    holder_scope = MODULE_LEVEL
+                elif named.id in declared_nonlocal.get(function, ()):
+                    holder_scope = (function.rpartition(".")[0] or MODULE_LEVEL)
+                known = aliases.setdefault(holder_scope, {}).setdefault(named.id, set())
                 if not targets <= known:
                     known |= targets
                     growing = True
@@ -1822,7 +1851,8 @@ def _hands_on(tree, spelled):
     def called(node, function):
         """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
-            return outwards(function, node.func.id, aliases)
+            _where, in_class = places.get(id(node), (MODULE_LEVEL, None))
+            return outwards(function, node.func.id, aliases, in_class)
         if isinstance(node.func, ast.Attribute):
             through = _dotted(node.func.value)
             if (through is None and isinstance(node.func.value, ast.Call)
