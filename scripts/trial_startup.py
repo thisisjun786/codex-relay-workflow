@@ -160,6 +160,16 @@ RECEIPT_IDENTITY_REQUIRED = ("threadId", ("creation", "thread", "id"))
 RECEIPT_IDENTITY_OPTIONAL = ("taskId",)
 RECEIPT_IDENTITIES = RECEIPT_IDENTITY_REQUIRED + RECEIPT_IDENTITY_OPTIONAL
 
+# What an assignment that has not started yet answers with, from the relay's own state machine.
+# Its generation carries no head revision, so nothing has been emitted into it: that is the state
+# a trial's first dispatch goes into, and every later one means this generation already has a
+# head or a verdict. Dispatching into one of those reuses a prior head or opens a competing
+# revision, and either way the round trip being measured is not the one that runs. The action is
+# derived from the state by the same payload, so requiring both is what makes a payload that
+# names one and contradicts it with the other unreadable rather than agreeable.
+AWAITING_FIRST_EMIT = "requested"
+AWAITING_FIRST_EMIT_ACTION = "child_emits"
+
 
 def blank_settings(values):
     """Which of those settings are present and are not a non-empty string, in a stable order."""
@@ -1706,6 +1716,21 @@ def reading_capability(record, relay):
                 unasked = [] if verified is MISSING else sorted(
                     key for key in expect
                     if key in REQUESTABLE_SETTINGS and key not in verified)
+                # And what the receipt says it verified is what it says it asked for. The bridge
+                # builds that list out of the request, so a receipt naming a setting in one and
+                # not the other is not one it wrote: reading the list alone let a capture claim
+                # verification of something no request carried. The values have to be the ones
+                # the record declares too, because a request for another model is not this
+                # trial's request however faithfully the host echoed it.
+                requested = field(found["payload"], "settings", "requested")
+                if not isinstance(requested, dict):
+                    requested = MISSING
+                inconsistent = (verified is not MISSING and requested is not MISSING
+                                and sorted(verified) != sorted(requested))
+                unrequested = [] if requested is MISSING else sorted(
+                    key for key, value in expect.items()
+                    if key in REQUESTABLE_SETTINGS
+                    and not declared_agrees(value, field(requested, key)))
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
                     if not declared_agrees(value, field(actual, key))
@@ -1713,7 +1738,8 @@ def reading_capability(record, relay):
                 added = [] if actual is MISSING else sorted(
                     {key + "." + name for key, value in expect.items()
                      for name in beyond_declaration(value, field(actual, key))})
-                ok = (names and not disagreed and not unasked
+                ok = (names and not disagreed and not unasked and not unrequested
+                      and not inconsistent and requested is not MISSING
                       and isinstance(findings, list) and not findings
                       and actual is not MISSING and verified is not MISSING)
                 # Answerable only where every field its predicate reads is there. A receipt with
@@ -1722,6 +1748,7 @@ def reading_capability(record, relay):
                 absent = [name for name, value in (("the settings the host echoed", actual),
                                                    ("its findings", findings),
                                                    ("the settings it verified", verified),
+                                                   ("the settings it asked for", requested),
                                                    ("the thread it is about", identifies))
                           if value is MISSING]
                 cells.append(graded("receiptEcho:" + str(task), MISSING if absent else actual, ok,
@@ -2237,6 +2264,8 @@ def reading_assignment(record, relay):
                       and e.get("relationshipId") == assignment.get("relationshipId")), MISSING)
     ok = (same(responsible, assignment.get("relationshipId")) and entry is not MISSING
           and field(entry, "relationshipStatus") == "active"
+          and field(entry, "state") == AWAITING_FIRST_EMIT
+          and field(entry, "nextExpectedAction") == AWAITING_FIRST_EMIT_ACTION
           and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
           and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
           and same(field(entry, "executionGeneration"), assignment.get("executionGeneration")))
@@ -2244,6 +2273,8 @@ def reading_assignment(record, relay):
     # relationship and nothing else never said whether it was active or whose generation it was.
     absent = [name for name, value in (("which relationship owns this issue", responsible),
                                        ("its status", field(entry, "relationshipStatus")),
+                                       ("its state", field(entry, "state")),
+                                       ("what it waits for", field(entry, "nextExpectedAction")),
                                        ("its child", field(entry, "childTaskId")),
                                        ("its parent", field(entry, "parentTaskId")),
                                        ("its generation", field(entry, "executionGeneration")))
@@ -2253,6 +2284,9 @@ def reading_assignment(record, relay):
                         unreadable="the store did not answer " + ", ".join(absent),
                         evidence=("the responsible relationship is " + str(shown(responsible))
                                   + ", status " + str(shown(field(entry, "relationshipStatus")))
+                                  + ", state " + str(shown(field(entry, "state")))
+                                  + " waiting for "
+                                  + str(shown(field(entry, "nextExpectedAction")))
                                   + ", child " + str(shown(field(entry, "childTaskId")))
                                   + ", parent " + str(shown(field(entry, "parentTaskId")))
                                   + ", generation "
@@ -2304,11 +2338,15 @@ def assignment_now(record, relay):
     status = field(entry, "relationshipStatus")
     generation = field(entry, "executionGeneration")
     still = (same(responsible, assignment.get("relationshipId")) and status == "active"
+             and field(entry, "state") == AWAITING_FIRST_EMIT
+             and field(entry, "nextExpectedAction") == AWAITING_FIRST_EMIT_ACTION
              and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
              and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
              and same(generation, assignment.get("executionGeneration")))
     answered = MISSING if (responsible is MISSING or entry is MISSING
                            or status is MISSING or generation is MISSING
+                           or field(entry, "state") is MISSING
+                           or field(entry, "nextExpectedAction") is MISSING
                            or field(entry, "childTaskId") is MISSING
                            or field(entry, "parentTaskId") is MISSING) else responsible
     cell_now = graded("relationshipStillCurrent", answered, still, probe=probe,

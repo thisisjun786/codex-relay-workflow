@@ -309,6 +309,9 @@ class World:
                     "relationshipId": self.RELATIONSHIP, "issueKey": self.ISSUE_A,
                     "parentTaskId": self.PARENT_A, "childTaskId": self.CHILD_A,
                     "relationshipStatus": "active", "state": "requested",
+                    # Derived from the state by the same payload, so a fixture naming one and not
+                    # the other would be a shape the store does not produce.
+                    "nextExpectedAction": "child_emits",
                     "executionGeneration": 1,
                     "criteria": {"mode": "registered", "registered": 4},
                 }],
@@ -1216,7 +1219,7 @@ class PayloadContract(TrialCase):
     PRODUCERS = {
         ("assignment.py", "state"): ("relationshipId", "issueKey", "childTaskId",
                                      "parentTaskId", "relationshipStatus", "executionGeneration",
-                                     "criteria"),
+                                     "criteria", "state", "nextExpectedAction"),
         ("assignment.py", "for_issue"): ("issueKey", "assignments", "responsibleRelationship"),
         ("cli.py", "cmd_criteria_show"): ("setDigest", "sourceRef", "criteria"),
         ("cli.py", "cmd_settings_show"): ("task", "usable", "missing", "settings"),
@@ -1292,9 +1295,10 @@ class PayloadContract(TrialCase):
         # environment selection is read from the created thread. That claim is asserted against
         # the bridge's own source in ThirtyFirstHostedRound rather than taken on trust here.
         # verified is the same receipt's own list of the settings it was asked for and answered
-        # on, which is what says empty findings established them; the keys that list can hold
-        # are asserted against the contract's own source in FortyFifthHostedRound.
-        own |= {"creation", "thread", "environments", "verified"}
+        # on, which is what says empty findings established them, and requested is the request
+        # that list is built from; the keys either can hold are asserted against the contract's
+        # own source in FortyFifthHostedRound.
+        own |= {"creation", "thread", "environments", "verified", "requested"}
         # The runtime host record's own shape, which is not a relay payload either: the owned
         # pointer is what says which command a host reaches the runtime through.
         own |= {"pointer"}
@@ -2710,6 +2714,10 @@ class TwentyThirdHostedRound(TrialCase):
         for task in (World.PARENT_A, World.CHILD_A):
             self.world.captures["receipt-" + task + ".json"]["settings"]["actual"]["sandbox"] = {
                 "networkAccess": False, "type": "workspaceWrite"}
+            # The request carries it too, in its own order, because what the host echoed is what
+            # it was asked for and this case is about the order not mattering in either.
+            self.world.captures["receipt-" + task + ".json"]["settings"]["requested"][
+                "sandbox"] = {"networkAccess": False, "type": "workspaceWrite"}
         self.world.payloads["settings-show"]["payload"]["settings"]["sandbox"] = {
             "networkAccess": False, "type": "workspaceWrite"}
         self.world.flush()
@@ -4832,6 +4840,72 @@ class FortyFifthHostedRound(TrialCase):
         world.start_supervisor()
         document = world.preflight()
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_receipt_verifying_what_it_never_asked_for_is_not_one(self):
+        # The bridge builds the verified list out of the request, so a receipt naming a setting
+        # in one and not the other is not one it wrote. Reading that list on its own let a
+        # capture claim verification of a model, an effort and a sandbox no request carried.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            settings = self.world.captures["receipt-" + task + ".json"]["settings"]
+            settings["requested"] = {key: value for key, value in settings["requested"].items()
+                                     if key not in ("model", "reasoningEffort", "sandbox")}
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt verified settings its own request never carried")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_request_for_another_model_is_not_this_trials_request(self):
+        # And the values in it are the ones the record declares. A request faithfully echoed is
+        # still the wrong request if it asked for something else.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            settings = self.world.captures["receipt-" + task + ".json"]["settings"]
+            settings["requested"] = dict(settings["requested"], model="another-model")
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a request for another model was read as this trial's request")
+
+    def test_an_assignment_already_past_its_first_emit_is_not_ready(self):
+        # requested is the state whose generation carries no head revision: nothing has been
+        # emitted into it, which is what a first dispatch goes into. Every later state means the
+        # generation already has a head or a verdict, so dispatching reuses a prior head or opens
+        # a competing revision and the round trip measured is not the one that ran. Idempotent
+        # registration replays an active relationship in any of them.
+        for state, action in (("received", "daemon_delivers"),
+                              ("needs_changes", "child_corrects"),
+                              ("verified", "coordinator_integrates")):
+            with self.subTest(state=state):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                entry = world.payloads["assignment-find"]["payload"]["assignments"][0]
+                entry["state"] = state
+                entry["nextExpectedAction"] = action
+                world.flush()
+                world.start_supervisor()
+                document = world.preflight()
+                self.assertFalse(document["readyToStart"],
+                                 "a trial was cleared to dispatch into a generation with a head")
+                self.assertEqual(
+                    cells_of(document, "assignmentState")["relationship"]["value"], NOT_VERIFIED)
+
+    def test_an_assignment_that_advances_during_the_pass_is_caught_at_the_gate(self):
+        # And the same state read again before the dispatch, because a child that emits while the
+        # probes run leaves the first reading saying the generation is still empty.
+        advanced = json.loads(json.dumps(self.world.payloads["assignment-find"]["payload"]))
+        advanced["assignments"][0]["state"] = "received"
+        advanced["assignments"][0]["nextExpectedAction"] = "daemon_delivers"
+        self.world.payloads["after"] = {"subcommand": "assignment-find", "calls": 1,
+                                        "payloads": {"assignment-find": {"payload": advanced}}}
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "assignmentState")["relationship"]["value"], VERIFIED)
+        self.assertFalse(document["readyToStart"],
+                         "an assignment that advanced while the probes ran was published ready")
 
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
