@@ -147,7 +147,12 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         answer["unreadable"].append("no destination was named, so nothing was scanned")
         return answer
     root = Path(destination)
-    excluded = {str(Path(pointer_path))} if pointer_path else set()
+    # Built from the SURVEYED root's own spelling, because that is the spelling scandir will
+    # return children in. Holding the pointer's own spelling instead missed it whenever --dest
+    # was an alias of the directory the pointer sits in, and a real directory standing where
+    # the pointer belongs -- carrying an abandoned claim -- was then classified RECLAIM while
+    # the pointer cell beside it read NOT_A_LINK and promised it was left exactly as it is.
+    excluded = {str(root / Path(pointer_path).name)} if pointer_path else set()
     try:
         # Not a glob: a listing that cannot be made must raise here rather than come back as a
         # complete description of a smaller tree (reading.OMITTING_READERS).

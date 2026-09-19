@@ -9283,6 +9283,26 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertNotIn(str(host.pointer_path), found["residualPaths"],
                          "a destination that was never scanned claimed a pointer as its own")
 
+    def test_the_pointer_place_is_excluded_through_an_alias_of_this_destination(self):
+        """scandir returns children in the surveyed root's spelling, so an exclusion holding
+        the pointer's own spelling missed it whenever --dest was an alias. A real directory
+        standing where the pointer belongs was then classified RECLAIM while the pointer cell
+        beside it read NOT_A_LINK and promised it was left exactly as it is."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.pointer_path.unlink()
+            # A real directory where the pointer belongs, carrying an abandoned claim.
+            host.pointer_path.mkdir()
+            staging.write_claim(host.pointer_path, staging.STAGING, issue="CRW-100")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            found = _diagnose(host, dest=str(alias))
+        entries = {Path(entry["path"]).name: entry for entry in found["residue"]["entries"]}
+        self.assertEqual(entries[host.pointer_path.name]["decision"], residue.NOT_SCANNED)
+        self.assertNotIn(entries[host.pointer_path.name]["path"], found["residualPaths"],
+                         "the pointer cell says this path is left as it is, and the entry"
+                         " beside it listed the same object for removal")
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here
