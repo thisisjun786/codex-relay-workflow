@@ -3795,6 +3795,65 @@ RESOLVES_LIKE_PYTHON = {
          " with the carrier in the other arm, a single-valued answer resolved the property to"
          " the getter that does not carry and dropped the method again. The method and property"
          " tables hold every arm now, the way the alias table beside them already did."),
+    "a default every call through an alias overrides":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "alias = helper",
+          "",
+          "def consumer():",
+          "    return alias('fine')"),
+         "consumer", False,
+         "a FALSE POSITIVE, so no declared limit was available for it: the claim exceeding the"
+         " verified reach is the same fault as the claim falling short. Resolving a call to a"
+         " definition read the literal spelling only, so a call through an alias reached no"
+         " definition -- and since a definition no call reaches keeps its default, a helper"
+         " whose every call overrides it was reported as taking it. _hands_on had resolved the"
+         " same alias all along, which is the two-tables-one-question shape again."),
+    "a default an alias call leaves to itself":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "alias = helper",
+          "",
+          "def consumer():",
+          "    return alias()"),
+         "consumer", True,
+         "its pair: resolving the alias must not have made every aliased call look like it"
+         " supplies the argument. The call really does omit it, so the refusal reaches here."),
+    "a handle default an alias call supplies":
+        (TEXT,
+         ("def helper(path=HERE):",
+          "    return path.read_text()",
+          "",
+          "alias = helper",
+          "",
+          "def consumer(other):",
+          "    return alias(other)"),
+         "consumer", False,
+         "the handle side of the same defect, reported once and fixed in the shared answer"
+         " rather than twice."),
+    "a default behind an alias a conditional binds":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def other(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def pick(flag):",
+          "    alias = helper if flag else other",
+          "",
+          "    def consumer():",
+          "        return alias('fine')",
+          "    return consumer"),
+         "pick.consumer", False,
+         "the module's value-follower guard asked for this one rather than a reviewer, for the"
+         " second round running: resolving the alias off a bare Name made this a resolver"
+         " reading fewer forms than the vocabulary. Routing through _passed_through answers it"
+         " and covers a conditional alias at the same time."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4971,7 +5030,8 @@ def _default_applies(tree, places):
             continue
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
         if not isinstance(node, ast.Lambda):
-            owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, {})[node.name] = at
+            owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL,
+                             {}).setdefault(node.name, set()).add(at)
         spelled = node.args.posonlyargs + node.args.args
         if spelled and spelled[0].arg in ("self", "cls"):
             # A bound method is handed its receiver before any written argument, so the slot a
@@ -4993,24 +5053,55 @@ def _default_applies(tree, places):
                 continue
             for made in _lambda_named(value):
                 owned.setdefault(places.get(id(node), (MODULE_LEVEL, None))[0],
-                                 {})[named.id] = places.get(
-                                     id(made), (MODULE_LEVEL, None))[0]
+                                 {}).setdefault(named.id, set()).add(
+                                     places.get(id(made), (MODULE_LEVEL, None))[0])
+    # alias = helper makes alias() the same call. Reading only the literal spelling left every
+    # call through an alias unresolved, which reads as nobody calling helper at all -- and a
+    # definition no call reaches keeps its default, so a helper whose every call overrides the
+    # default was reported as taking it. To a fixpoint, because an alias of an alias is one.
+    # The scope's own definition wins: a rebinding is not registered over a def written here.
+    spreading = True
+    while spreading:
+        spreading = False
+        for node in ast.walk(tree):
+            at = places.get(id(node), (MODULE_LEVEL, None))[0]
+            for named, value in _bindings(node):
+                if not isinstance(named, ast.Name):
+                    continue
+                if named.id in owned.get(at, {}):
+                    continue
+                # Through the pass-through vocabulary, so an alias bound by a conditional is
+                # still an alias rather than a form this loop cannot see.
+                for spelled_as in _passed_through(value):
+                    reach = [] if at == MODULE_LEVEL else at.split(".")
+                    target = set()
+                    while reach and not target:
+                        target = set(owned.get(".".join(reach), {}).get(spelled_as.id) or ())
+                        reach.pop()
+                    if not target:
+                        target = set(owned.get(MODULE_LEVEL, {}).get(spelled_as.id) or ())
+                    # EVERY arm a conditional may hand over, not the first: with one arm's
+                    # default left uncontradicted it stays applicable and reports a caller
+                    # that can never receive it.
+                    if target - owned.get(at, {}).get(named.id, set()):
+                        owned.setdefault(at, {}).setdefault(named.id, set()).update(target)
+                        spreading = True
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         named = (_dotted(node.func) or "").rpartition(".")[2]
         reach = ([] if places.get(id(node), (MODULE_LEVEL, None))[0] == MODULE_LEVEL
                  else places.get(id(node), (MODULE_LEVEL, None))[0].split("."))
-        target = None
-        while reach and target is None:
-            target = owned.get(".".join(reach), {}).get(named)
+        target = set()
+        while reach and not target:
+            target = set(owned.get(".".join(reach), {}).get(named) or ())
             reach.pop()
-        if target is None:
-            target = owned.get(MODULE_LEVEL, {}).get(named)
-        if target is None:
+        if not target:
+            target = set(owned.get(MODULE_LEVEL, {}).get(named) or ())
+        if not target:
             continue
         for (place, argument), where in defined.items():
-            if place != target:
+            if place not in target:
                 continue
             # The receiver moves the slot only when the call does not WRITE it. holder.helper(x)
             # hands the instance over unwritten, so x lands one slot further along; the unbound
