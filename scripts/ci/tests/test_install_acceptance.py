@@ -1927,6 +1927,42 @@ RESOLVES_LIKE_PYTHON = {
          "outer", True,
          "binding a method through an alias is the same lookup as calling it through one, so"
          " the attribute path consults the scope-aware table the call path already did."),
+    "a decorator imported from a module that does not export it":
+        (REFUSAL,
+         ("from innocent import staticmethod as sm",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @sm",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "an import records a spelling, not a meaning. The owner is asked whether it really"
+         " exports the builtin, and one nothing here can read reaches nothing -- which keeps"
+         " the receiver the method has."),
+    "two classes of one spelling in different functions":
+        (REFUSAL,
+         ("def first():",
+          "    class Holder:",
+          "        def carrier(self):",
+          "            return \"fine\"",
+          "        def consumer(self):",
+          "            return self.carrier()",
+          "    return Holder",
+          "",
+          "def second():",
+          "    class Holder:",
+          "        def carrier(self):",
+          "            return reading.UNREADABLE",
+          "        def consumer(self):",
+          "            return self.carrier()",
+          "    return Holder"),
+         "second.consumer", True,
+         "two classes, and one key for both answers in both directions at once: the second's"
+         " consumer is lost and the first's would be invented. This was declared a limit of the"
+         " reader for a long while; it was a limit of cost, and only a form that cannot be"
+         " widened may be declared."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -2564,12 +2600,17 @@ def observe_all(root):
 # through classes while Python resolves through objects. Every measured disagreement between the
 # two is in RESOLVES_LIKE_PYTHON with the sample that produces it and the answer Python gives.
 #
-# One limit does not fit that record, because it cannot be planted as a single line: a class is
-# named by its own name, so two classes written with the same name in different function scopes
-# answer to one key and the first found wins. Telling them apart would mean carrying the
-# enclosing chain through the method index, the held-attribute table and the base table at once.
-# It is the one place where this reader takes the first answer rather than all of them, and it is
-# written down here rather than left to be discovered. That is what keeps the declaration from rotting: widening
+# A class is keyed by the scope it is written in as well as its spelling, so two classes of one
+# name in different functions are two classes to every table at once: the method index, the
+# held-attribute table, the property index and the base list. This was recorded here as a limit
+# for a long while, on the grounds that telling them apart would mean carrying the enclosing
+# chain through all of those together. It would, and that is what it now does -- a limit of cost
+# is not a limit of reach, and only what the reader genuinely cannot see belongs in a record of
+# what it cannot see.
+#
+# Place names are the other question and still leave classes out of the chain, so two methods of
+# one name in one function collide on purpose and the pin below fails rather than letting one
+# declaration speak for both. That is what keeps every declaration from rotting: widening
 # the derivation later makes the control for the form it now covers fail, which is the prompt to
 # delete the entry rather than leave a limitation standing that stopped being true.
 
@@ -2595,8 +2636,12 @@ def _places(tree):
     conclusion arrive inside an already declared place and be absorbed. The chain is what keeps
     the names apart -- two helpers may both be called spelled -- while a top-level function or a
     method still answers to the plain name the declarations are keyed by. Classes are not part of
-    the chain, so two classes with a method of the same name collide on purpose, and the pin
-    below fails rather than letting one declaration speak for both.
+    the chain, so two methods of one name in one function collide on purpose, and the pin below
+    fails rather than letting one declaration speak for both.
+
+    The CLASS each node sits in is named the other way, by the scope it is written in as well as
+    its spelling, because two classes of one name in different functions are two classes and the
+    tables keyed by them must not merge the pair.
     """
     found = {}
 
@@ -2653,7 +2698,11 @@ def _places(tree):
                 for held in held_walruses:
                     found[id(held)] = outer_place
             elif isinstance(child, ast.ClassDef):
-                owner = child.name
+                # Qualified by the scope it is written in. Two classes spelled the same in
+                # different functions are two classes, and a table keyed by the bare spelling
+                # makes one of them answer for the other.
+                owner = (klass + "." + child.name if klass
+                         else (".".join(chain) + "." + child.name if chain else child.name))
             # setdefault, because a default or a decorator was already placed in the scope
             # that evaluates it and walking into the def must not take it back.
             found.setdefault(id(child), (".".join(inner) if inner else MODULE_LEVEL, owner))
@@ -2833,7 +2882,9 @@ def _class_aliases(tree):
     because an alias of an alias names the same class.
     """
     places = _places(tree)
-    classes = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    by_spelling = _class_spellings(tree, places)
+    classes = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
+               if isinstance(node, ast.ClassDef)}
     # Per scope, and unconditional only. A name bound inside a function is that function's --
     # which a class written in that same function really does see -- and one under an if is a
     # guess about the run. An annotated binding is a binding.
@@ -2860,7 +2911,8 @@ def _class_aliases(tree):
                 else:
                     continue
                 spelling = (_dotted(value) or "").rpartition(".")[2]
-                reached = (spelling if spelling in classes
+                named_key = _class_named(by_spelling, spelling, scope)
+                reached = (named_key if named_key in classes
                            else here.get(spelling)
                            or named.get(MODULE_LEVEL, {}).get(spelling))
                 for target in targets:
@@ -2885,6 +2937,32 @@ def _bound_around(taken, scope, name):
     return False
 
 
+def _class_named(by_spelling, spelled_as, scope):
+    """The class a spelling reaches from that scope, innermost first, then the module.
+
+    Classes are keyed by their scope, so a base list and a qualified call have to be turned
+    into the same key the tables use before anything is looked up.
+    """
+    reach = [] if scope == MODULE_LEVEL else scope.split(".")
+    while reach:
+        found = by_spelling.get(".".join(reach), {}).get(spelled_as)
+        if found:
+            return found
+        reach.pop()
+    return by_spelling.get(MODULE_LEVEL, {}).get(spelled_as, spelled_as)
+
+
+def _class_spellings(tree, places):
+    """How a class spelling reaches its table key, per scope it is written in."""
+    by_spelling = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        where, key = places.get(id(node), (MODULE_LEVEL, None))
+        by_spelling.setdefault(where, {}).setdefault(node.name, key)
+    return by_spelling
+
+
 def _written_in(tree, places):
     """The scope each class's bases are resolved in, enclosing classes included.
 
@@ -2898,7 +2976,7 @@ def _written_in(tree, places):
             continue
         for inner in node.body:
             if isinstance(inner, ast.ClassDef):
-                owner[id(inner)] = node.name
+                owner[id(inner)] = places.get(id(node), (MODULE_LEVEL, None))[1]
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
@@ -2932,8 +3010,9 @@ def _instance_classes(tree):
     because second = first holds the same instance.
     """
     places = _places(tree)
-    classes = frozenset(node.name for node in ast.walk(tree)
-                        if isinstance(node, ast.ClassDef))
+    by_spelling = _class_spellings(tree, places)
+    classes = frozenset(places.get(id(node), (MODULE_LEVEL, None))[1]
+                        for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
     alias_of = _class_aliases(tree)
 
     def held_in(made, scope, name):
@@ -2958,7 +3037,8 @@ def _instance_classes(tree):
                     # A bare name, resolved where it is written: Alias = Holder makes Alias()
                     # a Holder. A qualified one is that owner's class, not this file's,
                     # whatever its last part is spelled.
-                    builds = (_base_named(alias_of, value.func.id, scope)
+                    builds = (_class_named(by_spelling,
+                                           _base_named(alias_of, value.func.id, scope), scope)
                               if isinstance(value.func, ast.Name) else None)
                 else:
                     builds = held_in(made, scope, _dotted(value) or "")
@@ -3148,9 +3228,11 @@ def _held_by_class(tree, spelled, over=None):
             continue
         for statement in node.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                rebound.setdefault(node.name, set()).add(statement.name)
+                rebound.setdefault(places.get(id(node), (MODULE_LEVEL, None))[1],
+                                   set()).add(statement.name)
             elif not isinstance(statement, (ast.For, ast.AsyncFor)):
-                rebound.setdefault(node.name, set()).update(_binds_locally(statement))
+                rebound.setdefault(places.get(id(node), (MODULE_LEVEL, None))[1],
+                                   set()).update(_binds_locally(statement))
     # A class attribute assigned after the class statement takes part in lookup exactly as one
     # written in the body does. Only at the top level of the module, where it certainly runs:
     # one under an if or inside a function is the same guess about the run as before.
@@ -3167,9 +3249,13 @@ def _held_by_class(tree, spelled, over=None):
     # An attribute declared on a base is held by everything under it, the way a method is.
     alias_of = _class_aliases(tree)
     written = _written_in(tree, places)
-    parents = {node.name: [_base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
-                                       written.get(id(node), MODULE_LEVEL))
-                           for base in node.bases]
+    by_spelling = _class_spellings(tree, places)
+    parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
+               [_class_named(by_spelling,
+                             _base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
+                                         written.get(id(node), MODULE_LEVEL)),
+                             written.get(id(node), MODULE_LEVEL))
+                for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
     growing = True
@@ -3206,9 +3292,13 @@ def _hands_on(tree, spelled):
     places = _places(tree)
     alias_of = _class_aliases(tree)
     written = _written_in(tree, places)
-    parents = {node.name: [_base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
-                                       written.get(id(node), MODULE_LEVEL))
-                           for base in node.bases]
+    by_spelling = _class_spellings(tree, places)
+    parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
+               [_class_named(by_spelling,
+                             _base_named(alias_of, (_dotted(base) or "").rpartition(".")[2],
+                                         written.get(id(node), MODULE_LEVEL)),
+                             written.get(id(node), MODULE_LEVEL))
+                for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
     # An instance answers to its class here too: holder = Holder() makes holder.carrier() the
@@ -3219,8 +3309,8 @@ def _hands_on(tree, spelled):
     class_scope = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            where = places.get(id(node), (MODULE_LEVEL, None))[0]
-            class_scope.setdefault(node.name, []).append(
+            where, key = places.get(id(node), (MODULE_LEVEL, None))
+            class_scope.setdefault(key, []).append(
                 ("<class " + node.name + " in " + where + ">", where))
     # Directly in a class body is what makes a def a method: a helper nested inside a method is
     # not one, and a class written inside a function still has methods.
@@ -3257,7 +3347,8 @@ def _hands_on(tree, spelled):
     # guess about the run that a conditional class binding is, and reading it as the definite
     # meaning of a decorator name suppresses a receiver the method really has.
     module_statements = {id(statement) for statement in getattr(tree, "body", ())}
-    owns_a_body = {id(statement): node.name for node in ast.walk(tree)
+    owns_a_body = {id(statement): places.get(id(node), (MODULE_LEVEL, None))[1]
+                   for node in ast.walk(tree)
                    if isinstance(node, ast.ClassDef) for statement in node.body}
     # Which function body owns a statement, so a class written inside that function closes over
     # what it bound. An unrelated function's binding is still that function's.
@@ -3271,6 +3362,23 @@ def _hands_on(tree, spelled):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             bound = [(node.lineno, alias.asname or alias.name.split(".")[0],
                       alias.name.rpartition(".")[2]) for alias in node.names]
+            if isinstance(node, ast.ImportFrom):
+                # from X import property as prop binds the descriptor only if X really exports
+                # it. The owner is asked, in this module's namespace first and then the ones
+                # already imported; one nothing here can read reaches nothing, which keeps a
+                # receiver the method may really have.
+                owner = (vars(sys.modules[__name__]).get(node.module or "")
+                         or sys.modules.get(node.module or ""))
+                bound = []
+                for alias in node.names:
+                    exported = (getattr(owner, alias.name, None)
+                                if isinstance(owner, types.ModuleType) else None)
+                    builtin = getattr(sys.modules.get("builtins"), alias.name, None)
+                    if builtin is None:
+                        builtin = getattr(sys.modules.get("functools"), alias.name, None)
+                    bound.append((node.lineno, alias.asname or alias.name,
+                                  alias.name if exported is not None and exported is builtin
+                                  else None))
             imported |= {name for _line, name, _value in bound}
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -3422,18 +3530,20 @@ def _hands_on(tree, spelled):
             if not isinstance(statement, ast.Assign) or not isinstance(statement.value, ast.Call):
                 continue
             if not resolves_to(statement.value.func, ("property", "cached_property"),
-                               node.name,
+                               places.get(id(node), (MODULE_LEVEL, None))[1],
                                places.get(id(node), (MODULE_LEVEL, None))[0]):
                 continue
             for given in list(statement.value.args)[:1]:
-                reached = methods.get((node.name,
+                reached = methods.get((places.get(id(node), (MODULE_LEVEL, None))[1],
                                        (_dotted(given) or "").rpartition(".")[2]))
                 if not reached:
                     continue
                 for target in statement.targets:
                     for inner in ast.walk(target):
                         if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
-                            properties.setdefault((node.name, inner.id), reached)
+                            properties.setdefault(
+                                (places.get(id(node), (MODULE_LEVEL, None))[1], inner.id),
+                                reached)
     # The places that ARE getters, so a class alias naming one can be recognised as naming a
     # property rather than an ordinary method.
     property_places = set(properties.values())
@@ -3493,7 +3603,8 @@ def _hands_on(tree, spelled):
                                                                    ast.match_case))], False)
 
         for named, line in bound_in(node.body):
-            class_bound.setdefault(node.name, {}).setdefault(named, line)
+            class_bound.setdefault(places.get(id(node), (MODULE_LEVEL, None))[1],
+                                   {}).setdefault(named, line)
 
     # Where a scope says a name belongs to the module, so a receiver search stops there instead
     # of finding the method around it: global self makes self the module's object, whatever the
@@ -3860,6 +3971,8 @@ def _hands_on(tree, spelled):
             named_class = (through or "").rpartition(".")[2] or None
             aliased = (_base_named(alias_of, named_class, function)
                        if named_class else None)
+            aliased = (_class_named(by_spelling, aliased, function)
+                       if aliased is not None else None)
             if isinstance(node.func.value, ast.Name) and id(node.func.value) in holds_an:
                 # A name holding an instance names its class, whatever it is spelled.
                 named_class = holds_an[id(node.func.value)]
@@ -5847,6 +5960,8 @@ HANDED = {
     "_base_named": NOTHING,
     "_bound_around": NOTHING,
     "_written_in": NOTHING,
+    "_class_named": NOTHING,
+    "_class_spellings": NOTHING,
     "_instance_classes": NOTHING,
     "_shadowing_names": NOTHING,
     "places_reached": NOTHING,
