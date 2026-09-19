@@ -9706,7 +9706,7 @@ class DiagnosisReportsResidue(unittest.TestCase):
                           "an unexpandable --dest was reported as an internal fault rather"
                           " than as a reading of the input that failed")
         self.assertTrue(
-            any("could not be expanded" in one
+            any("could not be settled" in one
                 for one in found.get("residue", {}).get("unreadable") or []),
             "the destination could not be read and the survey did not say so: "
             + repr(found.get("residue", {}).get("unreadable")))
@@ -9735,7 +9735,7 @@ class DiagnosisReportsResidue(unittest.TestCase):
         self.assertEqual(found.get("residualPaths") or [], [],
                          "a cleanup list was published for a destination the operator never"
                          " named")
-        self.assertTrue(any("could not be expanded" in one
+        self.assertTrue(any("could not be settled" in one
                             for one in survey.get("unreadable") or []),
                         "the reason there is nothing to scan was dropped")
         self.assertNotIn("no destination was named, so nothing was scanned",
@@ -9771,6 +9771,34 @@ class DiagnosisReportsResidue(unittest.TestCase):
                             str(Path(host.pointer_path).parent),
                             "diagnosis fell back to the installation the host record names"
                             " while the operator had named one")
+
+    def test_a_relative_destination_from_a_deleted_directory_is_a_reading_not_a_crash(self):
+        """Third spelling in the same class, and a different exception. absolute() reads the
+        current working directory for a relative path, and a working directory that has been
+        removed answers ENOENT -- an OSError, where the unknown ~user raises RuntimeError. Both
+        are one answer, so the predicate catches both rather than the one that was reported.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            gone = Path(temporary) / "a-working-directory-that-goes-away"
+            gone.mkdir()
+            entered = os.getcwd()
+            try:
+                os.chdir(gone)
+                gone.rmdir()
+                try:
+                    found = _diagnose(host, dest="a-relative-destination")
+                except Exception as error:
+                    found = {"raised": type(error).__name__ + ": " + str(error)}
+            finally:
+                os.chdir(entered)
+        self.assertNotIn("raised", found,
+                         "a relative destination read from a deleted working directory took"
+                         " the whole payload with it: " + str(found.get("raised")))
+        self.assertTrue(any("could not be settled" in one
+                            for one in (found.get("residue") or {}).get("unreadable") or []),
+                        "the destination could not be settled and the survey did not say so: "
+                        + repr((found.get("residue") or {}).get("unreadable")))
 
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):

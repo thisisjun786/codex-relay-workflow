@@ -90,6 +90,15 @@ def _not_registered(observed):
     found = observed.get("adapterRegistrations") or 0
     if found:
         return RULED_OUT, (str(found) + " registration(s) in the hook file run this adapter")
+    if not observed.get("registrationReadHere", True):
+        # An empty hook file is what a CORRECTLY installed plugin-owned host looks like: the
+        # registration lives in a package manifest this command does not read. Establishing an
+        # absence from the one file it is deliberately not in reported a repair that would put
+        # a second owner on one event, which the ownership rules exist to refuse.
+        return NOT_RULED_OUT, ("these settings record an owner whose registration lives in a"
+                               " package manifest rather than in this hook file, and this"
+                               " command does not read that manifest, so an empty hook file"
+                               " establishes nothing about whether this adapter is registered")
     kept = observed.get("unregisteredRecords") or 0
     if kept:
         return ESTABLISHED, ("the hook file was read and registers this adapter for nothing, so"
@@ -413,8 +422,8 @@ def _nothing_recorded(observed):
 # its predicate as well as its provenance for the same reason the swap gate's cells do: a rule
 # written at the site it is applied is a rule that drifts from the one that was declared.
 CAUSE_RULES = {
-    NOT_REGISTERED: (("registrationReadable", "adapterRegistrations", "unregisteredRecords"),
-                     _not_registered),
+    NOT_REGISTERED: (("registrationReadable", "adapterRegistrations", "registrationReadHere",
+                      "unregisteredRecords"), _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
     ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),

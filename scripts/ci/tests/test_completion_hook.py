@@ -2679,6 +2679,77 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "one directory named through an alias was counted as two journals"
                          " that might disagree")
 
+    def test_a_plugin_owned_registration_is_not_an_absent_one(self):
+        """The hook file is deliberately empty on a plugin-owned host: that registration lives
+        in the package manifest, which this command does not read. Establishing an absence from
+        the one file it is deliberately not in named a repair that would put a second owner on
+        one event, which is exactly what the ownership rules refuse.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT))
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registrationOwner"]["value"], completion.OWNER_PLUGIN,
+                         "the fixture did not build the plugin-owned host this case is about")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
+                            "an empty hook file on a plugin-owned host was read as an absent"
+                            " registration, in a payload whose own cell says the plugin owns"
+                            " it")
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
+                         "whether this adapter is registered was not established either way,"
+                         " and the answer has to say so rather than choose")
+
+    def test_a_link_retargeted_between_two_listings_does_not_share_a_snapshot(self):
+        """The identity is captured WITH the snapshot rather than re-derived from the spelling.
+        Comparing a stored spelling again asks the filesystem a fresh question, so a link
+        retargeted between two registrations matched its NEW target and handed back the listing
+        taken from the old one -- a wrong count rather than a missing one.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            holding = Path(temporary) / "the-links-first-target"
+            empty = Path(temporary) / "the-links-second-target"
+            holding.mkdir()
+            empty.mkdir()
+            alias = Path(temporary) / "retargeted-link"
+            alias.symlink_to(holding)
+            # The first registration reads the LINK; the second reads the link's eventual
+            # target under its own name.
+            amend_settings(temporary, journalRoot=str(alias))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(empty)
+            second.write_text(json.dumps(document), encoding="utf-8")
+
+            real, taken = completion._journal_cell, []
+
+            def listing(config):
+                cell = real(config)
+                taken.append(config.get("journalRoot"))
+                if len(taken) == 1:
+                    # Between the two listings, exactly the window this case is about.
+                    alias.unlink()
+                    alias.symlink_to(empty)
+                return cell
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=listing):
+                found = completion.status(codex_home=temporary, environ={})
+            self.assertEqual(taken[0], str(alias),
+                             "the fixture did not read the link first: " + repr(taken))
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual([entry.get("journalRoot") for entry in named],
+                         [str(alias), str(empty)],
+                         "the second registration was handed the listing taken from the link's"
+                         " OLD target, because identity was re-derived from the spelling after"
+                         " the link had moved")
+
     def test_records_already_written_survive_the_registration_being_removed(self):
         """An empty hook file establishes the PRESENT. A registration removed after the hook
         had fired leaves its journal exactly where it was, and this answer used to say no

@@ -106,17 +106,39 @@ def same_directory(one, other):
 
     Every one of those was a STRING answering a question about the filesystem. This asks the
     filesystem. A failure establishes nothing and is answered "different", which keeps an
-    unverified pointer out of a cleanup list and two unproven aliases out of one cache entry --
-    the direction both callers fail in on purpose.
+    unverified pointer out of a cleanup list -- the direction it fails in on purpose.
 
-    It lives here rather than in either caller because it has two: the destination a survey
-    describes, and the journal a registration records through, are both named by spellings that
-    can be aliases. A second copy kept equal by hand is the shape this repository removes.
+    Ask this only where BOTH spellings are being read together. Where one side was read
+    EARLIER, ask path_identity instead: re-statting a stored spelling asks about whatever it
+    names now, which is not the question the earlier reading answered.
     """
     try:
         return os.path.samefile(str(one), str(other))
     except (OSError, ValueError):
         return False
+
+
+def path_identity(path):
+    """The identity the kernel gives a path NOW, as a value a later comparison can be pinned to.
+
+    same_directory asks whether two spellings name one thing at the moment it is called. That is
+    the wrong question when one side was read earlier: a symlink retargeted in between matches
+    its NEW target, and a caller comparing against the stored spelling would then reuse a
+    reading taken from the old one -- a wrong reading rather than a missing one, which is the
+    failure this module exists to avoid.
+
+    It lives here beside same_directory because both are the same subject: what the kernel, and
+    not a string, says two paths are. A destination a survey describes and a journal a
+    registration records through are both named by spellings that can be aliases.
+
+    None where the kernel could not answer, and a None must never compare equal to anything: an
+    identity that was not established may not collapse two readings into one.
+    """
+    try:
+        found = os.stat(str(path))
+    except (OSError, ValueError):
+        return None
+    return (found.st_dev, found.st_ino)
 
 
 class Reading:

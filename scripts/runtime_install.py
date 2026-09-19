@@ -1060,8 +1060,11 @@ def cmd_diagnose(args):
     if destination is not None:
         try:
             settled_destination = Path(destination).expanduser().absolute()
-        except RuntimeError as error:
-            unreadable_destination = ("the destination named by --dest could not be expanded: "
+        # OSError as well as RuntimeError: absolute() reads the current working directory for a
+        # relative spelling, and a working directory that has been removed answers ENOENT. Both
+        # are one answer here -- this command could not settle the path it was given.
+        except (OSError, RuntimeError) as error:
+            unreadable_destination = ("the destination named by --dest could not be settled: "
                                       + str(destination) + ": " + type(error).__name__ + ": "
                                       + str(error))
     # The recorded pointer first: that is the link this host actually reaches a runtime

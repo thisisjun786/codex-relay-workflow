@@ -1609,9 +1609,11 @@ def journals_named(registrations, already_read=None):
     # let a Stop landing between the reads report two different counts for one directory --
     # enough to establish "recorded on another path" when there is only one path.
     scanned = {}
-    # The spelling each snapshot was taken through, so a later registration can ask the kernel
-    # whether its own spelling reaches that same directory. Kept beside the snapshots rather
-    # than derived from their keys, because a key is lexical and this question is not.
+    # The kernel's identity for each snapshot, captured when it was taken, so a later
+    # registration can ask whether its own spelling reaches that same directory. Kept beside
+    # the snapshots rather than derived from their keys, because a key is lexical and this
+    # question is not -- and stored as the ANSWER rather than as the spelling, so a link
+    # retargeted afterwards cannot make a stale snapshot look current.
     aliases = {}
     for registration in registrations:
         if not registration.get("settings"):
@@ -1654,9 +1656,12 @@ def journals_named(registrations, already_read=None):
         # cannot, the spellings keep their own keys rather than being merged on a guess: a
         # second reading of one directory is the cost, and a shared reading of two different
         # ones is what that refuses to cost.
-        if configured and root not in scanned:
-            alias = next((key for key, spelling in aliases.items()
-                          if reading.same_directory(configured, spelling)), None)
+        # Taken BEFORE the listing rather than after it. An identity captured afterwards can
+        # already be one the link acquired while the listing ran, which is the substitution
+        # this exists to prevent rather than a narrower version of it.
+        mine = reading.path_identity(configured) if configured else None
+        if mine is not None and root not in scanned:
+            alias = next((key for key, taken in aliases.items() if taken == mine), None)
             if alias is not None:
                 root = alias
         if root in scanned:
@@ -1667,8 +1672,12 @@ def journals_named(registrations, already_read=None):
         else:
             cell = _journal_cell(config)
             scanned[root] = cell
-            if configured:
-                aliases[root] = configured
+            if mine is not None:
+                # The answer taken above, stored rather than the spelling that produced it:
+                # comparing a stored spelling again asks the filesystem a fresh question, and a
+                # link retargeted between two registrations would then match its new target and
+                # hand back the listing taken from the old one.
+                aliases[root] = mine
         value = cell["value"]
         entry["journal"] = cell
         entry["journalRoot"] = cell.get("journalRoot")
@@ -1920,6 +1929,11 @@ def status(codex_home=None, environ=None, event=EVENT):
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
+        # Whether the hook file is where this host's registration would BE. The plugin owner
+        # registers through its package manifest, which this command does not read, so on a
+        # correctly plugin-owned host an empty hook file is exactly what a working installation
+        # looks like and establishes nothing at all about registration.
+        "registrationReadHere": owner_of(config) != OWNER_PLUGIN,
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
