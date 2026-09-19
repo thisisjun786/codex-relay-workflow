@@ -65,9 +65,11 @@ reference is recorded as a reference so nobody later reads it as an instruction.
 role carries no project's issues and no issue's implementation: it holds no checkout and it merges
 nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). That describes
 the role rather than converting whatever task the designation arrives in, so read this task's own
-current binding before binding anything. A task already bound as some project's parent does not
-become the supervisor by being handed a designation: its project would lose its parent and its
-children their owner. The supervision belongs in a task of its own, or in the existing supervisor
+current binding before binding anything. A task already bound to a scope does not become the
+supervisor by being handed a designation, and that holds for any binding rather than a project's
+alone: a parent would leave its project without one and its children without an owner, and an
+issue-bound task would abandon or blur the implementation it owns. Each task is bound to one Linear
+level, so what decides this is whether the task is free, not which level happens to hold it. The supervision belongs in a task of its own, or in the existing supervisor
 where there is one, and the designation is routed there: to an existing supervisor by the delivery
 in the reuse order below, and otherwise to a task created for it the way this workflow creates any
 independent task, under

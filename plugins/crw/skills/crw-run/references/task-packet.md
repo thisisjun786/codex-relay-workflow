@@ -286,8 +286,12 @@ text the sender wrote, and no bundled store enforces these levels
 ([OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity)). The receiving parent
 matches the claimed supervisor against what it already holds: its own record, and the initiative's
 record read directly rather than quoted back to it inside the message, since a quotation proves
-only what the sender wrote. Where those disagree it answers the message as a peer request to be
-decided rather than as an instruction, and says so in the reply. One parent cannot assign work to another, so a handoff whose
+only what the sender wrote. Identity is half of it, because a handoff naming the right supervisor
+can still carry the wrong scope, by forgery, by mistake, or by arriving after the scope moved. The
+same read settles the rest: that the initiative named is the one whose record this is, that this
+parent's own project is in that initiative's approved set, and that the designation revision the
+handoff cites is the one in force. Where any of those disagree it answers the message as a peer
+request to be decided rather than as an instruction, and says so in the reply. One parent cannot assign work to another, so a handoff whose
 sender cannot be confirmed as this project's supervisor is not a handoff.
 
 A project record naming no supervisor is the ordinary state of a project that predates the
