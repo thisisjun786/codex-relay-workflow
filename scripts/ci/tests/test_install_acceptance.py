@@ -1862,6 +1862,71 @@ RESOLVES_LIKE_PYTHON = {
          "a class body closes over the function around it, so that binding is a real alias"
          " there. Its pair is the function-local alias that must NOT leak into an unrelated"
          " class: the difference is whether the class is written inside that function."),
+    "a handle name copied in a scope that did not derive it":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer(stream):",
+          "    alias = stream",
+          "    return alias.read()"),
+         "consumer", False,
+         "the scope check was on the matcher and not on the propagation, so copying an"
+         " unrelated parameter to a second name minted a handle the module never declared."),
+    "an open another object owns":
+        (TEXT,
+         ("import innocent",
+          "",
+          "def helper():",
+          "    return innocent.open(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "only a handle's own open opens the file this module asks about. Accepting any"
+         " qualified name spelled open reads somebody's method as the builtin, and HERE.open()"
+         " beside it is the case that must keep working."),
+    "an instance built through a class alias":
+        (REFUSAL,
+         ("class Holder:",
+          "    unread = reading.UNREADABLE",
+          "",
+          "Alias = Holder",
+          "",
+          "def consumer():",
+          "    holder = Alias()",
+          "    return holder.unread"),
+         "consumer", True,
+         "the constructor is a name like any other, so it is resolved where it is written"
+         " before the instance is recorded."),
+    "an instance built by another module's class of the same name":
+        (REFUSAL,
+         ("import innocent",
+          "",
+          "class Holder:",
+          "    unread = reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    holder = innocent.Holder()",
+          "    return holder.unread"),
+         "consumer", False,
+         "its pair: a qualified constructor is that owner's class, not this file's, whatever"
+         " its last part is spelled."),
+    "a method bound through a class alias in a function":
+        (REFUSAL,
+         ("class Holder:",
+          "    @staticmethod",
+          "    def carrier():",
+          "        return reading.UNREADABLE",
+          "",
+          "def outer():",
+          "    Alias = Holder",
+          "    alias = Alias.carrier",
+          "    return alias()"),
+         "outer", True,
+         "binding a method through an alias is the same lookup as calling it through one, so"
+         " the attribute path consults the scope-aware table the call path already did."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -2869,6 +2934,7 @@ def _instance_classes(tree):
     places = _places(tree)
     classes = frozenset(node.name for node in ast.walk(tree)
                         if isinstance(node, ast.ClassDef))
+    alias_of = _class_aliases(tree)
 
     def held_in(made, scope, name):
         """The class this name holds an instance of, looked up innermost first."""
@@ -2888,9 +2954,14 @@ def _instance_classes(tree):
         for node in ast.walk(tree):
             scope = places.get(id(node), (MODULE_LEVEL, None))[0]
             for target, value in _bindings(node):
-                builds = ((_dotted(value.func) or "").rpartition(".")[2]
-                          if isinstance(value, ast.Call)
-                          else held_in(made, scope, _dotted(value) or ""))
+                if isinstance(value, ast.Call):
+                    # A bare name, resolved where it is written: Alias = Holder makes Alias()
+                    # a Holder. A qualified one is that owner's class, not this file's,
+                    # whatever its last part is spelled.
+                    builds = (_base_named(alias_of, value.func.id, scope)
+                              if isinstance(value.func, ast.Name) else None)
+                else:
+                    builds = held_in(made, scope, _dotted(value) or "")
                 bound = _dotted(target)
                 if builds in classes and bound and made.get((scope, bound)) != builds:
                     made[(scope, bound)] = builds
@@ -3678,7 +3749,13 @@ def _hands_on(tree, spelled):
                         # it searches the rest of THIS class's line, not each base's in turn.
                         return inherited(klass, expression.attr, (), aliases, after=True)
                     qualifier = (through or "").rpartition(".")[2] or None
-                    if qualifier is not None:
+                    aliased = (_base_named(alias_of, qualifier, function)
+                               if qualifier else None)
+                    if aliased is not None and aliased != qualifier and aliased in parents:
+                        # A name the scope binds to a class IS that class here too, which the
+                        # module-only resolver below cannot see.
+                        qualifier = aliased
+                    elif qualifier is not None:
                         qualifier = names_class(qualifier, expression.lineno) or qualifier
                     return inherited(klass if through in instance(function) else qualifier,
                                      expression.attr, (), aliases)
@@ -4168,33 +4245,52 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
     what open answers with is the file it was given and that is the whole of what is needed here.
     """
     places, known, where_from, growing = _places(tree), set(handles), {}, True
+    declared = frozenset(handles)
+
+    def seen_in(scope, made):
+        """Whether a use in this scope sees a handle derived in one of those."""
+        return any(scope == owner or scope.startswith(owner + ".") for owner in made)
+
     while growing:
         growing = False
-        def reaches(expression):
+        def reaches(expression, scope=MODULE_LEVEL):
             """Whether this right-hand side names a handle, either arm of a conditional too."""
             if isinstance(expression, ast.IfExp):
-                return reaches(expression.body) or reaches(expression.orelse)
+                return reaches(expression.body, scope) or reaches(expression.orelse, scope)
             if isinstance(expression, (ast.NamedExpr, ast.Await)):
-                return reaches(expression.value)
+                return reaches(expression.value, scope)
             if isinstance(expression, ast.BoolOp):
-                return any(reaches(value) for value in expression.values)
+                return any(reaches(value, scope) for value in expression.values)
             if (isinstance(expression, ast.Call)
                     and (_dotted(expression.func) or "").rpartition(".")[2] == "open"):
-                if not opens_a_file or (isinstance(expression.func, ast.Name)
-                                        and id(expression.func) in shadowed):
+                opener = expression.func
+                if isinstance(opener, ast.Name):
                     # A scope that binds open itself, or a module that defines one, has
                     # shadowed the builtin: what that call answers with is not this file.
+                    if not opens_a_file or id(opener) in shadowed:
+                        return False
+                elif not (isinstance(opener, ast.Attribute)
+                          and reaches(opener.value, scope)):
+                    # innocent.open is that object's own method. Only a handle's own open --
+                    # HERE.open() -- opens the file this module is asking about.
                     return False
-                opener = expression.func
-                return any(reaches(given) for given in list(expression.args)
+                return any(reaches(given, scope) for given in list(expression.args)
                            + [given.value for given in expression.keywords]
                            + ([opener.value] if isinstance(opener, ast.Attribute) else []))
-            return _dotted(expression) in known
+            named = _dotted(expression)
+            if named is None or named not in known:
+                return False
+            if isinstance(expression, ast.Name) and id(expression) in shadowed:
+                return False
+            # A DERIVED handle belongs to the scope that derived it; a declared one is the
+            # module's everywhere. Otherwise an unrelated parameter of the same spelling
+            # becomes a handle simply by being copied to a second name.
+            return named in declared or seen_in(scope, where_from.get(named, ()))
 
         for node in ast.walk(tree):
             scope, _klass = places.get(id(node), (MODULE_LEVEL, None))
             for target, value in _bindings(node):
-                if not reaches(value):
+                if not reaches(value, scope):
                     continue
                 named = _dotted(target)
                 if not named:
@@ -4281,6 +4377,13 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 # HERE.open().read() names the handle as the receiver of open rather than as
                 # its argument, and it is the same read either way.
                 opener = node.func.value.func
+                if isinstance(opener, ast.Name):
+                    if id(opener) in shadowed:
+                        return None
+                elif not (isinstance(opener, ast.Attribute)
+                          and spelled(opener.value, klass)):
+                    # Only a handle's own open opens the file this module asks about.
+                    return None
                 for argument in (list(node.func.value.args)
                                  + [given.value for given in node.func.value.keywords]
                                  + ([opener.value] if isinstance(opener, ast.Attribute)
