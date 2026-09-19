@@ -1043,7 +1043,9 @@ class ProcessWitnessTests(unittest.TestCase):
         traces = sorted((run_root() / "on" / "witness").glob("*.strace"))
         self.assertTrue(traces, "no trace of any firing was left on disk to read")
         first = traces[0].read_text(encoding="utf-8", errors="replace").splitlines()[0]
-        started = re.match(r"^\d+ execve\(\"([^\"]+)\", \[(.*)\], ", first)
+        # The tracer pads its process column, so the separator is whitespace rather than one
+        # space. A stricter pattern read nothing on a runner whose pids are shorter.
+        started = re.match(r"^\d+\s+execve\(\"([^\"]+)\", \[(.*)\], ", first)
         self.assertTrue(started, "the first thing the tracer recorded is not a start: " + first[:200])
         self.assertEqual(started.group(1), sys.executable,
                          "the kernel started an executable other than the one the run registered")

@@ -1206,6 +1206,9 @@ WITNESS_DOES_NOT_COVER = (
     " changed in between is answered as it is afterwards",
     "the tracer itself, which is trusted rather than checked, and its own trace file, which it"
     " writes without tracing",
+    "a host whose tracer rejects one of the options this witness needs. The probe reports that"
+    " as not performed, carrying the tracer's own complaint, rather than tracing with a"
+    " narrower option set whose output this parser was not written against",
     "anything a process does after the tracer stops, including a grandchild that outlives the"
     " firing. That firing is reported as faulted rather than as one that wrote nothing",
 )
@@ -2374,12 +2377,18 @@ def stability(earlier, later):
                             " and it does not decide this judgment."}
 
 
-def compare(root):
-    """Build both arms, drive every scenario at both, and read what each one has afterwards."""
+def compare(root, tracer=None):
+    """Build both arms, drive every scenario at both, and read what each one has afterwards.
+
+    The tracer is probed ONCE per run and handed in. Probing again here would answer a second
+    time about a host that can change between the two, and the caller that asked for the first
+    answer - --require-witness - would have refused on one probe while the rows were taken
+    under another.
+    """
     launcher = launcher_for(root)
     # Before the arms. The install is the first subprocess an arm makes, and whether this host can
     # witness a process has to be answered before anything that reading decides is started.
-    tracer = tracer_probe(root)
+    tracer = tracer_probe(root) if tracer is None else tracer
     arms = {name: Arm(root, name, launcher, tracer) for name in ARMS}
     scenarios = {"_arms": {}, "_tracer": tracer,
                  "_wrote": [launcher] + [Path(place) for place in tracer.get("wrote") or []]
@@ -2499,15 +2508,15 @@ def main(argv=None):
     answer = None
     try:
         earlier = source_identity()
-        # Asked before the work rather than after it: a caller who needs this run to witness the
-        # process boundary needs to be told it cannot before waiting for rows that will not carry
-        # the answer.
-        insisted = tracer_probe(root) if args.require_witness else {"usable": True}
-        if not insisted.get("usable"):
+        # Probed once, here, and handed to the run. Asking twice would let the answer that
+        # decides the refusal differ from the answer the rows were taken under, so a run could
+        # pass --require-witness on one probe and witness nothing on another.
+        witnessing = tracer_probe(root)
+        if args.require_witness and not witnessing.get("usable"):
             answer = refusal("the process boundary cannot be witnessed here and --require-witness"
-                             " was given: " + str(insisted.get("because")))
+                             " was given: " + str(witnessing.get("because")))
         else:
-            answer = document(compare(root), root, earlier)
+            answer = document(compare(root, witnessing), root, earlier)
     except RelayError as error:
         answer = refusal("a relay command a scenario needed refused: " + str(error))
     except NotAValue as error:
