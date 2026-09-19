@@ -4024,6 +4024,65 @@ RESOLVES_LIKE_PYTHON = {
          " comprehension's own scope. Every table keyed off where a name is bound then read the"
          " binding as the comprehension's, so the outward walk for the nonlocal missed the real"
          " owner and filed the carrier one scope short."),
+    "an owner module handed over by an unpacking":
+        (REFUSAL,
+         ("answers, ignored = reading, None",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", True,
+         "the alias propagation read the whole right-hand side as one value, so a tuple handed"
+         " neither name anything and answers never became an owner. Every reader of it was then"
+         " dropped. _bindings had paired the elements off all along -- this pass was the one"
+         " asking the question of the statement instead of the binding."),
+    "an owner module handed over plainly":
+        (REFUSAL,
+         ("answers = reading",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", True,
+         "SUPPORT, green at the parent: pairing the elements off must not have stopped an"
+         " ordinary single binding naming the owner."),
+    "a class body that rebinds a spelling before reading it":
+        (REFUSAL,
+         ("class Holder:",
+          "    CHANGED = \"fine\"",
+          "    answer = CHANGED"),
+         "Holder.answer", False,
+         "the shadow table skipped every class statement, which is right for a METHOD reading"
+         " the name -- that resolves outside the class entirely -- and wrong for a load written"
+         " in the body, which reads what the body has already bound. Leaving both out reported"
+         " the module constant at a place that never names it. A class body binds in order, so"
+         " the line decides."),
+    "a class body that reads a spelling it never binds":
+        (REFUSAL,
+         ("class Holder:",
+          "    answer = CHANGED"),
+         "Holder.answer", True,
+         "SUPPORT, green at the parent, and the pair that stops the fix above from hiding every"
+         " class-body read: with nothing bound in the body the load really is the module's."),
+    "a class body that reads a spelling before rebinding it":
+        (REFUSAL,
+         ("class Holder:",
+          "    answer = CHANGED",
+          "    CHANGED = \"fine\""),
+         "Holder.answer", True,
+         "SUPPORT, and the reason the rule is positional rather than merely present: the same"
+         " two statements in the other order really do read the module constant, because the"
+         " class body had not bound the name yet when the load ran."),
+    "a method reading a spelling its class body binds":
+        (REFUSAL,
+         ("class Holder:",
+          "    CHANGED = \"fine\"",
+          "",
+          "    def answer(self):",
+          "        return CHANGED"),
+         "answer", True,
+         "SUPPORT, and the half of the old behaviour that was correct: a class namespace is not"
+         " in a method's lookup chain, so the bare name there reaches the module however plainly"
+         " the body above it rebound the spelling. Teaching the body to shadow must not have"
+         " taught the methods inside it to."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5769,6 +5828,35 @@ def _shadowing_names(tree):
                 break
             reach.pop()
         if hidden:
+            shadowed.add(id(node))
+    # A class body binds IN ORDER and only the class body sees it. The loop above skips class
+    # statements because a name bound there makes no local in the function around it -- true
+    # for a method reading the name, which resolves outside the class entirely, and wrong for
+    # a load written in the body itself, which reads what the body has already bound. Leaving
+    # both out reported the module constant at a place that never names it.
+    written_at, body_binds = {}, {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        where, key = places.get(id(node), (MODULE_LEVEL, None))
+        written_at[key] = where
+        for statement in node.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            # Directly in the body and unconditional: a binding under an if is a guess about
+            # the run, which is the rule the certainty sweep already states for this table.
+            for named in _binds_locally(statement):
+                body_binds.setdefault(key, {}).setdefault(named, statement.lineno)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            continue
+        where, klass = places.get(id(node), (MODULE_LEVEL, None))
+        if klass is None or written_at.get(klass) != where:
+            # Written inside a method rather than in the body, so the class namespace is not
+            # in its lookup chain at all.
+            continue
+        bound_at = body_binds.get(klass, {}).get(node.id)
+        if bound_at is not None and node.lineno > bound_at:
             shadowed.add(id(node))
     return frozenset(shadowed), taken
 
@@ -7698,18 +7786,17 @@ def refusals_reached(source):
     while spreading:
         spreading = False
         for node in ast.walk(tree):
-            binding = _assigned(node)
-            if binding is None:
-                continue
-            targets, value = binding
             where = places.get(id(node), (MODULE_LEVEL, None))[0]
-            for source in _passed_through(value):
-                named = (qualifies.get(where, {}).get(source.id)
-                         or qualifies.get(MODULE_LEVEL, {}).get(source.id)
-                         or ({source.id} if source.id in owners_here else set()))
-                for target in targets:
-                    if not isinstance(target, ast.Name):
-                        continue
+            # Pair by pair rather than whole-statement: answers, ignored = reading, None hands
+            # the module to ONE of the names, and reading the tuple as a single value followed
+            # neither, so the alias was never recorded and every reader of it was dropped.
+            for target, value in _bindings(node):
+                if not isinstance(target, ast.Name):
+                    continue
+                for source in _passed_through(value):
+                    named = (qualifies.get(where, {}).get(source.id)
+                             or qualifies.get(MODULE_LEVEL, {}).get(source.id)
+                             or ({source.id} if source.id in owners_here else set()))
                     holds = qualifies.setdefault(where, {}).setdefault(target.id, set())
                     if named - holds:
                         holds |= named
