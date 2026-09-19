@@ -82,27 +82,35 @@ def _entry(path, **fields):
 
 
 def _same_directory(one, other):
-    """Whether two spellings name the same directory, answered the way the kernel answers it.
+    """Whether two spellings name the same directory, established by asking the filesystem.
 
-    os.path.realpath IS that answer: it resolves each symlink as it walks and applies '..' to
-    what the link pointed at, which is exactly what the kernel does when it opens the path. So
-    /alias/. and /real are one directory when alias links to real, and /srv/link/../dest is
-    /var/runtime/dest rather than /srv/dest.
+    os.path.samefile stats both and compares the device and inode the kernel reports, so it
+    answers the question the kernel would answer: an alias of this destination is this
+    destination, and 'link/..' lands where the link actually pointed rather than cancelling.
+    It also raises when either path is not traversable, which is the half that pure string
+    work cannot do.
 
-    Two earlier attempts here were wrong in opposite directions and both are worth recording.
-    Comparing raw strings made one directory into two whenever the spelling differed, and an
-    owned dangling pointer in the surveyed destination was disowned. Comparing lexically
-    normalised strings made two directories into one, because normpath cancels 'X/..' without
-    knowing X is a symlink. Requiring both to agree then reintroduced the first failure for any
-    path that combined an alias with '..'. Resolution alone has neither problem.
+    Four attempts reached this, and the three that failed are worth keeping written down
+    because each was wrong in a way the next one reintroduced:
 
-    realpath answers best-effort and does not raise on a loop; a NUL-bearing string cannot name
-    a path at all and does raise, and nothing being established is answered "different", which
-    keeps an unverified pointer out of the cleanup list.
+      - raw strings made ONE directory into two whenever the spelling differed, and an owned
+        dangling pointer in the surveyed destination was disowned;
+      - lexically normalised strings made TWO directories into one, because normpath cancels
+        'X/..' without knowing X is a symlink;
+      - requiring both forms to agree brought the first failure back for any path combining an
+        alias with '..';
+      - resolution alone fixed that and still collapsed 'missing/..', because realpath is
+        best-effort: it equated a destination the kernel answers ENOENT for with a real one,
+        so a pointer could be claimed for a destination that was never scanned.
+
+    Every one of those was a STRING answering a question about the filesystem. This asks the
+    filesystem. A failure establishes nothing and is answered "different", which keeps an
+    unverified pointer out of the cleanup list -- the direction this module fails in on
+    purpose.
     """
     try:
-        return os.path.realpath(str(one)) == os.path.realpath(str(other))
-    except ValueError:
+        return os.path.samefile(str(one), str(other))
+    except (OSError, ValueError):
         return False
 
 

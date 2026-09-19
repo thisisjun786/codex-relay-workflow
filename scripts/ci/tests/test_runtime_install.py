@@ -9134,6 +9134,10 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             host = _Host(temporary)
             pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            # The detour has to EXIST: a path the kernel answers ENOENT for is not this
+            # destination written differently, it is a destination that cannot be reached, and
+            # the comparison is required to say so.
+            (host.destination.parent / "detour").mkdir()
             detour = host.destination.parent / "detour" / ".." / host.destination.name
             found = _diagnose(host, dest=str(detour))
         self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
@@ -9264,6 +9268,20 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertEqual(found["residue"]["pointer"]["finding"],
                          residue.POINTER_OUTSIDE_DESTINATION)
         self.assertNotIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_destination_the_kernel_cannot_reach_never_claims_the_pointer(self):
+        """realpath is best-effort and collapses 'missing/..', so a destination the kernel
+        answers ENOENT for compared equal to a real one: the scan failed and a recorded
+        dangling pointer under the real directory was still claimed as this survey's residue."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            unreachable = host.destination.parent / "missing" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(unreachable))
+        self.assertFalse(found["residue"]["read"],
+                         "the fixture did not produce the unscannable destination this is about")
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"],
+                         "a destination that was never scanned claimed a pointer as its own")
 
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
