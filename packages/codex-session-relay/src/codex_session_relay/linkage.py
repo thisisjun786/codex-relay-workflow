@@ -1456,44 +1456,9 @@ class Linkage:
                      "actor": actor, "acknowledged": claimed},
                     at=now,
                 )
-                if scope_kind == PROJECT:
-                    self._move_assignments(db, claimed, expect_task_id, endpoint.task_id,
-                                           at=now)
         if refusal is not None:
             raise refusal.error()
         return self.binding(new_id)
-
-    def _move_assignments(self, db, relationship_ids, outgoing, incoming, *, at):
-        """Repoint the assignments a parent handover acknowledged.
-
-        Moving the project binding and the edges while relationships kept naming the outgoing
-        task left delivery and AssignmentView still targeting it, so the replacement owned a
-        project whose work answered to its predecessor. The acknowledged list IS the set the
-        incoming owner confirmed it is taking on, so it is exactly the set that moves.
-
-        allowedRecipients moves with it. It names the task a completion may be delivered to,
-        so repointing the parent without it would leave every one of those assignments
-        authorized to deliver only to a parent that no longer owns them.
-        """
-        import json as _json
-
-        for rid in relationship_ids:
-            row = db.execute(
-                "SELECT parent_task_id, allowed_recipients FROM relationships"
-                "  WHERE relationship_id = ?", (rid,)
-            ).fetchone()
-            if row is None or row["parent_task_id"] != outgoing:
-                continue
-            recipients = _json.loads(row["allowed_recipients"])
-            moved = [incoming if name == outgoing else name for name in recipients]
-            db.execute(
-                "UPDATE relationships SET parent_task_id = ?, allowed_recipients = ?,"
-                " updated_at = ? WHERE relationship_id = ?",
-                (incoming, _json.dumps(moved), at, rid),
-            )
-            self.store.journal(
-                "assignment_reparented", rid,
-                {"from": outgoing, "to": incoming}, at=at)
 
     # ---------------------------------------------------------------- records
 

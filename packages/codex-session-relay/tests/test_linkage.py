@@ -811,8 +811,19 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
             acknowledged=[], evidence="a second handover owing nothing", actor="test")
 
     def test_a_parent_handover_moves_the_assignments_it_acknowledged(self):
-        """The binding and the edges moved while relationships kept naming the outgoing task,
-        so delivery and AssignmentView went on answering to the parent that stepped down."""
+        """A parent handover does NOT reparent its assignments, and that is deliberate.
+
+        An earlier attempt here rewrote relationships.parent_task_id in place, and review
+        caught what that costs: relationship_id is sha256(parent|child|issue), so the row's
+        stored identity would no longer derive from its own columns, and queued deliveries
+        still name the old parent's thread. It was reverted rather than patched, because
+        moving an assignment to a new parent is supersession - a new relationship with a new
+        identity - and that is a larger change than this issue owns.
+
+        What holds today: the scope moves, the assignments do not, and the mismatch is
+        visible rather than silent. counterpart reports owner_drift, so a message about one of
+        these assignments is told the recorded owner and the live one disagree.
+        """
         self.supervise()
         relationship = self.register()
         rid = relationship["relationshipId"]
@@ -821,10 +832,11 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
             role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
             endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
             evidence="taking on the unfinished issue", actor="test")
-        moved = self.registry.get(rid)
-        self.assertEqual(moved["parent"]["taskId"], OTHER_PARENT)
-        self.assertIn(OTHER_PARENT, moved["authorizedScope"]["allowedRecipients"])
-        self.assertNotIn(PARENT, moved["authorizedScope"]["allowedRecipients"])
+        kept = self.registry.get(rid)
+        self.assertEqual(kept["parent"]["taskId"], PARENT,
+                         "the assignment's identity columns were rewritten under it")
+        self.assertEqual(kept["relationshipId"], rid)
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], OTHER_PARENT)
 
 class TheObservationsFromTheSameRound(LinkageTestCase):
     def test_a_sender_scope_the_sender_does_not_own_is_reported(self):
