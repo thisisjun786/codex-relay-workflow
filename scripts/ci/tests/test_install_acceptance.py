@@ -4349,6 +4349,80 @@ RESOLVES_LIKE_PYTHON = {
          "a dict is iterated over its KEYS, which are written out exactly as a tuple's elements"
          " are. Listing the three sequence forms and stopping was the same half-applied rule as"
          " the keyword-only slots above, in the commit that added it."),
+    "a carrier handed through a written unpacking":
+        (REFUSAL,
+         ("def identity(answer):",
+          "    return answer",
+          "",
+          "def helper():",
+          "    return identity(*(reading.UNREADABLE,))",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the positional zip took the Starred NODE as the argument, so a slot was bound to a"
+         " piece of syntax rather than to what the call hands over. A written unpacking supplies"
+         " the values it writes, so they are expanded first."),
+    "a carrier handed through a written mapping":
+        (REFUSAL,
+         ("def identity(answer):",
+          "    return answer",
+          "",
+          "def helper():",
+          "    return identity(**{\"answer\": reading.UNREADABLE})",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the other half of the same shape: a double-star carries arg None, so the keyword"
+         " filter matched nothing at all. A mapping written out names its own slots exactly as"
+         " a keyword written out does."),
+    "a carrier handed through an unpacking this text cannot read":
+        (REFUSAL,
+         ("def identity(answer):",
+          "    return answer",
+          "",
+          "def helper(supplied):",
+          "    return identity(*supplied)",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "SUPPORT, green at the parent, and the limit the two above stop at: how many values"
+         " *supplied carries cannot be read here, so the positional count stops at it rather"
+         " than guessing how far it reaches."),
+    "a carrier handed positionally to a classmethod through its class":
+        (REFUSAL,
+         ("class Holder:",
+          "    @classmethod",
+          "    def identity(cls, answer):",
+          "        return answer",
+          "",
+          "def helper():",
+          "    return Holder.identity(reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "naming the class was read as the receiver having been written, which is true of an"
+         " ordinary method and false of a classmethod: that one is bound through its class too"
+         " and hands cls over unwritten. The same correction the default-applicability side"
+         " needed several rounds ago, arriving here because this table was newer."),
+    "a carrier handed positionally to an unbound method through its class":
+        (REFUSAL,
+         ("class Holder:",
+          "    def identity(self, answer):",
+          "        return answer",
+          "",
+          "def helper(obj):",
+          "    return Holder.identity(obj, reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", True,
+         "SUPPORT, green at the parent, and the pair that keeps the correction above honest:"
+         " an ordinary method reached through its class really does write its receiver, so the"
+         " slots must not move for it."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -6616,6 +6690,7 @@ def _hands_on(tree, spelled):
         line, value = above[-1]
         return names_class(value, line, followed + 1)
     defined, methods, plain, receivers, properties = set(), {}, set(), {}, {}
+    bound_to_its_class = set()
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
@@ -6631,6 +6706,12 @@ def _hands_on(tree, spelled):
         standalone = decorated_by(node, ("staticmethod",), klass, where)
         if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
+        if (id(node) in is_method and first and not standalone
+                and decorated_by(node, ("classmethod",), klass, where)):
+            # A classmethod is bound through the CLASS as well as through an instance, so
+            # Holder.identity(x) hands cls over unwritten where an ordinary method spelled
+            # that way writes its receiver.
+            bound_to_its_class.add(where)
         # Which class a method belongs to, because self.name reaches a method of THIS class and
         # not a module-level function or another class's method that happens to share the name.
         if id(node) in is_method:
@@ -7291,9 +7372,34 @@ def _hands_on(tree, spelled):
                                 if not reach:
                                     break
                                 reach.pop()
-                            if not through_a_class:
+                            # A classmethod is bound through its class too, so naming the class
+                            # does not mean the receiver was written.
+                            if not through_a_class or reached in bound_to_its_class:
                                 standing = standing[1:]
-                        handed += list(zip(standing, node.args))
+                        # A written unpacking supplies the values it writes: identity(*(x,))
+                        # hands x over, and zipping the Starred node itself binds a slot to a
+                        # syntax node rather than to what was passed. One this text cannot read
+                        # stops the positional count rather than guessing how far it reaches.
+                        written = []
+                        for given in node.args:
+                            if not isinstance(given, ast.Starred):
+                                written.append(given)
+                            elif isinstance(given.value, (ast.Tuple, ast.List, ast.Set)):
+                                written.extend(given.value.elts)
+                            else:
+                                break
+                        handed += list(zip(standing, written))
+                        # And a written mapping names its own slots, the same way a keyword
+                        # written out does.
+                        for word in node.keywords:
+                            if word.arg is not None or not isinstance(word.value, ast.Dict):
+                                continue
+                            for key, given in zip(word.value.keys, word.value.values):
+                                if (isinstance(key, ast.Constant)
+                                        and isinstance(key.value, str)
+                                        and (key.value in only_by_keyword
+                                             or key.value in slots)):
+                                    handed.append((key.value, given))
                         for name, given in handed:
                             if not _reachable(given, reaching(function, klass), klass,
                                               visible(function)):
