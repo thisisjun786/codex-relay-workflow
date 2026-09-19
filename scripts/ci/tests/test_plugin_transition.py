@@ -3431,6 +3431,37 @@ class TheFindingsFromReview(TransitionCase):
         self.assertNotEqual(seen.get("outcome"), "internal_error", json.dumps(seen)[:400])
 
     @needs_reader
+    def test_archives_that_cannot_be_listed_refuse_the_retirement(self):
+        """An unlistable directory is not one holding no archives."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        real_glob = Path.glob
+
+        def refusing(self, pattern, *arguments, **keywords):
+            if "superseded" in str(pattern):
+                raise OSError(errno.EACCES, "Permission denied")
+            return real_glob(self, pattern, *arguments, **keywords)
+
+        Path.glob = refusing
+        self.addCleanup(setattr, Path, "glob", real_glob)
+        with self.assertRaises(OSError):
+            steps.retire(host.home / "crw-completion-hook.json")
+        Path.glob = real_glob
+        # Nothing was archived and the document is still where it was.
+        self.assertTrue((host.home / "crw-completion-hook.json").is_file())
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+        # And the step that calls it answers with a refusal rather than a claim.
+        Path.glob = refusing
+        answer = steps.settings_retire(inventory.snapshot(host.home, repo_root=ROOT), {},
+                                       apply=True)
+        Path.glob = real_glob
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
+        self.assertTrue((host.home / "crw-completion-hook.json").is_file())
+
+    @needs_reader
     def test_a_cache_whose_skills_cannot_be_listed_is_a_reading_not_a_crash(self):
         """The version cache is replaced wholesale, so it can go away between two calls."""
         import sys as _sys

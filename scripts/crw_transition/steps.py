@@ -79,8 +79,15 @@ def retire(path, into=None, stem=None):
     try:
         reached = [inventory.archive_order(found, name)[0]
                    for found in holder.glob(name + "*") if found.is_file()]
-    except OSError:
-        reached = []
+    except OSError as error:
+        # Not an empty set. Treating an unlistable directory as one holding no archives chooses a
+        # wall-clock name, and a future-dated archive that is still there then outranks the
+        # document this call is taking aside -- the restore this ordering exists to prevent,
+        # arriving as soon as the directory can be read again. The caller's refusal path already
+        # handles an OSError from here.
+        raise OSError(error.errno or errno.EIO,
+                      "the archives beside " + str(holder) + " could not be listed, so a name"
+                      " that sorts after them could not be chosen (" + str(error) + ")") from error
     moment = max([stamp()] + [item for item in reached if item])
     base = prefix + moment
     target, suffix = base, 0
