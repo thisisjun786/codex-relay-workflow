@@ -60,6 +60,11 @@ class Host:
         for program in ("python3", "codex-session-relay", "codex-thread-bridge",
                         "crw-completion-hook"):
             path = self.version / "bin" / program
+            if program == "python3":
+                # A real interpreter, because preflight asks the candidate to BE a Python before
+                # recording it: an executable that is not one would reach no adapter on any Stop.
+                path.symlink_to(sys.executable)
+                continue
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
 
@@ -416,6 +421,9 @@ class RunningItAgainChangesNothing(TransitionCase):
                         "crw-completion-hook"):
             path = host.version / "bin" / program
             path.parent.mkdir(parents=True, exist_ok=True)
+            if program == "python3":
+                path.symlink_to(sys.executable)
+                continue
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
         code, answer = host.transition("--apply")
@@ -1027,6 +1035,9 @@ class TheFindingsFromReview(TransitionCase):
         for program in ("python3", "codex-session-relay", "codex-thread-bridge",
                         "crw-completion-hook"):
             path = other / "versions" / "v1" / "bin" / program
+            if program == "python3":
+                path.symlink_to(sys.executable)
+                continue
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
         custom, fixed = self.registered_at(host, "registered.json")
@@ -1081,6 +1092,80 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:400])
         self.assertEqual(host.hooks_document()["hooks"]["SessionStart"],
                          document["hooks"]["SessionStart"])
+
+    def test_a_table_header_inside_a_string_is_not_a_plugin_registration(self):
+        """A line-oriented scan reads the contents of a multiline string as structure."""
+        host = self.host.manual_install()
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(ROOT / "plugins" / "crw", cache, symlinks=False)
+        host.append_config('[somewhere]\nnote = """\n[plugins."crw@crw"]\nenabled = true\n"""\n')
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("not registered", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_relative_bridge_command_is_refused_before_anything_is_retired(self):
+        host = self.host
+        host.link_skills()
+        host.register_hook()
+        run([RUNTIME, "register-mcp", "--owner", "user", "--codex-home", host.home,
+             "--bridge-command", "codex-thread-bridge", "--apply"])
+        host.install_plugin()
+        before = (host.config(), host.settings(), host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("which is relative", answer["results"][0]["detail"])
+        self.assertEqual((host.config(), host.settings(), host.record()), before)
+
+    def test_a_relative_settings_argument_is_not_proven(self):
+        """It resolves against whoever runs this command, not the workspace the hook fires from."""
+        host = self.ready()
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " settings.json"
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot prove is its own adapter", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), document)
+
+    def test_stopping_after_the_retire_still_leaves_the_custom_file_discoverable(self):
+        """The custom path is recorded only in the command, so the archive goes first."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           markerRoot=str(self.host.marker / "registered"))
+        fixed.unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.ORDER[0][0], "settings retire")
+        self.assertEqual(steps.settings_retire(snapshot, {}, apply=True)["outcome"], "settled")
+        # Stopped here: the registration is still in place and the archive is already in the home.
+        recovered, name = inventory.newest_retired(host.home)
+        self.assertEqual(recovered["markerRoot"], str(host.marker / "registered"),
+                         "recovered " + str(name))
+        code, answer = host.call("--dest", str(host.destination), "transition", "--apply",
+                                 "--accept-hook-trust-gap")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        self.assertEqual(host.settings()["markerRoot"], str(host.marker / "registered"))
+
+    def test_swap_state_does_not_report_a_host_record_it_did_not_read(self):
+        """load() answers with a Reading, and a Reading is truthy for absent and unreadable alike."""
+        host = self.ready()
+        state = host.root / "state"
+        state.mkdir()
+        done = run([CLI, "--codex-home", host.home, "swap-state"],
+                   env={**os.environ, "XDG_STATE_HOME": str(state)})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 0)
+        self.assertIn(str(state), answer["hostRecordPath"])
+        self.assertIn(answer["recordedHostRecord"], (False, None))
+        self.assertIsNotNone(answer["recordedDetail"])
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

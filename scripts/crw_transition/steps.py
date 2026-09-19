@@ -166,6 +166,16 @@ def mcp_refusals(mcp):
                             + repr(registration.get("command")) + " "
                             + repr(registration.get("args") or []) + "). This command does not"
                             " choose between them: settle which one this host runs first")
+    named = (record or {}).get("bridgeExecutable") or registration.get("command")
+    if named and not os.path.isabs(str(named)):
+        # A user-owned record and a configuration entry may both carry a relative command, and a
+        # plugin-owned record may not: the packaged launcher runs from the installed package
+        # directory, so a relative command resolves inside the version cache. Discovered at the
+        # write, this refused with the settings, the record and the table already retired.
+        found.append("the bridge is registered as " + repr(str(named)) + ", which is relative."
+                     " A plugin-owned record has to name an absolute path, because the packaged"
+                     " launcher runs from the installed package directory. Re-register it with an"
+                     " absolute command first")
     for alias in mcp.get("aliases") or []:
         found.append("the table [mcp_servers." + str(alias["name"]) + "] in "
                         + mcp["configPath"] + " starts the same bridge under another name ("
@@ -275,6 +285,17 @@ def preflight(host, options):
                 if not _executable(path):
                     refusals.append(label + " at " + str(path) + " is not an executable file, so"
                                     " recording it would name something that cannot run")
+            if _executable(interpreter):
+                try:
+                    # Executable is not the question. /bin/true is executable, exits 0, and would
+                    # be recorded happily; every Stop would then run it, reach no adapter, and
+                    # write no journal entry while the install reported success. The installer asks
+                    # the candidate to be a Python before registering it as one, and so does this.
+                    completion.interpreter_for(interpreter, run=True)
+                except ValueError as error:
+                    refusals.append("the interpreter at " + str(interpreter)
+                                    + " did not answer as a Python this adapter can run: "
+                                    + str(error))
 
     # Checked here, before the standdown, because the packaged launcher reads one fixed path and
     # ignores this override: with it set, the plugin-owned document would be written where no
@@ -703,7 +724,12 @@ def skill_unlink(host, options, *, apply=False):
                    foreignLeft=[item["path"] for item in host["skills"]["foreign"]])
 
 
-ORDER = (("hook standdown", hook_standdown), ("settings retire", settings_retire),
+# Retire before standdown. The custom settings path is recorded only in the hook command, so
+# removing the command first and stopping there leaves a file the next run cannot rediscover and a
+# host with no completion hook. Retiring first costs a window in which the old registration runs
+# against absent settings -- it releases in silence and records nothing -- and no window in which
+# two adapters run, because the plugin-owned settings are still not installed.
+ORDER = (("settings retire", settings_retire), ("hook standdown", hook_standdown),
          ("settings install", settings_install), ("mcp record retire", mcp_record_retire),
          ("mcp table standdown", mcp_table_standdown),
          ("mcp record install", mcp_record_install), ("skill unlink", skill_unlink))
@@ -869,10 +895,21 @@ def swap_state(host, options):
     point = host["pointer"]
     recorded = None
     detail = None
+    path = None
     try:
+        # The host record follows XDG rather than the Codex home, so the path it resolves to is
+        # reported: an answer about a record is useless without saying which record was read.
         path = hostrecord.record_path()
         loaded = hostrecord.load(path, 1)
-        recorded = loaded
+        # load() answers with a Reading, and a Reading is an object: truthy for an absent record,
+        # an unreadable one and a malformed one alike. Reporting presence from bool() told an
+        # operator a host record was there after exactly the failure that would remove it.
+        state = getattr(loaded, "state", None)
+        usable = getattr(loaded, "usable", None)
+        recorded = bool(state == reading.PRESENT) if state is not None else None
+        detail = getattr(loaded, "detail", None) if not usable else None
+        if state is not None and state != reading.PRESENT:
+            detail = detail or ("the host record reading answered " + str(state))
     except Exception as error:  # noqa: BLE001 - a private receipt that cannot be read is a reading
         detail = type(error).__name__ + ": " + str(error)
     return {
@@ -880,7 +917,8 @@ def swap_state(host, options):
         "pointerState": point.get("state"),
         "pointerTarget": point.get("target"),
         "pointerResolves": bool(point.get("targetDirectory")),
-        "recordedHostRecord": bool(recorded),
+        "recordedHostRecord": recorded,
+        "hostRecordPath": str(path) if path else None,
         "recordedDetail": detail,
         "agrees": None,
         "residualFromRun": None,

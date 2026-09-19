@@ -32,8 +32,10 @@ INTERPRETER_SCRIPT = "python3"
 
 REPO_MARKERS = ("plugins/crw/.codex-plugin/plugin.json", "scripts/crw_runtime/completion.py")
 
-STATE_KEY = re.compile(r'^\s*\[hooks\.state\."([^"]+)"\]\s*$')
-PLUGIN_KEY = re.compile(r'^\s*\[plugins\."([^"]+)"\]\s*$')
+try:
+    import tomllib
+except ImportError:  # the documented 3.10 floor
+    tomllib = None
 # Any table header at all, because what ends a table is the next one starting, not the next table
 # of the same kind. Reading past it attributed a later table's keys to this one.
 TABLE = re.compile(r"^\s*\[")
@@ -126,6 +128,26 @@ def table_span(text, header):
         return "\n".join(collected) + "\n"
     return None
 
+def removal_is_structural(text, span, name):
+    """Whether removing this span is a TOML edit and not a cut through a string.
+
+    table_span finds its header by reading lines, and a line inside a multiline string can look
+    exactly like one. So the answer is checked against a parser: what is left has to parse, it has
+    to no longer register this server, and every other server has to survive unchanged.
+    """
+    if tomllib is None:
+        return False
+    try:
+        before = tomllib.loads(text)
+        after = tomllib.loads(text.replace(span, "", 1))
+    except Exception:  # noqa: BLE001 - either side failing means this is not a clean removal
+        return False
+    mine = before.get("mcp_servers") or {}
+    theirs = after.get("mcp_servers") or {}
+    if name in theirs or name not in mine:
+        return False
+    return {key: value for key, value in mine.items() if key != name} == theirs
+
 def read_plugin(codex_home, *, name=PLUGIN_NAME):
     """Whether the plugin is installed AND registered, and what its cache actually holds.
 
@@ -140,41 +162,45 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
     if not text.usable:
         answer["configEntry"] = text.state
         answer["detail"] = text.detail
+    elif tomllib is None:
+        # Refused rather than approximated, the way this repository's own configuration reader
+        # refuses: a line-oriented scan reads the contents of a multiline string as structure.
+        answer["configEntry"] = reading.UNREADABLE
+        answer["detail"] = ("reading a Codex configuration needs tomllib, so whether this plugin"
+                            " is registered was not established on this interpreter")
     else:
-        block = None
-        for line in text.value.splitlines():
-            key = PLUGIN_KEY.match(line)
-            if key:
-                block = key.group(1) if key.group(1).split("@")[0] == name else None
-                if block:
-                    answer["configEntry"] = reading.PRESENT
-                    answer["entryKey"] = block
-                continue
-            if TABLE.match(line):
-                block = None
-            trust = STATE_KEY.match(line)
-            if trust and trust.group(1).split(":")[0].split("@")[0] == name:
-                answer["trustKeys"].append(trust.group(1))
-            if block and line.strip().startswith("enabled"):
-                answer["enabled"] = line.split("=", 1)[1].strip() == "true"
-        # Trust is positional and recorded per hook identity. A key naming this plugin and this
-        # hook document is the only evidence available from a file; nothing here can grant it.
-        # The key shape is <plugin>@<marketplace>:<document>:<event>:<matcher>:<index>, and the
-        # document segment is compared as a whole. A substring test anywhere in the key would
-        # accept trust recorded for a different document whose path merely contains this one.
-        # A key naming this plugin and this hook document is the only evidence a file carries, and
-        # it is NOT proof the hook will fire: the recorded trusted_hash belongs to the hook as it
-        # stood when trust was given, and nothing here can compute the hash Codex compares it
-        # against. A stale or fabricated record looks exactly like a current one. So this reports
-        # what it found and refuses to call it trust.
-        answer["trustKeyPresent"] = any(
-            len(key.split(":")) == 5 and key.split(":")[1] == HOOK_DOCUMENT
-            for key in answer["trustKeys"])
-        answer["trusted"] = None
-        answer["trustNote"] = ("a trust key was found and its recorded hash was NOT compared with"
-                               " the installed hook, which this repository cannot do"
-                               if answer["trustKeyPresent"] else
-                               "no trust key names this plugin and this hook document")
+        try:
+            parsed = tomllib.loads(text.value)
+        except Exception as error:  # noqa: BLE001 - a file that will not parse is a reading
+            answer["configEntry"] = reading.UNREADABLE
+            answer["detail"] = "this file is not readable TOML: " + type(error).__name__ + ": " + str(error)
+            parsed = None
+        if parsed is not None:
+            plugins = parsed.get("plugins")
+            entry = None
+            if isinstance(plugins, dict):
+                for key, value in sorted(plugins.items()):
+                    if key.split("@")[0] == name and isinstance(value, dict):
+                        entry, answer["entryKey"] = value, key
+                        answer["configEntry"] = reading.PRESENT
+                        break
+            if entry is not None and "enabled" in entry:
+                answer["enabled"] = entry["enabled"] is True
+            state = (parsed.get("hooks") or {}).get("state")
+            if isinstance(state, dict):
+                answer["trustKeys"] = [key for key in sorted(state)
+                                       if key.split(":")[0].split("@")[0] == name]
+            # A key naming this plugin and this hook document is the only evidence a file carries,
+            # and it is NOT proof the hook will fire: the recorded hash belongs to the hook as it
+            # stood when trust was given, and nothing here can compute the hash Codex compares it
+            # against. So this reports what it found and refuses to call it trust.
+            answer["trustKeyPresent"] = any(
+                len(key.split(":")) == 5 and key.split(":")[1] == HOOK_DOCUMENT
+                for key in answer["trustKeys"])
+            answer["trustNote"] = ("a trust key was found and its recorded hash was NOT compared"
+                                   " with the installed hook, which this repository cannot do"
+                                   if answer["trustKeyPresent"] else
+                                   "no trust key names this plugin and this hook document")
 
     cache = Path(codex_home) / "plugins" / "cache"
     # The cache layout is <marketplace>/<plugin>/<version> and the entry key is
@@ -263,6 +289,10 @@ def canonical_command(argv):
         return None
     script = argv[1]
     if Path(script).name != completion.ENTRY_POINT_NAME:
+        return None
+    if not all(os.path.isabs(word) for word in argv[1:]):
+        # The hook fires from each session's own workspace and this command runs somewhere else, so
+        # a relative path names one file here and another one there. Unproven rather than resolved.
         return None
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
 
@@ -483,7 +513,8 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
                 answer["renderedTable"] = rendered
                 answer["tableSpan"] = span
                 answer["tableProven"] = (span is not None and not nested
-                                         and span.strip() == rendered.strip())
+                                         and span.strip() == rendered.strip()
+                                         and removal_is_structural(text.value, span, name))
                 if span is not None and not answer["tableProven"]:
                     answer["detail"] = ("the table holds more or other than the command and"
                                         " arguments this repository renders for it"
@@ -578,6 +609,13 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
     settings["conflictingRegistrations"] = conflict
     derived = destination_from(document)
     dest = destination or derived
+    # Re-derived from the reading that is RETURNED. The first read only answered which
+    # destination to carry into the second; pairing one read's settings with another read's
+    # inventory would configure the plugin from a registration that is no longer there.
+    hook = read_hook(codex_home, event, destination=dest, repo_root=repo_root)
+    document, carried, conflict = registered_document(hook, settings, codex_home)
+    settings["carriedFrom"] = carried
+    settings["conflictingRegistrations"] = conflict
     return {
         "codexHome": str(codex_home),
         "repoRoot": str(repo_root),
@@ -586,7 +624,7 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
         else ("the caller" if destination else None),
         "plugin": read_plugin(codex_home),
         "skills": read_skill_links(codex_home, repo_root),
-        "hook": read_hook(codex_home, event, destination=dest, repo_root=repo_root),
+        "hook": hook,
         "registered": {"document": document, "from": carried, "conflict": conflict},
         "settings": settings,
         "mcp": read_mcp(codex_home),
