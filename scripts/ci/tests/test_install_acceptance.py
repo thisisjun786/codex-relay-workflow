@@ -1577,8 +1577,14 @@ def _hands_on(tree, spelled):
     because alias = helper is an ordinary refactor and not a place to lose one.
     """
     places = _places(tree)
-    parents = {node.name: [_dotted(base) for base in node.bases]
+    parents = {node.name: [(_dotted(base) or "").rpartition(".")[2]
+                           for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    # Directly in a class body is what makes a def a method: a helper nested inside a method is
+    # not one, and a class written inside a function still has methods.
+    is_method = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                 for inner in node.body
+                 if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))}
     defined, methods, plain, receivers = set(), {}, set(), {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1587,17 +1593,17 @@ def _hands_on(tree, spelled):
         defined.add(where)
         # A method is reached through an instance or its class, never as a bare name inside
         # another method, so it is kept out of the lexical lookup.
-        if klass is None or "." in where:
+        if id(node) not in is_method:
             plain.add(where)
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        if klass is not None and first:
+        if id(node) in is_method and first:
             receivers[where] = first[0].arg
         # Which class a method belongs to, because self.name reaches a method of THIS class and
         # not a module-level function or another class's method that happens to share the name.
-        if klass is not None and "." not in where:
-            methods[(klass, where)] = where
+        if id(node) in is_method:
+            methods.setdefault((klass, where.rpartition(".")[2]), where)
     for node in ast.walk(tree):
         # carrier = lambda self: ... in a class body binds a method named carrier, and the
         # lambda's own place is what a call through it reaches.
@@ -1614,8 +1620,18 @@ def _hands_on(tree, spelled):
                                                          (MODULE_LEVEL, None))[0]
 
     def instance(function):
-        """How this scope spells its instance: whatever its first parameter is called."""
-        return {receivers.get(function), "cls"} - {None}
+        """How this scope spells its instance: whatever the first parameter is called.
+
+        Looked up outwards, because a closure with no parameters of its own still sees the one
+        the method around it was given.
+        """
+        chain = [] if function == MODULE_LEVEL else function.split(".")
+        while chain:
+            spelled = receivers.get(".".join(chain))
+            if spelled:
+                return {spelled, "cls"}
+            chain.pop()
+        return {"cls"}
 
     def inherited(klass, named, seen=()):
         """The method this class reaches by that name, its own or one it inherits."""
@@ -1702,11 +1718,13 @@ def _hands_on(tree, spelled):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
         taken_names.setdefault(where, set()).difference_update(node.names)
 
-    declared_global = {}
+    declared_global, declared_nonlocal = {}, {}
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Global, ast.Nonlocal)):
-            where = places.get(id(node), (MODULE_LEVEL, None))[0]
-            declared_global.setdefault(where, set()).update(node.names)
+        if not isinstance(node, (ast.Global, ast.Nonlocal)):
+            continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        which = declared_global if isinstance(node, ast.Global) else declared_nonlocal
+        which.setdefault(where, set()).update(node.names)
 
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
@@ -1722,7 +1740,11 @@ def _hands_on(tree, spelled):
         if named in declared_global.get(caller, ()):
             # global says the module, not the next scope out that happens to share the name.
             return {named} if named in plain else set()
-        for scope in scopes(caller):
+        outer = list(scopes(caller))
+        if named in declared_nonlocal.get(caller, ()):
+            # nonlocal says the scope AROUND this one, which is not the module either.
+            outer = outer[1:]
+        for scope in outer:
             if aliases and named in aliases.get(scope, {}):
                 return set(aliases[scope][named])
             candidate = named if scope == MODULE_LEVEL else scope + "." + named
@@ -1764,6 +1786,8 @@ def _hands_on(tree, spelled):
                     return outwards(function, expression.id, aliases)
                 if isinstance(expression, ast.Await):
                     return names(expression.value)
+                if isinstance(expression, ast.BoolOp):
+                    return set().union(*(names(value) for value in expression.values))
                 if isinstance(expression, ast.Lambda):
                     return {places.get(id(expression), (MODULE_LEVEL, None))[0]}
                 if isinstance(expression, ast.Attribute):
@@ -2082,6 +2106,8 @@ def source_spellings(tree):
                 return spelled_by(expression.body) + spelled_by(expression.orelse)
             if isinstance(expression, (ast.NamedExpr, ast.Await)):
                 return spelled_by(expression.value)
+            if isinstance(expression, ast.BoolOp):
+                return [name for value in expression.values for name in spelled_by(value)]
             named = _dotted(expression)
             return [named] if named else []
 
