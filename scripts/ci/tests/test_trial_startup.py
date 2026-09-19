@@ -5110,12 +5110,33 @@ class FortyFifthHostedRound(TrialCase):
         self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.2
         self.world.record["supervisor"]["minimumAliveSeconds"] = 0.05
         self.world.flush()
-        pauses = {"count": 0}
+        counter = {"progress": 1, "frozen": False}
+
+        def move(seconds=None):
+            counter["progress"] += 1
+            advance(counter["progress"])
 
         def pause(seconds):
-            pauses["count"] += 1
-            advance(1 + pauses["count"])
+            # The counter moves while the reading this gate anchors on waits out its interval,
+            # and stops once that reading is behind us. Freezing it from the start would fail
+            # the anchored reading instead, which is a different case.
+            if not counter["frozen"]:
+                move()
 
+        # One move between the anchored reading and the gate's own, so the gate sees a real
+        # advance however long the pass took to reach it, and nothing after that. Leaving the
+        # gate's advance to a sleeper call made the case depend on the run being fast enough
+        # that the declared interval had not already elapsed, which is a property of the machine
+        # rather than of the thing under test, and it is why this failed on CI and not here.
+        gate = startup.order_gate
+
+        def advance_the_counter_before_the_gate_reads_it(*args, **named):
+            move()
+            counter["frozen"] = True
+            return gate(*args, **named)
+
+        startup.order_gate = advance_the_counter_before_the_gate_reads_it
+        self.addCleanup(setattr, startup, "order_gate", gate)
         original = startup.store_still_the_same
 
         def take_longer_than_the_counters_interval(record, relay):
@@ -5133,6 +5154,9 @@ class FortyFifthHostedRound(TrialCase):
                         "the gate's own reading did not see the advance this case needs")
         self.assertTrue(answer["aliveAfterTheLastProbe"],
                         "this case is about a process that stays, not one that leaves")
+        self.assertGreaterEqual(answer["secondsSinceTheGatesOwnReading"],
+                                answer["declaredAdvanceSeconds"],
+                                "the last probe did not outlast the counter's own interval")
 
     def test_a_ledger_line_cannot_write_a_verdict_into_the_report(self):
         # These four fields are the operator's own words and they are copied into the report. A
