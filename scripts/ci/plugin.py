@@ -24,7 +24,11 @@ ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ROOT = ROOT / "plugins/crw"
 MARKETPLACE = ".agents/plugins/marketplace.json"
 MANIFEST = ".codex-plugin/plugin.json"
-TOP_LEVEL = {".codex-plugin", "skills", "LICENSE"}
+# What may sit at the plugin root regardless of what the manifest declares. Everything else
+# has to be named by a declaration, and the set is derived from the manifest rather than kept
+# here as a list, because a component nobody declared does not load (measured) while the
+# installer still copies it.
+ALWAYS = {".codex-plugin", "LICENSE"}
 REQUIRED_FILES = (MANIFEST, "LICENSE")
 LICENSE_ID = "MIT"
 IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -56,6 +60,9 @@ FORBIDDEN_NAMES = re.compile(
 HTTPS_FIELDS = ("websiteURL", "privacyPolicyURL", "termsOfServiceURL")
 ASSET_FIELDS = ("composerIcon", "logo", "logoDark")
 BRAND_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+# The largest timeout a hook may be registered with. Above this the host clamps at discovery
+# and the clamped value is not measured, so a larger number is not the deadline it looks like.
+HOOK_TIMEOUT_SECONDS = 10
 
 
 class PackageError(Exception):
@@ -113,9 +120,6 @@ def directory_payload(plugin_root):
             # copies it, so it would ship unseen by every payload rule.
             if not any(path.iterdir()):
                 errors.append(name + ": an empty directory still ships; remove it")
-            elif PurePosixPath(name).parts[0] not in TOP_LEVEL:
-                errors.append(name + ": only " + ", ".join(sorted(TOP_LEVEL))
-                              + " may ship in the package")
             continue
         mode = "100755" if path.stat().st_mode & 0o111 else "100644"
         payload[name] = (mode, path.read_bytes())
@@ -163,9 +167,217 @@ def declared_skills_path(manifest):
     return relative.as_posix()
 
 
+def inside(declared):
+    """A ./ relative path that stays in the package, or None when it is neither."""
+    if not isinstance(declared, str) or not declared.startswith("./"):
+        return None
+    relative = PurePosixPath(declared[2:].strip("/"))
+    if not relative.name or relative.is_absolute() or ".." in relative.parts:
+        return None
+    return relative.as_posix()
+
+
+def declared_hooks(manifest):
+    """The hook documents this manifest declares, as a list however it spelled them.
+
+    A list and a single string both load, measured on codex-cli 0.154.0. A hooks value that is
+    neither is not a third spelling: an inline document was measured not to load at all, so it
+    is a declaration that ships a file nothing reads.
+    """
+    declared = manifest.get("hooks")
+    if declared is None:
+        return []
+    if isinstance(declared, str):
+        return [declared]
+    if isinstance(declared, list):
+        return declared
+    raise ValueError("hooks must be a ./ relative path or a list of them; an inline document"
+                     " does not load")
+
+
+def declared_components(manifest):
+    """Every path the manifest declares, and the top-level names they occupy.
+
+    Returned together because both answers come from one reading. The package may hold exactly
+    these roots: anything else installs without loading, and anything declared but missing is a
+    component the manifest promises and the package does not ship.
+    """
+    paths, roots, errors = [], set(ALWAYS), []
+    try:
+        skills_path = declared_skills_path(manifest)
+        roots.add(PurePosixPath(skills_path).parts[0])
+    except ValueError as exc:
+        errors.append(str(exc))
+    try:
+        hooks = declared_hooks(manifest)
+    except ValueError as exc:
+        errors.append(str(exc))
+        hooks = []
+    declared_mcp = manifest.get("mcpServers")
+    if isinstance(declared_mcp, dict):
+        errors.append("mcpServers must name a ./ relative file: an inline table would ship a"
+                      " server this check never reads")
+        declared_mcp = None
+    for field, value in [("hooks", path) for path in hooks] \
+            + ([("mcpServers", declared_mcp)] if declared_mcp is not None else []):
+        relative = inside(value)
+        if relative is None:
+            errors.append(field + " " + repr(value) + " must be a ./ relative path inside the"
+                          " plugin root")
+            continue
+        paths.append((field, relative))
+        roots.add(PurePosixPath(relative).parts[0])
+    if "apps" in manifest:
+        errors.append("apps is not declared by this package")
+    return paths, roots, errors
+
+
+def hook_document_errors(name, data, label):
+    """A declared hook file has to be the document a host reads, not merely valid JSON."""
+    errors = []
+    try:
+        document = json.loads(data.decode())
+    except (UnicodeDecodeError, ValueError) as exc:
+        return [label + " " + name + ": " + str(exc)]
+    events = document.get("hooks") if isinstance(document, dict) else None
+    if not isinstance(events, dict) or not events:
+        return [label + " " + name + ": a hook file must hold a nonempty hooks object"]
+    for event, groups in sorted(events.items()):
+        if not isinstance(groups, list) or not groups:
+            errors.append(label + " " + name + ": " + event + " must hold a nonempty list")
+            continue
+        for group in groups:
+            entries = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(entries, list) or not entries:
+                errors.append(label + " " + name + ": every " + event
+                              + " group must hold a nonempty hooks list")
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("type") != "command":
+                    errors.append(label + " " + name + ": every hook must be a command hook")
+                    continue
+                if not nonempty(entry.get("command")):
+                    errors.append(label + " " + name + ": every hook needs a command")
+                timeout = entry.get("timeout")
+                if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+                    errors.append(label + " " + name + ": every hook needs a positive integer"
+                                  " timeout")
+                elif timeout > HOOK_TIMEOUT_SECONDS:
+                    # The host clamps an over-long timeout at discovery and the clamped value is
+                    # not measured, so a larger number is not the deadline it appears to be.
+                    errors.append(label + " " + name + ": a hook timeout may not exceed "
+                                  + str(HOOK_TIMEOUT_SECONDS) + " seconds")
+    return errors
+
+
+def mcp_document_errors(name, data, payload, label):
+    """A declared MCP file, checked against how a plugin server was measured to start.
+
+    Three of these rules are measurements rather than taste. A server inherits no plugin-root
+    variable, so a variable in a command or an argument arrives as literal text and the server
+    never starts. A relative command resolves only when cwd is set. And the package may not
+    name an absolute path, because it ships to hosts it has never seen.
+    """
+    errors = []
+    try:
+        document = json.loads(data.decode())
+    except (UnicodeDecodeError, ValueError) as exc:
+        return [label + " " + name + ": " + str(exc)]
+    servers = document.get("mcpServers") if isinstance(document, dict) else None
+    if not isinstance(servers, dict) or not servers:
+        return [label + " " + name + ": an MCP file must hold a nonempty mcpServers object"]
+    for server, declared in sorted(servers.items()):
+        where = label + " " + name + " " + server + ": "
+        if not isinstance(declared, dict):
+            errors.append(where + "a server must be an object")
+            continue
+        command = declared.get("command")
+        if not nonempty(command):
+            errors.append(where + "a server needs a command")
+            command = None
+        if declared.get("cwd") != ".":
+            errors.append(where + "cwd must be \".\": a relative command resolves against it,"
+                          " and a server declared without one never starts")
+        arguments = declared.get("args")
+        if not isinstance(arguments, list) or not all(isinstance(w, str) for w in arguments):
+            errors.append(where + "args must be a list of strings")
+            arguments = []
+        # Only values the checks above accepted as strings. A truthy non-string command such as
+        # 1 or true would otherwise reach the membership tests below and end the whole package
+        # check in a TypeError, hiding this finding and every other one in the run.
+        for word in ([command] if command else []) + list(arguments):
+            if "$" in word or "%" in word:
+                errors.append(where + repr(word) + " carries a variable; a plugin MCP server"
+                              " runs without a shell and inherits no plugin root, so it would"
+                              " arrive as literal text")
+            elif word.startswith("/"):
+                errors.append(where + repr(word) + " is an absolute path; the package ships to"
+                              " hosts it has not seen")
+            elif word.startswith("./") and word[2:] not in payload:
+                errors.append(where + repr(word) + " names a file the package does not ship")
+    return errors
+
+
 def nonempty(value):
     """Ingestion treats a whitespace-only value as absent, so this check does too."""
     return isinstance(value, str) and bool(value.strip())
+
+
+def yaml_scalar(text):
+    """One quoted or bare scalar, the way this repository's metadata check reads one."""
+    text = text.strip()
+    if text.startswith("\""):
+        return json.loads(text)
+    if text.startswith("'") and text.endswith("'") and len(text) > 1:
+        return text[1:-1].replace("''", "'")
+    return text
+
+
+def interface_errors(skill_path, payload, label):
+    """A skill's interface metadata, read from the bytes the release actually ships.
+
+    The repository's metadata check reads the working tree; this reads the payload, which is
+    what a clone installs. A file broken only in the committed revision would otherwise ship
+    and be found by nobody.
+
+    What this does NOT claim: that a plugin installation reads this file. Measured on
+    codex-cli 0.154.0, the model-visible skill listing takes its description from the SKILL.md
+    frontmatter, and a description placed only here never appeared. So this is checked against
+    the shape this repository requires of it, not against an ingestion contract nobody has
+    observed.
+    """
+    name = PurePosixPath(skill_path).name
+    try:
+        text = payload[skill_path + "/agents/openai.yaml"][1].decode()
+    except (KeyError, UnicodeDecodeError) as exc:
+        return [label + " " + skill_path + "/agents/openai.yaml: " + str(exc)]
+    interface, section = {}, None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            section = line.strip()
+        elif section == "interface:":
+            key, separator, value = line.strip().partition(":")
+            if not separator or key in interface:
+                return [label + " " + skill_path + "/agents/openai.yaml: malformed interface"
+                        " metadata"]
+            try:
+                interface[key] = yaml_scalar(value)
+            except ValueError as exc:
+                # Reported with the other findings rather than raised. A quoting mistake here
+                # would otherwise abort the whole package check, and the run would end with one
+                # traceback instead of the list of everything that is wrong.
+                return [label + " " + skill_path + "/agents/openai.yaml: " + key + " is not a"
+                        " readable scalar (" + str(exc) + ")"]
+    missing = {"display_name", "short_description", "default_prompt"} - set(interface)
+    if missing:
+        return [label + " " + skill_path + "/agents/openai.yaml: missing interface "
+                + ", ".join(sorted(missing))]
+    if "$" + name not in interface["default_prompt"]:
+        return [label + " " + skill_path + "/agents/openai.yaml: default_prompt must name $"
+                + name]
+    return []
 
 
 def https_url(value):
@@ -271,11 +483,19 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
                 errors.append(label + " manifest: interface." + field
                               + " must be a nonempty string" + (" list" if field in
                               ("capabilities", "defaultPrompt") else ""))
-    for field in ("hooks", "mcpServers", "apps"):
-        if field in manifest:
-            errors.append(label + " manifest: " + field + " is not declared by this package; "
-                          "declaring a component replaces default discovery and belongs to its "
-                          "own change")
+    declared, _, component_errors = declared_components(manifest)
+    errors += [label + " manifest: " + problem for problem in component_errors]
+    if payload is not None:
+        for field, relative in declared:
+            if relative not in payload:
+                errors.append(label + " manifest: " + field + " names " + repr("./" + relative)
+                              + ", which the package does not ship")
+                continue
+            data = payload[relative][1]
+            if field == "hooks":
+                errors += hook_document_errors(relative, data, label)
+            else:
+                errors += mcp_document_errors(relative, data, payload, label)
     return errors
 
 
@@ -323,16 +543,21 @@ def marketplace_errors(catalog, manifest, plugin_relative):
     return errors
 
 
-def hygiene(payload, label):
+def hygiene(payload, manifest, label):
     errors = []
     for required in REQUIRED_FILES:
         if required not in payload:
             errors.append(label + ": " + required + " must ship with the package")
+    try:
+        _, roots, _ = declared_components(manifest)
+    except (AttributeError, TypeError):
+        roots = set(ALWAYS)
     for name, (_, data) in sorted(payload.items()):
         parts = PurePosixPath(name).parts
-        if parts[0] not in TOP_LEVEL:
-            errors.append(label + " " + name + ": only " + ", ".join(sorted(TOP_LEVEL))
-                          + " may ship in the package")
+        if parts[0] not in roots:
+            errors.append(label + " " + name + ": only " + ", ".join(sorted(roots))
+                          + " may ship in the package; a component the manifest does not"
+                            " declare installs without ever loading")
         if any(FORBIDDEN_NAMES.match(part) for part in parts):
             errors.append(label + " " + name + ": operational state and credentials may not ship")
         try:
@@ -366,19 +591,26 @@ def skills(payload, manifest, label):
             PurePosixPath(*parts[len(prefix_parts) + 1:]).as_posix())
     if not found:
         errors.append(label + ": the declared skills path ships no skill")
+    declared, _, _ = declared_components(manifest)
+    component_files = {relative for _, relative in declared}
     for name in sorted(payload):
         parts = PurePosixPath(name).parts
-        if parts[0] == ".codex-plugin" or name == "LICENSE":
+        if parts[0] in ALWAYS or name in component_files:
             continue
-        if parts[:len(prefix_parts)] != prefix_parts:
-            # Everything under the plugin root ships, so an undeclared tree would be
-            # installed without ever being validated as a skill.
-            errors.append(label + " " + name + ": ships outside the declared skills path "
-                          + prefix)
+        if parts[:len(prefix_parts)] == prefix_parts:
+            continue
+        if any(name.startswith(PurePosixPath(relative).parts[0] + "/")
+               for relative in component_files):
+            # A declared component's own directory may hold what that component starts. The
+            # skills path is checked as skills; this is checked by the component rules above.
+            continue
+        errors.append(label + " " + name + ": ships outside every declared component path")
     for skill, files in sorted(found.items()):
         for required in ("SKILL.md", "agents/openai.yaml"):
             if required not in files:
                 errors.append(label + " " + prefix + "/" + skill + ": missing " + required)
+        if "agents/openai.yaml" in files:
+            errors += interface_errors(prefix + "/" + skill, payload, label)
     return errors, found
 
 
@@ -418,7 +650,7 @@ def check_installed(path):
     manifest = read_manifest(payload, "installed")
     # The installed directory is named by version, so only the packaged facts apply here.
     errors += manifest_errors(manifest, None, "installed", payload)
-    errors += hygiene(payload, "installed")
+    errors += hygiene(payload, manifest, "installed")
     skill_errors, found = skills(payload, manifest, "installed")
     return errors + skill_errors, report_payload(payload, manifest, found,
                                                  {"source": "payload", "path": str(path)})
@@ -430,7 +662,7 @@ def check_revision(revision):
     release, errors = revision_payload(resolved, plugin_relative)
     manifest = read_manifest(release, "release")
     errors += manifest_errors(manifest, PLUGIN_ROOT.name, "release", release)
-    errors += hygiene(release, "release")
+    errors += hygiene(release, manifest, "release")
     skill_errors, found = skills(release, manifest, "release")
     errors += skill_errors
     try:
@@ -446,9 +678,10 @@ def check_revision(revision):
     errors += compatibility_link_errors(resolved, manifest, plugin_relative)
     # A local marketplace installs the working tree, so it gets the same checks.
     working, working_errors = directory_payload(PLUGIN_ROOT)
-    errors += working_errors + hygiene(working, "working tree")
+    errors += working_errors
     working_manifest, manifest_read_errors = safe_manifest(working, "working tree")
     errors += manifest_read_errors
+    errors += hygiene(working, working_manifest or {}, "working tree")
     if working_manifest is not None:
         errors += manifest_errors(working_manifest, PLUGIN_ROOT.name, "working tree", working)
         working_skill_errors, working_found = skills(working, working_manifest, "working tree")

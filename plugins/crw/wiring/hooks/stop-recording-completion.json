@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"",
+            "timeout": 10,
+            "statusMessage": "(crw) Checking the completion records"
+          }
+        ]
+      }
+    ]
+  }
+}
