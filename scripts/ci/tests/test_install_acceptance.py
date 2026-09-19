@@ -1591,7 +1591,9 @@ def _held_by_class(tree, spelled, over=None):
                     (through or "").rpartition(".")[2] or None)
                 if owner is not None:
                     held.setdefault(owner, set()).add(target.attr)
-            elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
+            elif isinstance(target, ast.Name) and klass is not None:
+                # A bare binding in a class body, wherever the class is written: the class body
+                # of a class made inside a function is that function's place, not the module's.
                 held.setdefault(klass, set()).add(target.id)
     # An attribute declared on a base is held by everything under it, the way a method is.
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
@@ -1626,6 +1628,14 @@ def _hands_on(tree, spelled):
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2]
                            for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    # A class body is a scope of its own, and it is not the module: a class written inside a
+    # function has one too, and two class bodies do not share their names.
+    class_scope = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            where = places.get(id(node), (MODULE_LEVEL, None))[0]
+            class_scope.setdefault(node.name, []).append(
+                ("<class " + node.name + " in " + where + ">", where))
     # Directly in a class body is what makes a def a method: a helper nested inside a method is
     # not one, and a class written inside a function still has methods.
     def in_body(body):
@@ -1670,42 +1680,46 @@ def _hands_on(tree, spelled):
         if not isinstance(node.value, ast.Lambda):
             continue
         where, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if klass is None:
+        if klass is None or not any(around == where
+                                    for _scope, around in class_scope.get(klass, ())):
+            # Bound in a class BODY, not merely somewhere under a class: a lambda made inside a
+            # method is that method's local and never answers self.name().
             continue
+        seat = places.get(id(node.value), (MODULE_LEVEL, None))[0]
+        first = (node.value.args.posonlyargs + node.value.args.args)[:1]
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
             if isinstance(target, ast.Name):
-                methods[(klass, target.id)] = places.get(id(node.value),
-                                                         (MODULE_LEVEL, None))[0]
+                methods[(klass, target.id)] = seat
+                if first:
+                    receivers[seat] = first[0].arg
 
     # What a class body binds, and where. A def binds its own name there as surely as an
     # assignment does, and a binding written after a default has not happened yet when that
     # default runs, so the line is part of the answer.
-    # A class body is a scope of its own, and it is not the module: a class written inside a
-    # function has one too, and two class bodies do not share their names.
-    def body_scope(node):
-        where = places.get(id(node), (MODULE_LEVEL, None))[0]
-        return "<class " + node.name + " in " + where + ">"
-
-    class_scope, class_bound = {}, {}
+    class_bound = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        class_scope.setdefault(node.name, []).append(
-            (body_scope(node), places.get(id(node), (MODULE_LEVEL, None))[0]))
         def bound_in(body):
-            """Every name this class body binds, including under an if or a try."""
+            """Every name this class body binds: under an if, a try, an except, an import."""
             for statement in body:
                 if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
                                           ast.ClassDef)):
                     yield statement.name, statement.lineno
                     continue
+                if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                    for alias in statement.names:
+                        yield (alias.asname or alias.name.split(".")[0]), statement.lineno
+                elif isinstance(statement, ast.ExceptHandler) and statement.name:
+                    yield statement.name, statement.lineno
                 for target, _value in _bindings(statement):
                     if isinstance(target, ast.Name):
                         yield target.id, statement.lineno
                 for field, value in ast.iter_fields(statement):
                     if isinstance(value, list):
                         yield from bound_in([item for item in value
-                                             if isinstance(item, ast.stmt)])
+                                             if isinstance(item, (ast.stmt,
+                                                                  ast.ExceptHandler))])
 
         for named, line in bound_in(node.body):
             class_bound.setdefault(node.name, {}).setdefault(named, line)
@@ -1731,20 +1745,28 @@ def _hands_on(tree, spelled):
                 outer = receivers.get(".".join(below))
                 if outer:
                     if outer in taken_names.get(scope, set()):
-                        return {"cls"}
+                        return set()
                     break
                 below.pop()
             chain.pop()
         return set()
 
-    def inherited(klass, named, seen=()):
-        """The method this class reaches by that name, its own or one it inherits."""
+    def inherited(klass, named, seen=(), aliases=None):
+        """The method this class reaches by that name, its own or one it inherits.
+
+        An alias made in the class body binds the same method object, so self.alias() reaches
+        what self.carrier() does.
+        """
         if klass is None or klass in seen:
             return None
         if (klass, named) in methods:
             return methods[(klass, named)]
+        for scope, _around in class_scope.get(klass, ()):
+            held_alias = (aliases or {}).get(scope, {}).get(named)
+            if held_alias:
+                return sorted(held_alias)[0]
         for base in parents.get(klass, ()):
-            reached = inherited(base, named, tuple(seen) + (klass,))
+            reached = inherited(base, named, tuple(seen) + (klass,), aliases)
             if reached:
                 return reached
         return None
@@ -1904,8 +1926,11 @@ def _hands_on(tree, spelled):
                 if isinstance(expression, ast.NamedExpr):
                     return names(expression.value)
                 if isinstance(expression, ast.Name):
-                    _where, in_class = places.get(id(node), (MODULE_LEVEL, None))
-                    return outwards(function, expression.id, aliases, in_class,
+                    # Resolved where the expression is evaluated, which is not always where the
+                    # name it feeds is bound: a comprehension walrus binds outside and computes
+                    # inside.
+                    inside, in_class = places.get(id(expression), (function, None))
+                    return outwards(inside, expression.id, aliases, in_class,
                                     expression.lineno)
                 if isinstance(expression, ast.Await):
                     return names(expression.value)
@@ -1986,7 +2011,7 @@ def _hands_on(tree, spelled):
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
             reached = inherited(klass if through in instance(function)
                                 else (through or "").rpartition(".")[2] or None,
-                                node.func.attr)
+                                node.func.attr, (), aliases)
             return {reached} if reached else set()
         return set()
 
