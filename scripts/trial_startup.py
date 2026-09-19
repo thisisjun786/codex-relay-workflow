@@ -106,6 +106,18 @@ POLICY_CONFIG_FIELDS = {
                        "excludeSlashTmp"),
 }
 
+# All and only the fields each policy type carries, and the ones that have to be booleans, from
+# the bridge's own validation. A policy is refused before the creation call when its key set is
+# wrong, a flag is not a boolean, or a writable root is not an absolute string, so a record
+# carrying one could never have produced the receipt it declares.
+POLICY_PROTOCOL_FIELDS = {
+    "readOnly": ("networkAccess",),
+    "dangerFullAccess": (),
+    "workspaceWrite": ("networkAccess", "writableRoots", "excludeTmpdirEnvVar",
+                       "excludeSlashTmp"),
+}
+POLICY_FLAGS = ("networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp")
+
 # The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
 # an omitted default and an explicit one are not read as a difference. This is a second copy of
 # another lane's contract and it is held here only because the relay is not importable from a
@@ -537,14 +549,27 @@ def untransmittable_policy_fields(policy):
 def readable_policy(policy):
     """The policy with its defaults filled, or None where the relay could not read it at all.
 
-    Mirrors normalise_policy: an object carrying a string type, and a writableRoots that is a
-    list wherever it appears. A string there normalises to None and the relay refuses the send,
-    so a preflight comparing only values approved a row delivery cannot use.
+    Mirrors what the two sides actually require of a policy, not only its outer shape. The relay
+    normalises it and refuses a send it cannot read in full; the bridge refuses it before the
+    creation call unless the key set is all and only its type's protocol fields, its flags are
+    booleans, and every writable root is an absolute string. A writableRoots of [7] is a list, so
+    checking the outer list alone certified a policy that could never have produced the receipt
+    the record declares.
     """
     if not isinstance(policy, dict) or not isinstance(policy.get("type"), str):
         return None
     merged = with_policy_defaults(policy)
-    if "writableRoots" in merged and not isinstance(merged["writableRoots"], list):
+    expected = POLICY_PROTOCOL_FIELDS.get(merged["type"])
+    if expected is None or set(merged) != {"type", *expected}:
+        return None
+    if any(not isinstance(merged[key], bool) for key in POLICY_FLAGS if key in merged):
+        return None
+    roots = merged.get("writableRoots")
+    if "writableRoots" in merged and (
+            not isinstance(roots, list)
+            # Absolute, the way every other path in this module is judged: a relative root is
+            # read against whichever directory a process happens to be in.
+            or any(not isinstance(one, str) or not one.startswith("/") for one in roots)):
         return None
     return merged
 
@@ -590,11 +615,12 @@ def undeliverable_settings(settings):
         return ["the store holds no settings to read"]
     problems = []
     policy = settings.get("sandbox")
-    if readable_policy(policy) is None:
+    kind = policy.get("type") if isinstance(policy, dict) else None
+    if kind not in RESUME_SANDBOX_TYPES:
+        problems.append("its sandbox type has no resume mode")
+    elif readable_policy(policy) is None:
         problems.append("its sandbox policy cannot be read in full")
     else:
-        if policy.get("type") not in RESUME_SANDBOX_TYPES:
-            problems.append("its sandbox type has no resume mode")
         for name in untransmittable_policy_fields(policy):
             problems.append("sandbox." + name + " is not something a resume can carry")
     if not isinstance(settings.get("runtimeWorkspaceRoots"), list):

@@ -3930,5 +3930,66 @@ class FortyFirstHostedRound(TrialCase):
         self.assertIn("environments is not a list of selections", cell["evidence"])
 
 
+class FortySecondHostedRound(TrialCase):
+    """A policy whose outer shape is right and whose contents the two sides refuse."""
+
+    def declare(self, policy):
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["sandbox"] = policy
+        self.world.flush()
+        return self.world.refusal()
+
+    def test_a_writable_root_that_is_not_a_path_is_refused(self):
+        # A list of the wrong things is still a list. The bridge refuses the policy before the
+        # creation call, so a record carrying it could never have produced the receipt it
+        # declares, and certifying it approved a round trip that cannot start.
+        refused = self.declare({"type": "workspaceWrite", "writableRoots": [7],
+                                "networkAccess": False, "excludeTmpdirEnvVar": False,
+                                "excludeSlashTmp": False})
+        self.assertIsNotNone(refused, "a writable root that is not a path was accepted")
+        self.assertIn("cannot be read in full", refused.reason)
+
+    def test_a_relative_writable_root_is_refused(self):
+        refused = self.declare({"type": "workspaceWrite", "writableRoots": ["relative/path"],
+                                "networkAccess": False, "excludeTmpdirEnvVar": False,
+                                "excludeSlashTmp": False})
+        self.assertIsNotNone(refused, "a relative writable root was accepted")
+
+    def test_a_flag_that_is_not_a_boolean_is_refused(self):
+        refused = self.declare({"type": "workspaceWrite", "writableRoots": [],
+                                "networkAccess": "false", "excludeTmpdirEnvVar": False,
+                                "excludeSlashTmp": False})
+        self.assertIsNotNone(refused, "a policy flag that is not a boolean was accepted")
+
+    def test_a_field_the_type_does_not_carry_is_refused(self):
+        refused = self.declare({"type": "readOnly", "networkAccess": False,
+                                "writableRoots": []})
+        self.assertIsNotNone(refused, "a field this type does not carry was accepted")
+
+    def test_the_policies_a_trial_may_use_are_still_accepted(self):
+        # Support: each type at its own defaults, and workspaceWrite with a real root.
+        for policy in ({"type": "dangerFullAccess"}, {"type": "readOnly"},
+                       {"type": "workspaceWrite"},
+                       {"type": "workspaceWrite", "writableRoots": ["/tmp"]}):
+            with self.subTest(policy=policy):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                for boundary in world.record["boundaries"]:
+                    for participant in boundary["participants"]:
+                        participant["expect"]["sandbox"] = dict(policy)
+                world.flush()
+                self.assertIsNone(world.refusal())
+
+    def test_the_field_sets_are_the_bridges_own(self):
+        # Support, and the guard on the fifth copied contract, read as a value.
+        source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
+                              "bridge.py")
+        theirs = assigned_literal(source, "fields")
+        self.assertEqual({kind: {"type", *names}
+                          for kind, names in startup.POLICY_PROTOCOL_FIELDS.items()},
+                         {kind: set(names) for kind, names in theirs.items()})
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
