@@ -1575,6 +1575,106 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(custom.is_file())
         self.assertEqual(json.loads(fixed.read_text(encoding="utf-8")), other)
 
+    def test_a_plugin_owned_record_is_compared_with_the_live_table_too(self):
+        """Both surfaces are live whoever wrote the record, so both are compared."""
+        host = self.ready()
+        record = host.home / "crw-bridge-mcp.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["owner"] = "plugin"
+        document["args"] = ["--alias"]
+        record.write_text(json.dumps(document), encoding="utf-8")
+        before = (host.config(), host.hooks_document(), host.settings(), host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("disagree about", answer["results"][0]["detail"])
+        self.assertIn("args", answer["results"][0]["detail"])
+        self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
+                         before)
+
+    def test_a_bridge_that_stopped_existing_after_preflight_is_not_installed(self):
+        """register-mcp writes the command it is given without requiring it to be there."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        missing = str(host.root / "gone" / "codex-thread-bridge")
+        was = str(host.destination / "current" / "bin" / "codex-thread-bridge")
+        # Both surfaces moved together, so the divergence check is not what answers this.
+        record = host.home / "crw-bridge-mcp.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["bridgeExecutable"] = missing
+        record.write_text(json.dumps(document), encoding="utf-8")
+        (host.home / "config.toml").write_text(host.config().replace(was, missing),
+                                               encoding="utf-8")
+        table, kept = host.config(), host.record()
+        results = steps.transition(snapshot, {"accept_hook_renumbering": False,
+                                              "accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["mcp record retire"], "refused", json.dumps(results)[:900])
+        refusal = [item for item in results if item["step"] == "mcp record retire"][0]
+        self.assertIn("is not an executable file", refusal["detail"])
+        self.assertEqual(outcomes["mcp table standdown"], "not_reached")
+        self.assertEqual((host.config(), host.record()), (table, kept))
+
+    def test_a_payload_replaced_after_preflight_stops_the_first_removal(self):
+        """preflight runs the payload contract live, so the window it names starts after it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.plugin_refusals(snapshot), [])
+        (Path(snapshot["plugin"]["cacheVersion"]) / "wiring" / "mcp.json").unlink()
+        # Stubbed deliberately: preflight re-runs the contract live, so the only way to be in the
+        # window this is about is to have passed it before the cache was replaced.
+        original = steps.preflight
+        steps.preflight = lambda host, options: steps._answer(
+            "preflight", steps.SETTLED, "stubbed: this case is about the window after preflight")
+        self.addCleanup(setattr, steps, "preflight", original)
+        before = (host.hooks_document(), host.settings(), host.config())
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "refused", json.dumps(results)[:700])
+        refusal = [item for item in results if item["step"] == "settings retire"][0]
+        self.assertIn("--payload", refusal["detail"])
+        self.assertEqual((host.hooks_document(), host.settings(), host.config()), before)
+
+    def test_an_adapter_replaced_after_the_snapshot_stops_the_standdown(self):
+        """A command string names a file; it does not say what is in it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        # A registration pointing at a second checkout, so the bytes under it can change without
+        # this repository's own adapter being touched.
+        other = Path(self.directory) / "checkout"
+        (other / "scripts" / "crw_runtime").mkdir(parents=True)
+        (other / "plugins" / "crw" / ".codex-plugin").mkdir(parents=True)
+        (other / "plugins" / "crw" / ".codex-plugin" / "plugin.json").write_text(
+            "{}", encoding="utf-8")
+        (other / "scripts" / "crw_runtime" / "completion.py").write_text("", encoding="utf-8")
+        adapter = other / "scripts" / "completion_hook.py"
+        shutil.copy2(ROOT / "scripts" / "completion_hook.py", adapter)
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace(
+            str(ROOT / "scripts" / "completion_hook.py"), str(adapter))
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertTrue(all(item["proven"] for item in snapshot["hook"]["entries"]),
+                        json.dumps(snapshot["hook"]["entries"])[:600])
+        adapter.write_text(adapter.read_text(encoding="utf-8") + "\n# somebody else's edit\n",
+                           encoding="utf-8")
+        before = host.hooks_document()
+        answer = steps.hook_standdown(snapshot, {"accept_hook_renumbering": True}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("no longer this repository's own adapter", answer["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

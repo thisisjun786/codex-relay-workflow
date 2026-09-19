@@ -149,7 +149,13 @@ def mcp_refusals(mcp):
     found = []
     record = mcp.get("record") or {}
     registration = mcp.get("registration") or {}
-    if mcp.get("recordOwner") == bridgerecord.OWNER_USER and registration:
+    if mcp.get("recordOwner") in bridgerecord.OWNERS and registration:
+        # Either valid owner, because what makes this dangerous is that both surfaces are live,
+        # not which one wrote the record. With a plugin-owned record disagreeing with a canonical
+        # table, the retire answers already_done, the standdown removes the table, and the record
+        # install refuses -- leaving new sessions started from a record that names another
+        # executable than the one they were running a moment ago. A record no valid owner claims
+        # is left out: nothing runs it, and it is retired rather than compared.
         # The table is what current sessions actually run and the record is what the plugin launcher
         # would run. Choosing between them silently would replace a working table with a record that
         # starts something else, so a disagreement is reported rather than resolved here.
@@ -211,6 +217,31 @@ def registered_settings(host):
     return None, None
 
 
+def payload_complaints(repo_root, cache_version):
+    """Whether what is installed passes this repository's own payload contract, and what was run.
+
+    One function, two callers: preflight and the recheck in front of every removal. The version
+    cache is replaced wholesale on every install, so a replacement landing after preflight can
+    leave a single version that is malformed -- one missing wiring/mcp.json, say -- and a check
+    that lives in only one of the two places passes exactly the removal it exists to stop.
+    Written once rather than twice because two copies of a contract do not stay in agreement.
+    """
+    argv = [sys.executable, str(Path(repo_root) / "scripts" / "ci" / "plugin.py"),
+            "--payload", str(cache_version)]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as error:
+        return (["the installed payload could not be validated: "
+                 + type(error).__name__ + ": " + str(error)],
+                {"payloadCheck": argv, "exitCode": None})
+    if done.returncode != 0:
+        return (["the installed payload at " + str(cache_version) + " did not pass"
+                 " scripts/ci/plugin.py --payload, so what is installed is not a package this"
+                 " transition can rely on: " + (done.stdout + done.stderr).strip()[:400]],
+                {"payloadCheck": argv, "exitCode": done.returncode})
+    return [], {"payloadCheck": argv, "exitCode": done.returncode}
+
+
 def preflight(host, options):
     """Every reason not to start, collected before anything is touched.
 
@@ -238,19 +269,9 @@ def preflight(host, options):
     else:
         # The repository already owns a payload contract. A file census is not it: an empty hook
         # document and an empty mcp.json satisfy existence and leave no hook and no bridge.
-        argv = [sys.executable, str(Path(host["repoRoot"]) / "scripts" / "ci" / "plugin.py"),
-                "--payload", plugin["cacheVersion"]]
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=300)
-            notes.append({"payloadCheck": argv, "exitCode": done.returncode})
-            if done.returncode != 0:
-                refusals.append("the installed payload at " + plugin["cacheVersion"]
-                                + " did not pass scripts/ci/plugin.py --payload, so what is"
-                                  " installed is not a package this transition can rely on: "
-                                + (done.stdout + done.stderr).strip()[:400])
-        except (OSError, subprocess.SubprocessError) as error:
-            refusals.append("the installed payload could not be validated: "
-                            + type(error).__name__ + ": " + str(error))
+        complaints, note = payload_complaints(host["repoRoot"], plugin["cacheVersion"])
+        notes.append(note)
+        refusals.extend(complaints)
         linked = {Path(item["path"]).name for item in host["skills"]["crwOwned"]}
         missing = sorted(linked - set(plugin.get("skills") or []))
         if missing:
@@ -494,6 +515,24 @@ def hook_standdown(host, options, *, apply=False):
                            " nothing was removed; rerun to decide against the file as it stands",
                            wanted=sorted(item["identity"] for item in entries),
                            found=sorted(item["identity"] for item in current))
+        # The proof is re-run, not merely the command strings compared. A command string says which
+        # file a registration runs; it says nothing about what is in that file. An adapter replaced
+        # in the checkout after the snapshot leaves every string identical, so the multiset above
+        # still matches and this would remove a registration whose target is no longer this
+        # repository's adapter -- with its settings already archived by the step before it.
+        reproved = inventory.read_hook(host["codexHome"], event, repo_root=host["repoRoot"])
+        if reproved["reading"] is not None:
+            return _answer("hook standdown", REFUSED,
+                           "the hook file could not be read again under the lock, so whether these"
+                           " registrations still run this repository's adapter was not"
+                           " established and nothing was removed", reading=reproved["reading"])
+        unproven = [item["identity"] for item in reproved["entries"] if not item.get("proven")]
+        if unproven:
+            return _answer("hook standdown", REFUSED,
+                           "the file " + ", ".join(unproven) + " runs is no longer this"
+                           " repository's own adapter, so nothing was removed: the program"
+                           " changed after it was proved, and removing the registration now would"
+                           " take away somebody else's hook", identities=unproven)
         # The consent question is asked again here, against the file being written. The list the
         # snapshot carried was computed before anything was locked, so a foreign hook that landed
         # in the same group since then would have its index moved, and its recorded trust detached,
@@ -821,6 +860,13 @@ def plugin_refusals(host):
     if not plugin.get("cacheVersion"):
         found.append("no single installed plugin version could be named"
                      + (": " + str(plugin["detail"]) if plugin.get("detail") else ""))
+    else:
+        # The same contract preflight applies, not a lighter census of it. The directories being
+        # present says nothing about whether the package still declares the hook and the server:
+        # a wholesale cache replacement landing mid-run leaves one version that may declare
+        # neither, and every destructive step after it would pass a check that only counted
+        # directories.
+        found.extend(payload_complaints(host["repoRoot"], plugin["cacheVersion"])[0])
     if len(plugin.get("entryKeys") or []) > 1:
         # The same cardinality preflight refuses on. Asked again here because an entry installed
         # after the snapshot leaves the first one present and enabled, so every other check in
@@ -937,6 +983,16 @@ def transition(host, options, *, apply=False):
                 # with no bridge. The decision is made about the state that will be written.
                 host = {**host, "mcp": inventory.read_mcp(host["codexHome"])}
                 changed = mcp_refusals(host["mcp"])
+                # The executable probe preflight makes, against the refreshed reading. mcp_refusals
+                # judges shape, ownership and agreement; register-mcp writes whatever
+                # --bridge-command it was given without requiring it to exist, so a supported
+                # registration landing here can name an absolute path that is not there, and this
+                # would retire the live surfaces and install a record that cannot start a bridge.
+                command = bridge_command(host)
+                if command and not _executable(command):
+                    changed.append("the bridge at " + str(command) + " is not an executable file,"
+                                   " so the record this would install names something that cannot"
+                                   " run")
                 if changed:
                     # The refreshed reading has to pass the same checks preflight applied, or a
                     # surface that changed while this ran would reach the steps unvalidated: an
