@@ -2515,7 +2515,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
                       answer["results"][0]["detail"])
         self.assertIn("the same surface, once each", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
@@ -2537,7 +2537,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.config()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("does not declare the codex-thread-bridge server running",
+        self.assertIn("The replacement has to be that same map",
                       answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
@@ -2557,7 +2557,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
                       answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -2591,7 +2591,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.config()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("does not declare the codex-thread-bridge server running",
+        self.assertIn("The replacement has to be that same map",
                       answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
@@ -2685,7 +2685,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
                       answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -2708,6 +2708,46 @@ class TheFindingsFromReview(TransitionCase):
         fixed.write_text(json.dumps(document), encoding="utf-8")
         back = steps._recreated_settings([retired])
         self.assertTrue([item for item in back if str(fixed) in item], json.dumps(back))
+
+    def test_a_versioned_python_this_checkout_does_not_ship_is_refused(self):
+        """Half a launcher is not a launcher: the interpreter is part of the declaration."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace("python3 ", "python3.999999 ", 1)
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("python3.999999", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_trailing_newline_is_not_the_name_of_an_executable(self):
+        """$ matches before a final newline, and nothing can run "python3\n"."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        self.assertIsNone(steps._script(["python3\n", "./wiring/crw_stop_hook.py"]))
+        self.assertIsNone(steps._shape(["python3\n", "./wiring/crw_stop_hook.py"]))
+
+    def test_a_second_cached_server_starting_the_same_launcher_is_refused(self):
+        """One owner per surface: another entry running it is a second bridge."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "mcp.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        document["mcpServers"]["codex-thread-bridge-again"] = dict(
+            document["mcpServers"]["codex-thread-bridge"])
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("codex-thread-bridge-again", answer["results"][0]["detail"])
+        self.assertIn("a second bridge", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

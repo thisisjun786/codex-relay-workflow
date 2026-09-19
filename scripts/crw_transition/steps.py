@@ -330,9 +330,11 @@ def _script(words):
     if not words:
         return None
     program = Path(str(words[0]).strip("\"'")).name
-    if not INTERPRETER_NAMES.match(program):
+    if not INTERPRETER_NAMES.fullmatch(program):
         # Something other than a Python starts this. What it does with a file name that follows
         # is its own business, and it is not this launcher being declared.
+        # fullmatch, because $ also matches before a trailing newline and "python3\n" is not the
+        # name of anything Codex can execute.
         return None
     for word in words[1:]:
         text = str(word).strip("\"'")
@@ -345,6 +347,20 @@ def _script(words):
             return None
         return _relative(text)
     return None
+
+
+def _shape(words):
+    """The whole thing a declaration runs, interpreter and script together, or None.
+
+    Compared as a pair because half of it is not a launcher. A versioned name this checkout does
+    not ship -- python3.999999 -- is a valid spelling of a Python that need not exist on the host,
+    and the only thing that makes a cached declaration the replacement is that it is the same
+    declaration this checkout ships.
+    """
+    script = _script(words)
+    if script is None:
+        return None
+    return Path(str(words[0]).strip("\"'")).name + " " + script
 
 
 def _plugin_checker(repo_root):
@@ -390,9 +406,9 @@ def _declared(root, repo_root):
                         words = shlex.split(str((hook or {}).get("command") or ""))
                     except ValueError:
                         words = []
-                    script = _script(words)
-                    if script:
-                        events.setdefault(event, []).append(script)
+                    shape = _shape(words)
+                    if shape:
+                        events.setdefault(event, []).append(shape)
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
@@ -405,9 +421,9 @@ def _declared(root, repo_root):
         for name, entry in ((document or {}).get("mcpServers") or {}).items():
             words = [str((entry or {}).get("command") or "")]
             words += [str(word) for word in ((entry or {}).get("args") or [])]
-            script = _script(words)
-            if script:
-                servers[name] = script
+            shape = _shape(words)
+            if shape:
+                servers[name] = shape
     return events, servers, unread
 
 
@@ -441,12 +457,19 @@ def declaration_complaints(repo_root, cache_version):
                          + ", and this checkout declares " + ", ".join(sorted(wanted))
                          + ". The replacement has to be the same surface, once each: anything"
                          " else either leaves the Stop unanswered or answers it twice")
-    for name, script in sorted(ours_servers.items()):
-        if cached_servers.get(name) != script:
-            found.append("the installed package does not declare the " + str(name) + " server"
-                         " running " + str(script) + " (it runs "
-                         + str(cached_servers.get(name)) + "), which is what would start the"
-                         " bridge this transition is removing the registration for")
+    if cached_servers != ours_servers:
+        # The whole map, not each name this checkout happens to use. A cached file carrying the
+        # expected entry PLUS a second name running the same launcher passes every per-name test
+        # and loads two bridge servers, which is the one-owner handoff defeated by addition.
+        found.append("the installed package declares the servers "
+                     + (", ".join(name + " -> " + shape
+                                  for name, shape in sorted(cached_servers.items()))
+                        if cached_servers else "nothing this checkout ships")
+                     + ", and this checkout declares "
+                     + ", ".join(name + " -> " + shape
+                                 for name, shape in sorted(ours_servers.items()))
+                     + ". The replacement has to be that same map: another entry starting the"
+                     " same launcher is a second bridge, and a different one is not this bridge")
     return found
 
 
