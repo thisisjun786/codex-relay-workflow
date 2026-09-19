@@ -5,6 +5,7 @@ code, and nothing is removed before the replacement is proven able to serve it. 
 from what is on disk, so an interrupted run converges on the next one.
 """
 
+import contextlib
 import errno
 import json
 import os
@@ -574,12 +575,17 @@ def settings_retire(host, options, *, apply=False):
     if host["settings"].get("document") is not None:
         known.setdefault(str(host["settings"]["path"]), host["settings"]["document"])
     moved = []
-    for candidate in paths:
-        with hostrecord.Locked(Path(candidate)):
+    # Every lock first, then every proof, and only then the moves. Validating and moving in one
+    # pass meant a later file failing its check left the earlier ones already archived, with the
+    # standdown never reached: those registrations stay installed and release in silence, which is
+    # a partial retirement reported as a refusal.
+    with contextlib.ExitStack() as locks:
+        for candidate in paths:
+            locks.enter_context(hostrecord.Locked(Path(candidate)))
+        for candidate in paths:
             # The snapshot proved what this file said; the lock only serialises the rename. A
             # writer that finished in between has settings this command never read, and archiving
-            # them takes a live installation's configuration away and leaves its hook releasing in
-            # silence. The proof is made current here, inside the lock, before anything moves.
+            # them takes a live installation's configuration away.
             now, outcome, detail, _found = completion.read_configuration(Path(candidate))
             was = known.get(candidate)
             if was is not None and now != was:
@@ -587,7 +593,8 @@ def settings_retire(host, options, *, apply=False):
                                str(candidate) + " changed after it was read (" + str(outcome or "")
                                + str(detail or "") + "), so nothing was archived; rerun to decide"
                                " against the settings as they now stand",
-                               retired=moved)
+                               retired=[])
+        for candidate in paths:
             moved.append({"from": candidate,
                           "to": retire(candidate, into=home, stem=completion.CONFIG_NAME)})
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),

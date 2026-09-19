@@ -1350,6 +1350,31 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(json.loads(custom.read_text(encoding="utf-8"))["markerRoot"],
                          str(host.marker / "manual"))
 
+    def test_a_later_settings_change_leaves_the_earlier_files_in_place(self):
+        """Validating and moving in one pass archived the earlier paths before the refusal."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        # Two paths are in play: the fixed one and the registered one, in that order, so the
+        # registered file is the one validated after the fixed one would already have been
+        # archived by the old single pass.
+        self.assertEqual(steps.settings_retire(snapshot, {}, apply=False)["paths"],
+                         [str(fixed), str(custom)])
+        changed = json.loads(custom.read_text(encoding="utf-8"))
+        changed["markerRoot"] = str(host.marker / "written-by-somebody-else")
+        custom.write_text(json.dumps(changed), encoding="utf-8")
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:400])
+        self.assertEqual(answer["retired"], [])
+        self.assertTrue(fixed.is_file(), "the earlier file was archived before the refusal")
+        self.assertTrue(custom.is_file())
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
