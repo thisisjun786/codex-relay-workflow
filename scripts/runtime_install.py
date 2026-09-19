@@ -3044,30 +3044,84 @@ def _settle_claim(environment, state, *, issue, run):
     could not take and a file it could not write are the same answer here. Anything else is a
     defect in this command rather than a record that would not write, and a defect reported as
     a settled-looking outcome is how one stops being found.
+
+    AND THE RECORD HAS THE SAME SPLIT THE RESULT DOES, so it gets the same treatment rather
+    than a branch. Writing the claim is two steps: the bytes are replaced under
+    hostrecord.Locked, and the lock is released afterwards. A failure in the SECOND raises with
+    the new bytes already on disk, and reading that as an unsettled record is this very
+    substitution one layer down -- it would send an operator to repair bookkeeping that is
+    already correct. So the answer carries two outcomes of its own, decided by two different
+    readings:
+
+      'settled'  -- did the RECORD land. Decided by reading the claim back, never by the
+                    exception, because an exception says the call did not finish.
+      'released' -- did the CALL finish. False whenever anything raised, whatever landed.
+
+    What failed afterwards is then named as itself rather than folded into the record's
+    outcome. A release that failed leaves the lock file it could not unlink, and that file is
+    not cosmetic: the next claim write at this path waits on it and then refuses until it is
+    gone or older than hostrecord.STALE_LOCK_SECONDS. So it is read on the filesystem, reported
+    as a residual path, and carried into the recovery sentence -- the same shape _install_failed
+    already reports residue in, for the same reason.
+
+    Fail closed where the readback itself failed. A claim nobody could read establishes
+    nothing, and it is not the same case as one that is merely missing: staging.decide()
+    answers KEEP for an unreadable claim, so the next run refuses this directory instead of
+    repairing it. The advice has to differ because the behaviour does, which is why it is
+    derived from the reading rather than written once for every failure.
     """
     path = staging.claim_path(environment)
     try:
         staging.write_claim(environment, state, issue=issue, run=run)
     except OSError as error:
-        # Read back rather than assumed. Which claim is actually there decides which repair the
-        # next run makes, and a failed write can leave the previous one or nothing at all.
-        left = staging.read_claim(environment)
-        return {
-            "path": str(path), "settled": False, "wanted": state,
-            "leftSaying": (left.value or {}).get("state") if left.ok else None,
-            "leftReading": left.state,
-            "detail": type(error).__name__ + ": " + error.__str__(),
-            "recoveryRequires": (
-                "run install again against the same destination. The replacement itself"
-                " finished: this environment is selected and the owned pointer names it, so"
-                " there is nothing to rebuild and nothing to undo. What is missing is only the"
-                " claim that records it, which the next run writes -- it reads a selected"
-                " environment whose claim never settled as an interrupted promotion and"
-                " finishes the bookkeeping. Until then this destination carries a runtime that"
-                " is in service and a claim that does not say so."),
-        }
-    return {"path": str(path), "settled": True, "wanted": state, "leftSaying": state,
-            "leftReading": reading.PRESENT, "detail": None, "recoveryRequires": None}
+        raised = type(error).__name__ + ": " + error.__str__()
+    else:
+        # No reading was made here, and none is reported. A cell carrying a reading its own
+        # question never produced is the habit the rest of this module is written against.
+        return {"path": str(path), "settled": True, "released": True, "wanted": state,
+                "detail": None, "readBack": None, "residualPaths": [],
+                "recoveryRequires": None}
+
+    left = staging.read_claim(environment)
+    says = (left.value or {}).get("state") if left.ok else None
+    settled = says == state
+    # Read on the filesystem rather than inferred from the exception. Which step raised is not
+    # knowable from here, and whether the lock outlived it is a fact about the directory.
+    stranded = Path(str(path) + hostrecord.LOCK_SUFFIX)
+    residual = [str(stranded)] if stranded.exists() else []
+
+    if settled:
+        record_requires = None
+    elif left.usable:
+        record_requires = (
+            "run install again against the same destination. The replacement itself finished:"
+            " this environment is selected and the owned pointer names it, so there is nothing"
+            " to rebuild and nothing to undo. What is missing is only the claim that records"
+            " it, which the next run writes -- it reads a selected environment whose claim"
+            " never settled as an interrupted promotion and finishes the bookkeeping. Until"
+            " then this destination carries a runtime that is in service and a claim that does"
+            " not say so.")
+    else:
+        record_requires = (
+            "make the claim at " + str(path) + " readable or remove it, then run install"
+            " again. The replacement itself finished and this environment is in service, so it"
+            " must not be deleted -- but rerunning alone will NOT repair this one: a claim that"
+            " cannot be read is not a claim this command may act on, so the next run reports"
+            " the directory and leaves it exactly as it stands rather than finishing the"
+            " promotion.")
+    residue_requires = None if not residual else (
+        "remove " + str(stranded) + " by hand. The lock taken to write this claim outlived the"
+        " call that took it, so the next claim write at this path waits on that file and then"
+        " refuses, until it is gone or older than " + str(hostrecord.STALE_LOCK_SECONDS)
+        + " seconds. It holds no runtime and removing it destroys nothing.")
+    return {"path": str(path), "settled": settled, "released": False, "wanted": state,
+            "detail": raised,
+            "readBack": {"state": left.state, "saying": says, "detail": left.detail},
+            "residualPaths": residual,
+            # Composed the way a refusal composes its own, so a reader meets one sentence
+            # covering everything outstanding rather than one per thing that went wrong.
+            "recoveryRequires": "; and ".join(
+                part for part in (record_requires, residue_requires) if part) or None}
 
 
 def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue,

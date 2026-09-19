@@ -5945,6 +5945,38 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_unless_settling))
+        if breaking == "settle the staging claim after it lands":
+            # What a failing RELEASE really leaves: the claim replaced, the lock file it could
+            # not unlink still there, and the call raising on its way out. Raising before the
+            # write would leave nothing to honour and the case would pass without exercising
+            # the readback; leaving no lock file would model a release that failed without
+            # failing to release anything.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def write_then_strand(environment, state, **kwargs):
+                written = real_write(environment, state, **kwargs)
+                if state == staging.COMPLETE:
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("stranded", encoding="utf-8")
+                    raise OSError("the claim lock could not be released")
+                return written
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_then_strand))
+        if breaking == "settle the staging claim unreadably":
+            # The third shape: the claim at that path can no longer be read at all. Absence and
+            # unreadability are not one answer here, because the next run repairs one and
+            # refuses the other.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def corrupt_instead_of_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    raise OSError("the claim could not be replaced")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_instead_of_settling))
         for entered in patches:
             entered.__enter__()
         try:
@@ -6213,6 +6245,71 @@ class SettledRecordTests(unittest.TestCase):
         self.assertNotEqual(code, 1, "a repair that landed is not a refusal")
         self.assertEqual(after["pointerTarget"], str(host.candidate),
                          "the pointer agrees with the selection, which is the repair itself")
+
+    def test_a_record_that_landed_before_the_call_failed_is_settled(self):
+        """The record has the same split the result does: the write landed, the release did not.
+
+        write_claim replaces the claim under a lock and unlinks the lock file afterwards, so a
+        failure while releasing raises with the new bytes already on disk. Deciding the record
+        from the exception is this same substitution one layer down, and it sends an operator
+        to repair bookkeeping that is already correct.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after it lands")
+            claim = staging.read_claim(host.candidate)
+            stranded = str(staging.claim_path(host.candidate)) + hostrecord.LOCK_SUFFIX
+
+        self.assertTrue(staging.settled(claim),
+                        "the claim really is COMPLETE on disk, whatever the call did next")
+        self.assertIs(payload.get("claimSettled"), True,
+                      "so the record settled: " + json.dumps(payload.get("claim"))[:600])
+        self.assertEqual(code, 0,
+                         "the runtime was replaced and the record says so, which is a success")
+        self.assertEqual(payload["claim"]["readBack"]["saying"], staging.COMPLETE,
+                         "decided on the evidence of the claim itself")
+        # And what failed afterwards is named as itself rather than as the record failing.
+        self.assertIs(payload["claim"]["released"], False,
+                      "the call did not finish, which is its own outcome")
+        self.assertTrue(payload["claim"]["detail"],
+                        "naming what raised, rather than hiding it behind the readback")
+        self.assertEqual(payload["claim"]["residualPaths"], [stranded],
+                         "the lock the release could not unlink is named, because the next"
+                         " claim write at this path waits on it and then refuses")
+        self.assertIn(stranded, payload["claim"]["recoveryRequires"] or "",
+                      "with the action it implies, so a success is not silently residual")
+
+    def test_a_record_nobody_could_read_back_is_not_reported_as_settled(self):
+        """Fail closed, and say something different, because the next run does something
+        different: staging.decide() answers KEEP for a claim it cannot read, so rerunning
+        repairs the ordinary case and refuses this one.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim unreadably")
+            # What the next run actually does with a claim it cannot read.
+            again, second = UpdateRecoveryTests()._run(host)
+        with tempfile.TemporaryDirectory() as temporary:
+            ordinary = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim")[1]
+
+        self.assertIs(payload.get("claimSettled"), False,
+                      "a reading that failed establishes nothing, least of all success")
+        claim = payload.get("claim") or {}
+        self.assertIn("readBack", claim,
+                      "the readback is what decides settlement, so it travels with the answer"
+                      " as the evidence for it: " + json.dumps(claim)[:400])
+        self.assertIn(claim["readBack"]["state"], reading.UNUSABLE)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(again, 1, json.dumps(second)[:600])
+        self.assertEqual(second["stagingDecision"], staging.KEEP,
+                         "the next run refuses this directory rather than repairing it")
+        self.assertNotEqual(claim["recoveryRequires"],
+                            ordinary["claim"]["recoveryRequires"],
+                            "so it must not be given the advice that fits the case a rerun"
+                            " does repair")
 
     def test_the_three_outcomes_are_three_exit_statuses(self):
         """A caller reading only the status still has to be able to tell them apart.
