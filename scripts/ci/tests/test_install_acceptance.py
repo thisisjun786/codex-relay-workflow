@@ -52,6 +52,7 @@ import json
 import os
 import shutil
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -205,6 +206,10 @@ TOUCHES_SOURCE_WITHOUT_CONCLUDING = {
     "diagnose_for":
         "it runs RUNTIME as a program and reads what the program answered. The text of that"
         " file is never opened here, and what the run answers is the thing being asked.",
+    "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice":
+        "it parses a sample written into the case itself, to measure that a derivation comes"
+        " back on it. No file is read and nothing about this module's own text is concluded:"
+        " the answer it wants is whether the loop halts, not what the loop says.",
     "linked_skills":
         "it names install.py to run it, not to read it.",
     "importable_runtime":
@@ -257,6 +262,7 @@ SOURCE_UNDECIDED_CALLS = {
     "dict": (EVERY_INTERPRETER, "a builtin type; calling it constructs a mapping"),
     "type": (EVERY_INTERPRETER, "a builtin type; calling it asks an object what it is"),
     "KeyError": (EVERY_INTERPRETER, "a builtin exception being raised"),
+    "TimeoutError": (EVERY_INTERPRETER, "the same, raised to bound a derivation being measured"),
     "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
     "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
@@ -2809,11 +2815,31 @@ RESOLVES_LIKE_PYTHON = {
           "    def getter(self):",
           "        return reading.UNREADABLE",
           "    carrier = property(getter)",
-          "    def answer(self):",
-          "        return self.carrier"),
-         "answer", True,
-         "its pair: the positional spelling was already read, so admitting the keyword must not"
-         " have changed what the ordinary one builds."),
+         "    def answer(self):",
+         "        return self.carrier"),
+        "answer", True,
+        "its pair: the positional spelling was already read, so admitting the keyword must not"
+        " have changed what the ordinary one builds."),
+    "a refusal read before the scope rebinds the qualifier":
+        (REFUSAL,
+         ("def consumer():",
+          "    import crw_runtime.reading as r",
+          "    accepted = r.UNREADABLE",
+          "    import json as r",
+          "    return accepted"),
+         "consumer", True,
+         "the read happened while the name held the owner, and these tables are keyed by scope"
+         " rather than by position in it. Taking the last binding loses a read that really"
+         " occurred, so a name that EVER holds the owner is treated as holding it -- the"
+         " direction this reader errs in everywhere else."),
+    "a qualifier the scope binds only to another module":
+        (REFUSAL,
+         ("def consumer():",
+          "    import json as r",
+          "    return r.UNREADABLE"),
+         "consumer", False,
+         "its pair: reading every binding of the name must not make every qualifier an owner."
+         " A scope that binds the alias only to something else still names nothing here."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3696,6 +3722,16 @@ def _class_aliases(tree):
     Alias = Base makes class Child(Alias) inherit from Base, so the line a name is searched in
     is built from what the bases NAME rather than from how they are spelled. To a fixpoint,
     because an alias of an alias names the same class.
+
+    The fixpoint is monotone by construction: what grows is the SET of classes each name has
+    ever been bound to in a scope, and a set only ever gains members, so the loop runs at most
+    once per (scope, name, class) and then stops. Writing the answer itself and re-running while
+    it differs is not a fixpoint at all -- two classes bound to one name flip it forever -- and
+    a derivation that does not halt is worse than one that answers narrowly.
+
+    One class is an alias. Two different ones in the same scope mean which it holds depends on
+    where the read is written, and these tables are keyed by scope rather than by position in
+    it, so the name names no class here rather than naming whichever was seen last.
     """
     places = _places(tree)
     by_spelling = _class_spellings(tree, places)
@@ -3714,18 +3750,17 @@ def _class_aliases(tree):
             bodies.append((places.get(id(node), (MODULE_LEVEL, None))[0] + "." + node.name
                            if places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL
                            else node.name, list(node.body)))
-    named, growing = {}, True
+    named, ever, growing = {}, {}, True
     while growing:
         growing = False
         for scope, body in bodies:
             here = named.setdefault(scope, {})
+            held = ever.setdefault(scope, {})
             for node in body:
-                if isinstance(node, ast.Assign):
-                    targets, value = node.targets, node.value
-                elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                    targets, value = [node.target], node.value
-                else:
+                binding = _assigned(node)
+                if binding is None:
                     continue
+                targets, value = binding
                 spelling = (_dotted(value) or "").rpartition(".")[2]
                 named_key = _class_named(by_spelling, spelling, scope)
                 reached = (named_key if named_key in classes
@@ -3733,9 +3768,31 @@ def _class_aliases(tree):
                            or named.get(MODULE_LEVEL, {}).get(spelling))
                 for target in targets:
                     bound = _dotted(target)
-                    if reached and bound and here.get(bound) != reached:
+                    if not bound:
+                        continue
+                    seen = held.setdefault(bound, set())
+                    if len(held.get(spelling, ())) > 1:
+                        # An alias OF an undecidable name is undecidable too. Asked before the
+                        # value is resolved, because an undecidable name resolves to nothing and
+                        # would otherwise leave whichever pass ran first standing -- which makes
+                        # the answer depend on the order these bodies are walked.
+                        if not seen >= held[spelling]:
+                            seen |= held[spelling]
+                            growing = True
+                        here.pop(bound, None)
+                        continue
+                    if not reached:
+                        continue
+                    if reached in seen:
+                        continue
+                    seen.add(reached)
+                    growing = True
+                    if len(seen) == 1:
                         here[bound] = reached
-                        growing = True
+                    else:
+                        # Undecidable rather than last-seen, and it stays undecidable, which is
+                        # what keeps the measure growing instead of oscillating.
+                        here.pop(bound, None)
     return named
 
 
@@ -3832,19 +3889,26 @@ def _assigned(node):
 
 
 def _names_module(qualifies, scope, spelled_as, fallback):
-    """Which module a qualifier names, read innermost-first from the scope that wrote it.
+    """Which modules a qualifier may name, read innermost-first from the scope that wrote it.
 
     Two functions may import different modules under one alias, so the answer belongs to a
     scope rather than to the file: keying it file-wide lets the later import overwrite the
     earlier one and answers for both with whichever landed last.
+
+    Within ONE scope the answer is every module the alias is bound to, not the last. A function
+    may import the owner, read an answer off it, and rebind the name afterwards; the read
+    already happened, and these tables are keyed by scope rather than by position in it. Taking
+    the last binding silently loses that read, so a name that EVER holds the owner is treated
+    as holding it -- the direction this reader errs in everywhere else.
     """
     reach = [] if scope == MODULE_LEVEL else scope.split(".")
     while reach:
         found = qualifies.get(".".join(reach), {}).get(spelled_as)
         if found:
-            return found
+            return frozenset(found)
         reach.pop()
-    return qualifies.get(MODULE_LEVEL, {}).get(spelled_as, fallback)
+    found = qualifies.get(MODULE_LEVEL, {}).get(spelled_as)
+    return frozenset(found) if found else frozenset({fallback} if fallback else ())
 
 
 def _bound_around(taken, scope, name):
@@ -3994,11 +4058,18 @@ def _instance_classes(tree):
     # Keyed by scope as well as spelling. Two functions may each bind holder, to different
     # classes, and a table that keeps the first answers the second with the wrong one.
     made, growing = {}, True
+    # Monotone for the same reason _class_aliases is: what grows is the SET of classes each
+    # name has ever been built from, and a set only gains members. Writing the answer and
+    # re-running while it differs is not a fixpoint -- holder = First() followed by
+    # holder = Second() flips it forever. Nobody reported this one; it is the same shape as the
+    # alias table beside it, and the shape is what was wrong.
+    ever = {}
     while growing:
         growing = False
         for node in ast.walk(tree):
             scope = places.get(id(node), (MODULE_LEVEL, None))[0]
             for target, value in _bindings(node):
+                carried = ""
                 if isinstance(value, ast.Call):
                     # A bare name, resolved where it is written: Alias = Holder makes Alias()
                     # a Holder. A qualified one is that owner's class, not this file's,
@@ -4012,11 +4083,31 @@ def _instance_classes(tree):
                                              _dotted(value.func) or "", scope,
                                              terminal=False))
                 else:
-                    builds = held_in(made, scope, _dotted(value) or "")
+                    carried = _dotted(value) or ""
+                    builds = held_in(made, scope, carried)
                 bound = _dotted(target)
-                if builds in classes and bound and made.get((scope, bound)) != builds:
+                if not bound:
+                    continue
+                seen = ever.setdefault((scope, bound), set())
+                carries = ever.get((scope, carried), set()) if carried else set()
+                if len(carries) > 1:
+                    # Copied from a name that is itself undecidable, so this one is too --
+                    # asked before the value resolves, or whichever pass ran first would stand.
+                    if not seen >= carries:
+                        seen |= carries
+                        growing = True
+                    made.pop((scope, bound), None)
+                    continue
+                if builds not in classes or builds in seen:
+                    continue
+                seen.add(builds)
+                growing = True
+                if len(seen) == 1:
                     made[(scope, bound)] = builds
-                    growing = True
+                else:
+                    # Which class the name holds depends on where it is read, and this table is
+                    # keyed by scope rather than by position in it.
+                    made.pop((scope, bound), None)
     # Answered per NODE, because which instance a spelling names depends on where it is read.
     by_node, built = {}, set()
     for node in ast.walk(tree):
@@ -5453,9 +5544,9 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                 reader = through
             if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
                     and id(node.value) in shadowed and id(node.value) not in built
-                    and _names_module(qualifies,
-                                      places.get(id(node), (MODULE_LEVEL, None))[0],
-                                      through, None) not in owners):
+                    and not (_names_module(qualifies,
+                                           places.get(id(node), (MODULE_LEVEL, None))[0],
+                                           through, None) & owners)):
                 # The scope binds that qualifier itself, so neither an imported module nor an
                 # instance bound at module level under the same spelling is what this reads.
                 # Unless what binds it is an import of the module that owns the answer: a
@@ -5479,10 +5570,10 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             # Which module a qualifier names is the analysed source's own import to answer:
             # import json as reading wears a spelling this module happens to own, and
             # import crw_runtime.reading as r wears one it does not.
-            named_module = _names_module(qualifies,
-                                         places.get(id(node), (MODULE_LEVEL, None))[0],
-                                         through, (through or "").rpartition(".")[2])
-            if node.attr in attributes and named_module in owners:
+            named_modules = _names_module(qualifies,
+                                          places.get(id(node), (MODULE_LEVEL, None))[0],
+                                          through, (through or "").rpartition(".")[2])
+            if node.attr in attributes and (named_modules & owners):
                 return (through or "") + "." + node.attr
             return None
         if isinstance(node, ast.Name) and node.id in names:
@@ -5866,12 +5957,13 @@ def refusals_reached(source):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
         if isinstance(node, ast.Import):
             for alias in node.names:
-                qualifies.setdefault(where, {})[alias.asname or alias.name] = (
-                    alias.name.rpartition(".")[2])
+                qualifies.setdefault(where, {}).setdefault(
+                    alias.asname or alias.name, set()).add(alias.name.rpartition(".")[2])
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 if alias.name != "*":
-                    qualifies.setdefault(where, {})[alias.asname or alias.name] = alias.name
+                    qualifies.setdefault(where, {}).setdefault(
+                        alias.asname or alias.name, set()).add(alias.name)
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
@@ -6493,6 +6585,41 @@ class SevenReadingsTests(unittest.TestCase):
                     self.assertNotIn(place, places,
                                      form + ": " + place + " cannot reach the declared thing and"
                                      " this reader named it anyway: " + json.dumps(places))
+
+    def test_each_binding_fixpoint_here_halts_on_a_name_bound_twice(self):
+        """The derivations halt, measured on the input that makes them spin.
+
+        A loop that writes its answer and runs again while the answer differs is not a
+        fixpoint. Two classes bound to one name flip it forever, so the module hangs rather
+        than answering narrowly -- and a derivation that does not halt is worse than one that
+        answers less, because nothing is reported at all. Both tables now grow the SET of what
+        a name has ever been bound to, and a set only gains members, so each is bounded by the
+        number of distinct classes.
+
+        Measured rather than argued, and measured as a failure rather than as a hang: each
+        derivation runs under a real-time bound on the input that used to spin, and one that
+        does not come back fails here with the reason.
+        """
+        spun = ("class First:", "    pass", "", "class Second:", "    pass", "",
+                "Alias = First", "Alias = Second", "", "def consumer():",
+                "    holder = First()", "    holder = Second()", "    return holder")
+        tree = ast.parse("\n".join(spun))
+        for name, derive in (("_class_aliases", _class_aliases),
+                             ("_instance_classes", _instance_classes)):
+            with self.subTest(name):
+                def rang(_number, _frame):
+                    raise TimeoutError(name)
+                before = signal.signal(signal.SIGALRM, rang)
+                signal.setitimer(signal.ITIMER_REAL, 10.0)
+                try:
+                    derive(tree)
+                except TimeoutError:
+                    self.fail(name + ": did not halt on a name bound to two classes, so it"
+                              " writes its answer and runs again rather than growing a set that"
+                              " can only gain members")
+                finally:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    signal.signal(signal.SIGALRM, before)
 
     def test_every_value_follower_here_reads_the_whole_pass_through_vocabulary(self):
         """Support: the reach over value forms, derived from this file and then measured.
@@ -7365,6 +7492,7 @@ HANDED = {
     "_visible_from": NOTHING,
     "_passed_through": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
+    "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
