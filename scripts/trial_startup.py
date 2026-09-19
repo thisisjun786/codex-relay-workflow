@@ -156,6 +156,17 @@ def unreadable_access(value):
     is never flattened into empty here either. An empty list is a selection; a null is not."""
     return value is MISSING or value is None
 
+
+def comparable_access(key, value):
+    """One delivery setting in the form the relay compares it in.
+
+    Only the environments need it: an omitted runtimeWorkspaceRoots means that entry's own cwd,
+    so raw equality called two spellings of one selection a disagreement.
+    """
+    if key == "environments" and value is not MISSING:
+        return normalised_environments(value)
+    return value
+
 # Every fact a later predicate compares a payload against. Declared here and required at ingress,
 # because a comparison between two absent values is an agreement nobody established.
 REQUIRED_FIELDS = (
@@ -522,6 +533,74 @@ def untransmittable_policy_fields(policy):
                   if name != "type" and name not in mapped and value != defaults.get(name))
 
 
+def readable_policy(policy):
+    """The policy with its defaults filled, or None where the relay could not read it at all.
+
+    Mirrors normalise_policy: an object carrying a string type, and a writableRoots that is a
+    list wherever it appears. A string there normalises to None and the relay refuses the send,
+    so a preflight comparing only values approved a row delivery cannot use.
+    """
+    if not isinstance(policy, dict) or not isinstance(policy.get("type"), str):
+        return None
+    merged = with_policy_defaults(policy)
+    if "writableRoots" in merged and not isinstance(merged["writableRoots"], list):
+        return None
+    return merged
+
+
+def normalised_environments(value):
+    """Each environment selection the way the relay reads it, MISSING where it could not.
+
+    An omitted runtimeWorkspaceRoots means a one-element list holding that entry's own cwd, so a
+    row spelling it out and a receipt leaving it off are the same selection. Comparing them raw
+    made this reading stricter than the delivery it describes and refused a trial that would
+    have been accepted. None stays None, because None is unknown and is never flattened to empty.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return MISSING
+    out = []
+    for entry in value:
+        if not isinstance(entry, dict) or "environmentId" not in entry or "cwd" not in entry:
+            return MISSING
+        roots = entry.get("runtimeWorkspaceRoots")
+        out.append({"environmentId": entry["environmentId"], "cwd": entry["cwd"],
+                    "runtimeWorkspaceRoots": list(roots) if roots is not None
+                    else [entry["cwd"]]})
+    return out
+
+
+def undeliverable_settings(settings):
+    """What delivery would refuse about this row before it sends, in its own terms.
+
+    Readiness was published for rows every equality check agreed on and delivery could not use:
+    a runtimeWorkspaceRoots of 7 that resume parameters raise on, a writableRoots that is a
+    string so the policy cannot be normalised at all. usable means complete rather than usable,
+    so the row is run through the shapes delivery actually applies instead of one rule being
+    added here per shape that turns up.
+    """
+    if settings is MISSING or not isinstance(settings, dict):
+        return ["the store holds no settings to read"]
+    problems = []
+    policy = settings.get("sandbox")
+    if readable_policy(policy) is None:
+        problems.append("its sandbox policy cannot be read in full")
+    else:
+        if policy.get("type") not in RESUME_SANDBOX_TYPES:
+            problems.append("its sandbox type has no resume mode")
+        for name in untransmittable_policy_fields(policy):
+            problems.append("sandbox." + name + " is not something a resume can carry")
+    if not isinstance(settings.get("runtimeWorkspaceRoots"), list):
+        problems.append("runtimeWorkspaceRoots is not a list, and resume parameters are built"
+                        " from it")
+    if normalised_environments(settings.get("environments", None)) is MISSING:
+        problems.append("environments is not a list of selections carrying an id and a cwd")
+    if settings.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
+        problems.append("its approval policy is not the one delivery authorises")
+    return problems
+
+
 def digest_of(path):
     reader = hashlib.sha256()
     with open(str(path), "rb") as handle:
@@ -836,6 +915,11 @@ def load_start(path, *, environment=None, mode="preflight"):
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               sandbox=shown(sandbox.get("type")),
                               resumable=list(RESUME_SANDBOX_TYPES))
+            if readable_policy(sandbox) is None:
+                raise Refused("this sandbox policy cannot be read in full, so the relay could"
+                              " confirm it with nothing and refuses the send",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              sandbox=shown(sandbox))
             untransmittable = untransmittable_policy_fields(sandbox)
             if untransmittable:
                 raise Refused("this sandbox policy asks for something no resume can carry, so the"
@@ -1390,10 +1474,11 @@ def reading_capability(record, relay):
             # Compared payload against payload rather than against a fifth declaration, because
             # neither side of it is the operator's to invent.
             unread = [key for key in DELIVERY_ACCESS
-                      if unreadable_access(receipt_access(receipt, key))
-                      or unreadable_access(field(settings, key))]
+                      if unreadable_access(comparable_access(key, receipt_access(receipt, key)))
+                      or unreadable_access(comparable_access(key, field(settings, key)))]
             apart = [key for key in DELIVERY_ACCESS
-                     if not same_value(receipt_access(receipt, key), field(settings, key))]
+                     if not same_value(comparable_access(key, receipt_access(receipt, key)),
+                                       comparable_access(key, field(settings, key)))]
             cells.append(graded("deliveryAccess:" + str(task),
                                 MISSING if unread else field(settings, "cwd"), not apart,
                                 probe=probe, provenance=EXECUTED,
@@ -1405,6 +1490,19 @@ def reading_capability(record, relay):
                                           "the store's settings disagree with the creation receipt"
                                           " at " + ", ".join(apart) + ", so this trial would run"
                                           " with access the receipt never recorded")))
+
+            # What delivery would refuse about the row before it sends. Equality between two
+            # payloads says they agree; it does not say the thing they agree on can be used.
+            undeliverable = undeliverable_settings(settings)
+            cells.append(graded("deliverableSettings:" + str(task),
+                                MISSING if settings is MISSING else field(payload, "task"),
+                                not undeliverable, probe=probe, provenance=EXECUTED,
+                                unreadable="settings-show reported no settings row to run through"
+                                           " the shapes delivery applies",
+                                evidence=("the store's row survives the transformations delivery"
+                                          " performs on it" if not undeliverable else
+                                          "delivery would refuse this row before it sends: "
+                                          + "; ".join(undeliverable))))
 
             # The permission profile a resume is checked against. The relay compares the whole
             # object the creation response gave, so a record holding an id-shaped stand-in is

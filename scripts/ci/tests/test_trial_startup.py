@@ -3740,5 +3740,97 @@ class ThirtyNinthHostedRound(TrialCase):
         self.assertFalse(cell["met"])
 
 
+class FortiethHostedRound(TrialCase):
+    """A row two payloads agree on that delivery cannot use, and one spelling of a selection.
+
+    Equality says two payloads agree. It does not say the thing they agree on survives the
+    transformations delivery performs on it before it sends, and three separate shapes reached
+    readiness that way. The row is run through those transformations now.
+    """
+
+    def rowed(self, **changes):
+        settings = self.world.payloads["settings-show"]["payload"]["settings"]
+        settings.update(changes)
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            for half in ("requested", "actual"):
+                capture["settings"][half].update(
+                    {k: v for k, v in changes.items() if k != "environments"})
+        self.world.start_supervisor()
+        self.world.flush()
+        return self.world.preflight()
+
+    def test_roots_that_resume_parameters_cannot_be_built_from_refuse_the_start(self):
+        document = self.rowed(runtimeWorkspaceRoots=7)
+        self.assertFalse(document["readyToStart"],
+                         "a row delivery raises on before thread/resume was approved")
+        cell = cells_of(document, "capability")["deliverableSettings:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("runtimeWorkspaceRoots is not a list", cell["evidence"])
+
+    def test_a_policy_the_relay_cannot_normalise_refuses_the_start(self):
+        document = self.rowed(sandbox={"type": "workspaceWrite", "writableRoots": "not-a-list"})
+        self.assertFalse(document["readyToStart"],
+                         "a row whose policy cannot be normalised was approved")
+        # The record naming the same policy is refused at ingress, which is the earlier and
+        # better place; this is the row reaching the same verdict when only the store holds it.
+        cell = cells_of(document, "capability").get("deliverableSettings:" + World.PARENT_A)
+        self.assertIsNotNone(cell, "no reading ran the row through what delivery does to it")
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("cannot be read in full", cell["evidence"])
+
+    def test_the_same_malformed_policy_is_refused_in_the_record_too(self):
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["sandbox"] = {"type": "workspaceWrite",
+                                                    "writableRoots": "not-a-list"}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a policy the relay cannot read was accepted")
+        self.assertIn("cannot be read in full", refused.reason)
+
+    def test_an_omitted_roots_list_is_the_same_selection_as_an_explicit_one(self):
+        # The protocol says an omitted runtimeWorkspaceRoots is that entry's own cwd, so these
+        # two spellings are one selection and refusing the trial was stricter than delivery.
+        here = str(self.world.repos["A"])
+        self.world.payloads["settings-show"]["payload"]["settings"]["environments"] = [
+            {"environmentId": "local", "cwd": here, "runtimeWorkspaceRoots": [here]}]
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            capture["creation"]["thread"]["environments"] = [
+                {"environmentId": "local", "cwd": here}]
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]["value"],
+            VERIFIED)
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_selection_that_really_differs_still_refuses(self):
+        # Support: the defaulting rule is the relay's, not an absence of comparison.
+        here = str(self.world.repos["A"])
+        self.world.payloads["settings-show"]["payload"]["settings"]["environments"] = [
+            {"environmentId": "local", "cwd": here, "runtimeWorkspaceRoots": [str(self.world.root)]}]
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            capture["creation"]["thread"]["environments"] = [
+                {"environmentId": "local", "cwd": here}]
+        self.world.start_supervisor()
+        self.world.flush()
+        self.assertEqual(
+            cells_of(self.world.preflight(),
+                     "capability")["deliveryAccess:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_the_defaulting_rule_is_the_relays_own(self):
+        # Support, read as the function's own expression rather than matched as text.
+        source = relay_source("packages", "codex-session-relay", "src", "codex_session_relay",
+                              "settings.py")
+        named = constants_in(source, "normalise_environments")
+        self.assertIn("runtimeWorkspaceRoots", named)
+        self.assertIn("cwd", named)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
