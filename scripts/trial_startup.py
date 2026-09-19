@@ -448,10 +448,21 @@ def entry_point(environment=None):
     installs = field(found.value, "components", RELAY_COMPONENT, "installs")
     if installs is MISSING or not isinstance(installs, list) or not installs:
         raise Refused("the host record names no install for " + RELAY_COMPONENT, path=str(path))
-    locations = [i.get("location") for i in installs if isinstance(i, dict) and i.get("location")]
-    return {"hostRecord": str(path), "consoleScript": console, "locations": locations,
-            "pointers": [str(Path(location) / POINTER_NAME / "bin" / console)
-                         for location in locations]}
+    # The owned pointer, which is the path a host reaches the runtime through. An install's
+    # location is where the module was installed — a site-packages directory for a copied
+    # install, a checkout for an editable one — and it has no pointer under it, so deriving the
+    # command from it named a path no real install has and refused every genuine trial. The
+    # pointer is <destination>/current (scripts/crw_runtime/pointer.py) and the record keeps that
+    # path under its own key, which is the one thing here that says which command a host runs.
+    owned = field(found.value, "pointer", "path")
+    if owned is MISSING or not isinstance(owned, str) or not owned.startswith("/"):
+        raise Refused("the host record names no owned pointer, so no installed relay is reached"
+                      " here", path=str(path), pointer=shown(field(found.value, "pointer")))
+    entries = [i.get("entryPoint") for i in installs
+               if isinstance(i, dict) and isinstance(i.get("entryPoint"), str)]
+    return {"hostRecord": str(path), "consoleScript": console, "pointerPath": owned,
+            "entryPoints": entries,
+            "pointers": [str(Path(owned) / "bin" / console)]}
 
 
 def anchored_launcher(record, environment=None):

@@ -205,8 +205,21 @@ class World:
         # this waits for the supervisor to actually reach the fixture's bound instead of
         # declaring one nothing has to meet. Capped, because a case that declares a large bound
         # is asserting the refusal rather than waiting for it.
-        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.05
-        while time.time() - launched < wanted:
+        #
+        # Waited on the same measurement the reading uses, the process's own start time, and not
+        # on when this call reached Popen. The two differ by however long the child took to
+        # exist, which is small here and was not small on a loaded CI runner: the uptime cell
+        # read under the bound there while this waited above it.
+        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.2
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            started = startup.process_started_at(self.supervisor.pid)
+            if started is None:
+                # No /proc, so the reading uses the record's own launchedAt instead and this
+                # wait has nothing to measure against.
+                break
+            if time.time() - started >= wanted:
+                break
             time.sleep(0.02)
         self.record["supervisor"]["pid"] = self.supervisor.pid
         self.flush()
@@ -217,8 +230,19 @@ class World:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "host-record.json").write_text(json.dumps({
             "recordVersion": 1, "definitionVersion": 1, "host": "test", "user": "test",
+            # The shape runtime_install.py actually writes: an install's location is where the
+            # module went, its entryPoint is that environment's own console script, and the
+            # owned pointer is recorded separately as <destination>/current. A fixture that put
+            # a pointer under the location would have passed a checker no real install can.
+            "pointer": {"path": str(self.install / "current"), "target": str(self.install / "env")},
             "components": {"codex-session-relay": {
-                "installs": [{"location": str(self.install)}], "measuredPoints": []}},
+                "installs": [{
+                    "location": str(self.install / "env" / "lib" / "python3.13"
+                                    / "site-packages" / "codex_session_relay"),
+                    "entryPoint": str(self.install / "env" / "bin" / "codex-session-relay"),
+                    "environment": str(self.install / "env"),
+                }],
+                "measuredPoints": []}},
         }), encoding="utf-8")
 
     def environment(self):
@@ -1146,6 +1170,9 @@ class PayloadContract(TrialCase):
         # environment selection is read from the created thread. That claim is asserted against
         # the bridge's own source in ThirtyFirstHostedRound rather than taken on trust here.
         own |= {"creation", "thread", "environments"}
+        # The runtime host record's own shape, which is not a relay payload either: the owned
+        # pointer is what says which command a host reaches the runtime through.
+        own |= {"pointer"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -3154,6 +3181,37 @@ class ThirtySecondHostedRound(TrialCase):
     def test_a_positive_minimum_uptime_is_still_accepted(self):
         # Support: the bound the fixture declares keeps working.
         self.assertIsNone(self.world.refusal())
+
+
+class ThirtyThirdHostedRound(TrialCase):
+    """The command a host actually reaches the runtime through."""
+
+    def test_the_launcher_is_the_owned_pointer_the_record_names(self):
+        # The fixture writes the shape runtime_install.py writes: an install's location is where
+        # the module went, and the owned pointer is recorded separately. Deriving the command
+        # from the location named a path no real install has.
+        self.assertIsNone(self.world.refusal(),
+                          "a host record in the shape a real install writes was refused")
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertEqual(document["relay"]["launcher"], str(self.world.launcher))
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_record_with_no_owned_pointer_is_refused(self):
+        directory = self.world.state / "codex-relay-workflow"
+        record = json.loads((directory / "host-record.json").read_text(encoding="utf-8"))
+        del record["pointer"]
+        (directory / "host-record.json").write_text(json.dumps(record), encoding="utf-8")
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a record naming no owned pointer was accepted")
+        self.assertIn("owned pointer", refused.reason)
+
+    def test_the_pointer_is_where_the_runtime_lane_puts_it(self):
+        # Support, and the reason the command is <pointer>/bin/<console>: the runtime lane owns
+        # that layout, and this reads it rather than choosing one.
+        source = (ROOT / "scripts" / "crw_runtime" / "pointer.py").read_text(encoding="utf-8")
+        self.assertIn('POINTER_NAME = "current"', source)
+        self.assertIn("Path(destination) / POINTER_NAME", source)
 
 
 if __name__ == "__main__":                                           # pragma: no cover
