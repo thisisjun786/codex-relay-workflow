@@ -2540,6 +2540,94 @@ class TheFindingsFromReview(TransitionCase):
                       answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
+    def test_a_cache_whose_manifest_declares_other_documents_is_refused(self):
+        """Codex loads what the manifest names, so stale files at the old paths prove nothing."""
+        cache = (Path(self.host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION)
+        host = self.ready()
+        manifest = cache / ".codex-plugin" / "plugin.json"
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        # The declared documents move, and the originals are left exactly where they were.
+        other = cache / "wiring" / "hooks" / "other.json"
+        other.write_text(json.dumps({"hooks": {"Stop": [{"hooks": [{
+            "type": "command", "command": "python3 \"${PLUGIN_ROOT}/wiring/crw_bridge_mcp.py\"",
+            "timeout": 10, "statusMessage": "(x)"}]}]}}), encoding="utf-8")
+        document["hooks"] = ["./wiring/hooks/other.json"]
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not declare a Stop hook that runs", answer["results"][0]["detail"])
+        self.assertIn("wiring/crw_stop_hook.py", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_command_that_only_mentions_the_launcher_is_not_running_it(self):
+        """An interpreter runs its first non-option argument, and nothing else on the line."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        # The impersonations from review, and the real declarations beside them.
+        self.assertIsNone(steps._script(["true", "crw_stop_hook.py"]))
+        self.assertEqual(steps._script(["python3", "./wiring/crw_stop_hook.py",
+                                        "./wiring/crw_bridge_mcp.py"]),
+                         "wiring/crw_stop_hook.py")
+        self.assertEqual(steps._script(["python3", "${PLUGIN_ROOT}/wiring/crw_stop_hook.py"]),
+                         "wiring/crw_stop_hook.py")
+        self.assertEqual(steps._script(["python3", "-u", "./wiring/crw_bridge_mcp.py"]),
+                         "wiring/crw_bridge_mcp.py")
+        self.assertIsNone(steps._script([]))
+
+    def test_a_server_whose_first_argument_is_another_script_is_refused(self):
+        """Python runs args[0]; the expected launcher sitting after it never starts."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "mcp.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = dict(document["mcpServers"]["codex-thread-bridge"])
+        entry["args"] = ["./wiring/crw_stop_hook.py", "./wiring/crw_bridge_mcp.py"]
+        document["mcpServers"] = {"codex-thread-bridge": entry}
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not declare the codex-thread-bridge server running",
+                      answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
+    def test_the_settings_stay_locked_across_the_removal(self):
+        """Noticing afterwards is not keeping the writer out; the lock has to span both."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings_path = host.home / "crw-completion-hook.json"
+        original = steps.hook_standdown
+        seen = {}
+
+        def watching(host_view, options, *, apply=False):
+            """Ask from inside the removal whether that path is still held by this run."""
+            try:
+                with hostrecord.Locked(settings_path, timeout=0.2):
+                    seen["held"] = False
+            except hostrecord.Busy:
+                seen["held"] = True
+            return original(host_view, options, apply=apply)
+
+        steps.ORDER = tuple((name, watching if name == "hook standdown" else step)
+                            for name, step in steps.ORDER)
+        self.addCleanup(setattr, steps, "ORDER",
+                        tuple((name, original if name == "hook standdown" else step)
+                              for name, step in steps.ORDER))
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertTrue(seen.get("held"),
+                        "the settings lock was not held across the hook removal")
+        self.assertEqual(outcomes["hook standdown"], "settled", json.dumps(results)[:700])
+        self.assertEqual(outcomes["settings install"], "settled")
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

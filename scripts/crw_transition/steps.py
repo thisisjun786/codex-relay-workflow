@@ -7,9 +7,11 @@ from what is on disk, so an interrupted run converges on the next one.
 
 import contextlib
 import errno
+import importlib.util
 import json
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -296,35 +298,100 @@ def payload_complaints(repo_root, cache_version):
             {"payloadCheck": argv, "exitCode": done.returncode})
 
 
-def _programs(command):
-    """The program file names a declared command runs, by their own last component."""
-    return {Path(word.strip("\"'")).name for word in str(command).split()
-            if word.strip("\"'").endswith(".py")}
+def _relative(word):
+    """A declared path as the package's own relative one, whichever way it was spelled."""
+    text = str(word).strip("\"'")
+    for prefix in ("${PLUGIN_ROOT}/", "$PLUGIN_ROOT/", "./"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return text
 
 
-def _declared(root):
-    """What a plugin payload at this root declares: hook commands per event, and server commands."""
-    events, servers = {}, {}
-    for path in sorted((Path(root) / "wiring" / "hooks").glob("*.json")):
+def _script(words):
+    """The script a declared command will actually execute, or None.
+
+    Positional, because that is how execution works: an interpreter runs its first non-option
+    argument and nothing else. Collecting every token that ends in .py accepted a command that
+    merely mentions the launcher -- true crw_stop_hook.py, or an argument list whose first entry
+    is a different script -- as though it ran it.
+    """
+    if not words:
+        return None
+    program = Path(str(words[0]).strip("\"'")).name
+    if not (program == "python" or program.startswith("python3")):
+        # Something other than a Python starts this. What it does with a file name that follows
+        # is its own business, and it is not this launcher being declared.
+        return None
+    for word in words[1:]:
+        text = str(word).strip("\"'")
+        if text.startswith("-"):
+            continue
+        return _relative(text)
+    return None
+
+
+def _plugin_checker(repo_root):
+    """This repository's own packaging check, loaded as a module for its manifest rules."""
+    path = Path(repo_root) / "scripts" / "ci" / "plugin.py"
+    spec = importlib.util.spec_from_file_location("crw_ci_plugin", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _declared(root, repo_root):
+    """The hook and server launchers the MANIFEST at this root declares, and what could not be read.
+
+    Following the manifest is the whole point: Codex loads the documents it names and ignores
+    every other file in the package, so reading fixed paths let a cache whose manifest declares
+    other documents satisfy this comparison with stale files nothing ever loads.
+    """
+    events, servers, unread = {}, {}, []
+    manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return events, servers, [str(manifest_path) + " could not be read ("
+                                 + type(error).__name__ + ": " + str(error) + ")"]
+    try:
+        hook_paths = _plugin_checker(repo_root).declared_hooks(manifest)
+    except Exception as error:  # noqa: BLE001 - a manifest this cannot read declares nothing
+        return events, servers, [str(manifest_path) + " does not declare readable hooks ("
+                                 + type(error).__name__ + ": " + str(error) + ")"]
+    for relative in hook_paths:
+        path = Path(root) / _relative(relative)
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
+            unread.append(str(path) + " is declared and could not be read ("
+                          + type(error).__name__ + ": " + str(error) + ")")
             continue
         for event, groups in ((document or {}).get("hooks") or {}).items():
             for group in groups or []:
                 for hook in (group or {}).get("hooks") or []:
-                    command = str((hook or {}).get("command") or "")
-                    if command:
-                        events.setdefault(event, []).append(command)
-    try:
-        document = json.loads((Path(root) / "wiring" / "mcp.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        document = {}
-    for name, entry in ((document or {}).get("mcpServers") or {}).items():
-        words = [str((entry or {}).get("command") or "")]
-        words += [str(word) for word in ((entry or {}).get("args") or [])]
-        servers[name] = " ".join(words)
-    return events, servers
+                    try:
+                        words = shlex.split(str((hook or {}).get("command") or ""))
+                    except ValueError:
+                        words = []
+                    script = _script(words)
+                    if script:
+                        events.setdefault(event, set()).add(script)
+    named = manifest.get("mcpServers")
+    if isinstance(named, str) and named.strip():
+        path = Path(root) / _relative(named)
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            unread.append(str(path) + " is declared and could not be read ("
+                          + type(error).__name__ + ": " + str(error) + ")")
+            document = {}
+        for name, entry in ((document or {}).get("mcpServers") or {}).items():
+            words = [str((entry or {}).get("command") or "")]
+            words += [str(word) for word in ((entry or {}).get("args") or [])]
+            script = _script(words)
+            if script:
+                servers[name] = script
+    return events, servers, unread
 
 
 def declaration_complaints(repo_root, cache_version):
@@ -337,24 +404,26 @@ def declaration_complaints(repo_root, cache_version):
     declares the launchers this repository ships. So the cached declarations are compared with
     this checkout's own, by event, by server name, and by which program each one runs.
     """
-    ours_events, ours_servers = _declared(Path(repo_root) / "plugins" / "crw")
-    cached_events, cached_servers = _declared(cache_version)
-    found = []
-    for event, commands in sorted(ours_events.items()):
-        wanted = {name for command in commands for name in _programs(command)}
-        got = {name for command in cached_events.get(event) or [] for name in _programs(command)}
-        missing = sorted(wanted - got)
+    ours_events, ours_servers, ours_unread = _declared(Path(repo_root) / "plugins" / "crw",
+                                                       repo_root)
+    cached_events, cached_servers, unread = _declared(cache_version, repo_root)
+    found = list(unread)
+    if ours_unread:
+        # This checkout's own package is the thing being compared against. If it cannot be read
+        # here, the comparison proves nothing and must not pass by being empty.
+        found.append("this checkout's plugin package could not be read, so what the installed one"
+                     " declares was compared with nothing: " + "; ".join(ours_unread))
+    for event, wanted in sorted(ours_events.items()):
+        missing = sorted(wanted - (cached_events.get(event) or set()))
         if missing:
             found.append("the installed package does not declare a " + str(event) + " hook that"
                          " runs " + ", ".join(missing) + ", which is what would answer the Stop"
                          " this transition is removing the registration for")
-    for name, command in sorted(ours_servers.items()):
-        wanted = _programs(command)
-        got = _programs(cached_servers.get(name) or "")
-        missing = sorted(wanted - got)
-        if missing:
+    for name, script in sorted(ours_servers.items()):
+        if cached_servers.get(name) != script:
             found.append("the installed package does not declare the " + str(name) + " server"
-                         " running " + ", ".join(missing) + ", which is what would start the"
+                         " running " + str(script) + " (it runs "
+                         + str(cached_servers.get(name)) + "), which is what would start the"
                          " bridge this transition is removing the registration for")
     return found
 
@@ -1506,22 +1575,36 @@ def transition(host, options, *, apply=False):
                                 for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
                     break
             if apply and name == "hook standdown":
-                back = _recreated_settings(results)
-                if back:
-                    results.append(_answer(name, REFUSED,
-                                           "settings were written again at " + "; ".join(back)
-                                           + " after this run archived them, so the registration"
-                                           " is left installed and reading what is there now."
-                                           " Removing it would leave a document the plugin"
-                                           " settings cannot replace and no completion hook at"
-                                           " all. Rerun to decide against the host as it stands",
-                                           paths=back))
-                    results += [_answer(other, NOT_REACHED,
-                                        "the settings this run archived came back while it ran")
-                                for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
-                    break
-            answer = step(host, options, apply=apply) if name != "settings install" \
-                else step(host, options, apply=apply, previous=previous)
+                # The check and the removal under the SAME held locks. Asking whether the archived
+                # settings came back and then removing the registration in a separate breath left
+                # the window the question was asked about: the supported writer takes these locks,
+                # so holding them across both is what actually keeps it out rather than merely
+                # noticing afterwards that it got in.
+                with contextlib.ExitStack() as guard:
+                    retired = next((item for item in results
+                                    if item["step"] == "settings retire"), None)
+                    for moved in (retired or {}).get("retired") or []:
+                        guard.enter_context(hostrecord.Locked(Path(moved["from"])))
+                    back = _recreated_settings(results)
+                    if back:
+                        results.append(_answer(name, REFUSED,
+                                               "settings were written again at " + "; ".join(back)
+                                               + " after this run archived them, so the"
+                                               " registration is left installed and reading what"
+                                               " is there now. Removing it would leave a document"
+                                               " the plugin settings cannot replace and no"
+                                               " completion hook at all. Rerun to decide against"
+                                               " the host as it stands", paths=back))
+                        results += [_answer(other, NOT_REACHED,
+                                            "the settings this run archived came back while it"
+                                            " ran")
+                                    for other, _step
+                                    in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
+                        break
+                    answer = step(host, options, apply=apply)
+            else:
+                answer = step(host, options, apply=apply) if name != "settings install" \
+                    else step(host, options, apply=apply, previous=previous)
             results.append(answer)
             if name == MCP_STEPS[-1] and lock is not None:
                 lock.__exit__(None, None, None)
