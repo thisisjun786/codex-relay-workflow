@@ -4733,6 +4733,42 @@ class FortyFifthHostedRound(TrialCase):
                 self.assertIsNotNone(refused, "a boundary with a third participant was accepted")
                 self.assertIn("neither its parent nor its child", refused.reason)
 
+    def test_a_workspace_path_longer_than_the_report_bound_still_reads(self):
+        # The bound on what a probe carries into a report was applied to the answer itself, so a
+        # repository whose path is longer than it had its head cut off, the tail was resolved
+        # against the directory git ran in, and a workspace that answered correctly read as one
+        # that disagreed. A long path is a place, not a disagreement.
+        deep = Path(self.base) / ("crw111-" + "d" * 60)
+        for _ in range(6):
+            deep = deep / ("e" * 60)
+        subprocess.run(["git", "init", "-q", str(deep)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(shutil.rmtree, str(Path(self.base) / ("crw111-" + "d" * 60)),
+                        ignore_errors=True)
+        self.assertGreater(len(str(deep)), 400, "the fixture did not build a path past the bound")
+        world = World(self.base)
+        self.addCleanup(world.stop)
+        boundary = world.record["boundaries"][1]
+        boundary["repositoryRoot"] = str(deep)
+        for participant in boundary["participants"]:
+            participant["cwd"] = str(deep)
+        world.captures["register-B.json"]["authorizedScope"]["artifactRoots"] = [str(deep)]
+        world.captures["register-B.json"]["parent"]["cwd"] = str(deep)
+        world.captures["register-B.json"]["child"]["cwd"] = str(deep)
+        world.payloads["taskCwd"][World.PARENT_B] = str(deep)
+        world.payloads["taskCwd"][World.CHILD_B] = str(deep)
+        for task in (World.PARENT_B, World.CHILD_B):
+            world.captures["receipt-" + task + ".json"]["settings"]["actual"]["cwd"] = str(deep)
+            world.captures["receipt-" + task + ".json"]["settings"]["requested"]["cwd"] = str(deep)
+        world.flush()
+        world.start_supervisor()
+        document = world.preflight()
+        for participant in (World.PARENT_B, World.CHILD_B):
+            cell = cells_of(document, "boundaries")["toplevel:B:" + participant]
+            self.assertEqual(cell["value"], VERIFIED,
+                             "a workspace git answered for was read as a disagreement")
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
         # once it is off, so a service disabled while its current worker still holds the lock is

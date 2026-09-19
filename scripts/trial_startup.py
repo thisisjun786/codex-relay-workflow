@@ -1140,7 +1140,7 @@ def run(argv, *, cwd, timeout=60, environment=None):
                               text=True, timeout=timeout, env=environment)
     except (OSError, subprocess.SubprocessError) as error:
         return {"argv": [str(a) for a in argv], "exitCode": None, "payload": None,
-                "stdout": "", "measuredAt": stamp(at),
+                "stdout": "", "stdoutTail": "", "measuredAt": stamp(at),
                 "detail": type(error).__name__ + ": " + str(error)}
     payload = None
     try:
@@ -1149,7 +1149,12 @@ def run(argv, *, cwd, timeout=60, environment=None):
     except ValueError:
         payload = None
     return {"argv": [str(a) for a in argv], "exitCode": done.returncode, "payload": payload,
-            "stdout": done.stdout.strip()[-400:], "measuredAt": stamp(at),
+            # Whole, because the readings parse this: a workspace path longer than the bound had
+            # its head cut off, the tail was resolved against the directory git ran in, and a
+            # repository that answered correctly read as one that disagreed. The bound belongs to
+            # the copy that travels into a report, not to the answer a cell is graded on.
+            "stdout": done.stdout.strip(),
+            "stdoutTail": done.stdout.strip()[-400:], "measuredAt": stamp(at),
             "detail": None if payload is not None else "the output was not a JSON object"}
 
 
