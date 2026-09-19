@@ -744,6 +744,10 @@ NAMES_A_REFUSAL_WITHOUT_SETTLING = {
     "refusal_spellings":
         "it derives the spellings from REFUSAL_ANSWERS. Naming the set is how it asks the"
         " question, not an answer it accepted.",
+    "refusals_reached":
+        "it names the same set for the same reason, one question further on: to ask an"
+        " imported module whether what it exports under a borrowed spelling is really one of"
+        " the answers. Asking is not settling.",
     "test_a_place_that_settles_for_a_refusal_in_a_form_the_old_sweep_missed_is_still_caught":
         "it plants a refusal in a synthetic file for the check to find; what this case reads"
         " is whether the check failed, not what the planted place asserted.",
@@ -1744,6 +1748,46 @@ RESOLVES_LIKE_PYTHON = {
          " are asked -- a module named in the source under analysis is not something to import"
          " in order to answer a question about the text. One that cannot be read answers no,"
          " which keeps the receiver and errs towards reporting."),
+    "a class body binding inside a function":
+        (REFUSAL,
+         ("def outer():",
+          "    class Holder:",
+          "        CHANGED = \"fine\"",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", True,
+         "a class body is not the function around it. The name it binds creates no local there,"
+         " so reading it as a shadow drops the module constant the closure really sees."),
+    "a refusal name imported from a module that does not export one":
+        (REFUSAL,
+         ("from innocent import NOT_READ",
+          "",
+          "def consumer():",
+          "    return NOT_READ"),
+         "consumer", False,
+         "the spelling occurring in some other module's inventory is not the answer here. The"
+         " owner is asked whether it exports it, and one nothing here has imported cannot say"
+         " yes."),
+    "a refusal name imported from the module that does export it":
+        (REFUSAL,
+         ("from completion import NOT_READ",
+          "",
+          "def consumer():",
+          "    return NOT_READ"),
+         "consumer", True,
+         "its pair: the ordinary import really does make the answer readable here, so"
+         " validating the owner must not have rejected every one."),
+    "a parameter spelled like the opener":
+        (TEXT,
+         ("def helper(open):",
+          "    return open(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "deciding once per module that open is the builtin misses the scope that binds it"
+         " itself, and what a caller's open answers with is not this module's source."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2717,6 +2761,11 @@ def _shadowing_names(tree):
     the binding IS the constant. A scope saying the name is global is not shadowing either.
     """
     places, taken, said_global = _places(tree), {}, {}
+    # A class body is not the function around it. _places labels its statements with the
+    # enclosing scope, but a name bound there creates no local in that function, so reading it
+    # as a shadow drops the module constant a nested function really does see.
+    in_a_class_body = {id(statement) for node in ast.walk(tree)
+                       if isinstance(node, ast.ClassDef) for statement in node.body}
     for node in ast.walk(tree):
         where, _klass = places.get(id(node), (MODULE_LEVEL, None))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -2729,6 +2778,8 @@ def _shadowing_names(tree):
         if isinstance(node, ast.Global):
             said_global.setdefault(where, set()).update(node.names)
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if id(node) in in_a_class_body:
+                continue
             for named in _binds_locally(node):
                 taken.setdefault(where, set()).add(named)
     shadowed = set()
@@ -4012,6 +4063,10 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                     and isinstance(node.func.value, ast.Call)
                     and opens_a_file
                     and (_dotted(node.func.value.func) or "").rpartition(".")[2] == "open"):
+                if (isinstance(node.func.value.func, ast.Name)
+                        and id(node.func.value.func) in shadowed):
+                    # The scope binds open itself, so what it answers with is the caller's.
+                    return None
                 # HERE.open().read() names the handle as the receiver of open rather than as
                 # its argument, and it is the same read either way.
                 opener = node.func.value.func
@@ -4095,9 +4150,23 @@ def refusals_reached(source):
     # A refusal imported by name is that answer under a bare name: from completion import
     # NOT_READ makes the constant readable here without an attribute to match.
     answers_here = spellings["module attribute"] | spellings["collection"]
-    imported_answers = {alias.asname or alias.name for node in ast.walk(tree)
-                        if isinstance(node, ast.ImportFrom)
-                        for alias in node.names if alias.name in answers_here}
+    # The owner is asked whether it really exports that answer. A name occurring in some other
+    # module's inventory is not one here, and only modules this process has already imported
+    # are consulted -- one named in the source under analysis is not something to import in
+    # order to answer a question about the text.
+    imported_answers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        # Asked of THIS module's namespace first, which is where the producers are resolved
+        # everywhere else here: a module imported for its own sake is bound by name rather than
+        # registered under one.
+        owner = vars(sys.modules[__name__]).get(node.module) or sys.modules.get(node.module)
+        if not isinstance(owner, types.ModuleType):
+            continue
+        for alias in node.names:
+            if alias.name in answers_here and getattr(owner, alias.name, None) in REFUSAL_ANSWERS:
+                imported_answers.add(alias.asname or alias.name)
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
