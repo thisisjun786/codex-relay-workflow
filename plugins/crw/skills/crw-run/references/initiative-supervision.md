@@ -156,7 +156,9 @@ own record holds, it reads that owner's scope before it writes anything, because
 need not describe the same execution and the new owner's approved set may not contain this project
 at all. Where it does contain it, the parent compares the rest of what that record says about this
 project, its contribution, the completion boundary, the limits, the prerequisites and any
-shared-target order, against what its work was actually started under. It takes the owner, updates
+shared-target order, against what its work was actually started under, reading the contribution
+from whichever record owns it exactly as an arriving handoff is checked rather than assuming the
+initiative carries it. It takes the owner, updates
 its own record and carries on untouched only where those agree, since the supervision changed and
 the project's work did not. Where the winning set excludes this project, the parent records no
 supervisor it is not in fact supervised by: it preserves the work already done, stops it and raises

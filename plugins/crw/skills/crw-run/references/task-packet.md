@@ -305,11 +305,13 @@ can still carry the wrong scope, by forgery, by mistake, or by arriving after th
 same read settles the rest: that the initiative named is the one whose record this is, that this
 parent's own project is in that initiative's approved set, and that the two values this handoff
 states it was written from, that membership, the completion boundary, and the designation's limits and exclusions, are the ones
-the record carries now. The contribution is corroborated against whichever record the handoff
-names as its source, because that value lives in the project record or in the initiative body
-depending on how the plan was written, and a lookup fixed on either one refuses a legitimate
-handoff whenever the other owns it. A handoff naming no source is the case that fails: there is
-nothing to read it against, so it is a proposal rather than an instruction. The limits are compared for the same reason as the rest: a handoff that
+the record carries now. The contribution is read from whichever record owns it for this
+project, and the receiver decides which that is rather than the sender: the project record where it
+carries one, and the initiative body where it does not. The handoff names the source it was written
+from, but that is context for the comparison and not the choice of oracle, because a sender free to
+name its own source can always name the one its value matches. Where the named source is not the
+owning one, or the two records disagree about this project, that is a discrepancy raised rather
+than something the message settles, and a handoff naming no source at all is a proposal. The limits are compared for the same reason as the rest: a handoff that
 omits a narrowing the designation made, by forgery, mistake or age, reads as ordinary authority to
 a parent that already holds it, and the later refusal only catches authority being widened. For the
 same reason the handoff's two statements of those limits are compared with each other: Authority
