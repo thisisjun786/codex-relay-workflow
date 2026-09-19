@@ -158,11 +158,34 @@ def build():
 
 
 def main(argv=None):
+    """Run one command, and never let an operational failure leave a traceback.
+
+    A bounded failure contract, like the runtime installer's. Every command here promises a JSON
+    receipt, and a receipt is exactly what an operator has left when a step failed: a traceback on
+    stdout is unparseable, says nothing about what was written before it, and cannot be diffed
+    against the run that came before. A defect still fails the command; it fails it in the shape
+    the caller was promised.
+    """
     parser = build()
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
     except KeyboardInterrupt:
+        emit({"command": getattr(args, "command", None), "outcome": "interrupted",
+              "note": "the run was interrupted. Nothing further was written; rerun to decide"
+                      " against the host as it now stands."})
+        return EXIT_REFUSED
+    except OSError as error:
+        emit({"command": getattr(args, "command", None), "outcome": "failed",
+              "error": type(error).__name__ + ": " + str(error),
+              "note": "an operational failure, reported as a receipt rather than a traceback."
+                      " Steps already settled stay settled: rerun to converge from here."})
+        return EXIT_REFUSED
+    except Exception as error:  # noqa: BLE001 - a defect is reported in the promised shape
+        emit({"command": getattr(args, "command", None), "outcome": "internal_error",
+              "error": type(error).__name__ + ": " + str(error),
+              "note": "a defect in this command. Nothing about the host is claimed by this"
+                      " receipt; treat the run as having stopped where it stopped."})
         return EXIT_REFUSED
 
 
