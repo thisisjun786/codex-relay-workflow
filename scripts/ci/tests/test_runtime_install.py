@@ -5963,6 +5963,26 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_then_strand))
+        if breaking == "settle the staging claim after the selection moves on":
+            # An install that was queued on the promotion lock promotes its OWN environment the
+            # moment this run releases it, which is the window _settle_claim runs in. Both
+            # truths move, because that is what a promotion writes: the selection and the
+            # pointer. Then the settle fails, and the advice is composed against a record that
+            # no longer names this environment.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def move_on_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=move_on_then_fail))
         if breaking == "settle the staging claim while another run holds it":
             # A COMPETING writer, as hostrecord.Locked leaves the world when it gives up: the
             # lock file is there, it is somebody else's, and this run never took it. The file
@@ -6151,6 +6171,17 @@ class UpdateRecoveryTests(unittest.TestCase):
 
 
 
+def _advice(payload, host):
+    """A claim's recovery sentence with this host's temporary paths taken out of it.
+
+    Two cases run in two temporary directories, so every path in their advice differs no
+    matter what the advice SAYS. Comparing them raw is a test that passes for the wrong
+    reason -- which it did, and it hid a case it was written to catch.
+    """
+    return ((payload.get("claim") or {}).get("recoveryRequires") or "").replace(
+        str(host.root), "<root>")
+
+
 class SettledRecordTests(unittest.TestCase):
     """The record of a replacement is not the replacement.
 
@@ -6255,6 +6286,10 @@ class SettledRecordTests(unittest.TestCase):
         self.assertEqual(payload["stagingDecision"], staging.RESUME)
         self.assertTrue(payload.get("applied"),
                         "the missing half of the promotion was written")
+        self.assertIs(payload.get("promoted"), True,
+                      "and this result carries the same promotion marker the ordinary exit"
+                      " does, because it can return the same non-zero status and a consumer"
+                      " reading only 'applied' would take it for an unused destination")
         self.assertIs(payload.get("claimSettled"), False,
                       "and the claim recording it was not")
         self.assertTrue(payload.get("recoveryRequires"),
@@ -6362,6 +6397,38 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_advice_is_not_promised_from_a_selection_that_has_moved_on(self):
+        """Settling runs outside the promotion lock, so the selection can move under it.
+
+        An install queued on that lock promotes its own environment the moment this run
+        releases it. "Rerun and it will finish the bookkeeping" is then false in the expensive
+        direction: with the selection moved, staging.decide() reads this directory as an
+        abandoned staging, so following that advice removes and rebuilds it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the selection moves on")
+            # What a rerun would actually decide, now that the selection has moved.
+            again, second = UpdateRecoveryTests()._run(host)
+            moved_on = _advice(payload, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            still_ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        reclaimed = [step for step in second.get("steps", [])
+                     if step.get("step") == "reclaim abandoned staging"]
+        self.assertTrue(reclaimed,
+                        "a rerun here removes and rebuilds rather than recording, which is"
+                        " the hazard the advice must not walk an operator into: "
+                        + json.dumps(second)[:400])
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(still_ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(moved_on, still_ours,
+                            "so it must not be given the advice written for the case where"
+                            " this environment is still the selected one: " + moved_on[:300])
 
     def test_rerunning_while_the_write_still_fails_loses_nothing(self):
         """The advice names a precondition, and the case where it is not met is safe.

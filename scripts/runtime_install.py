@@ -2961,7 +2961,8 @@ def cmd_install(args):
         # whose failure finds the replacement already done, so it answers rather than raises
         # and the result carries the two outcomes side by side.
         settled = _settle_claim(environment, staging.COMPLETE, issue=args.issue,
-                                run=str(os.getpid()))
+                                run=str(os.getpid()), record_path=record_path,
+                                definition_version=data["definitionVersion"], data=data)
 
         emit({
             "command": "install", "applied": True, "environment": str(environment),
@@ -3020,7 +3021,7 @@ def cmd_install(args):
             holder.__exit__()
 
 
-def _settle_claim(environment, state, *, issue, run):
+def _settle_claim(environment, state, *, issue, run, record_path, definition_version, data):
     """Write the claim that says this staging finished, and answer whether the RECORD landed.
 
     The claim settles last on purpose: it says the replacement finished, and until the selection
@@ -3081,6 +3082,15 @@ def _settle_claim(environment, state, *, issue, run):
     answers KEEP for an unreadable claim, so the next run refuses this directory instead of
     repairing it. The advice has to differ because the behaviour does, which is why it is
     derived from the reading rather than written once for every failure.
+
+    AND THE SELECTION IS RE-READ BEFORE ANY OF THAT IS PROMISED. This runs OUTSIDE the
+    promotion lock -- deliberately, because settling a claim is not a promotion -- so an
+    install that was queued on that lock can promote its own environment between this run
+    releasing it and this line. "Rerun and it will finish the bookkeeping" is then false in
+    the expensive direction: with the selection moved on, staging.decide() reads this
+    directory as an abandoned staging and answers RECLAIM, so following the advice would
+    remove and rebuild it. What the next run will do depends on what the record says NOW, so
+    that is what the advice is derived from rather than the selection this run committed.
     """
     path = staging.claim_path(environment)
     contended = False
@@ -3108,9 +3118,28 @@ def _settle_claim(environment, state, *, issue, run):
     # did not, so whatever is at that path is somebody else's and reporting it as residue
     # would be this command naming another run's live working file for deletion.
     residual = [] if contended else ([str(lock)] if lock.exists() else [])
+    # The selection as it stands now, not as this run left it. None is "could not be read",
+    # which is a third answer and never folded into either of the other two.
+    current = hostrecord.load(record_path, definition_version)
+    selects = _names_environment(current.value, environment, data) if current.usable else None
 
     if settled:
         record_requires = None
+    elif selects is None:
+        record_requires = (
+            "read " + str(record_path) + " before acting on this. The host record could not be"
+            " read here, so whether it still selects this environment could not be"
+            " established -- and that is exactly what decides whether rerunning install"
+            " finishes the missing bookkeeping or removes and rebuilds this directory instead."
+            " Do not rerun to settle the record until that reading succeeds.")
+    elif selects is False:
+        record_requires = (
+            "nothing needs doing about this record, and DO NOT rerun install here to settle"
+            " it. Another run moved the selection on after this one promoted, so the"
+            " environment this claim describes is no longer the one the host uses and a claim"
+            " recording a superseded staging records nothing anybody reads. With the selection"
+            " moved, the next run reads this directory as an abandoned staging and would"
+            " remove and rebuild it rather than finish any bookkeeping.")
     elif contended:
         record_requires = (
             "wait for the run that holds " + str(lock) + " and then run install again against"
@@ -3280,8 +3309,15 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
     # Outside the lock, and previously outside every handler too: an OSError here escaped this
     # function, escaped cmd_install through a finally with no except, and left the command with
     # no result and no exit status at all -- for a repair that had already written the pointer.
-    settled = _settle_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()))
+    settled = _settle_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()),
+                            record_path=record_path,
+                            definition_version=data["definitionVersion"], data=data)
     emit(dict(standing, applied=True,
+              # The same marker the ordinary promotion reports, and for the same reader. This
+              # path can return EXIT_INCOMPLETE too, and a consumer told only 'applied' has no
+              # way to tell a non-zero result here from an unused destination -- which is the
+              # one misreading that ends with the selected, reachable runtime cleaned up.
+              promoted=True,
               pointer={"path": str(pointer_path), "previousTarget": before.get("target"),
                        "target": str(environment)},
               claimSettled=settled["settled"], claim=settled,
