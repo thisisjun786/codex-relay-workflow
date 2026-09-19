@@ -1695,6 +1695,14 @@ def _end_the_session(started, session):
     The group is the one taken when the process was STARTED. Asking for it now would ask about
     a leader that may already have exited while a child of its own holds the pipes open --
     which is precisely the shape that times out -- and the lookup fails just when it is needed.
+
+    What this does NOT reach, stated rather than implied: a descendant that calls setsid() puts
+    itself in a session no group named here contains, and nothing portable can name it
+    afterwards. So the pipes are CLOSED rather than drained -- waiting on a descendant that
+    escaped would hang this reading on the very process it failed to kill -- and such a
+    descendant outlives the probe. It cannot write a journal record, which is the boundary this
+    command is held to; it is a resource this command could not reclaim, and that is a limit
+    and not a claim.
     """
     try:
         os.killpg(session, signal.SIGKILL)
@@ -1703,8 +1711,14 @@ def _end_the_session(started, session):
             started.kill()
         except OSError:
             pass
+    for pipe in (started.stdout, started.stderr):
+        try:
+            if pipe is not None:
+                pipe.close()
+        except OSError:
+            pass
     try:
-        started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
+        started.wait(timeout=INTERPRETER_PROBE_SECONDS)
     except (subprocess.TimeoutExpired, OSError, ValueError):
         pass
 
@@ -1755,6 +1769,9 @@ def _answers_as_an_interpreter(resolved, label):
     except OSError as error:
         return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
                      path=str(resolved),
+                     # Attempted, not run: the host refused to create the process, so no
+                     # program of this host's executed and the receipt must not imply one did.
+                     attempted=_said_invocation(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
     # Taken NOW, while the leader is certainly alive and is certainly the group leader.
     try:
@@ -1765,12 +1782,20 @@ def _answers_as_an_interpreter(resolved, label):
         spoke, _complained = started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
     except subprocess.TimeoutExpired:
         _end_the_session(started, session)
-        return _cell(NOT_READ, label + " did not answer within "
-                     + str(INTERPRETER_PROBE_SECONDS) + "s, so whether it runs was not"
-                     " established", path=str(resolved))
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and did not answer within " + str(INTERPRETER_PROBE_SECONDS)
+                     + "s, so whether it runs Python was not established",
+                     path=str(resolved), ran=_said_invocation(resolved))
     except OSError as error:
-        return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
-                     path=str(resolved),
+        # It STARTED, and reading its answer is what failed. Saying it could not be run would
+        # be false twice: a program of this host's did execute, and COULD_NOT_BE_RUN is one of
+        # firing.CANNOT_START, so the word would settle a startability question this reading
+        # never reached. It reports what it ran and claims nothing further from it.
+        _end_the_session(started, session)
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and its answer could not be read: " + str(error) + ", so whether it"
+                     " runs Python was not established",
+                     path=str(resolved), ran=_said_invocation(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
     answered = _text(spoke).strip().split(" ")
     version = _python_said(answered[1]) if len(answered) == 2 else None
@@ -1779,11 +1804,12 @@ def _answers_as_an_interpreter(resolved, label):
     # ending in 'exit 1' would otherwise throw away the one piece of positive evidence there is.
     if answered[0] == expected and version is not None:
         if version < SUPPORTED_PYTHON:
-            return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " runs Python "
+            return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " was RUN as "
+                         + _said_invocation(resolved) + " and answered Python "
                          + ".".join(str(part) for part in version) + ", below the supported "
                          + ".".join(str(part) for part in SUPPORTED_PYTHON) + ", so the"
                          " adapter fails on every Stop before evaluating or journalling"
-                         " anything", path=str(resolved))
+                         " anything", path=str(resolved), ran=_said_invocation(resolved))
         return _cell(reading.PRESENT, label + " was RUN as " + _said_invocation(resolved)
                      + " and answered as a supported Python interpreter. That is what this"
                      " establishes: the registered first word answers at the spelling the host"
@@ -1798,15 +1824,17 @@ def _answers_as_an_interpreter(resolved, label):
         # interpreter and exits non-zero while starting the adapter perfectly well through the
         # words that follow it, which this command deliberately does not follow. Establishing
         # "not an interpreter" from that condemned a working registration.
-        return _cell(NOT_READ, label + " did not accept the question, which is also what a"
-                     " wrapper around an interpreter does, so whether it runs Python was not"
-                     " established here", path=str(resolved))
-    return _cell(NOT_READ, label + " is there and executable and did not answer as a Python"
-                 " interpreter when it was run. Two hosts look exactly like this -- a program"
-                 " that is not an interpreter at all, and a wrapper that ignores an option"
-                 " meant for the interpreter behind it and starts the adapter perfectly well"
-                 " -- and nothing here separates them, so whether this can start the adapter"
-                 " was not established", path=str(resolved))
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and did not accept the question, which is also what a wrapper around"
+                     " an interpreter does, so whether it runs Python was not established"
+                     " here", path=str(resolved), ran=_said_invocation(resolved))
+    return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                 + " and did not answer as a Python interpreter. Two hosts look exactly like"
+                 " this -- a program that is not an interpreter at all, and a wrapper that"
+                 " ignores an option meant for the interpreter behind it and starts the adapter"
+                 " perfectly well -- and nothing here separates them, so whether this can start"
+                 " the adapter was not established",
+                 path=str(resolved), ran=_said_invocation(resolved))
 
 
 def _recorded_program_cell(named, label, asks=False):

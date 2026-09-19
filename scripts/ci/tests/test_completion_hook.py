@@ -4276,6 +4276,82 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                             "a registration that runs the adapter directly was reported as"
                             " naming an interpreter the host cannot start")
 
+    def test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked(self):
+        """A failed reading has the same side effect as a successful one.
+
+        Naming the invocation only where the probe ANSWERED told an operator about the cost of
+        the readings that went well and hid it for every other one -- and those are the readings
+        a receipt is most often examined for. The requirement is that the output say what was
+        executed, not that it say so when the answer was good.
+
+        The derived part matters: the branches are read out of the probe's own source, so a
+        branch added later is covered without anyone remembering to add it here.
+        """
+        source = inspect.getsource(completion._answers_as_an_interpreter)
+        cells = [node for node in ast.walk(ast.parse(textwrap.dedent(source)))
+                 if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_cell"]
+        self.assertTrue(cells, "no branch could be read out of the probe's source")
+        for call in cells:
+            named = {word.arg for word in call.keywords}
+            with self.subTest(line=call.lineno):
+                self.assertTrue(named & {"ran", "attempted"},
+                                "a branch of the probe reports neither what it ran nor what it"
+                                " attempted, so a receipt cannot show the reading's cost")
+
+        # And the same, measured rather than parsed, on a host whose interpreter answers
+        # nothing: /bin/true runs and says nothing, which is the shape that used to go unnamed.
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            register(temporary)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, "/bin/true", 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        probes = [one["probe"] for one in (found["registeredInterpreter"].get("probes") or [])]
+        self.assertTrue(probes, "the fixture named no interpreter to probe")
+        for probe in probes:
+            self.assertTrue(probe.get("ran") or probe.get("attempted"),
+                            "a probe that executed a program did not say which: " + repr(probe))
+
+    def test_losing_the_answer_after_the_program_started_is_not_a_cannot_start(self):
+        """Losing the answer is not learning that the program cannot run.
+
+        This branch is reached with the process ALREADY CREATED and the reading of its output
+        failing afterwards. Answering firing.COULD_NOT_BE_RUN put that outcome into
+        firing.CANNOT_START, the set the firing rules read as "this registration is established
+        not to start" -- so a lost pipe settled a startability question the reading never
+        reached, and the receipt said a program that did execute could not be run.
+
+        The membership is taken from firing.CANNOT_START rather than restated, so a value added
+        to that set later is covered without this case being edited.
+        """
+        class LostThePipe:
+            # Never signalled: _end_the_session is replaced below, and os.getpgid(-1) raises,
+            # so no group of this host's can be named from here even by accident.
+            pid = -1
+            returncode = None
+            stdout = None
+            stderr = None
+
+            def communicate(self, timeout=None):
+                raise OSError(errno.EIO, "input/output error")
+
+        reaped = []
+        with mock.patch.object(completion.subprocess, "Popen", return_value=LostThePipe()), \
+                mock.patch.object(completion, "_end_the_session",
+                                  side_effect=lambda started, session: reaped.append(session)):
+            cell = completion._answers_as_an_interpreter(Path(sys.executable), "the first word")
+
+        self.assertNotIn(cell.get("value"), firing.CANNOT_START,
+                         "a probe whose program started and whose answer was then lost reported"
+                         " the registration established not to start: " + repr(cell))
+        self.assertTrue(cell.get("ran"),
+                        "the reading executed a program and did not say which: " + repr(cell))
+        self.assertTrue(reaped,
+                        "a probe that started a program abandoned it when the read failed")
+
     def test_a_wrapper_that_ignores_the_question_is_not_condemned(self):
         """The probe cannot tell this host from the one it was built to catch.
 
