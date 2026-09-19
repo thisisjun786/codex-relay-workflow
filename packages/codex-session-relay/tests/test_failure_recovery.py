@@ -31,9 +31,9 @@ from codex_session_relay.receipts import ReceiptIntake
 from codex_session_relay.reconcile import Reconciler
 from codex_session_relay.registry import Registry
 from codex_session_relay.store import Store
-from codex_session_relay.transport import DISPATCHED
+from codex_session_relay.transport import DISPATCHED, QUEUED
 
-from .support import CHILD, DISPATCH_TURN, DeliveryTestCase
+from .support import CHILD, DISPATCH_TURN, DeliveryTestCase, WorkerKilled, killed_before_commit
 from .test_guard import DISPATCH, LATER, NOW, GuardTestCase
 
 REVISION_DISPATCH = "dispatch-2-revision"
@@ -41,7 +41,14 @@ LATER_DECLARATION = "2026-01-01T00:01:00+00:00"
 
 
 class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
-    """A worker killed mid-write, and the next one picking the work up."""
+    """A worker killed mid-write, and the next one picking the work up.
+
+    Two kills and two intervals. The global fault hook fires before every COMMIT, so arming
+    it and running a tick kills whichever write the tick makes first - which is not a choice
+    of interval, it is whatever the daemon happens to do first. Each case below names the
+    transaction it means and asserts which one it actually interrupted, so the two cannot
+    quietly become the same case.
+    """
 
     def daemon(self):
         return RelayDaemon(
@@ -66,27 +73,31 @@ class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
         self.ack = AckService(self.store, self.registry, self.intake, self.delivery, self.clock)
         self.reconciler = Reconciler(self.store, self.registry, self.delivery, self.clock)
 
-    def test_an_aborted_tick_leaves_no_partial_state_and_a_new_daemon_delivers_once(self):
+    def test_a_tick_killed_at_its_first_write_leaves_no_partial_state_and_a_new_daemon_delivers_once(self):
+        """Dead at the first write, finished by somebody else. That is the shape of a kill.
+
+        The first write a tick commits is _record_poll's poll observation during _observe,
+        and this asserts it rather than assuming it, because that is exactly the claim the
+        regression map makes about this case. No attempt transaction has begun here, so the
+        absent attempt row below says the claim never started; it is not rollback evidence,
+        and the case after this one is where rollback is measured.
+        """
         _relationship, event_id = self.queued_event()
         self.clock.advance(3600)
 
-        faults = {"count": 0}
+        with self.assertRaises(WorkerKilled):
+            with killed_before_commit(self.store) as kill:
+                self.daemon().tick(now=self.clock.now())
 
-        def die():
-            faults["count"] += 1
-            raise RuntimeError("the worker was killed inside its own write transaction")
-
-        self.store.fault_hook = die
-        try:
-            self.daemon().tick(now=self.clock.now())
-        except RuntimeError:
-            pass
-        finally:
-            self.store.fault_hook = None
-
-        self.assertGreaterEqual(
-            faults["count"], 1,
-            "no transaction was interrupted, so this test asserted nothing about recovery",
+        self.assertIn(
+            "poll_observations", kill.killed,
+            "the first write a tick commits is no longer _record_poll's, so the map's account"
+            f" of this case is stale: {kill.transactions}",
+        )
+        self.assertNotIn(
+            "attempts", kill.killed,
+            "this case is named for the FIRST write; reaching the attempt claim here would"
+            " make it a duplicate of the case below",
         )
         self.assertEqual(
             self.adapter.sends, [],
@@ -94,7 +105,78 @@ class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
         )
         self.assertEqual(
             self.store.all("SELECT * FROM attempts"), [],
-            "an attempt row survived the rollback that was supposed to take it",
+            "the tick died before _deliver ran, so no attempt should have been written at all",
+        )
+
+        self.reopen()
+        self.daemon().tick(now=self.clock.now())
+
+        self.assertEqual(
+            len(self.adapter.sends), 1,
+            f"the handoff was not delivered exactly once: {self.adapter.sends}",
+        )
+        self.assertEqual(self.delivery.get(event_id)["state"], DISPATCHED)
+        self.assertEqual(
+            len(self.store.all("SELECT * FROM attempts WHERE event_id = ?", (event_id,))), 1,
+        )
+
+    def test_a_tick_killed_inside_the_attempt_transaction_rolls_that_attempt_back_and_a_new_daemon_delivers_once(self):
+        """The half the case above cannot reach: the delivery attempt's own transaction.
+
+        delivery._claim allocates the attempt number, writes the attempts row, the rendered
+        bytes and the reserved send capacity in ONE transaction, and the transport call
+        happens only after that transaction commits. So this interval is the only place where
+        a claim exists and a send does not, and what a kill here establishes is that nothing
+        of the claim survives it.
+
+        Identified rather than assumed. Three places write attempts - _claim, delivery's
+        _settle, and reconcile - and _settle writes deliveries in the same transaction, so
+        those two tables together do not separate a claim from a settle. attempt_messages has
+        exactly one writer in the package and it is inside _claim, which is what makes the
+        subset below an identification; the empty send list beside it is the independent
+        check that no settle ran.
+
+        The reservation is in that subset for a different reason, and review found it: the
+        empty-table loop below would pass for recipient_rate whether the reservation rolled
+        back or was never written at all. Requiring it in the interrupted transaction is what
+        stops that check being satisfied by a _count_send that moved out of the claim.
+
+        Not another TransactionRecovery or VerdictAtomicity. Those interrupt a body mid-write
+        and count rows. This one has to REACH _deliver, leave the tick's earlier commits
+        alone, and then recover across a process boundary.
+        """
+        _relationship, event_id = self.queued_event()
+        self.clock.advance(3600)
+
+        with self.assertRaises(WorkerKilled):
+            with killed_before_commit(self.store, writing="attempts") as kill:
+                self.daemon().tick(now=self.clock.now())
+
+        self.assertLessEqual(
+            {"deliveries", "attempts", "attempt_messages", "recipient_rate"}, set(kill.killed),
+            "the interrupted transaction did not hold the claim, the attempt row, the rendered"
+            " bytes and the reserved capacity together, so this is not _claim's transaction and"
+            f" the empty-table checks below would pass without proving anything: {kill.killed}",
+        )
+        for table in ("attempts", "attempt_messages", "recipient_rate"):
+            self.assertEqual(
+                self.store.all(f"SELECT * FROM {table}"), [],
+                f"{table} kept a row the rollback was supposed to take",
+            )
+        self.assertEqual(
+            self.delivery.get(event_id)["state"], QUEUED,
+            "the delivery kept the sending state its claim set, so a lease nobody holds now"
+            " stands between this event and the daemon that would finish it",
+        )
+        self.assertEqual(
+            self.adapter.sends, [],
+            "a claim that rolled back still reached the host, so the kill landed after the"
+            " send rather than inside the claim",
+        )
+        self.assertEqual(
+            len(self.store.all("SELECT * FROM poll_observations")), 1,
+            "the rollback took work this tick had already committed, which is a wider failure"
+            " than the one being measured here",
         )
 
         self.reopen()

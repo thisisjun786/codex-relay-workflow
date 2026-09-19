@@ -1,8 +1,10 @@
 # Plugin packaging
 
-This repository publishes its skills as a versioned Codex plugin. The package is
-instructions only: the task bridge, the session relay, the Python runtime and the
-completion hook keep their own installer and are not bundled here.
+This repository publishes its skills as a versioned Codex plugin. The package also
+declares the task-bridge MCP server and the completion Stop hook, and ships the two
+small launchers that start them. It carries no runtime: the bridge, the session
+relay, the Python environment and the completion adapter keep their own installer,
+and the launchers only point at what that installer left behind.
 
 ## What the package is
 
@@ -11,7 +13,8 @@ completion hook keep their own installer and are not bundled here.
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
-| `plugins/crw/skills/` | The seven skills, the only declared component |
+| `plugins/crw/skills/` | The seven skills, one of the two declared components |
+| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
@@ -19,27 +22,62 @@ Edit the skills at `plugins/crw/skills/`; the root `skills` link is a compatibil
 path, not a second copy, and it is a Git symlink, so a checkout without symlink
 support turns it into a plain text file. The supported platform is Linux x86_64.
 
-Only those three entries may sit in the plugin root. Installation copies that
-directory verbatim, including untracked and ignored files, so anything left there
-is published. `python3 scripts/ci/plugin.py` enforces the rule.
-
-Everything that ships also has to sit inside the declared skills path, beside the
-files under `.codex-plugin/` and `LICENSE`, because a file outside it would install
-without ever being validated as a skill. The manifest itself may carry only the keys
+What may sit in the plugin root is whatever the manifest declares, plus
+`.codex-plugin/` and `LICENSE`. Installation copies that directory verbatim,
+including untracked and ignored files, so anything left there is published, and a
+component nobody declared installs without ever loading. `python3 scripts/ci/plugin.py`
+derives the permitted roots from the manifest, refuses a declaration naming a file the
+package does not ship, and checks the hook and server documents against the shapes that
+were measured to load. The manifest itself may carry only the keys
 the ingestion validator knows, and optional presentation fields are checked against
 its shapes: URLs that begin with `https://`, a `#RRGGBB` brand colour, and `./`
 relative asset paths the package actually ships.
 
-The manifest declares `skills` and nothing else. On this Codex version a declared
-component replaces default discovery rather than adding to it, so declaring
-`hooks` or `mcpServers` would change what loads; wiring those belongs to its own
-change.
-
-That replacement behavior was measured on codex-cli 0.154.0: a plugin declaring a
+The manifest declares every component the package ships. A declared component replaces
+default discovery rather than adding to it, measured on codex-cli 0.154.0: a plugin declaring a
 non-default skills directory while also holding `./skills/` loaded only the declared
 one. The plugin specification bundled with Codex describes the opposite, saying
 declared components supplement default discovery. This package follows the measured
-behavior and keeps every shipped component under the declared path.
+behavior and keeps every shipped component under a declared path.
+
+## How hooks and MCP servers load
+
+Measured on codex-cli 0.154.0 by installing probe plugins into isolated Codex homes and
+ending real turns against a local stub model provider, so the readings below are what a
+hook and a server actually did rather than what an installer accepted. The evidence is
+kept with the task record, outside this repository.
+
+| Reading | Result |
+| --- | --- |
+| `hooks` as an array of file paths | Loads, and the hooks fire |
+| `hooks` as one string path | Loads, and the hook fires |
+| `hooks` as an inline document | Does not load |
+| No `hooks` key, with a `./hooks/` directory present | Does not load: there is no default discovery for hooks |
+| Firing without persisted hook trust | Nothing fires. `--dangerously-bypass-hook-trust` is what made a probe fire |
+| `[hooks.state]` after installing, after read-only commands, after a session | Empty every time; `codex exec` never recorded trust |
+| Variables in a hook command | Expanded: the command goes through a shell and the process carries `CODEX_HOME`, `PLUGIN_ROOT`, `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` |
+| The same variables for a hook registered in `$CODEX_HOME/hooks.json` | `PLUGIN_ROOT` is absent; that environment belongs to plugin-declared hooks |
+| `skills`, `hooks` and `mcpServers` declared together | All three load |
+| A relative command in an MCP declaration | Resolves only when `cwd` is set; a `cwd` of `.` resolves to the installed version directory |
+| An MCP declaration with no `cwd` | `cwd` stays null and the server never starts |
+| A plugin-root variable in an MCP argument | Delivered literally, never expanded, and the server never starts |
+| What an MCP server inherits | `HOME` and its working directory. Not `CODEX_HOME`, not `PLUGIN_ROOT` |
+
+Those two environments are opposites, and the wiring is built around the difference. A
+hook command can name the plugin root and the Codex home through shell variables because
+a shell expands them. An MCP command can do neither, so it sets `cwd` to `.` with a
+`./` relative argument, and the program it starts derives the Codex home from its own
+location: the cache layout is
+`$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`.
+
+Hooks ship as an array with one event per file. A single file carrying several events
+works too, but a hook's identity is positional, so adding an event to a shared file
+renumbers the ones after it and detaches the trust Codex recorded against them.
+
+Installing the package does not make its hooks run. Trust is a separate, explicit step,
+and until it is given the declared hooks are inert. That is why installation activates
+nothing on its own, and why the installation flow has to say so rather than leave an
+operator waiting for a hook that is working exactly as installed.
 
 ## Install
 
@@ -59,6 +97,32 @@ codex plugin add crw@crw
 Installing creates no credential. The marketplace entry sets
 `authentication: ON_USE`, so Linear and repository access are checked when a skill
 needs them, and a skill says so and stops when they are missing.
+
+## Turning the wired surfaces on
+
+Installing the package installs the skills, and registers nothing else that works on
+its own. The declared MCP server and Stop hook both reach a runtime this package does
+not carry, and each needs a step the installation cannot take for you.
+
+1. Install the runtime, if this host has none:
+   `python3 scripts/runtime_install.py install --dest <destination> --apply`.
+2. Write the two records the launchers read. Neither registers anything itself:
+   `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply`
+   and
+   `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply`.
+   Each refuses when the same surface is already registered the other way, because the
+   two together would run two bridges, or two hooks on every Stop.
+3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
+   grants that: installing writes no trust, and a session without it runs the hook zero
+   times and says so nowhere.
+
+Step 3 is what makes an installed hook look broken while it is working exactly as
+installed. Steps 1 and 2 may run in either order; step 3 is last, because it is trust in
+the hook as it then stands.
+
+None of this starts a daemon. The server is a stdio process Codex spawns per session,
+the hook runs on a Stop and exits, and the completion hook installs in `observe` mode,
+which classifies and records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works and is
 unchanged. Both installations read the same source: `scripts/install.py` links the

@@ -8,9 +8,11 @@ are there to catch.
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
+from contextlib import contextmanager
 
 from codex_session_relay import NO_DELIVERABLE, identity, manifest
 from codex_session_relay.clock import FakeClock
@@ -214,4 +216,136 @@ class DeliveryTestCase(RelayTestCase):
     def attempts_for(self, event_id):
         return self.store.all(
             "SELECT * FROM attempts WHERE event_id = ? ORDER BY attempt_no", (event_id,)
+        )
+
+
+# ----------------------------------------------------------------- fault injection
+
+_WRITE_HEAD = re.compile(
+    r"^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?"
+    r"|DELETE\s+FROM)\s+(?:\w+\.)?[\"\[]?(\w+)",
+    re.IGNORECASE,
+)
+_BEGINS = re.compile(r"^\s*BEGIN\b", re.IGNORECASE)
+_ENDS = re.compile(r"^\s*(?:COMMIT|END|ROLLBACK)\b", re.IGNORECASE)
+
+
+def written_table(statement):
+    """The table a statement writes, or None when this reader cannot say.
+
+    The head only, never the body. An INSERT ... ON CONFLICT DO UPDATE belongs to the table
+    it inserts into, which is what poll_observations and recipient_rate need, and reading
+    only the head keeps this out of column lists that have nothing to do with which
+    transaction is running.
+
+    What it cannot read, said here rather than left to be found out: a write behind a common
+    table expression (WITH ... INSERT), a write a trigger makes, a savepoint, anything
+    issued through executescript, and any statement on a connection other than the one being
+    watched. None of those exists in this package today, and tests/test_regression_map.py
+    watches for the first of them instead of trusting that it stays true.
+    """
+    match = _WRITE_HEAD.match(statement)
+    return match.group(1) if match else None
+
+
+class WorkerKilled(BaseException):
+    """What a killed worker looks like from inside a transaction.
+
+    A BaseException deliberately. RelayDaemon._deliver wraps delivery.attempt in
+    except Exception, so an ordinary error injected inside the claim becomes a line on the
+    tick report and the worker lives - which is a refused delivery, not a kill. A signal is
+    not catchable that way, and Store.transaction already catches BaseException in order to
+    roll back, so this travels the path a real kill travels.
+    """
+
+
+class _TransactionWatch:
+    """Which tables the open transaction has written, read off the statements SQLite ran."""
+
+    def __init__(self):
+        self.pending = []
+        self.transactions = []
+        self.open = False
+
+    def statement(self, statement):
+        if _BEGINS.match(statement):
+            self.open, self.pending = True, []
+            return
+        if _ENDS.match(statement):
+            if self.open:
+                self.transactions.append(tuple(self.pending))
+            self.open, self.pending = False, []
+            return
+        table = written_table(statement)
+        if table is not None and self.open and table not in self.pending:
+            self.pending.append(table)
+
+
+class _Interruption:
+    """The fault, and the record of where it landed."""
+
+    def __init__(self, watch, writing):
+        self._watch = watch
+        self.writing = writing
+        self.killed = None
+        self.fired = 0
+
+    @property
+    def transactions(self):
+        """Every transaction the watcher saw END, in order.
+
+        Two things a reader needs, because the absence report below prints this. It INCLUDES
+        the rolled-back one - Store.transaction's ROLLBACK ends a transaction as surely as
+        its COMMIT - so the killed set appears here too. And it includes empty tuples, for a
+        transaction that opened and only read; delivery._suppress_if_superseded does exactly
+        that. An empty tuple means read-only, not unclassified.
+        """
+        return tuple(self._watch.transactions)
+
+    def __call__(self):
+        if self.writing is not None and self.writing not in self._watch.pending:
+            return
+        self.killed = tuple(self._watch.pending)
+        self.fired += 1
+        raise WorkerKilled(
+            "the worker was killed inside the transaction writing "
+            + (", ".join(self.killed) or "nothing")
+        )
+
+
+@contextmanager
+def killed_before_commit(store, *, writing=None):
+    """Kill the worker inside the transaction that writes that table, not whichever is first.
+
+    Store.fault_hook is global and fires just before every COMMIT, so arming it and running
+    a tick kills the tick's FIRST write wherever that happens to be. Naming the table is what
+    lets a case reach the transaction it is named for, and killed is what lets the case
+    assert that it got there rather than assume it.
+
+    Yields the interruption: killed is the tables the interrupted transaction held,
+    transactions is every transaction the watcher saw end, fired counts the kills.
+
+    If nothing fired and the body raised nothing, that is an absence and it is raised as one,
+    carrying the transactions actually seen - a case whose fault never fired asserted nothing
+    about recovery. A body that raised keeps its own exception, because that one explains
+    more than a bookkeeping failure would.
+
+    One connection only, store.db. A case that kills work on a second Store measures nothing
+    here.
+    """
+    watch = _TransactionWatch()
+    interruption = _Interruption(watch, writing)
+    store.db.set_trace_callback(watch.statement)
+    store.fault_hook = interruption
+    try:
+        yield interruption
+    finally:
+        store.fault_hook = None
+        store.db.set_trace_callback(None)
+    if interruption.fired == 0:
+        raise AssertionError(
+            "no transaction "
+            + (f"writing {writing!r}" if writing else "at all")
+            + " was interrupted, so this test asserted nothing about recovery."
+            f" Transactions seen: {interruption.transactions}"
         )
