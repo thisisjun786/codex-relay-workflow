@@ -70,12 +70,6 @@ NO_RECORDS_KEPT = "no_records_kept"
 UNESTABLISHED = "unestablished"
 RECORD_ANSWERS = (COUNTED, NO_RECORDS_KEPT, UNESTABLISHED)
 
-# An interpreter that is there, and executable, and does not answer as one. A file existing at
-# a path establishes that the path is not empty; it establishes nothing about what runs. This
-# is the answer for a program that was asked and did not answer, which is a repair and not an
-# uncertainty.
-NOT_AN_INTERPRETER = "not_an_interpreter"
-
 # The probe's answer when the host refused to create the process at all -- an invalid
 # executable format, a missing loader. Nothing ran, and that is a repair rather than an
 # uncertainty: the host gets the same refusal on the next Stop.
@@ -92,8 +86,7 @@ BELOW_SUPPORTED_PYTHON = "below_supported_python"
 #
 # Every consumer reads THIS tuple rather than restating its members, because a state added
 # here and dropped by one consumer is the defect that produced it in the first place.
-CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER, COULD_NOT_BE_RUN,
-                BELOW_SUPPORTED_PYTHON)
+CANNOT_START = (reading.ABSENT, reading.UNREADABLE, COULD_NOT_BE_RUN, BELOW_SUPPORTED_PYTHON)
 
 
 def _not_registered(observed):

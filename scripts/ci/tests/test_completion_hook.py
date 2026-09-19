@@ -4009,10 +4009,10 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
             entry["command"] = entry["command"].replace(sys.executable, "/bin/true", 1)
             hook_file.write_text(json.dumps(written), encoding="utf-8")
             cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                         firing.ESTABLISHED,
-                         "a registered interpreter that is not an interpreter was read as"
-                         " startable because a file exists at its path and is executable")
+        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                            firing.RULED_OUT,
+                            "a registered interpreter that is not an interpreter was read as"
+                            " startable because a file exists at its path and is executable")
 
     def test_a_program_that_repeats_its_arguments_is_not_an_interpreter(self):
         """Echoing the question is not answering it.
@@ -4032,10 +4032,11 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
             entry["command"] = entry["command"].replace(sys.executable, "/bin/echo", 1)
             hook_file.write_text(json.dumps(written), encoding="utf-8")
             cell = why_no_record(temporary)
-        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
-                         firing.ESTABLISHED,
-                         "a program that echoed the question back was read as having answered"
-                         " it, so a registration that cannot run read as startable")
+        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                            firing.RULED_OUT,
+                            "a program that echoed the question back was read as having"
+                            " answered it, so a registration that cannot run read as"
+                            " startable")
 
     def test_an_adapter_script_that_cannot_be_read_is_not_startable(self):
         """One step down from the interpreter, and the same sentence.
@@ -4111,9 +4112,9 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
         self.assertEqual(answers.get(str(dispatcher)), reading.PRESENT,
                          "the fixture did not build a dispatcher that answers under its real"
                          " name: " + repr(answers))
-        self.assertEqual(answers.get(str(alias)), firing.NOT_AN_INTERPRETER,
-                         "a spelling the dispatcher refuses was published with the reading"
-                         " taken from the spelling it accepts: " + repr(answers))
+        self.assertNotEqual(answers.get(str(alias)), reading.PRESENT,
+                            "a spelling the dispatcher refuses was published with the reading"
+                            " taken from the spelling it accepts: " + repr(answers))
 
     def test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status(self):
         """Only a program that RAN the source can produce this nonce.
@@ -4169,6 +4170,63 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                             firing.ESTABLISHED,
                             "a registration that runs the adapter directly was reported as"
                             " naming an interpreter the host cannot start")
+
+    def test_a_wrapper_that_ignores_the_question_is_not_condemned(self):
+        """The probe cannot tell this host from the one it was built to catch.
+
+        A wrapper can delegate its ordinary argv to Python and still accept or ignore an option
+        meant for the interpreter, exiting 0 with nothing to say. That is byte-for-byte what a
+        program which is not an interpreter looks like, so no reading here separates them --
+        and establishing the verdict condemned a host whose hook starts and records normally.
+        The observation cannot distinguish its cases, so it stops answering as though it can,
+        which still leaves the original defect closed: an unestablished reading is not
+        'startable'.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            wrapper = host / "a-wrapper-that-ignores-dash-c"
+            wrapper.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in -c) exit 0 ;; esac\n"
+                "exec " + shlex.quote(sys.executable) + " \"$@\"\n", encoding="utf-8")
+            wrapper.chmod(0o755)
+            register(temporary)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, str(wrapper), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                            firing.ESTABLISHED,
+                            "a wrapper that starts the adapter was condemned for declining a"
+                            " question this probe cannot tell it apart on")
+
+    def test_a_probe_that_times_out_leaves_nothing_of_its_own_running(self):
+        """SUPPORT, not evidence: the probe runs host programs, so it owns what it starts.
+
+        subprocess kills the process it created and leaves that process's own children running,
+        so a wrapper that forks left a descendant of this diagnosis behind on every timeout.
+        The probe opens its own session and the whole group goes with it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            marker = host / "the-descendant-was-still-running"
+            forking = host / "a-wrapper-that-forks-and-hangs"
+            forking.write_text(
+                "#!/bin/sh\n"
+                "( sleep 30; : > " + shlex.quote(str(marker)) + " ) &\n"
+                "sleep 30\n", encoding="utf-8")
+            forking.chmod(0o755)
+            with mock.patch.object(completion, "INTERPRETER_PROBE_SECONDS", 1):
+                answer = completion._answers_as_an_interpreter(forking, "a forking wrapper")
+            time.sleep(2)
+            survivors = subprocess.run(
+                ["pgrep", "-f", str(forking)], stdout=subprocess.PIPE).stdout.decode().split()
+        self.assertEqual(answer["value"], completion.NOT_READ)
+        self.assertEqual(survivors, [],
+                         "the probe timed out and left processes it had started behind: "
+                         + repr(survivors))
 
     def test_a_wrapper_around_an_interpreter_is_left_unjudged(self):
         """Refusing the question and answering it wrongly are different facts.
@@ -4288,7 +4346,7 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                      adapterInterpreter="/bin/true",
                      adapterEntryPoint=str(ENTRY_POINT))
             found = completion.status(codex_home=temporary, environ={})
-        self.assertEqual(found["adapterInterpreter"]["value"], firing.NOT_AN_INTERPRETER)
+        self.assertNotEqual(found["adapterInterpreter"]["value"], reading.PRESENT)
 
     def test_an_unread_settings_document_names_no_owner_to_the_operator(self):
         """Four states reach one predicate, and the sentence spoke for only one of them.

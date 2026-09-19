@@ -32,6 +32,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import time
 import uuid
@@ -1645,14 +1646,41 @@ def _interpreter_question():
 #                  version below the floor is still an answer, and its own repair.
 #   REFUSED        it ran and would not take the question, which is what a wrapper around an
 #                  interpreter does. Nothing about running Python was established.
-#   ANSWERED WRONG it took the question, exited cleanly and said something else. That is the
-#                  family this probe exists for, and it is established.
+#   NO ANSWER      it exited cleanly and did not answer. This is where the probe STOPS, and it
+#                  is the whole reason it establishes nothing: a program that is not an
+#                  interpreter and a wrapper that ignores an option meant for one are both
+#                  exactly this, and no reading here separates them. Rounds of narrowing the
+#                  non-answers taught that; the observation cannot distinguish its cases, so
+#                  it does not answer as though it can, which is what this issue is about.
 #   UNJUDGED       the command's shape does not put an interpreter in this word at all. There
 #                  is no question to ask, so none is asked and nothing is run.
 #
-# Only the third is a verdict. The other two non-answers are unestablished readings and say so,
-# and the fourth never reaches this function -- its caller answers it, because a gap that
-# produces no verdict is read as a clean one.
+# Only an ANSWER establishes anything, because only a program that ran the source can produce
+# it. Every non-answer is an unestablished reading that says which explanations remain open --
+# which still closes the defect this probe was added for, since a presence check alone used to
+# report "startable" and an unestablished reading does not. The last case never reaches this
+# function: its caller answers it, because a gap that produces no verdict is read as a clean
+# one.
+def _end_the_session(started):
+    """Kill everything the probe started, not only the process it made.
+
+    A wrapper that forks and then hangs leaves its own children running when the direct child
+    is killed, so each timeout left a descendant of this diagnosis behind. The probe opens its
+    own session for exactly this, and the whole group goes.
+    """
+    try:
+        os.killpg(os.getpgid(started.pid), signal.SIGKILL)
+    except (OSError, ValueError):
+        try:
+            started.kill()
+        except OSError:
+            pass
+    try:
+        started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+
+
 def _unjudged_interpreter(resolved, label):
     """The UNJUDGED outcome, reaching the caller as a reading rather than as nothing.
 
@@ -1688,12 +1716,22 @@ def _answers_as_an_interpreter(resolved, label):
     Called only where the command's shape puts an interpreter in this word. Where it does not,
     the caller answers with _unjudged_interpreter and nothing is run.
     """
+    source, expected = _interpreter_question()
     try:
-        source, expected = _interpreter_question()
-        finished = subprocess.run([str(resolved), "-c", source],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  timeout=INTERPRETER_PROBE_SECONDS)
+        # Its OWN session, so a timeout can reap everything it started. subprocess kills the
+        # process it created and leaves that process's own children running, so a wrapper that
+        # forks left a descendant of this diagnosis behind on every timeout.
+        started = subprocess.Popen([str(resolved), "-c", source],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+    except OSError as error:
+        return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
+                     path=str(resolved),
+                     errno=errno.errorcode.get(error.errno, error.errno))
+    try:
+        spoke, _complained = started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
     except subprocess.TimeoutExpired:
+        _end_the_session(started)
         return _cell(NOT_READ, label + " did not answer within "
                      + str(INTERPRETER_PROBE_SECONDS) + "s, so whether it runs was not"
                      " established", path=str(resolved))
@@ -1701,7 +1739,7 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
                      path=str(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
-    answered = _text(finished.stdout).strip().split(" ")
+    answered = _text(spoke).strip().split(" ")
     version = _python_said(answered[1]) if len(answered) == 2 else None
     # The ANSWER is read before the exit status, because only a program that ran the source can
     # produce this nonce and a wrapper is free to replace the status afterwards -- a launcher
@@ -1716,7 +1754,7 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
                      " this was asked; whether it does so on the next invocation is that"
                      " invocation's own fact", path=str(resolved))
-    if finished.returncode != 0:
+    if started.returncode != 0:
         # It REFUSED the question rather than answering it wrongly, and those are different
         # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an
         # interpreter and exits non-zero while starting the adapter perfectly well through the
@@ -1725,9 +1763,12 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(NOT_READ, label + " did not accept the question, which is also what a"
                      " wrapper around an interpreter does, so whether it runs Python was not"
                      " established here", path=str(resolved))
-    return _cell(firing.NOT_AN_INTERPRETER, label + " is there and executable and did not"
-                 " answer as a Python interpreter when it was run, so the adapter it is"
-                 " registered to start cannot have run through it", path=str(resolved))
+    return _cell(NOT_READ, label + " is there and executable and did not answer as a Python"
+                 " interpreter when it was run. Two hosts look exactly like this -- a program"
+                 " that is not an interpreter at all, and a wrapper that ignores an option"
+                 " meant for the interpreter behind it and starts the adapter perfectly well"
+                 " -- and nothing here separates them, so whether this can start the adapter"
+                 " was not established", path=str(resolved))
 
 
 def _recorded_program_cell(named, label, asks=False):
