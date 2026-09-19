@@ -199,7 +199,12 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
                                         + "), and every one of them loads")
             if entry is not None and "enabled" in entry:
                 answer["enabled"] = entry["enabled"] is True
-            state = (parsed.get("hooks") or {}).get("state")
+            hooks = parsed.get("hooks")
+            # Checked the way plugins is, because a configuration can say anything. A nonempty
+            # hooks value that is not a table -- hooks = "invalid" -- turned this reader into an
+            # AttributeError, and the command answered internal_error instead of the refusal it
+            # models for a configuration it cannot use.
+            state = hooks.get("state") if isinstance(hooks, dict) else None
             if isinstance(state, dict):
                 answer["trustKeys"] = [key for key in sorted(state)
                                        if key.split(":")[0].split("@")[0] == name]

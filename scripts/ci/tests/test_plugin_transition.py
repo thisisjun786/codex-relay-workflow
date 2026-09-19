@@ -3285,6 +3285,27 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("could not be listed", unlink["detail"])
         self.assertIn("nothing was removed", unlink["detail"])
 
+    @needs_reader
+    def test_a_hooks_value_that_is_not_a_table_is_read_rather_than_raised(self):
+        """A configuration can say anything, and this one says hooks is a string."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        # No [hooks.state] table, so the top-level key below is the only hooks value there is.
+        host = self.host.manual_install().install_plugin(trusted=False)
+        path = host.home / "config.toml"
+        path.write_text('hooks = "invalid"\n' + path.read_text(encoding="utf-8"),
+                        encoding="utf-8")
+        answer = inventory.read_plugin(host.home)
+        self.assertEqual(answer["configEntry"], "PRESENT", json.dumps(answer)[:500])
+        self.assertEqual(answer["trustKeys"], [])
+        self.assertFalse(answer["trustKeyPresent"])
+        # The modelled refusal, not an internal error.
+        code, seen = host.call("inspect")
+        self.assertEqual(code, 0, json.dumps(seen)[:700])
+        self.assertNotEqual(seen.get("outcome"), "internal_error", json.dumps(seen)[:400])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
