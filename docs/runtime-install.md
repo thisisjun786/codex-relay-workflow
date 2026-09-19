@@ -588,7 +588,8 @@ rather than folded into one.
 
 | Field | Answers |
 | --- | --- |
-| `promoted` | the replacement: the selection is committed and the pointer resolves into this environment |
+| `promoted` | whether THIS run replaced a runtime. A resumed promotion did; adopting bookkeeping for an installation the record already selected did not |
+| `inService` | the record selects this environment and the owned pointer names it. This is the fact that makes releasing the destination wrong, and every promoted exit carries it |
 | `claimSettled` | whether the claim recording it was written |
 | `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
 | `recoveryRequires` | what has to be done next, under the same key a refusal reports it |
@@ -597,16 +598,17 @@ So `install` has three exit statuses rather than two:
 
 | Status | The runtime | The record | What it means |
 | --- | --- | --- | --- |
-| `0` | replaced | written | the update finished |
-| `3` | replaced | not written | the host runs the new runtime; only the bookkeeping is missing |
-| `1` | not replaced | unchanged | the previous runtime is selected and reachable |
+| `0` | in service | written | the update finished |
+| `3` | in service | not written | the host reaches this runtime; only the bookkeeping is missing |
+| `1` | untouched | unchanged | the previous runtime is selected and reachable |
 
 **Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
 what it means everywhere else in this command: the candidate was promoted, it is selected, the
 owned pointer names it, and a host is running out of it. A wrapper that reads every non-zero
 install status as "nothing changed" would report the old runtime as selected, or clean up the
 environment now in service. Only exit 1 releases a candidate. Tell the two apart by the status
-itself, or by `promoted`, which every promoted exit carries.
+itself, or by `inService`, which every promoted exit carries. Read `promoted` for the narrower
+question of whether this run replaced anything: an adoption reports `inService` without it.
 
 Which accident happened, and what to do about it, is in `recoveryRequires` -- derived from the
 claim as it reads back and from a selection snapshot taken under the promotion lock, never from

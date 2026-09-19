@@ -2537,6 +2537,9 @@ def cmd_install(args):
                 return _finish_promotion(record_path, data, environment, pointer_path, standing,
                                          issue=args.issue, reported={
                     "resumed": True,
+                    # This run finished a REPLACEMENT somebody else committed, so it reports
+                    # the promotion marker. The adoption below does not: it replaced nothing.
+                    "promoted": True,
                     "note": "a previous run committed this environment as selected and did not"
                             " live to move the pointer. Nothing was rebuilt and nothing was"
                             " removed: the missing half of that promotion was written. Whether"
@@ -2553,6 +2556,11 @@ def cmd_install(args):
                 return _finish_promotion(record_path, data, environment, pointer_path, standing,
                                          issue=args.issue, reported={
                     "adopted": True,
+                    # Not promoted. This run replaced no runtime -- the record already
+                    # selected this installation -- and saying otherwise on a non-zero exit
+                    # would describe a swap that never happened. 'inService' is what that exit
+                    # needs a reader to know, and this path reports it like the other one.
+                    "promoted": False,
                     "note": "this installation was made before this command wrote staging"
                             " claims, and the host record selects it. It is brought under this"
                             " command's bookkeeping -- the pointer it is reached through, and"
@@ -2983,6 +2991,11 @@ def cmd_install(args):
             "hostRecord": str(record_path), "steps": performed, "installs": installs,
             "measurement": measurement,
             "promoted": True,
+            # What a consumer must not destroy, reported under the same name the resume exit
+            # uses. 'promoted' says this run replaced a runtime; this says the record selects
+            # this environment and the owned pointer names it, which is the fact that makes
+            # releasing the destination wrong. Both promoted statuses carry it.
+            "inService": True,
             # Two answers, never one. 'promoted' is the replacement -- the selection is
             # committed and the pointer resolves into this environment -- and 'claimSettled' is
             # the record of it. They are written at different moments and they can differ, and a
@@ -3177,8 +3190,9 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
                 selected = protection["recordSelectsIt"]
             else:
                 protected, selected = None, None
+            names = None if not current.ok else protection["pointerNamesIt"]
     except OSError as error:
-        current, protected, selected = None, None, None
+        current, protected, selected, names = None, None, None, None
         snapshot_detail = ("the promotion lock could not be taken to read a consistent"
                            " snapshot: " + type(error).__name__ + ": " + error.__str__())
     else:
@@ -3222,6 +3236,22 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " between finishing the missing bookkeeping, leaving the directory alone, and"
             " removing and rebuilding it. Do not rerun to settle the record until that reading"
             " succeeds.")
+    elif selected is True and names is not True:
+        # The record still selects this environment and the LINK does not agree, or could not
+        # be read. A rerun is not bookkeeping then: _finish_promotion replaces the pointer
+        # before it writes the claim, and refuses outright for a link this record does not
+        # account for. Saying "it only settles the claim" understates what the next run does,
+        # and understating a write is how somebody authorises one they did not mean to.
+        record_requires = (
+            "read the owned pointer at " + str((
+                (current.value.get("pointer") or {}).get("path") if current.ok else None)
+                or pointer.pointer_path(environment.parent))
+            + " before rerunning, and clear whatever stopped the write at " + str(path)
+            + ". This host record still selects this environment, but the owned pointer does"
+            " not name it or could not be read, so a rerun is NOT bookkeeping only: it"
+            " replaces that link before it writes the claim, and refuses outright if the link"
+            " is one this record does not account for. Nothing is at risk meanwhile -- this"
+            " environment stays selected and nothing removes it.")
     elif selected is True:
         record_requires = (
             "clear whatever stopped the write at " + str(path) + " -- the error is in"
@@ -3275,7 +3305,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             # can see WHICH reading produced it. It is a snapshot and not a guarantee: nothing
             # holds the promotion lock until somebody acts on this.
             "selection": {"state": None if current is None else current.state,
-                          "selects": selected, "protected": protected,
+                          "selects": selected, "pointerNames": names, "protected": protected,
                           "detail": snapshot_detail},
             # Composed the way a refusal composes its own, so a reader meets one sentence
             # covering everything outstanding rather than one per thing that went wrong.
@@ -3410,11 +3440,14 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                             record_path=record_path,
                             definition_version=data["definitionVersion"], data=data)
     emit(dict(standing, applied=True,
-              # The same marker the ordinary promotion reports, and for the same reader. This
-              # path can return EXIT_INCOMPLETE too, and a consumer told only 'applied' has no
-              # way to tell a non-zero result here from an unused destination -- which is the
-              # one misreading that ends with the selected, reachable runtime cleaned up.
-              promoted=True,
+              # What a consumer must not destroy, and it is not 'promoted'. This function
+              # serves two decisions: RESUME finishes a promotion, and RECORDED adopts
+              # bookkeeping for an installation this run replaced NOTHING to obtain -- so
+              # 'promoted' is the caller's to state and travels in 'reported'. What is true on
+              # both paths, and is what the non-zero exit needs a reader to know, is that the
+              # record selects this environment and the owned pointer now names it: both were
+              # established above before anything was written.
+              inService=True,
               pointer={"path": str(pointer_path), "previousTarget": before.get("target"),
                        "target": str(environment)},
               claimSettled=settled["settled"], claim=settled,

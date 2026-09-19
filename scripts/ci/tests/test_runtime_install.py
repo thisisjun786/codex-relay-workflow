@@ -5984,6 +5984,20 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=busy_after_moving_on))
+        if breaking == "settle the staging claim after the pointer goes":
+            # The record still selects this environment and the owned pointer no longer names
+            # it. A rerun is then not bookkeeping: _finish_promotion replaces the link before
+            # it writes the claim.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def unlink_pointer_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(host.pointer_path).unlink()
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=unlink_pointer_then_fail))
         if breaking == "settle the staging claim with the promotion lock unusable":
             # The claim write fails AND the lock the snapshot needs cannot be taken for a
             # reason that is not contention. Exclusive makes a directory, opens a file and
@@ -6490,6 +6504,65 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_a_pointer_that_does_not_agree_is_not_a_bookkeeping_only_retry(self):
+        """The selection alone does not make a rerun bookkeeping.
+
+        _finish_promotion replaces the owned pointer before it writes the claim, and refuses
+        outright for a link this record does not account for. Telling an operator a rerun will
+        "only settle the claim" understates a write, which is how somebody authorises one they
+        did not mean to.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            gone = _advice(UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the pointer goes")[1], host)
+            selection = (UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the pointer goes")[1]
+                .get("claim") or {}).get("selection") or {}
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            agreeing = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        self.assertIsNot(selection.get("pointerNames"), True,
+                         "the pointer no longer names it, and that reading is kept: "
+                         + json.dumps(selection)[:300])
+        self.assertTrue(agreeing, "the contrast needs the other case to say something")
+        self.assertNotEqual(gone, agreeing,
+                            "so it must not be told a rerun only settles the claim: "
+                            + gone[:300])
+
+    def test_an_adoption_that_replaced_nothing_does_not_report_a_replacement(self):
+        """_finish_promotion serves two decisions and only one of them replaces anything.
+
+        RESUME finishes a promotion somebody else committed. RECORDED adopts bookkeeping for
+        an installation the record already selected -- that caller says in so many words that
+        this run replaced nothing, so a non-zero exit describing a replacement would describe
+        a swap that never happened. What the exit needs a reader to know is 'inService'.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # An installation older than claims: populated, selected, and carrying no claim.
+            for component in host.data["components"]:
+                (host.candidate / "site" / component["module"]).mkdir(parents=True,
+                                                                      exist_ok=True)
+            hostrecord.update(
+                host.record_path, host.data["definitionVersion"],
+                select={c["component"]: str(host.candidate / "site" / c["module"])
+                        for c in host.data["components"]})
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+
+        self.assertEqual(payload["stagingDecision"], staging.RECORDED,
+                         json.dumps(payload)[:400])
+        self.assertIs(payload.get("promoted"), False,
+                      "this run replaced nothing and must not say it did")
+        self.assertIs(payload.get("inService"), True,
+                      "but the environment is selected and reached, which is what a non-zero"
+                      " exit needs a reader to know")
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertNotEqual(code, 1)
 
     def test_a_snapshot_that_could_not_be_taken_does_not_erase_the_promotion(self):
         """The lock added to fix one defect must not reintroduce the one this PR is about.
