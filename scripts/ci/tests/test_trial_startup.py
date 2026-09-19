@@ -4770,6 +4770,45 @@ class FortyFifthHostedRound(TrialCase):
                              "a workspace git answered for was read as a disagreement")
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
 
+    def test_the_gate_measures_its_interval_on_a_clock_that_cannot_go_backwards(self):
+        # The interval between the process reading and the final gate decides whether the counter
+        # has to have moved. Measured on the wall clock, a correction applied between the two
+        # made that interval look shorter than it was, and a shorter interval is one the counter
+        # need not have moved across: the gate then accepts a witness that has not advanced.
+        self.world.start_supervisor()
+
+        class Corrected:
+            """Real time until the run reaches the gate, then ten seconds earlier."""
+
+            def __init__(self):
+                self.corrected = False
+
+            def time(self):
+                return time.time() - (10 if self.corrected else 0)
+
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+        clock = Corrected()
+        original = startup.store_still_the_same
+
+        def correct_the_clock_then_read(record, relay):
+            # The reading immediately before the supervisor's own, in every version of this run.
+            answer = original(record, relay)
+            clock.corrected = True
+            return answer
+
+        startup.time = clock
+        startup.store_still_the_same = correct_the_clock_then_read
+        self.addCleanup(setattr, startup, "store_still_the_same", original)
+        self.addCleanup(setattr, startup, "time", time)
+        document = self.world.preflight()
+        gate = document["supervisorStillRunning"]
+        self.assertTrue(gate["advanceRequired"],
+                        "a corrected clock excused the counter from having to move")
+        self.assertGreaterEqual(gate["elapsedSeconds"],
+                                self.world.record["supervisor"]["witnessAdvanceSeconds"])
+
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
         # once it is off, so a service disabled while its current worker still holds the lock is

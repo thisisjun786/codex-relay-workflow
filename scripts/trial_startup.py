@@ -1468,8 +1468,8 @@ def reading_process(record, relay, sleeper=time.sleep):
 
     launched = moment(supervisor.get("launchedAt"), "supervisor.launchedAt")
     minimum = supervisor.get("minimumAliveSeconds")
-    measured = process_uptime(pid)
-    if measured is None:
+    lived = process_uptime(pid)
+    if lived is None:
         # No /proc here, which is most hosts that are not Linux. The record's declaration is what
         # is left, and the cell says which of the two it read rather than refusing every trial on
         # such a host or passing one off as the other.
@@ -1482,7 +1482,6 @@ def reading_process(record, relay, sleeper=time.sleep):
                                     + str(minimum) + ". A restarted supervisor keeps that"
                                     " declaration, and there is nothing here that would notice")))
     else:
-        lived = measured
         declared = time.time() - launched.timestamp()
         ok = lived >= minimum
         cells.append(cell("uptime", VERIFIED if ok else NOT_VERIFIED, provenance=READ,
@@ -1561,7 +1560,12 @@ def reading_process(record, relay, sleeper=time.sleep):
     # supervisor that leaves while they run leaves all of them verified.
     record["_supervisor"] = {"pid": pid, "witness": witness_path, "advanceSeconds": seconds,
                              "progress": (second_witness or {}).get("progress"),
-                             "at": time.time()}
+                             # On a clock that cannot go backwards, because this is the start of
+                             # an interval rather than a moment anyone reads: a wall clock
+                             # corrected between here and the gate made the interval look shorter
+                             # than it was, and a shorter interval is one the counter need not
+                             # have moved across.
+                             "at": time.monotonic()}
     return cells
 
 
@@ -2873,7 +2877,7 @@ def supervisor_still_running(record, relay=None):
     after = found.get("progress") if isinstance(found, dict) else None
     named = isinstance(found, dict) and same(found.get("pid"), pid)
     moved, held = witness_counter(anchor.get("progress")), witness_counter(after)
-    elapsed = time.time() - anchor["at"]
+    elapsed = time.monotonic() - anchor["at"]
     declared = witness_counter(anchor.get("advanceSeconds"))
     must_advance = declared is not None and elapsed >= declared
     if moved is None or held is None:
