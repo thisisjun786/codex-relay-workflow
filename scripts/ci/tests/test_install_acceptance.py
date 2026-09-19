@@ -1432,6 +1432,87 @@ RESOLVES_LIKE_PYTHON = {
          "the constructor form of the descriptor, as property(carrier) is on the reading side:"
          " it binds the same function under a second name, so calling through it runs the one"
          " that was wrapped."),
+    "a local of the scope around a nested one":
+        (REFUSAL,
+         ("def outer():",
+          "    accepted = reading.UNREADABLE",
+          "    def consumer():",
+          "        return accepted",
+          "    def user():",
+          "        return consumer()",
+          "    return user"),
+         "outer.user", True,
+         "a nested function reads what the function around it bound, so the helper hands the"
+         " same thing on and its caller takes it. Consulting only the nested scope's own names"
+         " ends the chain at the first closure."),
+    "a decorator alias bound under an if":
+        (REFUSAL,
+         ("def sm(fn):",
+          "    return fn",
+          "",
+          "if False:",
+          "    sm = staticmethod",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @sm",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "whether that binding happened is a question about the run, so it cannot be the"
+         " definite meaning of the name. Taking it suppresses a receiver the method really has"
+         " and the carrier call goes with it."),
+    "a parameter spelled like a refusal module":
+        (REFUSAL,
+         ("def consumer(reading):",
+          "    return reading.UNREADABLE"),
+         "consumer", False,
+         "the qualifier is the parameter's, so an imported module of that name is not what this"
+         " reads and what the object holds is the caller's fact."),
+    "the refusal module itself":
+        (REFUSAL,
+         ("def consumer():",
+          "    return reading.UNREADABLE"),
+         "consumer", True,
+         "its pair: a scope that does not bind the qualifier reads the module, so honouring the"
+         " shadow must not have stopped the ordinary reading."),
+    "a class alias bound inside a function":
+        (REFUSAL,
+         ("class Base:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Clean:",
+          "    pass",
+          "",
+          "def unrelated():",
+          "    Alias = Base",
+          "    return Alias",
+          "",
+          "Alias: type = Clean",
+          "",
+          "class Child(Alias):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", False,
+         "the name a base list reads is the module's, and an annotated binding is a binding."
+         " A name bound inside a function is that function's and cannot say what a class"
+         " written at module level inherits."),
+    "a class alias bound at module level":
+        (REFUSAL,
+         ("class Base:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "Alias = Base",
+          "",
+          "class Child(Alias):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "its pair: the module's own alias really is what the base names, so scoping the scan"
+         " must not have scoped it to nothing."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2297,14 +2378,21 @@ def _class_aliases(tree):
     named, growing = {}, True
     while growing:
         growing = False
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
+        for node in getattr(tree, "body", ()):
+            # Module level and unconditional only. A name bound inside a function is that
+            # function's, and one under an if is a guess about the run, so neither can say what
+            # a base written at module level inherits. An annotated binding is a binding.
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            else:
                 continue
-            spelling = (_dotted(node.value) or "").rpartition(".")[2]
+            spelling = (_dotted(value) or "").rpartition(".")[2]
             reached = spelling if spelling in classes else named.get(spelling)
-            for target in node.targets:
+            for target in targets:
                 bound = _dotted(target)
-                if reached and bound and bound not in named:
+                if reached and bound and named.get(bound) != reached:
                     named[bound] = reached
                     growing = True
     return named
@@ -2565,6 +2653,10 @@ def _hands_on(tree, spelled):
     # A class body's bindings stay in that class. Merging them into one table lets one class's
     # sm = staticmethod decide what @sm means in the next class, which is a name that body never
     # bound. An import binds the decorator as surely as an assignment does, so both are read.
+    # Only a statement the module certainly runs. One under an if at module level is the same
+    # guess about the run that a conditional class binding is, and reading it as the definite
+    # meaning of a decorator name suppresses a receiver the method really has.
+    module_statements = {id(statement) for statement in getattr(tree, "body", ())}
     owns_a_body = {id(statement): node.name for node in ast.walk(tree)
                    if isinstance(node, ast.ClassDef) for statement in node.body}
     module_bindings, class_bindings = [], {}
@@ -2590,7 +2682,7 @@ def _hands_on(tree, spelled):
             where = where.rpartition(".")[0] or MODULE_LEVEL
         if owner is not None:
             class_bindings.setdefault(owner, []).extend(bound)
-        elif where == MODULE_LEVEL:
+        elif where == MODULE_LEVEL and id(node) in module_statements:
             module_bindings += bound
 
     def means(name, seed, at, within=None, followed=0):
@@ -3119,6 +3211,20 @@ def _hands_on(tree, spelled):
         growing = False
         bound = {}
 
+        def visible(function):
+            """Every name holding the thing in this scope or in one enclosing it.
+
+            A nested function reads what the function around it bound, so a helper returning a
+            local of its enclosing scope hands the same thing on. The scopes are the prefixes of
+            the chain that names this one.
+            """
+            chain = [] if function == MODULE_LEVEL else function.split(".")
+            seen, scope = set(bound.get(MODULE_LEVEL, ())), []
+            for part in chain:
+                scope.append(part)
+                seen |= set(bound.get(".".join(scope), ()))
+            return seen
+
         def reaching(function, klass):
             def hands(expression, inner):
                 if isinstance(expression, ast.Call):
@@ -3143,7 +3249,8 @@ def _hands_on(tree, spelled):
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
                 held = bound.setdefault(function, set())
                 for named, value in _bindings(node):
-                    if not _reachable(value, reaching(function, klass), klass, held):
+                    if not _reachable(value, reaching(function, klass), klass,
+                                      visible(function)):
                         continue
                     if isinstance(named, ast.Name) and named.id not in held:
                         held.add(named.id)
@@ -3160,7 +3267,7 @@ def _hands_on(tree, spelled):
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
             if function == MODULE_LEVEL or function in carriers:
                 continue
-            if _reachable(answer, reaching(function, klass), klass, bound.get(function, set())):
+            if _reachable(answer, reaching(function, klass), klass, visible(function)):
                 carriers.add(function)
                 growing = True
 
@@ -3422,6 +3529,11 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=()):
             reader = (as_class or {}).get(reader, reader)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
+            if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
+                    and id(node.value) in shadowed):
+                # The scope binds that qualifier itself, so an imported module spelled the same
+                # way is not what this reads, and what the object holds is the caller's fact.
+                return None
             if reader in classes:
                 # A class written here is asked through the table above, which knows what it
                 # binds. Falling through would match on the attribute name alone, and then any
