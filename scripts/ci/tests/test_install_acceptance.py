@@ -990,6 +990,16 @@ ACCEPTS_A_REFUSAL = {
 # Places that name a refusal without settling for one. The negative rule over-collects, and this
 # is where the over-collection is paid for: a producer of a refusal is not a place accepting one.
 NAMES_A_REFUSAL_WITHOUT_SETTLING = {
+    "test_the_reach_of_each_derivation_is_the_declared_one":
+        "it names REFUSAL_REACH_INCLUDES to CHECK that each spelling in it is still derived."
+        " The table became a collection holding refusals once the reach stopped stopping one"
+        " container short of what the objects hold, and naming a table in order to test it is"
+        " the opposite of accepting what it contains as an answer.",
+    "test_a_refusal_nested_in_a_collection_is_still_collected":
+        "it builds collections holding a refusal and binds each on this module to ask the"
+        " derivation whether it finds one. The refusals are the material under test rather"
+        " than an answer this place accepts: it asserts what the derivation says about them,"
+        " and two of the shapes it builds hold no refusal at all.",
     "_unreadable":
         "it MAKES the refusal. A cell whose reading could not be taken is what this returns,"
         " and returning it is the opposite of settling for one somebody else returned.",
@@ -7612,14 +7622,27 @@ def refusal_spellings():
     def is_answer(value):
         return isinstance(value, str) and value in answers
 
-    def collects(value):
+    def collects(value, depth=0):
+        """Whether this value holds a refusal, at any depth of written container.
+
+        Reading the direct members only was a reach that stopped one container short of what
+        the objects hold: ((UNREADABLE,),) collects one just as plainly as (UNREADABLE,) does,
+        and a name bound to it is spelled the same way at the use site. A row settling for a
+        refusal through the nested form would not have been inventoried.
+
+        Bounded rather than open: the containers are the written ones, and the descent stops at
+        a depth no constant in this module approaches, so a value that somehow refers to itself
+        answers narrowly instead of not answering at all.
+        """
+        if depth > 8:
+            return False
         if isinstance(value, (tuple, list, set, frozenset)):
-            return any(is_answer(item) for item in value)
+            return any(is_answer(item) or collects(item, depth + 1) for item in value)
         if isinstance(value, dict):
             # Keys as well as values: "answer in mapping" asks about the keys, and a mapping
             # from a refusal to a label is an ordinary way for one to be written down.
-            return any(is_answer(item) for item in value) or any(
-                is_answer(item) for item in value.values())
+            return any(is_answer(item) or collects(item, depth + 1) for item in value) or any(
+                is_answer(item) or collects(item, depth + 1) for item in value.values())
         return False
 
     attributes, mine, held, owners = set(), set(), set(), set()
@@ -9084,6 +9107,42 @@ class SevenReadingsTests(unittest.TestCase):
             "    return helper()"))),
             "a set unpacking is declared unseatable and the seating answered anyway")
 
+    def test_a_refusal_nested_in_a_collection_is_still_collected(self):
+        """The reach over written containers, asked of the objects rather than read off them.
+
+        A refusal one container deep and a refusal two containers deep are spelled the same
+        way at the use site, so a reach that stopped at the direct members let a row settle for
+        one through the nested form without ever being inventoried. Nothing in the source says
+        which it is: the value is a tuple either way, and only asking the object distinguishes
+        them, which is why this is a behavioural control rather than another matcher case.
+
+        Each shape is bound on this module, the derivation is re-run and has to answer, and the
+        binding is removed again. The negatives are bound the same way -- a collection holding
+        nothing of the kind, and one that refers to itself -- so the descent cannot pass by
+        collecting everything, and cannot hang on a cycle either.
+        """
+        circular = []
+        circular.append(circular)
+        for shape, value, collected in (
+                ("one container deep", (reading.UNREADABLE,), True),
+                ("two containers deep", ((reading.UNREADABLE,),), True),
+                ("three containers deep", (((reading.UNREADABLE,),),), True),
+                ("held as a mapping value", {"key": [reading.UNREADABLE]}, True),
+                ("held as a mapping key", {(reading.UNREADABLE,): "label"}, True),
+                ("a collection of nothing of the kind", (("fine",),), False),
+                ("a collection that holds itself", circular, False)):
+            with self.subTest(shape):
+                here = sys.modules[__name__]
+                setattr(here, "A_COLLECTION_UNDER_TEST", value)
+                try:
+                    spelled = refusal_spellings()["collection"]
+                finally:
+                    delattr(here, "A_COLLECTION_UNDER_TEST")
+                self.assertEqual("A_COLLECTION_UNDER_TEST" in spelled, collected,
+                                 shape + ": the derivation and the object disagree about"
+                                 " whether this collection holds a refusal, so a use of the"
+                                 " name is inventoried on the wrong answer")
+
     def test_each_transformation_boundary_is_still_where_it_says(self):
         """Support: the declared transformation boundary, held at both ends.
 
@@ -10367,6 +10426,7 @@ HANDED = {
     "test_every_statement_reader_here_pairs_an_unpacking_off": NOTHING,
     "test_each_transformation_boundary_is_still_where_it_says": NOTHING,
     "test_every_argument_form_outside_the_seating_grammar_is_declared": NOTHING,
+    "test_a_refusal_nested_in_a_collection_is_still_collected": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
