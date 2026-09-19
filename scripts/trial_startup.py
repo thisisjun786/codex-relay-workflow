@@ -626,8 +626,15 @@ def load_start(path, *, environment=None, mode="preflight"):
         raise Refused("this record's trial window opens too long after this preflight to be the"
                       " dispatch it precedes", opensAt=window.get("opensAt"), now=stamp(),
                       allowanceSeconds=WINDOW_ALLOWANCE)
-    number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
-           minimum=0)
+    minimum_alive = field(record, "supervisor", "minimumAliveSeconds")
+    number(minimum_alive, "supervisor.minimumAliveSeconds", minimum=0)
+    if minimum_alive <= 0:
+        # A bound of zero is satisfied by a process that started this instant, so the reading
+        # would report persistence it never observed. The observation this exists for is a
+        # supervisor that outlived the shell which launched it, so the bound has to be long
+        # enough for that to have happened.
+        raise Refused("supervisor.minimumAliveSeconds must be greater than zero",
+                      minimumAliveSeconds=shown(minimum_alive))
     pid = field(record, "supervisor", "pid")
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         # A float pid is signalled as its truncated self while the witness is compared against the
@@ -681,6 +688,15 @@ def load_start(path, *, environment=None, mode="preflight"):
                 raise Refused("a participant's expect does not name every required setting",
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               required=list(REQUIRED_EXPECT))
+            # The relay records a sandbox as the policy object and reads its type out of it, so a
+            # mode on its own is a value the store can never hold and this record can never agree
+            # with. Refused here, where the operator can still fix it, rather than at a cell.
+            sandbox = expect.get("sandbox")
+            if not isinstance(sandbox, dict) or not isinstance(sandbox.get("type"), str):
+                raise Refused("a participant's expected sandbox must be the policy object the"
+                              " relay records, carrying its mode at \"type\"",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              sandbox=shown(sandbox))
             if not str(participant.get("taskId") or "").strip():
                 raise Refused("a participant has no task id", boundary=boundary.get("name"))
             absolute(participant.get("cwd"), "a participant cwd")
@@ -1100,8 +1116,13 @@ def reading_lifecycle(record):
 
 
 def reading_capability(record, relay):
-    """Two halves per participant: what the host echoed, and what the store holds."""
+    """Two halves per participant: what the host echoed, and what the store holds.
+
+    Returns the settings row it graded for each participant as well, because the gate has to
+    compare against the row as it is when the gate runs rather than this one.
+    """
     cells = []
+    seen = {}
     for boundary in record.get("boundaries") or []:
         for participant in boundary.get("participants") or []:
             task = participant.get("taskId")
@@ -1176,6 +1197,7 @@ def reading_capability(record, relay):
                                           + str(shown(usable)) + ", missing "
                                           + json.dumps(shown(field(payload, "missing")))
                                           + ", disagreeing " + json.dumps(differs))))
+            seen[str(task)] = settings
 
             # What the trial will actually run with, against what creation recorded. The four
             # declared settings say nothing about workspace access, so a record that is usable,
@@ -1199,6 +1221,36 @@ def reading_capability(record, relay):
                                           "the store's settings disagree with the creation receipt"
                                           " at " + ", ".join(apart) + ", so this trial would run"
                                           " with access the receipt never recorded")))
+    return cells, seen
+
+
+def settings_now(record, relay, seen):
+    """Every participant's settings row, read again immediately before the gate.
+
+    The capability probes run before the witness delay and the probes after it, and delivery
+    reloads the current row when it sends. A row replaced while those seconds passed left the
+    trial running with settings the preflight never approved, and the cached cells stayed
+    verified. Compared whole rather than field by field, because any change to the row is a
+    change to what delivery will use.
+    """
+    cells = []
+    for name in participants_of(record):
+        probe = relay.relay("settings-show", "--task", name)
+        payload = probe["payload"] or {}
+        current = field(payload, "settings")
+        before = seen.get(name, MISSING)
+        readable = current is not MISSING and before is not MISSING
+        agrees = readable and structurally_same(current, before)
+        cells.append(graded("settingsStillCurrent:" + name,
+                            field(payload, "task") if readable else MISSING, agrees,
+                            probe=probe, provenance=EXECUTED,
+                            unreadable="settings-show did not report a settings record for this"
+                                       " participant at the moment the gate runs",
+                            evidence=("this participant's settings row is still the one the"
+                                      " capability reading graded" if agrees else
+                                      "this participant's settings row is not the one the"
+                                      " capability reading graded, so the trial would run with a"
+                                      " record this preflight never approved")))
     return cells
 
 
@@ -1587,6 +1639,34 @@ def assignment_now(record, relay):
                                 " and a relationship archived while those ran would have been"
                                 " graded from an answer that was already stale"))
     return cell_now, payload, entry
+
+
+def criteria_now(record, relay):
+    """The registered criteria, read again immediately before the gate.
+
+    reading_assignment reads them before the witness delay and every probe after it. A set
+    replaced while those seconds passed left the cached cell verified, and the trial would then
+    be judged against criteria this preflight never approved.
+    """
+    assignment = record.get("assignment") or {}
+    wanted = assignment.get("criteria") or {}
+    probe = relay.relay("criteria-show", "--relationship", assignment.get("relationshipId"))
+    payload = probe["payload"] or {}
+    registered = field(payload, "criteria")
+    digest = field(payload, "setDigest")
+    source = field(payload, "sourceRef")
+    count = len(registered) if isinstance(registered, list) else None
+    still = (same(digest, wanted.get("setDigest")) and same(source, wanted.get("sourceRef"))
+             and same(count, wanted.get("count")))
+    answered = MISSING if (digest is MISSING or source is MISSING
+                           or registered is MISSING) else digest
+    return graded("criteriaStillCurrent", answered, still, probe=probe, provenance=EXECUTED,
+                  unreadable="criteria-show did not report a registered set at the moment the"
+                             " gate runs",
+                  evidence=("read again after every other reading rather than before them: digest "
+                            + str(shown(digest)) + ", source " + str(shown(source)) + ", "
+                            + str(count) + " criteria. A set replaced while the run was working"
+                            " would judge this trial against criteria nobody approved"))
 
 
 
@@ -2037,11 +2117,12 @@ def preflight(record, *, sleeper=time.sleep):
     # this run made for itself would otherwise be read as the shared store with a plausible identity.
     store_cells = reading_store(record, relay)
     assignment_cells, store_payload, entry = reading_assignment(record, relay)
+    capability_cells, settings_seen = reading_capability(record, relay)
     readings = {
         "storeIdentity": store_cells,
         "processPersistence": reading_process(record, relay, sleeper=sleeper),
         "parentLifecycle": reading_lifecycle(record),
-        "capability": reading_capability(record, relay),
+        "capability": capability_cells,
         "boundaries": reading_boundaries(record, relay),
         "assignmentState": assignment_cells,
     }
@@ -2050,6 +2131,8 @@ def preflight(record, *, sleeper=time.sleep):
     # after it. The gate is graded against a fresh read rather than the one taken before them.
     current, store_payload, entry = assignment_now(record, relay)
     assignment_cells.append(current)
+    assignment_cells.append(criteria_now(record, relay))
+    capability_cells.extend(settings_now(record, relay, settings_seen))
 
     assembled = {}
     for name, cells in readings.items():

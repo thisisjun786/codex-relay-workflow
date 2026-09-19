@@ -66,6 +66,18 @@ if rewrite.exists():
         mine = Path(__file__)
         mine.write_text(mine.read_text() + "\n# a different build\n")
 entry = payloads.get(subcommand)
+# A trial can ask this stub to answer differently once a subcommand has been asked a number of
+# times, which is what a row another process replaces partway through the run looks like from the
+# caller's side. Counting that subcommand rather than every call is what makes the trigger mean
+# "after the reading that already graded it" instead of "at some point".
+after = payloads.get("after")
+if isinstance(after, dict):
+    made = len([c for c in (json.loads(l) for l in (here / "calls.jsonl").read_text().splitlines()
+                            if l.strip()) if c["subcommand"] == after.get("subcommand")])
+    if made > int(after.get("calls", 0)):
+        for name, replacement in (after.get("payloads") or {}).items():
+            payloads[name] = replacement
+        entry = payloads.get(subcommand)
 if entry is None:
     sys.stderr.write("no payload for " + subcommand + "\n")
     raise SystemExit(9)
@@ -181,11 +193,20 @@ class World:
 
     def start_supervisor(self):
         witness = self.trial / "supervisor.jsonl"
+        launched = time.time()
         self.supervisor = subprocess.Popen(
             [sys.executable, "-c", WITNESS_WRITER, str(witness)], start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 5
         while time.time() < deadline and not witness.exists():
+            time.sleep(0.02)
+        # The record declares a positive minimum uptime, because a bound of zero is met by a
+        # process that started this instant and would report a persistence nobody observed. So
+        # this waits for the supervisor to actually reach the fixture's bound instead of
+        # declaring one nothing has to meet. Capped, because a case that declares a large bound
+        # is asserting the refusal rather than waiting for it.
+        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.05
+        while time.time() - launched < wanted:
             time.sleep(0.02)
         self.record["supervisor"]["pid"] = self.supervisor.pid
         self.flush()
@@ -253,7 +274,7 @@ class World:
         }
 
     def _settings(self):
-        return {"model": "a-model", "reasoningEffort": "xhigh", "sandbox": "dangerFullAccess",
+        return {"model": "a-model", "reasoningEffort": "xhigh", "sandbox": {"type": "dangerFullAccess"},
                 "approvalPolicy": "never", "cwd": str(self.root / "workspace"),
                 "runtimeWorkspaceRoots": [], "environments": []}
 
@@ -314,10 +335,10 @@ class World:
                     "participants": [
                         {"role": "parent", "taskId": parent, "cwd": str(self.repos[name]),
                          "expect": {"model": "a-model", "reasoningEffort": "xhigh",
-                                    "sandbox": "dangerFullAccess", "approvalPolicy": "never"}},
+                                    "sandbox": {"type": "dangerFullAccess"}, "approvalPolicy": "never"}},
                         {"role": "child", "taskId": child, "cwd": str(self.repos[name]),
                          "expect": {"model": "a-model", "reasoningEffort": "xhigh",
-                                    "sandbox": "dangerFullAccess", "approvalPolicy": "never"}}]}
+                                    "sandbox": {"type": "dangerFullAccess"}, "approvalPolicy": "never"}}]}
 
         now = time.time()
         captures = {
@@ -344,7 +365,7 @@ class World:
             "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                       "challengeNonce": self.NONCE},
             "supervisor": {"pid": os.getpid(), "witness": str(self.trial / "supervisor.jsonl"),
-                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0,
+                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.2,
                            "witnessAdvanceSeconds": 0.3, "service": False},
             "assignment": {"relationshipId": self.RELATIONSHIP, "parentTaskId": self.PARENT_A,
                            "childTaskId": self.CHILD_A, "issueKey": self.ISSUE_A,
@@ -3074,6 +3095,65 @@ class ThirtyFirstHostedRound(TrialCase):
         observable = source.split("OBSERVABLE = (")[1].split(")")[0]
         self.assertIn("runtimeWorkspaceRoots", observable)
         self.assertNotIn("environments", observable)
+
+
+class ThirtySecondHostedRound(TrialCase):
+    """Two more readings graded from an answer taken before the delay, and two records that
+    could never have agreed with the store they describe."""
+
+    def replaced_after(self, subcommand, calls, payload):
+        """Answer differently once this subcommand has been asked enough times.
+
+        The replacement lands after the reading that already graded it, which is the window the
+        gate has to close: a row or a criteria set another process replaces while the rest of the
+        readings run is the one delivery will actually use.
+        """
+        self.world.payloads["after"] = {"subcommand": subcommand, "calls": calls,
+                                        "payloads": {subcommand: {"payload": payload}}}
+        self.world.start_supervisor()
+        return self.world.preflight()
+
+    def test_settings_replaced_after_the_reading_refuse_the_start(self):
+        widened = json.loads(json.dumps(self.world.payloads["settings-show"]["payload"]))
+        widened["settings"]["runtimeWorkspaceRoots"] = [str(self.world.root)]
+        # Four participants, so the fifth ask is the first one the gate makes.
+        document = self.replaced_after("settings-show", 4, widened)
+        self.assertFalse(document["readyToStart"],
+                         "a settings row replaced while the run was working was approved anyway")
+        cell = cells_of(document, "capability")["settingsStillCurrent:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+
+    def test_criteria_replaced_after_the_reading_refuse_the_start(self):
+        replaced = json.loads(json.dumps(self.world.payloads["criteria-show"]["payload"]))
+        replaced.update(setDigest="digest-02", sourceRef="source-02", criteria=["c1", "c2"])
+        # Asked once by the reading, so the second ask is the gate's own.
+        document = self.replaced_after("criteria-show", 1, replaced)
+        self.assertFalse(document["readyToStart"],
+                         "a criteria set replaced while the run was working was approved anyway")
+        cell = cells_of(document, "assignmentState")["criteriaStillCurrent"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+
+    def test_a_sandbox_that_is_a_mode_on_its_own_is_refused(self):
+        # The relay records a policy object and reads the mode out of it, so a record declaring a
+        # bare mode could never agree with the row the store holds.
+        self.world.record["boundaries"][0]["participants"][0]["expect"]["sandbox"] = (
+            "dangerFullAccess")
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a bare sandbox mode was accepted")
+        self.assertIn("policy object", refused.reason)
+
+    def test_a_minimum_uptime_of_zero_is_refused(self):
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 0
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a bound met by a process that started this instant was"
+                             " accepted")
+        self.assertIn("greater than zero", refused.reason)
+
+    def test_a_positive_minimum_uptime_is_still_accepted(self):
+        # Support: the bound the fixture declares keeps working.
+        self.assertIsNone(self.world.refusal())
 
 
 if __name__ == "__main__":                                           # pragma: no cover
