@@ -248,7 +248,10 @@ Two carriers, chosen by whether the parent exists. A project with no parent yet 
 the first prompt of the new task, prefixed with its project designation so that task runs its own
 [Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
 existing parent receives it inside a [Coordination message](#coordination-message) of kind project
-handoff, carrying the [restoration block](#restoration-block) when its turn is already running.
+handoff, carrying the [restoration block](#restoration-block). That block travels whether the
+parent is running or idle: a task idle since its last result has usually lost as much context as
+one that has been working for ten turns, and a handoff it cannot place is answered from whatever
+it happens to remember.
 Write it in English, like every instruction that travels between tasks.
 
 Keep it short and point at what the existing records already hold.
@@ -261,8 +264,10 @@ Criteria: [the project record revision read, and this project's contribution to 
 Prerequisites: [cross-project prerequisites by relation, each with where its verification will
   appear; and the peer parents this project shares a surface with, to settle with directly]
 Authority: [the designation and its date, the limits in force, child-creation authority, and the
-  delivery scope: this parent merges its own project's pull requests, while release and
-  deployment stay the user's]
+  exact delivery, integration, release and deployment scope this designation carries to this
+  parent. Restate what the designation actually says rather than the standing default: an
+  explicit no-merge or review-only limit arrives as that limit, and an authority the designation
+  does not carry is not granted here]
 Current state: [locators only: the project's coordination record, its live children, its open
   pull requests, and any outcome already verified]
 Report back: [a result or blocked coordination message carrying the outcome, the evidence per
@@ -416,7 +421,12 @@ belongs to an installation nobody asked, not to every installation but one.
 
 Use the project's linked canonical Linear coordination document as part of the
 management assignment. For a standalone issue, use its existing linked document
-or an owned section in that issue and private issue/task recovery receipts. A
+or an owned section in that issue and private issue/task recovery receipts. Where this task
+supervises an initiative, its record is the initiative's own, under the
+[initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard)
+with its comments and updates, kept against the stable initiative link: a multi-project initiative
+has no one project document, and supervision state left in a contributing project's record is
+both outside that project's scope and somewhere recovery will not look. A
 project binding is optional; the actual coordinator identity remains required
 when delegating or routing relay delivery. Follow [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
 For explicit read-only scope or unavailable access, return an unsynced update;

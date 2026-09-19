@@ -42,6 +42,11 @@ Bind three things together, because a supervision missing any of them has no bou
 - the completion boundary, which is that finish condition as the initiative states it, together
   with what the designation excludes.
 
+Membership comes from the designation itself. Where it enumerates projects, that list is the set.
+Where it names only the initiative, the set is the initiative's contributing projects at the
+revision read, written out project by project in the record, so a later reader compares against a
+list that was fixed rather than against a relation that has moved since.
+
 The approved set is the set agreed at designation. A project created or linked to the initiative
 afterwards is outside it, and admitting one is a scope change recorded with its source and date,
 for the same reason a project link does not approve future backlog additions one level down.
@@ -54,7 +59,10 @@ reference is recorded as a reference so nobody later reads it as an instruction.
 binding makes this task no project's parent and no issue's child, it holds no checkout, and it
 merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). Where an
 installation records these relationships, one live scope per task per role is the rule it enforces,
-so a second same-role binding is refused rather than silently replacing the first.
+so a second same-role binding is refused rather than silently replacing the first. Where nothing
+records them, and the bundled relay records none, the reuse below is a read and not a lock: two
+designations issued at once can both find no supervisor, and the initiative's own record is what
+reconciles that afterwards rather than what prevents it.
 
 The record is the initiative's own, written by the supervisor under the
 [initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard) and
@@ -92,8 +100,8 @@ Two carriers, chosen by whether the parent exists. A project with no parent gets
 first prompt of the new task, prefixed with the project designation so that task runs its own
 [Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
 existing parent gets it as a [Coordination message](task-packet.md#coordination-message) of kind
-project handoff, carrying the [restoration block](task-packet.md#restoration-block) when that
-parent's turn is already running.
+project handoff, carrying the [restoration block](task-packet.md#restoration-block) whether that
+parent is running or idle.
 
 A handoff sent is not a parent bound. The transport accepting it, the parent binding the project,
 and the parent returning a result are three facts recorded separately, and the first does not
