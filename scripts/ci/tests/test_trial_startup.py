@@ -510,6 +510,19 @@ def cells_of(document, reading):
     return {c["cell"]: c for c in document["readings"][reading]["cells"]}
 
 
+def process_state_of(pid):
+    """The kernel's state letter for a process, read here rather than through the module.
+
+    A case about a state the module did not read yet has to be able to find that state at the
+    commit before it could.
+    """
+    try:
+        with open("/proc/" + str(pid) + "/stat", encoding="utf-8") as handle:
+            return handle.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 
 class TrialCase(unittest.TestCase):
     """One world per case, because every case disagrees with it in a different place."""
@@ -4232,7 +4245,7 @@ class FortyFourthHostedRound(TrialCase):
 
 
 class FortyFifthHostedRound(TrialCase):
-    """The receipt shape a bridge writes, rather than the one the fixture preferred again."""
+    """A receipt shape no bridge writes, a reading that graded one field of three, and a zombie."""
 
     def test_a_receipt_in_the_bridges_own_shape_is_read(self):
         # The bridge identifies the thread it created at threadId. The fixture wrote the relay's
@@ -4263,6 +4276,55 @@ class FortyFifthHostedRound(TrialCase):
                    for word in call.keywords}
         self.assertIn("threadId", written)
         self.assertNotIn("taskId", written)
+
+    def test_the_final_doctor_grades_the_reachability_it_reports(self):
+        # The socket and the write access were graded once, at the start. The same payload the
+        # identity recheck reads answers both again, and a path that stopped answering leaves
+        # those earlier cells verified while the dispatch this clears cannot use it.
+        refused = json.loads(json.dumps(self.world.payloads["doctor"]["payload"]))
+        refused["actorReachability"]["socketConnect"] = "refused"
+        self.world.payloads["after"] = {"subcommand": "doctor", "calls": 1,
+                                        "payloads": {"doctor": {"payload": refused}}}
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "readiness was published for a relay path the dispatch cannot use")
+        self.assertIn("storeStillTheSame.passed", document["judgmentsThatFailed"])
+        self.assertEqual(document["storeStillTheSame"]["socketReachable"], "refused")
+        # The first reading still says what it saw, which is why nothing else noticed.
+        self.assertEqual(cells_of(document, "storeIdentity")["socketReachable"]["value"], VERIFIED)
+
+    def test_a_zombie_supervisor_is_not_a_running_one(self):
+        # A process that exited and has not been reaped still answers kill(pid, 0) and still
+        # reports a detached session, and an advance interval longer than the rest of the pass
+        # means its unchanged counter is not a regression either. Every reading the final gate
+        # took said the poller was there, and it was polling nothing.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        self.world.start_supervisor()
+        # The ceiling the record allows, which is longer than the rest of this pass takes. The
+        # fixture's sleeper caps the pause itself, so nothing here waits that long.
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = startup.ADVANCE_CEILING
+        self.world.flush()
+        pid = self.world.supervisor.pid
+        original = startup.reading_lifecycle
+
+        def leave_a_zombie_then_read(record):
+            # Terminated and deliberately not reaped, which is the state this case is about. The
+            # world's own cleanup reaps it afterwards.
+            self.world.supervisor.terminate()
+            deadline = time.time() + 5
+            while time.time() < deadline and process_state_of(pid) != "Z":
+                time.sleep(0.02)
+            return original(record)
+
+        startup.reading_lifecycle = leave_a_zombie_then_read
+        self.addCleanup(setattr, startup, "reading_lifecycle", original)
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "readiness was published for a supervisor that had already exited")
+        self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
+        self.assertEqual(process_state_of(pid), "Z", "the case did not reach the state it is about")
 
 
 if __name__ == "__main__":                                           # pragma: no cover

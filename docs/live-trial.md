@@ -115,12 +115,17 @@ identity is asked of the relay a second time, because the first doctor runs befo
 constructs a store and every probe after it opens whatever the state directory names at that
 moment: a database replaced in between carries the same store id, the same challenge nonce and the
 same rows, and a device and inode of its own, so the peers proved access to a store that is no
-longer the one being read. The supervisor is read again last of all, because a poller that exits
+longer the one being read. That answer is graded on the reachability and the write access it
+reports as well as on the identity, because the same payload answers all three and a socket that
+stopped answering or a database that stopped being writable leaves those first cells verified
+while the dispatch this clears cannot run at all. The supervisor is read again last of all, because a poller that exits
 while the lifecycle, boundary, capability, criteria and assignment probes run leaves every cell
 those probes filled verified and publishes readiness for a trial with nothing polling, which is
 the first observed failure arriving as a pass. Its counter is held there to the advance the record
 declares for it once that long has passed, and to not going backwards when it has not, because a
-poller that has not ticked yet is not a stopped one. All three
+poller that has not ticked yet is not a stopped one. Liveness there is the kernel's own state
+letter rather than a signal alone: a process that has exited and has not been reaped answers a
+signal and still reports a detached session, and it polls nothing. All three
 observed failures were checks made too early, or not made.
 
 **Then dispatch.** The window opens here.

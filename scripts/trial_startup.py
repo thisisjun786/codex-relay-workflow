@@ -1233,11 +1233,28 @@ def witness_counter(value):
 def alive(pid):
     try:
         os.kill(int(pid), 0)
-        return True
     except ProcessLookupError:
         return False
     except (PermissionError, OverflowError, TypeError, ValueError):
         # A process this user may not signal still exists; anything unreadable is not an answer.
+        return None
+    # A process that has exited and has not been reaped still answers that signal and still
+    # reports a session, so both of those call a zombie alive. It polls nothing, so it is not
+    # the supervisor this reading is looking for. Where the host cannot say, the signal is the
+    # only answer there is and it stands.
+    return process_state(pid) != "Z"
+
+
+def process_state(pid):
+    """The kernel's own state letter for this process, or None where the host cannot say.
+
+    The same line `process_started_at` reads, and the field before the one it takes: the comm
+    can hold spaces and brackets, so the split is on its closing bracket rather than whitespace.
+    """
+    try:
+        with open("/proc/" + str(int(pid)) + "/stat", encoding="utf-8") as handle:
+            return handle.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, TypeError, ValueError, IndexError):
         return None
 
 
@@ -2687,13 +2704,27 @@ def store_still_the_same(record, relay):
                         "--expect-nonce", store.get("challengeNonce"))
     payload = probe["payload"] or {}
     verdict = field(payload, "sameStore")
-    return {"passed": verdict == "proven", "before": record.get("_sameStore"),
+    # The same payload answers the other two questions the first doctor was graded on, and they
+    # can change under a run exactly as identity can: a socket that stopped answering or a store
+    # that stopped being writable leaves those earlier cells verified while the dispatch this
+    # clears cannot use the path it was cleared for.
+    reach = field(payload, "actorReachability", "socketConnect")
+    writable = field(payload, "actorReachability", "stateDirectoryWritable")
+    db_writable = field(payload, "store", "observedAccess", "write")
+    return {"passed": (verdict == "proven" and reach == "ok"
+                       and writable is True and db_writable is True),
+            "before": record.get("_sameStore"),
             "after": shown(verdict), "command": " ".join(probe["argv"]),
+            "socketReachable": shown(reach), "stateDirectoryWritable": shown(writable),
+            "databaseWritable": shown(db_writable),
             "exitCode": probe["exitCode"], "readAt": probe.get("measuredAt") or stamp(),
             "detail": "the first doctor ran before any other command opened a store, and every"
                       " probe after it used whatever the state directory named then. This asks"
                       " the same question at the end, and a replacement answers it differently"
-                      " because its own device and inode are not the ones the record expects"}
+                      " because its own device and inode are not the ones the record expects."
+                      " The reachability and write access the first doctor was graded on are"
+                      " read from this answer too, because a socket or a database that stopped"
+                      " answering leaves those cells verified and the dispatch unable to run"}
 
 
 def captures_still_fresh(record):
