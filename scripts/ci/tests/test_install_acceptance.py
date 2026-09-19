@@ -2002,6 +2002,47 @@ RESOLVES_LIKE_PYTHON = {
          "the ordinary typed spelling of the same line. Reading only plain assignments made an"
          " annotation a form nobody looked at, which is why this goes through the same binding"
          " abstraction as everything else."),
+    "a method written under a class-body if":
+        (REFUSAL,
+         ("class Holder:",
+          "    if True:",
+          "        def consumer(self):",
+          "            CHANGED = \"fine\"",
+          "            return CHANGED"),
+         "consumer", False,
+         "a def opens a scope whose names are its own wherever in the body it is written. The"
+         " class-body walk promised to stop at definitions and did not, so the method's own"
+         " local was read as the class's and the module constant was reported instead."),
+    "a global declared by an enclosing scope":
+        (REFUSAL,
+         ("def outer():",
+          "    global CHANGED",
+          "    CHANGED = reading.UNREADABLE",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the declaration makes the assignment the module's, so every scope inside reads that"
+         " rather than a local. Exempting only the consumer's own scope left the enclosing"
+         " assignment looking like a shadow."),
+    "a helper handing an aliased refusal onward":
+        (REFUSAL,
+         ("settled = reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    return settled"),
+         "consumer", True,
+         "a function that hands the thing on is a place the thing reaches, whether or not"
+         " anybody calls it here. Reporting only its callers loses the one doing the handing,"
+         " and a helper nobody calls yet is lost entirely."),
+    "a name a function deletes":
+        (REFUSAL,
+         ("def consumer():",
+          "    del CHANGED",
+          "    return CHANGED"),
+         "consumer", False,
+         "del makes the name local for the whole function, so the later read raises rather than"
+         " reaching the module's. A binding is not only a Store."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -2842,6 +2883,11 @@ def _binds_locally(node):
         return {node.name} if node.name else set()
     elif isinstance(node, ast.MatchMapping):
         return {node.rest} if node.rest else set()
+    elif isinstance(node, ast.Delete):
+        # del makes the name local for the whole function: a later read raises rather than
+        # reaching the module's, so it shadows exactly as an assignment does.
+        return {inner.id for target in node.targets for inner in ast.walk(target)
+                if isinstance(inner, ast.Name)}
     found = set()
     for target in targets:
         # Only what the target BINDS. mapping[carrier] = value and carrier.attr = value read
@@ -3121,8 +3167,18 @@ def _shadowing_names(tree):
         for statement in body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
-            for inner in ast.walk(statement):
-                yield id(inner)
+            # Walked rather than ast.walk'd, because that descends into a def written under an
+            # if and marks its locals as the class's. A def opens a scope whose names are its
+            # own, wherever in the body it is written.
+            def owned(node):
+                yield id(node)
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                          ast.ClassDef, ast.Lambda)):
+                        continue
+                    yield from owned(child)
+
+            yield from owned(statement)
 
     in_a_class_body = {owned for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
                        for owned in owned_by_the_body(node.body)}
@@ -3155,7 +3211,13 @@ def _shadowing_names(tree):
         reach, hidden = [], False
         for part in where.split("."):
             reach.append(part)
-            if node.id in taken.get(".".join(reach), ()):
+            here = ".".join(reach)
+            if node.id in said_global.get(here, ()):
+                # That scope said the name is the module's, so what it binds is the module's
+                # and every scope inside it reads that rather than a local.
+                hidden = False
+                break
+            if node.id in taken.get(here, ()):
                 hidden = True
         if hidden:
             shadowed.add(id(node))
@@ -4168,8 +4230,18 @@ def _occurrences(tree, spelled):
         at_module = function == MODULE_LEVEL
         where = statements.get(id(node), "a statement") if at_module else function
         found.append((at_module, where, node.lineno, spelling))
-    _carriers, taken = _hands_on(tree, spelled)
-    return sorted(found + taken)
+    carriers, taken = _hands_on(tree, spelled)
+    # A function that hands the thing on is a place the thing reaches, whether or not anybody
+    # calls it here. Reporting only its callers loses the one that does the handing, and a
+    # helper nobody calls yet loses it entirely.
+    at = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            where, _klass = places.get(id(node), (MODULE_LEVEL, None))
+            at.setdefault(where, node.lineno)
+    handing = [(False, place, at[place], "hands it on")
+               for place in carriers if place in at]
+    return sorted(found + taken + handing)
 
 
 def refusal_spellings():
