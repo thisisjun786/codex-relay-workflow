@@ -2418,6 +2418,29 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                       "a registration configured never to record is an established repair"
                       " whatever an unrelated peer's startability could not be established")
 
+    def test_a_configured_policy_is_not_reopened_by_an_unjudged_peer(self):
+        """Whether a registration keeps a journal is what its settings say, and no startability
+        reading can change that. Letting uncertainty about a peer reopen it put journalling_off
+        on the table for a host whose settings conclusively rule it out."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entry = document["hooks"][completion.EVENT][0]["hooks"][0]
+            # A relative interpreter resolves per workspace, so startability is unjudged while
+            # the settings still say every_invocation.
+            entry["command"] = "./python " + entry["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotIn(firing.JOURNALLING_OFF,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "the settings enable journalling, so that cause is ruled out whatever"
+                         " could not be established about starting the program")
+        self.assertNotIn(firing.POLICY_RECORDS_ONLY_FAULTS,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "the policy is every_invocation, which the settings settle")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

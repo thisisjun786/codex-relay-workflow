@@ -296,12 +296,10 @@ def _journalling_off(observed):
         return ESTABLISHED, ("these registrations keep no journal, so they record nothing about"
                              " their own invocations by configuration and their absence says"
                              " nothing about firing: " + _named(off))
-    unjudged = _unjudged_peer(observed)
-    if unjudged:
-        return NOT_RULED_OUT, ("a registration whose startability was never established names "
-                               + _named(unjudged) + ", so whether its journal counts toward"
-                                 " this question was not settled either")
-    return RULED_OUT, "every registration that can start keeps a journal"
+    # No guard for an unjudged peer here: whether a registration keeps a journal is what
+    # its settings say, and no startability reading can change that. Letting uncertainty
+    # about a peer reopen it reported a policy the settings conclusively rule out.
+    return RULED_OUT, "every registration with usable settings keeps a journal"
 
 
 def _policy_records_only_faults(observed):
@@ -312,17 +310,16 @@ def _policy_records_only_faults(observed):
     that never fired looks like. One observation, two explanations, and no reading here
     separates them. Reporting either as established would be choosing.
     """
-    _holding, empty, _off, _unread = _record_answers(observed)
-    faults = [entry for entry in empty if entry.get("faultsOnly")]
+    # Read over every usable registration rather than over the startable subset, and on the
+    # entry's own policy and its own count. Both halves of this question are the
+    # registration's own, so an unjudged peer neither creates nor removes the ambiguity.
+    faults = [entry for entry in (observed.get("namedJournals") or [])
+              if entry.get("usable") and entry.get("faultsOnly")
+              and not (entry.get("records") or 0)]
     if faults:
         return NOT_RULED_OUT, ("these settings record only invocations that faulted ("
                                + _named(faults) + "), so an empty journal is equally what a"
                                " hook that fired and never faulted leaves behind")
-    unjudged = _unjudged_peer(observed)
-    if unjudged:
-        return NOT_RULED_OUT, ("a registration whose startability was never established names "
-                               + _named(unjudged) + ", so whether its journal counts toward"
-                                 " this question was not settled either")
     return RULED_OUT, "no named settings record only faults over an empty journal"
 
 
