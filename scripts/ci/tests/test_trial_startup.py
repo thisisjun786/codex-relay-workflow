@@ -5288,6 +5288,48 @@ class FortyFifthHostedRound(TrialCase):
         self.assertTrue(document["orderGate"]["passed"],
                         "this case is about a gate that passed and then went stale")
 
+    def test_an_assignment_replaced_while_the_gate_reads_it_is_caught(self):
+        # The snapshot used to be taken after the gate returned, so a file replaced while the gate
+        # was still reading -- between its assignment read and its message read -- was recorded as
+        # if it had always been there: the gate validated the old bytes and both readings agreed
+        # about the new ones.
+        self.world.start_supervisor()
+        self.world.flush()
+        assignment = self.world.record["assignment"]["assignmentFile"]
+        original = startup.order_gate
+
+        def replace_it_while_the_gate_reads(record, store_payload, entry):
+            answer = original(record, store_payload, entry)
+            with open(assignment, "a", encoding="utf-8") as handle:
+                handle.write("\n")
+            return answer
+
+        startup.order_gate = replace_it_while_the_gate_reads
+        self.addCleanup(setattr, startup, "order_gate", original)
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "an assignment replaced while the gate read it was published")
+        self.assertTrue(document["orderGate"]["passed"],
+                        "this case is about a gate that passed on the bytes it read")
+
+    def test_a_peer_reaching_the_state_directory_by_another_name_is_not_verified(self):
+        # resolve() answered about the file; the question is about the pathname. The relay opens
+        # --state exactly as given and the store's contract is that separate pathnames can carry
+        # separate write-ahead logs, so a peer that reached this directory through a symlink is a
+        # peer that may be writing its own log.
+        alias = os.path.join(str(self.world.root), "state-alias")
+        os.symlink(str(self.world.state / "relay"), alias)
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["store"]["dbPath"] = str(
+                os.path.join(alias, "relay.sqlite3"))
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer that reached the state directory by another name was ready")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
+
     def test_one_file_cannot_be_two_kinds_of_evidence(self):
         # This procedure is explicit that a creation receipt never establishes lifecycle. Pointing
         # both captures at one file let a receipt carrying a status answer a question nothing ever

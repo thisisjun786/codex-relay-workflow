@@ -2263,11 +2263,15 @@ def reading_store(record, relay):
         # path / "relay.sqlite3" and nothing else. Containment in the directory accepted a peer
         # reporting another database beside the shared one, which is the same defect one level
         # down -- a reading that answers "somewhere in there" for a question about which file.
+        # Compared as the pathname each side names, not as whatever it resolves to. The relay
+        # opens --state exactly as given, and the store's own contract is that separate pathnames
+        # can carry separate write-ahead logs -- so following a symlink here would answer about a
+        # file while the question is about a path. Normalised lexically and no further.
         peer_state = field(peer, "store", "dbPath")
         declared_state = field(record, "relay", "stateDirectory")
         state_agrees = (isinstance(peer_state, str) and isinstance(declared_state, str)
-                        and resolve(peer_state) == resolve(Path(declared_state)
-                                                           / RELAY_DATABASE_NAME))
+                        and os.path.normpath(peer_state)
+                        == os.path.normpath(os.path.join(declared_state, RELAY_DATABASE_NAME)))
         # OPS-3.3, asked of every participant rather than only of the boundary this process runs
         # in. The flag moves the store and the environment moves the adapter's ledger, so a peer
         # that sets one without the other keeps the record which suppresses duplicate delivery
@@ -3508,10 +3512,12 @@ def preflight(record, *, sleeper=time.sleep):
             value = VERIFIED
         assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
 
-    gate = order_gate(record, store_payload, entry)
-    # The bytes the gate just compared, so the reading below can say whether they are still the
-    # ones being dispatched after every probe that follows.
+    # Digested before the gate reads them, not after. Taken afterwards, a file replaced while the
+    # gate was still reading -- between its assignment read and its message read -- was recorded
+    # by this snapshot as if it had always been there, so the gate validated the old bytes and
+    # both readings agreed about the new ones.
     gate_inputs = dispatch_inputs(record)
+    gate = order_gate(record, store_payload, entry)
     # The store's identity, asked again now that every probe that used it has run, and before
     # the launcher is read, so the spawn this makes is covered by that reading too.
     supervisor = supervisor_still_running(record, relay, sleeper=sleeper)
