@@ -1429,8 +1429,8 @@ def _places(tree):
                             yield inner
                         yield from walruses(inner)
 
-                for inner in walruses(child):
-                    found[id(inner)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
+                outer_place = (".".join(chain) if chain else MODULE_LEVEL, klass)
+                held_walruses = list(walruses(child))
                 # A comprehension has a scope of its own on Python 3: its target shadows an
                 # outer name INSIDE it and not after it. Its first iterable is the exception,
                 # evaluated outside before that scope exists.
@@ -1439,6 +1439,10 @@ def _places(tree):
                     found[id(first)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
                     walk(first, chain, klass)
                 inner = chain + ["<comprehension@" + str(child.lineno) + ">"]
+                # The target binds outside; what computes it is still evaluated inside, so only
+                # the NamedExpr itself moves out and its value stays where it is written.
+                for held in held_walruses:
+                    found[id(held)] = outer_place
             elif isinstance(child, ast.ClassDef):
                 owner = child.name
             # setdefault, because a default or a decorator was already placed in the scope
@@ -1650,7 +1654,7 @@ def _hands_on(tree, spelled):
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        standalone = any(_dotted(mark) in ("staticmethod",)
+        standalone = any((_dotted(mark) or "").rpartition(".")[2] == "staticmethod"
                          for mark in getattr(node, "decorator_list", []))
         if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
@@ -1666,7 +1670,7 @@ def _hands_on(tree, spelled):
         if not isinstance(node.value, ast.Lambda):
             continue
         where, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if klass is None or where != MODULE_LEVEL:
+        if klass is None:
             continue
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
             if isinstance(target, ast.Name):
@@ -1688,15 +1692,23 @@ def _hands_on(tree, spelled):
             continue
         class_scope.setdefault(node.name, []).append(
             (body_scope(node), places.get(id(node), (MODULE_LEVEL, None))[0]))
-        for statement in node.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                class_bound.setdefault(node.name, {}).setdefault(statement.name,
-                                                                 statement.lineno)
-                continue
-            for target, _value in _bindings(statement):
-                if isinstance(target, ast.Name):
-                    class_bound.setdefault(node.name, {}).setdefault(target.id,
-                                                                     statement.lineno)
+        def bound_in(body):
+            """Every name this class body binds, including under an if or a try."""
+            for statement in body:
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                          ast.ClassDef)):
+                    yield statement.name, statement.lineno
+                    continue
+                for target, _value in _bindings(statement):
+                    if isinstance(target, ast.Name):
+                        yield target.id, statement.lineno
+                for field, value in ast.iter_fields(statement):
+                    if isinstance(value, list):
+                        yield from bound_in([item for item in value
+                                             if isinstance(item, ast.stmt)])
+
+        for named, line in bound_in(node.body):
+            class_bound.setdefault(node.name, {}).setdefault(named, line)
 
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
@@ -1709,7 +1721,7 @@ def _hands_on(tree, spelled):
             scope = ".".join(chain)
             spelled = receivers.get(scope)
             if spelled:
-                return {spelled, "cls"}
+                return {spelled}
             # A scope of its own that binds the same name is where the search stops: a nested
             # parameter called self is that function's, not the method's around it.
             # Any scope between here and the method binding the same name stops the search,
@@ -1723,7 +1735,7 @@ def _hands_on(tree, spelled):
                     break
                 below.pop()
             chain.pop()
-        return {"cls"}
+        return set()
 
     def inherited(klass, named, seen=()):
         """The method this class reaches by that name, its own or one it inherits."""
