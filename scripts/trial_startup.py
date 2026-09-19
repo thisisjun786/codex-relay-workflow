@@ -41,6 +41,7 @@ import hashlib
 import json
 import math
 import os
+import posixpath
 from pathlib import Path
 import subprocess
 import sys
@@ -507,6 +508,19 @@ def identities_in(payload, *keys):
     return [value for value in found if value is not MISSING and value is not None]
 
 
+def usable_root(value):
+    """Whether an artifact path could be inside this root.
+
+    The relay decides containment by normalising both sides with posixpath and comparing whole
+    components, so a root that is not a string cannot be compared at all, and a relative one
+    never contains the absolute paths a manifest carries. A list of values like those is an
+    empty list written at greater length.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return False
+    return posixpath.isabs(posixpath.normpath(value.strip()))
+
+
 def names_participant(payload, task, required=(), optional=()):
     """Whether this capture names this participant, on every identity it carries.
 
@@ -933,6 +947,16 @@ def load_start(path, *, environment=None, mode="preflight"):
     # the first.
     for boundary in record["boundaries"]:
         people = [p for p in (boundary.get("participants") or []) if isinstance(p, dict)]
+        # A boundary carries the two endpoints of one relationship and nothing else. A third
+        # participant is not a participant of it: the registration authorises the parent and the
+        # child, so a declared observer is certified by every reading here and cannot receive
+        # anything through this boundary.
+        strangers = sorted({str(shown(p.get("role"))) for p in people
+                            if p.get("role") not in ("parent", "child")})
+        if strangers:
+            raise Refused("a boundary declares a participant that is neither its parent nor its"
+                          " child, and its registration authorises only those two",
+                          boundary=boundary.get("name"), roles=strangers)
         for role in ("parent", "child"):
             named = [p.get("taskId") for p in people if p.get("role") == role]
             if len(named) != 1:
@@ -1261,6 +1285,16 @@ def registration_identity(record, boundary, receipt):
         if not isinstance(value, list) or not value:
             return False, ("its " + ".".join(path) + " is " + json.dumps(shown(value))
                            + ", which authorises nothing")
+    # And a root an artifact could not be inside authorises nothing either, so a list of those is
+    # an empty list written at greater length. The relay decides containment with normpath on
+    # both sides, so a root that is not a string cannot be compared at all and a relative one
+    # never contains the absolute paths a manifest carries.
+    unusable = [json.dumps(shown(root))
+                for root in field(receipt, "authorizedScope", "artifactRoots")
+                if not usable_root(root)]
+    if unusable:
+        return False, ("its authorizedScope.artifactRoots names " + ", ".join(unusable)
+                       + ", which no artifact path can be inside")
     if this_one:
         for name in ("relationshipId", "executionGeneration"):
             if field(receipt, name) is MISSING:

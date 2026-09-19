@@ -4682,6 +4682,57 @@ class FortyFifthHostedRound(TrialCase):
         document = world.preflight()
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
 
+    def test_a_root_no_artifact_could_be_inside_authorises_nothing(self):
+        # A non-empty list is not an authorisation. The relay decides containment by normalising
+        # both sides, so a root that is not a string cannot be compared at all and a relative one
+        # never contains the absolute paths a manifest carries: a list of those is an empty list
+        # written at greater length, and on the boundary that is not being dispatched nothing
+        # else looks at it.
+        for roots in ([None], [123], [""], ["relative/path"], ["/good", None]):
+            with self.subTest(roots=roots):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                world.captures["register-B.json"]["authorizedScope"]["artifactRoots"] = roots
+                world.flush()
+                world.start_supervisor()
+                document = world.preflight()
+                self.assertFalse(document["readyToStart"],
+                                 "a root no artifact could be inside was read as an authorisation")
+                self.assertEqual(cells_of(document, "boundaries")["registration:B"]["value"],
+                                 NOT_VERIFIED)
+
+    def test_containment_is_decided_on_whole_components_from_an_absolute_root(self):
+        # Support, and the reason a relative root cannot authorise anything: the relay's own
+        # containment normalises both sides and compares whole path components, read as that
+        # function's own expressions.
+        source = relay_source("packages", "codex-session-relay", "src", "codex_session_relay",
+                              "scope.py")
+        node = next(n for n in ast.walk(ast.parse(source))
+                    if isinstance(n, ast.FunctionDef) and n.name == "is_within")
+        called = {call.func.attr for call in ast.walk(node)
+                  if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)}
+        self.assertIn("normpath", called)
+        self.assertIn("startswith", called)
+
+    def test_a_boundary_declaring_a_third_participant_is_refused(self):
+        # A boundary carries the two endpoints of one relationship. A third was certified by
+        # every reading here while the registration authorises the parent and the child alone, so
+        # it could not receive anything through the boundary it was declared in.
+        for role in ("observer", "parent-elect", None):
+            with self.subTest(role=role):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                world.record["boundaries"][1]["participants"].append({
+                    "role": role, "taskId": "task-observer-b",
+                    "cwd": str(world.repos["B"]),
+                    "expect": {"model": "a-model", "reasoningEffort": "xhigh",
+                               "sandbox": {"type": "dangerFullAccess"},
+                               "approvalPolicy": "never"}})
+                world.flush()
+                refused = world.refusal()
+                self.assertIsNotNone(refused, "a boundary with a third participant was accepted")
+                self.assertIn("neither its parent nor its child", refused.reason)
+
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
         # once it is off, so a service disabled while its current worker still holds the lock is
