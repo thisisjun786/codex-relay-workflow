@@ -188,7 +188,6 @@ class Registry:
                 raise refusal.error()
             return self.get(rid)
         now = self.clock.iso()
-        self._raced = None
         if project_key is not None:
             # Decide the lower level BEFORE anything is inserted, in a transaction that writes
             # only the contest if there is one. Inserting the relationship first and then
@@ -223,10 +222,13 @@ class Registry:
             return self._register_in_transaction(
                 rid, parent, child, issue_key, roots, recipients, scope_ref,
                 dispatch_request_id, dispatch_turn_id, supersedes, project_key, now)
-        except RelayError:
-            raced = getattr(self, "_raced", None)
+        except RelayError as failure:
+            # Carried on the error rather than on self. Instance state made two concurrent
+            # registrations through ONE Registry able to read each other's contest, and a
+            # refusal that has to survive a rollback is the last thing that should depend on
+            # nobody sharing the object.
+            raced = getattr(failure, "raced_refusal", None)
             if raced is not None:
-                self._raced = None
                 with self.store.transaction() as db:
                     self.linkage.record_conflict_in(db, raced, at=now)
             raise
@@ -351,8 +353,9 @@ class Registry:
                     # the whole registration back, which is right, and takes any conflict row
                     # written in this transaction with it - so it is re-recorded afterwards,
                     # in its own transaction, rather than lost with the rollback.
-                    self._raced = refusal
-                    raise refusal.error()
+                    failure = refusal.error()
+                    failure.raced_refusal = refusal
+                    raise failure
         return self.get(rid)
 
     def open_generation(

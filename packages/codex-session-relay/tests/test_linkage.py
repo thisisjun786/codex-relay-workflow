@@ -1713,5 +1713,152 @@ class TheTwelfthRoundFoundTheseToo(LinkageTestCase):
             dispatch_turn_id="turn-far", supersedes=rid, project_key=PROJECT)
         self.assertEqual(self.registry.get(rid)["status"], "active")
 
+
+class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
+    def scoped(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        return relationship["relationshipId"]
+
+    def test_pausing_an_archived_assignment_restores_its_issue(self):
+        """paused is live on both sides of this boundary, but the lifecycle path tested for
+        active alone. An archived assignment paused straight back became a live relationship
+        whose binding stayed archived, so AssignmentView reported a responsible child while
+        linkage reported issue_without_child - one store answering two ways."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "archived", actor="test")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.registry.set_status(rid, "paused", actor="test")
+        owner = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertIsNotNone(owner, "the paused assignment was left without its issue")
+        self.assertEqual(owner["taskId"], CHILD)
+        self.assertEqual(owner["status"], "paused")
+
+    def test_pausing_an_archived_assignment_cannot_take_a_reclaimed_issue(self):
+        """Restoring through paused runs the same ownership checks restoring through active
+        does, rather than being a quieter way back in."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "archived", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint("01child-two", HOST))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.set_status,
+            rid, "paused", actor="test")
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+
+    def test_two_parents_of_one_issue_are_competing_not_a_cycle(self):
+        """One global visited set could not tell a back edge from a second parent, so a scope
+        reached from two projects was reported as a corrupt cycle - and the walk still called
+        itself resolved, which let a consumer read straight past it."""
+        self.supervise()
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
+        edges = []
+        with self.store.transaction() as db:
+            for project in (PROJECT, OTHER_PROJECT):
+                lid = link_id(linkage.EXECUTION, linkage.PROJECT, project,
+                              linkage.ISSUE, ISSUE)
+                edges.append(lid)
+                db.execute(
+                    "INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key,"
+                    " upper_task_id, lower_kind, lower_key, lower_task_id, status, revision,"
+                    " superseded_by, created_at, updated_at)"
+                    " VALUES (?,'execution','project',?,?,'issue',?,?,'active',1,NULL,?,?)",
+                    (lid, project, PARENT, ISSUE, CHILD, "2026-09-19T00:00:00Z",
+                     "2026-09-19T00:00:00Z"))
+        answer = self.linkage.down(linkage.INITIATIVE, INITIATIVE)
+        self.assertEqual(answer["state"], "ambiguous")
+        reported = [row.get("contention") for row in answer["contention"]]
+        self.assertIn("competing_parents", reported)
+        self.assertNotIn("scope_cycle", reported)
+        competing = [row for row in answer["contention"]
+                     if row.get("contention") == "competing_parents"][0]
+        self.assertEqual(sorted(competing["candidates"]), sorted(edges))
+
+    def test_a_dead_predecessor_does_not_relax_the_foreign_parent_check(self):
+        """A relationship_scope row outlives the assignment that wrote it, so a cancelled
+        predecessor's history was enough to get a successor past the foreign-parent guard and
+        repoint the project's issue edge to a parent the project does not have."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE, self.registry.register,
+            parent=self.parent(OTHER_PARENT), child=Endpoint("01child-two", HOST,
+                                                             cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[OTHER_PARENT],
+            dispatch_request_id="dispatch-dead", dispatch_turn_id="turn-dead",
+            supersedes=rid, project_key=PROJECT)
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+
+    def test_a_contest_that_only_appears_after_the_pre_check_is_still_recorded(self):
+        """The window between the pre-check transaction and the insert.
+
+        A refusal decided there rolls the whole registration back and would take its conflict
+        row with it, so it is re-recorded afterwards in its own transaction. That refusal rode
+        on Registry instance state, which two registrations sharing one Registry could read
+        from each other; it travels on the error now, which is the only thing belonging to one
+        call. The racer is injected exactly in the window rather than raced for, so the
+        interleaving is decided rather than hoped for and nothing here spends real time.
+        """
+        from unittest import mock
+
+        self.supervise()
+        original = type(self.registry)._register_in_transaction
+
+        def racing(registry, rid, parent, child, issue_key, *rest):
+            self.linkage.bind_scope(
+                role=linkage.CHILD, scope_key=issue_key,
+                endpoint=Endpoint("01child-racer", HOST))
+            return original(registry, rid, parent, child, issue_key, *rest)
+
+        with mock.patch.object(
+                type(self.registry), "_register_in_transaction", racing):
+            self.assertRefused(
+                RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.register,
+                parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+                issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+                dispatch_request_id="dispatch-raced", dispatch_turn_id="turn-raced",
+                project_key=PROJECT)
+        self.assertFalse(hasattr(self.registry, "_raced"))
+        self.assertTrue(
+            self.linkage.conflicts(linkage.ISSUE, ISSUE),
+            "the contest decided after the pre-check was lost with the rollback")
+        # The registration itself rolled back whole, which is what makes the re-record
+        # necessary in the first place.
+        self.assertEqual(
+            self.store.all("SELECT relationship_id FROM relationships WHERE issue_key = ?",
+                           (ISSUE,)), [])
+
+    def test_a_store_that_already_breaks_a_guard_index_still_opens(self):
+        """The partial unique indexes were created by the schema script, so a store already
+        holding duplicate live rows failed to OPEN - and the ambiguity-aware readers written
+        for exactly that store could never run. An operator got an IntegrityError where an
+        answer was owed."""
+        import os
+
+        path = os.path.join(self.tmp, "legacy-store.sqlite")
+        legacy = Store(path)
+        self.assertEqual(legacy.unenforced_indexes, [])
+        legacy.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with legacy.transaction() as db:
+            for task in ("01owner-one", "01owner-two"):
+                db.execute(
+                    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                    " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                    " superseded_by, handover_note, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,NULL,NULL,'active',1,NULL,NULL,NULL,?,?)",
+                    (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, task),
+                     linkage.PARENT, linkage.PROJECT, PROJECT, task, HOST,
+                     "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        reopened = Store(path)
+        self.assertEqual([entry["index"] for entry in reopened.unenforced_indexes],
+                         ["scope_bindings_one_live_owner"])
+        # And the reader answers about it rather than the store refusing to exist.
+        answer = Linkage(reopened, self.clock).up(task_id="01owner-one")
+        self.assertIs(answer["readable"], True)
+
 if __name__ == "__main__":
     unittest.main()

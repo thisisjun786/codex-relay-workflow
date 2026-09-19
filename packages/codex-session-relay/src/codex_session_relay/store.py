@@ -672,14 +672,26 @@ CREATE INDEX IF NOT EXISTS scope_directives_scope ON scope_directives
 -- reaches a database created after it. So the invariants that matter most are indexes and the
 -- vocabulary checks stay in Python, rather than being written where half the stores would
 -- never get them.
-CREATE UNIQUE INDEX IF NOT EXISTS scope_bindings_one_live_owner ON scope_bindings
-    (scope_kind, scope_key, role)
-    WHERE status IN ('active','paused') AND superseded_by IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links
-    (link_kind, upper_kind, upper_key, lower_kind, lower_key)
-    WHERE status IN ('active','paused') AND superseded_by IS NULL;
 CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
 """
+
+
+# Applied one at a time, AFTER the schema script, because these are the two invariants an
+# existing store may already violate - which is the exact case the ambiguity-aware linkage
+# readers were written for. Inside the script, a store holding duplicate live rows failed to
+# OPEN, so the diagnostics that exist to describe it could never run and an operator got an
+# IntegrityError where an answer was owed. A store that cannot take one keeps the rule in
+# Python and says which index is missing.
+GUARD_INDEXES = (
+    ("scope_bindings_one_live_owner",
+     "CREATE UNIQUE INDEX IF NOT EXISTS scope_bindings_one_live_owner ON scope_bindings"
+     " (scope_kind, scope_key, role)"
+     " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+    ("scope_links_one_live_edge",
+     "CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links"
+     " (link_kind, upper_kind, upper_key, lower_kind, lower_key)"
+     " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+)
 
 
 STATE_ENV = "CODEX_SESSION_RELAY_STATE"
@@ -924,6 +936,15 @@ class Store:
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(DDL)
+        # Never fatal. See GUARD_INDEXES: a store that already breaks one of these is the
+        # store the contention reporting was written for, and refusing to open it would hide
+        # the very state an operator has to see.
+        self.unenforced_indexes = []
+        for name, statement in GUARD_INDEXES:
+            try:
+                self.db.execute(statement)
+            except sqlite3.IntegrityError as fault:
+                self.unenforced_indexes.append({"index": name, "detail": str(fault)})
         self.db.execute(
             "INSERT OR IGNORE INTO schema_meta VALUES ('version', ?)", (str(SCHEMA_VERSION),)
         )

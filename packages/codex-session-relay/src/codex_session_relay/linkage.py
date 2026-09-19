@@ -725,12 +725,31 @@ class Linkage:
         # relationship for issue B to borrow a predecessor belonging to issue A.
         predecessor = relationship_row["supersedes"] if "supersedes" in \
             relationship_row.keys() else None
-        moving_within = db.execute(
-            "SELECT 1 FROM relationship_scope s"
-            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
-            " WHERE s.relationship_id = ? AND s.project_key = ? AND r.issue_key = ?",
-            (predecessor, project_key, issue_key),
-        ).fetchone() if predecessor else None
+        # And the predecessor has to still BE one. A scope row outlives the assignment that
+        # wrote it, so a dead predecessor's history alone was enough to relax the check: a
+        # successor could register under parent B while project P was still owned by A and
+        # repoint P's issue edge to B. replaceable_child_in asks the same question the write
+        # side asks - is this predecessor live and still holding the issue binding.
+        #
+        # Or this registration is the one that just took it over. register() archives the
+        # predecessor before inserting the successor and calls here again afterwards, by which
+        # time "still live" is false by its own doing. superseded_by naming THIS relationship
+        # is what tells those two apart, and only the transaction that wrote it can see it, so
+        # it relaxes nothing for a caller whose earlier check did not already pass.
+        moving_within = None
+        if predecessor:
+            taken_over = db.execute(
+                "SELECT 1 FROM relationships WHERE relationship_id = ? AND superseded_by = ?",
+                (predecessor, rid),
+            ).fetchone()
+            if taken_over is not None \
+                    or self.replaceable_child_in(db, predecessor) is not None:
+                moving_within = db.execute(
+                    "SELECT 1 FROM relationship_scope s"
+                    "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+                    " WHERE s.relationship_id = ? AND s.project_key = ? AND r.issue_key = ?",
+                    (predecessor, project_key, issue_key),
+                ).fetchone()
         if holder["task_id"] != parent_task and moving_within is None:
             # The issue has never belonged to this project, so this is a foreign attachment.
             # When it HAS, a differing parent is an assignment being moved to a new one, which
@@ -886,7 +905,7 @@ class Linkage:
         # paused into archived released the issue scope while registry still reported the
         # child as responsible, so one store answered two ways about the same assignment.
         lower = status if status in LIVE else ARCHIVED
-        if lower != ACTIVE and previous_status is not None and previous_status not in LIVE:
+        if lower not in LIVE and previous_status is not None and previous_status not in LIVE:
             # Already released. A relationship gives up its issue scope ONCE, at the moment it
             # stops being live, and a later deactivation of an already-dead row must not reach
             # the binding again. In between, that scope can have been claimed directly through
@@ -902,7 +921,13 @@ class Linkage:
             # and acting on them would archive the binding and the edge its SUCCESSOR has
             # already taken over, disabling the replacement's whole lower level.
             return "superseded"
-        if lower == ACTIVE:
+        if lower in LIVE:
+            # Any transition INTO a live status is a reactivation, paused as much as active.
+            # Testing for active alone let an archived assignment be paused straight back into
+            # a live relationship while its binding stayed archived, so AssignmentView reported
+            # a responsible child and linkage reported issue_without_child - one store
+            # answering two ways, which is the thing this whole path exists to prevent.
+            #
             # First, the PROJECT must still be in the hands this assignment names. Archiving or
             # cancelling releases the issue and leaves nothing live for attached() to see, so
             # the project can be handed to a new parent with no work to strand and no refusal.
@@ -1467,21 +1492,47 @@ class Linkage:
             # reachable through the write paths, but a reader that recursed forever on a
             # corrupt or hand-edited store would be worse than one that answers.
             self._descend(scope_kind, scope_key, levels, gaps, contention, depth=0,
-                          seen=set())
+                          seen=set(), path=())
             if not levels:
                 return {"state": "unregistered", "readable": True,
                         "levels": [], "gaps": gaps, "contention": contention}
-            return {"state": "resolved", "readable": True,
+            # Contested ownership anywhere in the tree makes the whole answer ambiguous, the
+            # same word up() uses. Reporting the finding beside a state that called the walk
+            # resolved left a consumer free to read past it.
+            contested = any(row.get("contention") == "competing_parents"
+                            for row in contention)
+            return {"state": "ambiguous" if contested else "resolved", "readable": True,
                     "levels": levels, "gaps": gaps, "contention": contention}
         except sqlite3.Error as fault:
             return {"state": "unreadable", "readable": False,
                     "levels": [], "gaps": [], "contention": [],
                     "detail": type(fault).__name__ + ": " + str(fault)}
 
-    def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth, seen):
-        if (scope_kind, scope_key) in seen:
+    def _incoming_execution(self, scope_kind, scope_key):
+        """The live execution edges INTO a scope, by id. One in a healthy store."""
+        return sorted(row["link_id"] for row in self.store.all(
+            "SELECT link_id FROM scope_links"
+            "  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"
+            "    AND status IN ('active','paused') AND superseded_by IS NULL",
+            (scope_kind, scope_key),
+        ))
+
+    def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth, seen,
+                 path=()):
+        if (scope_kind, scope_key) in path:
+            # A back edge INTO the chain currently being walked. That is a cycle.
             contention.append({"contention": "scope_cycle", "scopeKind": scope_kind,
                                "scopeKey": scope_key})
+            return
+        if (scope_kind, scope_key) in seen:
+            # Reached again from a different branch, which is not a cycle at all. One global
+            # visited set could not tell the two apart, so a scope with two execution parents
+            # was reported as a corrupt back edge rather than as the contested ownership it
+            # is - and the walk still called itself resolved. It is not descended into twice.
+            contention.append(
+                {"contention": "competing_parents", "scopeKind": scope_kind,
+                 "scopeKey": scope_key,
+                 "candidates": self._incoming_execution(scope_kind, scope_key)})
             return
         seen.add((scope_kind, scope_key))
         owner = self.owner(scope_kind, scope_key)
@@ -1511,7 +1562,8 @@ class Linkage:
                                    "recorded": edge["lower"]["taskId"],
                                    "live": live["taskId"]})
             self._descend(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"],
-                          levels, gaps, contention, depth=depth + 1, seen=seen)
+                          levels, gaps, contention, depth=depth + 1, seen=seen,
+                          path=path + ((scope_kind, scope_key),))
 
     def up(self, *, task_id=None, issue_key=None, relationship_id=None, scope_key=None):
         """Child to parent to supervisor, reporting a missing upper level as a gap."""

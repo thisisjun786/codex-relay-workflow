@@ -155,19 +155,25 @@ read the outstanding work cannot produce the list, which is the point.
 It moves the scope. It refuses outright while the scope still has unfinished work, and says
 which assignments it could not move.
 
-An assignment's identity is \`sha256(parentTaskId|childTaskId|issueKey)\` and its queued
+An assignment's identity is `sha256(parentTaskId|childTaskId|issueKey)` and its queued
 deliveries name the parent's thread. So a handover cannot carry that endpoint across: rewriting
-\`parent_task_id\` in place would leave a row whose stored identity no longer derives from its
+`parent_task_id` in place would leave a row whose stored identity no longer derives from its
 own columns, and a replacement parent that cannot receive the work it just accepted. Both were
 tried and both were wrong.
 
-Each assignment is moved by registering its successor with \`supersedes\`, which mints a correct
+Each assignment is moved by registering its successor with `supersedes`, which mints a correct
 new identity, carries the new parent's host and cwd, and repoints the project-to-issue edge.
-Once the project has no unfinished work, the scope changes hands and nothing is left answering
-to the parent that stepped down.
+Once no live assignment still names the parent that is stepping down, the scope changes hands
+and nothing is left answering to it.
 
-\`linkage-outstanding --project\` prints the set that has to be empty, and it is the PROJECT's
-set rather than one parent's, so work inherited from a previous parent still counts.
+That is the condition, and it is not "no unfinished work". Work re-registered under the
+INCOMING parent may still be unfinished and no longer blocks, because it already names the
+parent taking over. `linkage-outstanding --project` prints the PROJECT's unfinished set rather
+than one parent's, so work inherited from a previous parent still counts — and that set is
+frequently not empty at the moment a valid handover runs. `--acknowledge` has to equal
+whatever it prints then: restating it is the requirement, emptying it is not. Passing less is
+`handover_unconfirmed`, and waiting for every assignment to finish first is not required.
+`test_the_escape_route_a_stranding_refusal_prescribes_is_reachable` walks that sequence.
 
 The acknowledgement is still required and still means what the acceptance criterion asks: the
 incoming owner restates the outgoing owner and the exact unfinished set, so nothing is taken
