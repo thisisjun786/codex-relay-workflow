@@ -226,6 +226,16 @@ SOURCE_AT_MODULE_LEVEL = {
 # differs by version -- set is readable from 3.11 and not on the 3.10 floor -- so this is the
 # UNION, and each entry says where it is unreadable so a name that becomes readable everywhere
 # fails its own declaration instead of sitting here forever.
+# Names beginning with read that ask ABOUT a file rather than answer with it. The rule below
+# recognises a read by that prefix, which errs towards reporting on purpose; these are the
+# spellings where the erring is plainly wrong, written down with the reason rather than fixed
+# by narrowing the rule to a list of blessed reads -- that would trade an over-report for the
+# silence this module exists to refuse.
+ASKS_ABOUT_THE_FILE = {
+    "readable": "it answers whether the stream can be read, which is a boolean about the"
+                " handle and never the text behind it",
+}
+
 EVERY_INTERPRETER = "every supported interpreter"
 THE_FLOOR = "the 3.10 floor"
 # Where the floor entries stop being unreadable. Written down because no object can be asked it:
@@ -1513,6 +1523,42 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "its pair: the module's own alias really is what the base names, so scoping the scan"
          " must not have scoped it to nothing."),
+    "a held name reached in three steps":
+        (REFUSAL,
+         ("class Cases:",
+          "    def setUp(self):",
+          "        self.a = self.b",
+          "        self.b = self.c",
+          "        self.c = \"not_verified\"",
+          "    def consumer(self):",
+          "        return self.a"),
+         "consumer", True,
+         "the outer pass has to keep growing until nothing moves. Sharing the sets with the"
+         " round before adds a name to both, so the convergence test reads as settled while the"
+         " pass is still finding things -- a fixpoint that stops early, which looks like a pass"
+         " and is an omission."),
+    "a question asked about a handle rather than a read of it":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return stream.readable()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "readable() answers whether the stream can be read, which is a boolean about the"
+         " handle and never the text behind it, so nothing is handed on."),
+    "a read of a handle that really returns its lines":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return stream.readlines()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "its pair: the read prefix still recognises a read, so naming the one question that"
+         " is not one must not have narrowed the rule to a list of blessed spellings."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2499,7 +2545,12 @@ def _held_by_class(tree, spelled, over=None):
     spread over two methods, and the method that settles is the one with no spelling in it. The
     binding is derived rather than declared, so that shape arrives accounted.
     """
-    places, held = _places(tree), dict(over or {})
+    # Copied a set at a time. dict() alone shares the nested sets with the round before, so a
+    # name found in a later round is added to BOTH and the caller's wider != held reads as
+    # converged while the pass is still growing. A fixpoint that stops early is an omission,
+    # and it is the kind that looks like a pass.
+    places = _places(tree)
+    held = {owner: set(names) for owner, names in (over or {}).items()}
     # Which statements a class body actually owns: a bare name bound in one is an attribute of
     # that class, and the same name bound inside a method is that method's local.
     in_class_body = _owned_by_a_class(tree)
@@ -3634,7 +3685,7 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 # says nothing about the file the module's handle names.
                 on_a_handle = False
             if on_a_handle and attribute.startswith("read"):
-                return spelling
+                return None if attribute in ASKS_ABOUT_THE_FILE else spelling
             # open(HERE).read(): the file object has no name of its own, so there is no dotted
             # spelling to match, and the handle it was opened on is written in the same
             # expression. Nothing about the run decides which file that is, so this is read
