@@ -1174,5 +1174,68 @@ class TheSixthRoundFoundTheseToo(LinkageTestCase):
             expect_generation=1, expect_artifact_roots=[self.root],
             expect_allowed_recipients=[PARENT], actor="test")
 
+class TheSeventhRoundFoundTheseToo(LinkageTestCase):
+    def test_the_escape_route_a_stranding_refusal_prescribes_is_reachable(self):
+        """The refusal told a caller to move each assignment with supersedes, and then
+        attach_refusal rejected the successor for naming a parent that was not yet the
+        project's - so the only prescribed way out of the refusal was itself refused.
+        """
+        self.supervise()
+        original = self.register()
+        rid = original["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.assertRefused(
+            RefusalReason.HANDOVER_WOULD_STRAND,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
+            evidence="before the work moved", actor="test")
+
+        # Move the assignment to the incoming parent, which is what the refusal asked for.
+        self.registry.register(
+            parent=Endpoint(OTHER_PARENT, HOST, cwd="/parent"),
+            child=Endpoint("01child-two", HOST), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[OTHER_PARENT],
+            dispatch_request_id="dispatch-moved", dispatch_turn_id="turn-moved",
+            supersedes=rid)
+        self.assertEqual(self.linkage.attached(PROJECT, PARENT), [])
+
+        # And now the scope follows it. The acknowledgement is still the PROJECT's unfinished
+        # work, whoever parents it: the incoming owner confirms what it is taking on, and the
+        # stranding check is the separate question of what still names the outgoing one.
+        replacement = self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT),
+            acknowledged=self.linkage.outstanding(PROJECT),
+            evidence="the work moved first", actor="test")
+        self.assertEqual(replacement["taskId"], OTHER_PARENT)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+
+    def test_an_identical_instruction_after_a_handover_is_its_own_record(self):
+        """A handover advances the link revision. Without it in the identity, a replacement
+        supervisor re-issuing the same instruction derived its predecessor's id and silently
+        replayed that record."""
+        execution = self.supervise()
+        first = self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-same")
+        self.linkage.handover(
+            role=linkage.SUPERVISOR, scope_key=INITIATIVE, expect_task_id=SUPERVISOR_TASK,
+            endpoint=self.supervisor(OTHER_SUPERVISOR), acknowledged=[],
+            evidence="a new supervisor", actor="test")
+        second = self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=OTHER_SUPERVISOR,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-same")
+        self.assertNotEqual(first["directiveId"], second["directiveId"])
+        self.assertEqual(second["fromTaskId"], OTHER_SUPERVISOR)
+
+    def test_a_sender_scope_the_sender_does_not_own_is_not_answered_with_another_link(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        answer = self.linkage.counterpart(PARENT, CHILD, from_scope="PROJ-NOT-MINE")
+        self.assertIn("foreign_sender_scope", answer["findings"])
+        self.assertEqual(answer["state"], "unlinked")
+        self.assertIsNone(answer["link"])
+
 if __name__ == "__main__":
     unittest.main()

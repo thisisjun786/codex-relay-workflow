@@ -100,9 +100,15 @@ def link_id(kind, upper_kind, upper_key, lower_kind, lower_key):
     )[:ID_WIDTH]
 
 
-def directive_id(scope_kind, scope_key, from_scope_key, digest):
+def directive_id(scope_kind, scope_key, from_scope_key, digest, revision):
+    """Includes the link revision the instruction arrived on.
+
+    A handover advances that revision, so without it a replacement supervisor re-issuing an
+    identical instruction derived its predecessor's id, silently replayed that record, and the
+    two were indistinguishable. Same instruction, different relationship, different fact.
+    """
     return "dir-" + sha256_hex(
-        "|".join((scope_kind, scope_key, from_scope_key, digest))
+        "|".join((scope_kind, scope_key, from_scope_key, digest, str(revision)))
     )[:ID_WIDTH]
 
 
@@ -639,7 +645,17 @@ class Linkage:
                 "project " + repr(project_key) + " has no registered parent, so an issue "
                 "cannot be attached to it yet",
                 scope_kind=PROJECT, scope_key=project_key, challenger=parent_task)
-        if holder["task_id"] != parent_task:
+        moving_within = db.execute(
+            "SELECT 1 FROM relationship_scope s"
+            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+            " WHERE r.issue_key = ? AND s.project_key = ?"
+            " LIMIT 1",
+            (issue_key, project_key),
+        ).fetchone()
+        if holder["task_id"] != parent_task and moving_within is None:
+            # The issue has never belonged to this project, so this is a foreign attachment.
+            # When it HAS, a differing parent is an assignment being moved to a new one, which
+            # is exactly how a project's work is handed over before its scope is.
             return None, _Refusal(
                 RefusalReason.FOREIGN_SCOPE,
                 "issue " + repr(issue_key) + " is assigned under parent " + repr(parent_task)
@@ -863,7 +879,9 @@ class Linkage:
         referencing initiative.
         """
         _exact(digest, "a directive digest")
-        did = directive_id(scope_kind, scope_key, from_scope_key, digest)
+        # The id needs the link revision, which is only known once the edge is read inside the
+        # transaction, so it is derived there rather than up front.
+        did = None
         now = self.clock.iso()
         refusal = None
         with self.store.transaction() as db:
@@ -914,6 +932,8 @@ class Linkage:
                     incumbent=edge["upper_task_id"], challenger=from_task_id,
                 )
             if refusal is None:
+                did = directive_id(scope_kind, scope_key, from_scope_key, digest,
+                                   edge["revision"])
                 # The replay check runs AFTER validation, not before it. Returning an existing
                 # row first made the derived id a way past every check: the same digest
                 # replayed with a task that owns nothing and a link that joins nothing was
@@ -1092,6 +1112,10 @@ class Linkage:
                     # scopes could answer linked with no findings about a scope the message
                     # never named, which is the opposite of what quoting a source scope means.
                     findings.append("foreign_sender_scope")
+                    # So nothing is answered about, for the same reason the recipient side
+                    # clears its own: a finding beside a state that contradicts it is worse
+                    # than either alone.
+                    senders = []
             wrong_scope = None
             if quoted_scope is not None:
                 narrowed = [b for b in recipients if b["scopeKey"] == quoted_scope]
@@ -1445,8 +1469,8 @@ class Linkage:
                 unfinished_ids.append(row["rid"])
         return unfinished_ids
 
-    def attached(self, project_key):
-        """Every LIVE assignment in this project, settled or not.
+    def attached(self, project_key, task_id=None):
+        """Every LIVE assignment in this project, settled or not, optionally by parent.
 
         Wider than outstanding on purpose. A merged assignment is still a live relationship
         whose next generation opens under the parent named on its own row, so a handover that
@@ -1460,8 +1484,9 @@ class Linkage:
                 "  JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
                 " WHERE s.project_key = ? AND r.status IN ('active','paused')"
                 "   AND r.superseded_by IS NULL"
+                "   AND (? IS NULL OR r.parent_task_id = ?)"
                 " ORDER BY r.created_at",
-                (project_key,),
+                (project_key, task_id, task_id),
             )
         ]
 
@@ -1555,8 +1580,12 @@ class Linkage:
                         + "; a replacement owner confirms the unfinished work it takes on",
                         scope_kind=scope_kind, scope_key=scope_key,
                         incumbent=expect_task_id, challenger=endpoint.task_id)
-                elif scope_kind == PROJECT and self.attached(scope_key):
-                    still_here = self.attached(scope_key)
+                elif scope_kind == PROJECT and self.attached(scope_key, expect_task_id):
+                    # Only what still names the OUTGOING owner blocks. An assignment already
+                    # moved to the incoming parent by supersession is not stranded by this
+                    # handover, and counting it made the escape route this refusal prescribes
+                    # impossible to finish.
+                    still_here = self.attached(scope_key, expect_task_id)
                     # Refuse, and say what it could not move. An assignment's identity is
                     # sha256(parentTaskId|childTaskId|issueKey) and its queued deliveries name
                     # the parent's thread, so a handover cannot carry the endpoint across: it
