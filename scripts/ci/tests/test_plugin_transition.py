@@ -948,6 +948,76 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"],
                          [{"type": "command", "command": "/bin/true"}])
 
+    def registered_at(self, host, custom_name, **overrides):
+        """A manual install whose hook permanently names a settings file of its own."""
+        host.link_skills()
+        host.register_hook()
+        fixed = host.home / "crw-completion-hook.json"
+        registered = json.loads(fixed.read_text(encoding="utf-8"))
+        registered.update(overrides)
+        custom = host.root / custom_name
+        custom.write_text(json.dumps(registered), encoding="utf-8")
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(custom)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.register_mcp()
+        return custom, fixed
+
+    def test_the_registered_document_is_what_preflight_validates(self):
+        """A policy the plugin document cannot carry must refuse before the standdown."""
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json", journalPolicy="faults_only")
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("journalPolicy", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(custom.is_file())
+
+    def test_the_registered_archive_is_the_one_a_rerun_recovers(self):
+        """Both files are archived under one stem, so the order decides what a retry rebuilds."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           markerRoot=str(self.host.marker / "registered"))
+        unrelated = json.loads(fixed.read_text(encoding="utf-8"))
+        unrelated["markerRoot"] = str(host.marker / "unrelated")
+        fixed.write_text(json.dumps(unrelated), encoding="utf-8")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.hook_standdown(snapshot, {"accept_hook_trust_gap": True},
+                                              apply=True)["outcome"], "settled")
+        self.assertEqual(steps.settings_retire(snapshot, {}, apply=True)["outcome"], "settled")
+        # Interrupted here: the next run has only the archives to work from.
+        recovered, name = inventory.newest_retired(host.home)
+        self.assertEqual(recovered["markerRoot"], str(host.marker / "registered"),
+                         "recovered " + str(name))
+
+    def test_an_alias_registered_while_the_run_is_in_flight_is_refused_in_the_lock(self):
+        """The reading taken inside the ownership lock passes the same checks preflight applied."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        stale = inventory.snapshot(host.home, repo_root=ROOT)
+        host.append_config('[mcp_servers.late-alias]\ncommand = "'
+                           + str(host.destination / "current" / "bin" / "codex-thread-bridge")
+                           + '"\n')
+        before = host.config()
+        results = steps.transition(stale, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes.get("mcp record retire"), "refused", json.dumps(results)[:900])
+        self.assertIn("late-alias", [item for item in results
+                                     if item["step"] == "mcp record retire"][0]["detail"])
+        self.assertIn("[mcp_servers.codex-thread-bridge]", host.config())
+        self.assertEqual(host.config(), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

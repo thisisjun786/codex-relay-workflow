@@ -137,6 +137,52 @@ def adapter_paths(host):
     return str(base / inventory.INTERPRETER_SCRIPT), str(base / inventory.ADAPTER_SCRIPT)
 
 
+def mcp_refusals(mcp):
+    """Every reason the bridge surface cannot be transitioned, as a list.
+
+    A function rather than a stretch of preflight because it is asked twice: once on the reading
+    preflight decided from, and again on the reading taken inside the ownership lock. A surface
+    that changed in between -- an aliased table registered while this was running, say -- would
+    otherwise reach the steps having bypassed these checks entirely.
+    """
+    found = []
+    record = mcp.get("record") or {}
+    registration = mcp.get("registration") or {}
+    if mcp.get("recordOwner") == bridgerecord.OWNER_USER and registration:
+        # The table is what current sessions actually run and the record is what the plugin launcher
+        # would run. Choosing between them silently would replace a working table with a record that
+        # starts something else, so a disagreement is reported rather than resolved here.
+        divergent = [field for field, mine, theirs in (
+            ("bridgeExecutable", record.get("bridgeExecutable"), registration.get("command")),
+            ("args", list(record.get("args") or []), list(registration.get("args") or [])),
+            ("serverName", record.get("serverName"), inventory.SERVER_NAME))
+            if mine != theirs]
+        if divergent:
+            found.append("the bridge record at " + mcp["recordPath"] + " and the "
+                            + inventory.SERVER_NAME + " table in " + mcp["configPath"]
+                            + " disagree about " + ", ".join(divergent)
+                            + " (record " + repr(record.get("bridgeExecutable")) + " "
+                            + repr(record.get("args") or []) + ", table "
+                            + repr(registration.get("command")) + " "
+                            + repr(registration.get("args") or []) + "). This command does not"
+                            " choose between them: settle which one this host runs first")
+    for alias in mcp.get("aliases") or []:
+        found.append("the table [mcp_servers." + str(alias["name"]) + "] in "
+                        + mcp["configPath"] + " starts the same bridge under another name ("
+                        + str(alias["command"]) + "). Leaving it while the plugin declares its own"
+                        " would start two bridges, and renaming somebody's server is not this"
+                        " command's to do: remove or rename that table first")
+    if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
+        found.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
+                        + " is not the block this repository renders for the registration it"
+                          " holds, so it is somebody's own edit and is left in place"
+                        + (": " + str(mcp["detail"]) if mcp.get("detail") else ""))
+    if mcp["recordOutcome"] not in (None, bridgerecord.ABSENT):
+        found.append("the bridge record at " + mcp["recordPath"] + " could not be acted on ("
+                        + str(mcp["recordOutcome"]) + ")")
+    return found
+
+
 def registered_settings(host):
     """The document the registered hook actually reads, and where it came from.
 
@@ -242,7 +288,11 @@ def preflight(host, options):
     # so nothing else here catches it.
     refusals.extend(completion.override_complaints(completion.OWNER_PLUGIN))
 
-    document = host["settings"].get("document")
+    # The document registered_settings() will carry, because that is the one whose budget and
+    # journal policy have to be expressible as a plugin-owned document. Validating the fixed file
+    # while carrying the custom one let a faults_only policy or a 9-second budget through preflight
+    # and refuse at the write, with the registration already removed.
+    document, _source = registered_settings(host)
     budget = (document or {}).get("timeoutSeconds")
     if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
             and budget >= completion.LAUNCHER_CEILING_SECONDS:
@@ -302,40 +352,7 @@ def preflight(host, options):
                         " read (" + str(mcp["table"]) + ": " + str(mcp["detail"]) + "), so"
                         " whether this host registers " + inventory.SERVER_NAME + " was not"
                         " established")
-    record = mcp.get("record") or {}
-    registration = mcp.get("registration") or {}
-    if mcp.get("recordOwner") == bridgerecord.OWNER_USER and registration:
-        # The table is what current sessions actually run and the record is what the plugin launcher
-        # would run. Choosing between them silently would replace a working table with a record that
-        # starts something else, so a disagreement is reported rather than resolved here.
-        divergent = [field for field, mine, theirs in (
-            ("bridgeExecutable", record.get("bridgeExecutable"), registration.get("command")),
-            ("args", list(record.get("args") or []), list(registration.get("args") or [])),
-            ("serverName", record.get("serverName"), inventory.SERVER_NAME))
-            if mine != theirs]
-        if divergent:
-            refusals.append("the bridge record at " + mcp["recordPath"] + " and the "
-                            + inventory.SERVER_NAME + " table in " + mcp["configPath"]
-                            + " disagree about " + ", ".join(divergent)
-                            + " (record " + repr(record.get("bridgeExecutable")) + " "
-                            + repr(record.get("args") or []) + ", table "
-                            + repr(registration.get("command")) + " "
-                            + repr(registration.get("args") or []) + "). This command does not"
-                            " choose between them: settle which one this host runs first")
-    for alias in mcp.get("aliases") or []:
-        refusals.append("the table [mcp_servers." + str(alias["name"]) + "] in "
-                        + mcp["configPath"] + " starts the same bridge under another name ("
-                        + str(alias["command"]) + "). Leaving it while the plugin declares its own"
-                        " would start two bridges, and renaming somebody's server is not this"
-                        " command's to do: remove or rename that table first")
-    if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
-        refusals.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
-                        + " is not the block this repository renders for the registration it"
-                          " holds, so it is somebody's own edit and is left in place"
-                        + (": " + str(mcp["detail"]) if mcp.get("detail") else ""))
-    if mcp["recordOutcome"] not in (None, bridgerecord.ABSENT):
-        refusals.append("the bridge record at " + mcp["recordPath"] + " could not be acted on ("
-                        + str(mcp["recordOutcome"]) + ")")
+    refusals.extend(mcp_refusals(mcp))
 
     flight = host["inFlight"]
     # Reported, never a refusal. A marker entry is created once and outlives the work it recorded,
@@ -447,8 +464,12 @@ def settings_retire(host, options, *, apply=False):
     # unrelated existing file would otherwise have that file moved aside.
     fixed = str(Path(host["codexHome"]) / completion.CONFIG_NAME)
     named = [entry.get("settings") for entry in host["hook"]["entries"] if entry.get("settings")]
+    # The registered document is archived LAST. Every archive lands under one stem and the recovery
+    # takes the newest, so ordering decides which document a rerun rebuilds from: archived first, an
+    # unrelated file at the fixed path became the newest archive and silently supplied the marker
+    # root, the database and the journal after an interruption.
     paths = []
-    for candidate in named + [host["settings"]["path"], fixed]:
+    for candidate in [host["settings"]["path"], fixed] + named:
         if not candidate or candidate in paths or not Path(candidate).exists():
             continue
         if candidate != fixed:
@@ -456,6 +477,9 @@ def settings_retire(host, options, *, apply=False):
             if document is None:
                 continue
         paths.append(candidate)
+    # De-duplicated keeping the LAST occurrence, so a path that is both the fixed one and the one
+    # the registration names is archived in the registered position rather than the earlier one.
+    paths = [path for index, path in enumerate(paths) if path not in paths[index + 1:]]
     if not paths:
         return _answer("settings retire", ALREADY, "no settings file is there to retire")
     document = host["settings"]["document"]
@@ -727,6 +751,17 @@ def transition(host, options, *, apply=False):
                 # would retire the plugin record the first had just written, leaving new sessions
                 # with no bridge. The decision is made about the state that will be written.
                 host = {**host, "mcp": inventory.read_mcp(host["codexHome"])}
+                changed = mcp_refusals(host["mcp"])
+                if changed:
+                    # The refreshed reading has to pass the same checks preflight applied, or a
+                    # surface that changed while this ran would reach the steps unvalidated: an
+                    # alias registered in the meantime would survive the table removal and start a
+                    # second bridge.
+                    results.append(_answer("mcp record retire", REFUSED, "; ".join(changed)))
+                    for remaining in MCP_STEPS[1:] + ("skill unlink",):
+                        results.append(_answer(remaining, NOT_REACHED,
+                                               "the bridge surface changed while this ran"))
+                    break
             answer = step(host, options, apply=apply) if name != "settings install" \
                 else step(host, options, apply=apply, previous=previous)
             results.append(answer)
