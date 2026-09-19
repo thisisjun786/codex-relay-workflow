@@ -4117,6 +4117,16 @@ class FortyThirdHostedRound(TrialCase):
         self.world.flush()
         self.assertIsNone(self.world.refusal())
 
+    def test_a_long_working_directory_is_not_held_to_the_execution_policys_bound(self):
+        # cwd goes through a different check with a far larger bound, so holding it to the
+        # execution policy's 500 refused a working directory the bridge would have created.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["cwd"] = "/" + "d" * 600
+        self.world.flush()
+        self.assertIsNone(self.world.refusal(),
+                          "a working directory the bridge accepts was refused")
+
     def test_the_maximum_is_the_bridges_own(self):
         # Support, and the guard on the sixth copied constant, read as a value.
         source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",

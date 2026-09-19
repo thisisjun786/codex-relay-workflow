@@ -123,9 +123,12 @@ POLICY_FLAGS = ("networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp")
 # so nothing could have produced the evidence the record claims to be comparing.
 NON_EMPTY_SETTINGS = ("cwd", "model", "reasoningEffort")
 
-# And no longer than the creation policy accepts. A value past it is refused before any host
-# call, so a record naming one describes a participant no bridge created.
+# And, for the two that pass through the execution policy, no longer than it accepts. A value
+# past it is refused before any host call, so a record naming one describes a participant no
+# bridge created. cwd is not one of them: it goes through a different check with a far larger
+# bound, so holding it to this one refused a working directory the bridge would have accepted.
 SETTING_MAXIMUM = 500
+BOUNDED_SETTINGS = ("model", "reasoningEffort")
 
 
 def blank_settings(values):
@@ -135,7 +138,8 @@ def blank_settings(values):
     return sorted(name for name in NON_EMPTY_SETTINGS
                   if name in values
                   and (not isinstance(values[name], str) or not values[name].strip()
-                       or len(values[name]) > SETTING_MAXIMUM))
+                       or (name in BOUNDED_SETTINGS
+                           and len(values[name]) > SETTING_MAXIMUM)))
 
 # The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
 # an omitted default and an explicit one are not read as a difference. This is a second copy of
