@@ -589,7 +589,9 @@ def hook_standdown(host, options, *, apply=False):
         # in the checkout after the snapshot leaves every string identical, so the multiset above
         # still matches and this would remove a registration whose target is no longer this
         # repository's adapter -- with its settings already archived by the step before it.
-        reproved = inventory.read_hook(host["codexHome"], event, repo_root=host["repoRoot"])
+        reproved = inventory.read_hook(host["codexHome"], event,
+                                       destination=host.get("destination"),
+                                       repo_root=host["repoRoot"])
         if reproved["reading"] is not None:
             return _answer("hook standdown", REFUSED,
                            "the hook file could not be read again under the lock, so whether these"
@@ -602,6 +604,19 @@ def hook_standdown(host, options, *, apply=False):
                            " repository's own adapter, so nothing was removed: the program"
                            " changed after it was proved, and removing the registration now would"
                            " take away somebody else's hook", identities=unproven)
+        if reproved["unrecognised"]:
+            # The same question preflight asks, asked here where it is still free to answer no.
+            # This reading already has it, and leaving it to the recheck at the end meant every
+            # manual surface was gone by the time anyone refused.
+            return _answer("hook standdown", REFUSED,
+                           "a registration naming the packaged adapter or the destination is in"
+                           " the hook file ("
+                           + ", ".join(item["identity"] for item in reproved["unrecognised"])
+                           + ") and this transition did not write it, so nothing was removed:"
+                           " taking ours away now would leave that one firing beside the plugin's"
+                           " declaration on every " + str(event) + ". Decide what happens to it"
+                           " by hand",
+                           identities=[item["identity"] for item in reproved["unrecognised"]])
         # The consent question is asked again here, against the file being written. The list the
         # snapshot carried was computed before anything was locked, so a foreign hook that landed
         # in the same group since then would have its index moved, and its recorded trust detached,

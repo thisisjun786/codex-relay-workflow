@@ -2252,6 +2252,32 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("invalid choice", answer["error"])
         self.assertIn("usage", answer)
 
+    def test_an_unrecognised_entry_appearing_before_the_standdown_stops_it(self):
+        """The locked reread already has the answer, and refusing there costs nothing."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        document = host.hooks_document()
+        document["hooks"]["Stop"].append({"hooks": [{
+            "type": "command",
+            "command": str(host.version / "bin" / "crw-completion-hook"),
+        }]})
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        results = steps.transition(snapshot, {"accept_hook_renumbering": True,
+                                              "accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook standdown"], "refused", json.dumps(results)[:800])
+        standdown = [item for item in results if item["step"] == "hook standdown"][0]
+        self.assertIn("naming the packaged adapter or the destination", standdown["detail"])
+        # Nothing removed, and the settings the first step had archived are back.
+        self.assertEqual(host.hooks_document(), document)
+        self.assertEqual(host.settings(), settings)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
