@@ -178,6 +178,10 @@ TEXT_EVIDENCE = {
     "test_no_two_places_this_module_declares_can_share_a_name":
         "whether two places share a name is a property of the text: the module object has"
         " already discarded the second by the time it could be asked.",
+    "test_no_reader_here_sees_only_the_unannotated_binding":
+        "which form a reader here accepts is a property of how it is written, and the module"
+        " object cannot be asked: a function that tests ast.Assign and one that tests both are"
+        " the same callable to it. Reading the file is the only way to see the difference.",
     "test_every_place_that_settles_for_a_refusal_is_declared":
         "the places that name a refusal are in the text, so this inventory is derived from this"
         " file the same way -- and it is derived by accounting for every occurrence rather than"
@@ -254,6 +258,15 @@ SOURCE_UNDECIDED_CALLS = {
     "next": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
     "range": (EVERY_INTERPRETER, "a builtin type; calling it counts the scopes between two"),
 }
+
+# Every place that asks whether a statement binds a name. `carrier: property = property(getter)`
+# binds exactly as `carrier = property(getter)` does, and a table reading one form while the
+# table beside it reads both answers differently about one rule -- which this module produced
+# four separate times before the question was moved into _assigned(). A place that still reads
+# the bare form alone is declared here with the reason it may. The set is derived from this
+# file's own text, so a new reader of the bare form fails the module rather than waiting to be
+# found, and an entry that stops being true fails too.
+ASSIGN_ONLY_ON_PURPOSE = {}
 
 # What this derivation still cannot see, as data rather than as a sentence. Each form is planted
 # by a control that requires the derivation NOT to see it, so the list cannot rot in either
@@ -2446,11 +2459,95 @@ RESOLVES_LIKE_PYTHON = {
           "            def consumer():",
           "                return that.carrier()",
           "            return consumer",
-          "        return middle"),
-         "outer.middle.consumer", True,
-         "its pair: with no parameter taking the name, the grandchild really does read the"
-         " alias the method made, so stopping at intervening scopes must not have stopped"
-         " inheritance itself."),
+         "        return middle"),
+        "outer.middle.consumer", True,
+        "its pair: with no parameter taking the name, the grandchild really does read the"
+        " alias the method made, so stopping at intervening scopes must not have stopped"
+        " inheritance itself."),
+    "a qualifier two functions import differently":
+        (REFUSAL,
+         ("def good():",
+          "    import crw_runtime.reading as r",
+          "    return r.UNREADABLE",
+          "",
+          "def bad():",
+          "    import json as r",
+          "    return r.UNREADABLE"),
+         "good", True,
+         "which module an alias names belongs to the scope that imported it. Keyed file-wide,"
+         " the later import overwrites the earlier and answers for both, so whichever function"
+         " is written second decides what the first one read."),
+    "a qualifier the scope beside it imports from elsewhere":
+        (REFUSAL,
+         ("def bad():",
+          "    import json as r",
+          "    return r.UNREADABLE",
+          "",
+          "def good():",
+          "    import crw_runtime.reading as r",
+          "    return r.UNREADABLE"),
+         "bad", False,
+         "the same two functions in the other order, which is the half a file-wide answer gets"
+         " wrong here: the owning import lands last and answers for the scope that imported"
+         " json, so a function reading nothing of the kind is reported as settling for one."),
+    "a qualifier the scope beside it imports from elsewhere, read the other way":
+        (REFUSAL,
+         ("def bad():",
+          "    import json as r",
+          "    return r.UNREADABLE",
+          "",
+          "def good():",
+          "    import crw_runtime.reading as r",
+          "    return r.UNREADABLE"),
+         "good", True,
+         "and the function that really does read the refusal in that same order. Two entries"
+         " over one sample because one file-wide answer can only be right about one of them,"
+         " and which it fails is decided by nothing but the order they are written in."),
+    "a property built by an annotated binding":
+        (REFUSAL,
+         ("class Holder:",
+          "    def _getter(self):",
+          "        return reading.UNREADABLE",
+          "    carrier: property = property(_getter)",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "property(getter) installs the same descriptor whether or not a type is written on the"
+         " binding, so reading only the bare form leaves self.carrier looking like an ordinary"
+         " attribute and the getter's refusal never reaches the method that reads it."),
+    "a property built by a bare binding":
+        (REFUSAL,
+         ("class Holder:",
+          "    def _getter(self):",
+          "        return reading.UNREADABLE",
+          "    carrier = property(_getter)",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "its pair: the unannotated construction was already followed, so admitting the"
+         " annotated one must not have changed what the bare one builds."),
+    "an annotation that binds nothing at all":
+        (REFUSAL,
+         ("class Holder:",
+          "    carrier: property",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", False,
+         "the other pair: an annotation with no value declares a type and leaves the name"
+         " unbound. Treating every AnnAssign as a binding would invent a descriptor out of a"
+         " line that builds nothing."),
+    "an opener alias written as an annotated binding":
+        (TEXT,
+         ("def helper():",
+          "    fopen: object = open",
+          "    stream = fopen(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the same rebinding with a type on it. This is the fourth table to have read one form"
+         " and not the other, which is why the question now has one answer rather than four."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3412,6 +3509,40 @@ def _defined_in_scope(tree, places):
     return bound
 
 
+def _assigned(node):
+    """The targets and value of a binding statement, annotated or not, or None if it is neither.
+
+    `carrier: property = property(getter)` installs the same descriptor as the bare assignment,
+    and `fopen: object = open` rebinds the opener exactly as `fopen = open` does. A table that
+    reads only ast.Assign answers differently from the table beside it, which is the defect this
+    module keeps producing, so the question is asked in one place.
+
+    An annotation with no value binds nothing: `carrier: property` declares a type and leaves
+    the name unbound, which is not the same as binding it to something this reader cannot read.
+    """
+    if isinstance(node, ast.Assign):
+        return node.targets, node.value
+    if isinstance(node, ast.AnnAssign) and node.value is not None:
+        return [node.target], node.value
+    return None
+
+
+def _names_module(qualifies, scope, spelled_as, fallback):
+    """Which module a qualifier names, read innermost-first from the scope that wrote it.
+
+    Two functions may import different modules under one alias, so the answer belongs to a
+    scope rather than to the file: keying it file-wide lets the later import overwrite the
+    earlier one and answers for both with whichever landed last.
+    """
+    reach = [] if scope == MODULE_LEVEL else scope.split(".")
+    while reach:
+        found = qualifies.get(".".join(reach), {}).get(spelled_as)
+        if found:
+            return found
+        reach.pop()
+    return qualifies.get(MODULE_LEVEL, {}).get(spelled_as, fallback)
+
+
 def _bound_around(taken, scope, name):
     """Whether this scope or one enclosing it binds that name.
 
@@ -4115,8 +4246,10 @@ def _hands_on(tree, spelled):
         if not isinstance(node, ast.ClassDef):
             continue
         for statement in node.body:
-            if not isinstance(statement, ast.Assign) or not isinstance(statement.value, ast.Call):
+            binding = _assigned(statement)
+            if binding is None or not isinstance(statement.value, ast.Call):
                 continue
+            targets, _value = binding
             if not resolves_to(statement.value.func, ("property", "cached_property"),
                                places.get(id(node), (MODULE_LEVEL, None))[1],
                                places.get(id(node), (MODULE_LEVEL, None))[0]):
@@ -4126,7 +4259,7 @@ def _hands_on(tree, spelled):
                                        (_dotted(given) or "").rpartition(".")[2]))
                 if not reached:
                     continue
-                for target in statement.targets:
+                for target in targets:
                     for inner in ast.walk(target):
                         if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
                             properties.setdefault(
@@ -4949,13 +5082,14 @@ def source_spellings(tree):
 
 
 def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), built=(),
-                     imported_answers=(), known_keys=(), qualifies=None):
+                     imported_answers=(), known_keys=(), qualifies=None, places=None):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
     names = spellings["own global"] | spellings["collection"] | frozenset(imported_answers)
     owners = spellings.get("owner", frozenset())
     qualifies = qualifies or {}
+    places = places or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -4970,7 +5104,9 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                 reader = through
             if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
                     and id(node.value) in shadowed and id(node.value) not in built
-                    and qualifies.get(through) not in owners):
+                    and _names_module(qualifies,
+                                      places.get(id(node), (MODULE_LEVEL, None))[0],
+                                      through, None) not in owners):
                 # The scope binds that qualifier itself, so neither an imported module nor an
                 # instance bound at module level under the same spelling is what this reads.
                 # Unless what binds it is an import of the module that owns the answer: a
@@ -4994,7 +5130,9 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             # Which module a qualifier names is the analysed source's own import to answer:
             # import json as reading wears a spelling this module happens to own, and
             # import crw_runtime.reading as r wears one it does not.
-            named_module = qualifies.get(through, (through or "").rpartition(".")[2])
+            named_module = _names_module(qualifies,
+                                         places.get(id(node), (MODULE_LEVEL, None))[0],
+                                         through, (through or "").rpartition(".")[2])
             if node.attr in attributes and named_module in owners:
                 return (through or "") + "." + node.attr
             return None
@@ -5056,13 +5194,15 @@ def _opener_spellings(tree, places):
     while growing:
         growing = False
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
+            binding = _assigned(node)
+            if binding is None:
                 continue
-            spelling = _dotted(node.value)
+            targets, value = binding
+            spelling = _dotted(value)
             if spelling is None or (spelling not in bare and spelling not in dotted):
                 continue
             where = places.get(id(node), (MODULE_LEVEL, None))[0]
-            for target in node.targets:
+            for target in targets:
                 if not isinstance(target, ast.Name):
                     continue
                 if target.id not in bare:
@@ -5365,25 +5505,27 @@ def refusals_reached(source):
     # spelling reaches rather than by the spelling itself.
     qualifies = {}
     for node in ast.walk(tree):
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
         if isinstance(node, ast.Import):
             for alias in node.names:
-                qualifies[alias.asname or alias.name] = alias.name.rpartition(".")[2]
+                qualifies.setdefault(where, {})[alias.asname or alias.name] = (
+                    alias.name.rpartition(".")[2])
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 if alias.name != "*":
-                    qualifies[alias.asname or alias.name] = alias.name
+                    qualifies.setdefault(where, {})[alias.asname or alias.name] = alias.name
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
     while growing:
         wider = _held_by_class(
             tree, _refusal_spelled(spellings, held, classes, as_class, shadowed, built,
-                                   imported_answers, known_keys, qualifies), held)
+                                   imported_answers, known_keys, qualifies, places), held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed,
                                                 built, imported_answers, known_keys,
-                                                qualifies)),
+                                                qualifies, places)),
             spellings)
 
 
@@ -5398,9 +5540,9 @@ def source_text_reached(source):
     opens_a_file = not any(
         (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
          and statement.name == "open")
-        or (isinstance(statement, ast.Assign)
-            and any(inner.id == "open" for target in statement.targets
-                    for inner in ast.walk(target) if isinstance(inner, ast.Name)))
+        or any(inner.id == "open"
+               for target in (_assigned(statement) or ((), None))[0]
+               for inner in ast.walk(target) if isinstance(inner, ast.Name))
         for statement in getattr(tree, "body", ()))
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
@@ -5992,6 +6134,36 @@ class SevenReadingsTests(unittest.TestCase):
                     self.assertNotIn(place, places,
                                      form + ": " + place + " cannot reach the declared thing and"
                                      " this reader named it anyway: " + json.dumps(places))
+
+    def test_no_reader_here_sees_only_the_unannotated_binding(self):
+        """Support: a drift guard, derived from this file rather than written as a list.
+
+        Not a regression test for any one defect. It is the shape four of them shared: a table
+        reading ast.Assign alone while the table beside it reads both, so that
+        `carrier: property = property(getter)` binds for one and not the other. The set is
+        computed from this file's own text, so a new reader of the bare form fails here instead
+        of arriving later as a finding, and a declared exception that stops being true fails
+        too rather than sitting on the page claiming something that has moved.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        bare = set()
+        for node in ast.parse(source).body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            written = ast.get_source_segment(source, node) or ""
+            if "ast.Assign" not in written:
+                continue
+            if "ast.AnnAssign" in written or "_assigned(" in written:
+                continue
+            bare.add(node.name)
+        undeclared = sorted(bare - set(ASSIGN_ONLY_ON_PURPOSE))
+        self.assertEqual(undeclared, [],
+                         "a reader here sees only the unannotated binding and nobody wrote down"
+                         " why it may: " + json.dumps(undeclared))
+        stale = sorted(set(ASSIGN_ONLY_ON_PURPOSE) - bare)
+        self.assertEqual(stale, [],
+                         "declared as reading only the bare binding, but it no longer does, so"
+                         " delete the entry: " + json.dumps(stale))
 
     def test_no_two_places_this_module_declares_can_share_a_name(self):
         """Support: the declarations are keyed by name, so two places sharing one would merge.
@@ -6727,6 +6899,7 @@ HANDED = {
     "_update_with": NOTHING,
     "setUp": NOTHING,
     "_functions_here": NOTHING,
+    "test_no_reader_here_sees_only_the_unannotated_binding": NOTHING,
 
     # The derivations behind the two declared lists, and the synthetic modules that control them.
     # None of these reaches the thing under test: they read this file's own text and this
@@ -6742,6 +6915,8 @@ HANDED = {
     "_base_named": NOTHING,
     "_bound_around": NOTHING,
     "_defined_in_scope": NOTHING,
+    "_assigned": NOTHING,
+    "_names_module": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
