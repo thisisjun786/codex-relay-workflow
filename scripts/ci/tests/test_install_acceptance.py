@@ -983,6 +983,77 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "the helper was already accounted, because HERE is named in it. What was lost is the"
          " onward step, which HERE.read_text() in the same shape has always carried."),
+    "a class-body rebinding that may never happen":
+        (REFUSAL,
+         ("class Base:",
+          "    carrier = reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    if False:",
+          "        carrier = \"fine\"",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "whether the binding happened is a question about the run, so it cannot be read as a"
+         " shadow. Guessing that it did drops the inherited refusal and nobody is asked about"
+         " it, which is the direction this reader must not fail in."),
+    "a base to the left binding the name safely":
+        (REFUSAL,
+         ("class Safe:",
+          "    carrier = \"fine\"",
+          "",
+          "class Unsafe:",
+          "    carrier = reading.UNREADABLE",
+          "",
+          "class Child(Safe, Unsafe):",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", False,
+         "the held-attribute side of the same ordering: Safe settles the name for the bases to"
+         " its right, so Unsafe's refusal is never what the instance reads."),
+    "a decorator alias made inside another scope":
+        (REFUSAL,
+         ("def sm(fn):",
+          "    return fn",
+          "",
+          "def helper():",
+          "    sm = staticmethod",
+          "    return sm",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @sm",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "a name bound inside a function is that function's. Reading it as the decorator"
+         " everywhere suppresses a receiver the method really has, and the consumer leaves both"
+         " inventories -- the widening cost more than it bought until it was scoped."),
+    "a parameter spelled like a class":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "def consumer(Holder):",
+          "    return Holder.carrier()"),
+         "consumer", False,
+         "which object the parameter holds is a fact about the caller, so the qualifier is not"
+         " the class of that name however alike they are spelled."),
+    "a nested function declaring the receiver global":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def outer(self):",
+          "        def nested():",
+          "            global self",
+          "            return self.carrier()",
+          "        return nested"),
+         "outer.nested", False,
+         "global self makes the name the module's, so the search for a receiver stops there"
+         " rather than reaching the method around it."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -1864,45 +1935,45 @@ def _held_by_class(tree, spelled, over=None):
                     local.add(named.id)
                     spreading = True
 
-    # Every name a class binds for itself, whatever it binds it to, so a subclass standing in
-    # front of an inherited name can be told from one that inherits it. Recorded beside the
-    # held names rather than derived after them, because the value decides whether a name is
-    # HELD and the binding alone decides whether it SHADOWS.
-    rebound = {}
     for node in ast.walk(tree):
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
         for target, value in _bindings(node):
             through_class = (isinstance(target, ast.Attribute)
                              and _dotted(target.value) not in (None, "self", "cls"))
-            if klass is None and not through_class:
+            if (klass is None and not through_class) or not _reachable(
+                    value, spelled, klass, bound.get(function, set())):
                 continue
             if isinstance(target, ast.Attribute):
                 through = _dotted(target.value)
                 # Example.unread = ... names the class as statically as self.unread does.
                 owner = klass if through in ("self", "cls") else (
                     (through or "").rpartition(".")[2] or None)
-                named = target.attr
+                if owner is not None:
+                    held.setdefault(owner, set()).add(target.attr)
             elif (isinstance(target, ast.Name) and klass is not None
                     and any(id(statement) in in_class_body
                             for statement in ast.walk(node) if statement is node)):
                 # A bare binding in a class BODY, wherever the class is written. One inside a
                 # method is that method's local and no attribute of anything.
-                owner, named = klass, target.id
-            else:
-                continue
-            if owner is None:
-                continue
-            rebound.setdefault(owner, set()).add(named)
-            if _reachable(value, spelled, klass, bound.get(function, set())):
-                held.setdefault(owner, set()).add(named)
-    # A def or a nested class in a class body binds that name too, and stands in front of an
-    # inherited attribute exactly as an assignment does.
+                held.setdefault(klass, set()).add(target.id)
+    # Which names a class body binds for itself, whatever it binds them to, so a subclass
+    # standing in front of an inherited name can be told from one that inherits it. The value
+    # decides whether a name is HELD; the binding alone decides whether it SHADOWS.
+    #
+    # Only a binding the body certainly makes. One under an if, a for target over a sequence
+    # that may be empty, or a self.attr written in a method that may never run are all
+    # questions about the run, and taking one for a shadow would drop an inherited refusal
+    # nobody is then asked about. Not shadowing on a guess leaves the name reported instead,
+    # which is the direction this reader errs in.
+    rebound = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for statement in node.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 rebound.setdefault(node.name, set()).add(statement.name)
+            elif not isinstance(statement, (ast.For, ast.AsyncFor)):
+                rebound.setdefault(node.name, set()).update(_binds_locally(statement))
     # An attribute declared on a base is held by everything under it, the way a method is.
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
@@ -1910,14 +1981,16 @@ def _held_by_class(tree, spelled, over=None):
     while growing:
         growing = False
         for klass, bases in parents.items():
+            # Lookup stops at the first class that binds the name, so a base written to the
+            # left settles it for the ones to its right whether or not what it binds is a
+            # refusal. Taking each base independently reads past the class Python stops at.
+            settled = set(held.get(klass, ())) | set(rebound.get(klass, ()))
             for base in bases:
-                # Lookup stops at the first class that binds the name, so a subclass that
-                # rebinds an inherited one is not holding what the base held.
-                gained = (held.get(base, set()) - held.get(klass, set())
-                          - rebound.get(klass, set()))
+                gained = held.get(base, set()) - settled
                 if gained:
                     held.setdefault(klass, set()).update(gained)
                     growing = True
+                settled |= set(held.get(base, ())) | set(rebound.get(base, ()))
     return held
 
 
@@ -1978,6 +2051,11 @@ def _hands_on(tree, spelled):
             widening = False
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Assign):
+                    continue
+                # Module level only. A name bound inside a function is that function's, and
+                # treating one as the decorator everywhere would suppress a receiver a method
+                # really has and lose the consumer entirely.
+                if places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL:
                     continue
                 if (_dotted(node.value) or "").rpartition(".")[2] not in names:
                     continue
@@ -2079,6 +2157,15 @@ def _hands_on(tree, spelled):
         for named, line in bound_in(node.body):
             class_bound.setdefault(node.name, {}).setdefault(named, line)
 
+    # Where a scope says a name belongs to the module, so a receiver search stops there instead
+    # of finding the method around it: global self makes self the module's object, whatever the
+    # enclosing method was handed.
+    says_global = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Global):
+            where, _klass = places.get(id(node), (MODULE_LEVEL, None))
+            says_global.setdefault(where, set()).update(node.names)
+
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
 
@@ -2099,7 +2186,8 @@ def _hands_on(tree, spelled):
             while below:
                 outer = receivers.get(".".join(below))
                 if outer:
-                    if outer in taken_names.get(scope, set()):
+                    if (outer in taken_names.get(scope, set())
+                            or outer in says_global.get(scope, set())):
                         return set()
                     break
                 below.pop()
@@ -2409,8 +2497,13 @@ def _hands_on(tree, spelled):
             # cls.name in a classmethod names a method of this class exactly as self.name does,
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-            return inherited(klass if through in instance(function)
-                             else (through or "").rpartition(".")[2] or None,
+            named_class = (through or "").rpartition(".")[2] or None
+            if (isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in taken_names.get(function, set())):
+                # A parameter or a local of that name is not the class of that name: which
+                # object it holds is a fact about the caller.
+                named_class = None
+            return inherited(klass if through in instance(function) else named_class,
                              node.func.attr, (), aliases)
         return set()
 
