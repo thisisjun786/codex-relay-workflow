@@ -743,11 +743,29 @@ carries no receipt, acknowledgement or verdict and never enters another parent's
 relationship under OPS-7.3. Only the owning parent instructs its own children, so a correction that
 has to reach a child is routed to that child's parent rather than delivered around it.
 
-Unmeasured: the bundled relay holds no supervisor relationship and no parent-to-parent message. Its
-registration binds one parent to one child per issue, so a three-level registration and any peer
-delivery are proposed implementation owned by their own issues, and nothing here reports them as
-installed behaviour. An instruction a reader follows is not a store that enforces it, and this
-clause is not evidence that any runtime carries these levels today.
+Source-implemented, not measured on any host: the bundled relay now RECORDS these levels. Its
+`linkage` module holds a supervisor-to-parent relationship, a parent-to-parent peer link, and
+which project an issue belongs to, and it answers upward and downward queries over them. A
+project has at most one execution supervisor whichever initiative asks, every other initiative
+holds a reference that must agree who the parent is, conflicting instructions are retained with
+their origin rather than collapsed, and a replacement owner is refused unless it restates both
+the outgoing owner and the unfinished work it is taking on. The scope of that claim is the
+package's own suite under `packages/codex-session-relay/tests/test_linkage*.py`, and the
+records are described in `packages/codex-session-relay/docs/linkage.md`.
+
+What the relay still does NOT carry is any peer MESSAGE. A registered peer link is a record, not
+a channel: delivery, acknowledgement and shared merge order between parents remain proposed
+implementation owned by their own issues. Nor is a supervision an assignment, exactly as this
+clause already says - it carries no receipt, acknowledgement, verdict, generation or artifact
+scope, and the walk that resolves a hierarchy ignores peer and reference edges entirely, so
+neither can produce a second execution owner.
+
+Unmeasured on any host, and stated separately because they are separate facts: a green suite in
+that repository is evidence about its source, not about an installed runtime, an activated
+service or delivery anywhere. An instruction a reader follows is still not a store that enforces
+it, and a store that enforces it in its own tests is still not a running one. A claim that these
+levels are registered in Codex's own `parentThreadId` or in its interface needs separate host
+evidence and has none here.
 
 ## OPS-8 Parent return, fairness and isolation
 
