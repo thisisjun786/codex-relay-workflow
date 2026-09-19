@@ -2903,6 +2903,24 @@ class TheFindingsFromReview(TransitionCase):
                       answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    def test_a_cached_command_that_runs_the_launcher_twice_is_refused(self):
+        """Codex runs a hook command through a shell, so what follows the launcher runs too."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        # The first half is this repository's declaration, unchanged, and resolves to the launcher
+        # positionally. The second half runs the adapter again on every Stop.
+        entry["command"] = entry["command"] + " && " + entry["command"]
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("&&", answer["results"][0]["detail"])
+        self.assertIn("the same surface, once each", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

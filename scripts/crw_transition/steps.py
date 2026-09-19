@@ -319,24 +319,31 @@ def _relative(word):
     return text
 
 
-def _script(words):
-    """The script a declared command will actually execute, or None.
+def _resolve(words):
+    """The script a declared command will execute and every token after it, or (None, []).
 
     Positional, because that is how execution works: an interpreter runs its first non-option
     argument and nothing else. Collecting every token that ends in .py accepted a command that
     merely mentions the launcher -- true crw_stop_hook.py, or an argument list whose first entry
     is a different script -- as though it ran it.
+
+    The tokens AFTER the script are returned rather than discarded. Codex runs a hook command
+    through a shell, so "python3 <launcher> && python3 <launcher>" runs the adapter twice on
+    every Stop while resolving to the same first script, and a comparison that stopped at the
+    script could not see the second half. What they are is not interpreted here -- an argument, a
+    shell operator, a redirection -- because the only question is whether the cached declaration
+    is the one this checkout ships, and this checkout ships nothing after the launcher.
     """
     if not words:
-        return None
+        return None, []
     program = Path(str(words[0]).strip("\"'")).name
     if not INTERPRETER_NAMES.fullmatch(program):
         # Something other than a Python starts this. What it does with a file name that follows
         # is its own business, and it is not this launcher being declared.
         # fullmatch, because $ also matches before a trailing newline and "python3\n" is not the
         # name of anything Codex can execute.
-        return None
-    for word in words[1:]:
+        return None, []
+    for index, word in enumerate(words[1:], start=1):
         text = str(word).strip("\"'")
         if text in SAFE_INTERPRETER_FLAGS:
             continue
@@ -344,9 +351,14 @@ def _script(words):
             # -c takes source text and -m takes a module name, so the path that follows either is
             # not a file Python runs. Every other unrecognised option could do the same, and
             # guessing which is exactly the guess this function exists to stop making.
-            return None
-        return _relative(text)
-    return None
+            return None, []
+        return _relative(text), [str(rest).strip("\"'") for rest in words[index + 1:]]
+    return None, []
+
+
+def _script(words):
+    """The script a declared command will actually execute, or None."""
+    return _resolve(words)[0]
 
 
 def _shape(words):
@@ -363,11 +375,16 @@ def _shape(words):
     registration would report success over a hook that releases every Stop in silence. The script
     beside it is normalised instead, because the package declares it against PLUGIN_ROOT and that
     is the same file on both sides however it is spelled.
+
+    Whatever follows the script is part of the shape too, spelled out as it was written. A cached
+    declaration reading "python3 <launcher> && python3 <launcher>" resolves to the same script
+    this checkout declares and runs the adapter twice on every Stop, which is the duplicate
+    execution this whole command exists to end.
     """
-    script = _script(words)
+    script, tail = _resolve(words)
     if script is None:
         return None
-    return str(words[0]).strip("\"'") + " " + script
+    return str(words[0]).strip("\"'") + " " + script + ((" " + " ".join(tail)) if tail else "")
 
 
 def _plugin_checker(repo_root):
