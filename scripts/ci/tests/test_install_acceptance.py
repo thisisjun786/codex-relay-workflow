@@ -3854,6 +3854,88 @@ RESOLVES_LIKE_PYTHON = {
          " second round running: resolving the alias off a bare Name made this a resolver"
          " reading fewer forms than the vocabulary. Routing through _passed_through answers it"
          " and covers a conditional alias at the same time."),
+    "a method whose receiver is not spelled self":
+        (TEXT,
+         ("class Holder:",
+          "    def helper(this, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer(other):",
+          "    return holder.helper(other)"),
+         "consumer", False,
+         "self is a name a method chooses, not one the language requires, so reading the first"
+         " parameter's spelling to decide whether a receiver is handed over missed every"
+         " method that spells it otherwise. The call does supply path, and counting it against"
+         " the wrong slot inventoried a caller on a read that never happens. Whether a def is"
+         " a method is decided by its being written in a class body."),
+    "a staticmethod whose first parameter is spelled self":
+        (TEXT,
+         ("class Holder:",
+          "    @staticmethod",
+          "    def helper(self, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer(other):",
+          "    return holder.helper(other)"),
+         "consumer", True,
+         "the converse of the case above, and the reason the spelling test was wrong in both"
+         " directions at once: staticmethod hands no receiver over, so the single written"
+         " argument fills self and path really is left to HERE. Reading the spelling suppressed"
+         " a default that genuinely applies and dropped the consumer. A decorator this text"
+         " cannot read is treated as removing the receiver too, which reports a place rather"
+         " than dropping one."),
+    "a callee a nearer parameter stands in front of":
+        (REFUSAL,
+         ("held = reading.UNREADABLE",
+          "",
+          "def helper(answer=held):",
+          "    return answer",
+          "",
+          "def unrelated(helper):",
+          "    return helper('fine')"),
+         "helper", True,
+         "resolving a call by its terminal spelling walked straight past the parameter that"
+         " shadows it, so an unrelated call answered for this definition and recorded its"
+         " default as overridden. The real helper is never called, so its default applies and"
+         " it hands the refusal on; suppressing it lost the propagation entirely. The refusal"
+         " is held by a module name on purpose, so helper's presence here is DERIVED rather"
+         " than the literal spelling its own signature would otherwise write. The outward walk"
+         " stops at the first scope that binds the name, the way every other lookup here"
+         " already does."),
+    "a callee a qualified call on an unrelated owner does not reach":
+        (REFUSAL,
+         ("import other",
+          "",
+          "held = reading.UNREADABLE",
+          "",
+          "def helper(answer=held):",
+          "    return answer",
+          "",
+          "def unrelated():",
+          "    return other.helper('fine')"),
+         "helper", True,
+         "the same collision through a qualifier: other.helper is not this helper, and letting"
+         " the terminal spelling answer for it let an imported module's call contradict a"
+         " default here. A qualified call reaches a definition written here only when its"
+         " owner names a class written here or holds an instance of one."),
+    "a callee a call in the same scope really does reach":
+        (REFUSAL,
+         ("held = reading.UNREADABLE",
+          "",
+          "def helper(answer=held):",
+          "    return answer",
+          "",
+          "def unrelated():",
+          "    return helper('fine')"),
+         "helper", False,
+         "the pair for both of the two above, and the one that keeps them honest: with nothing"
+         " standing in front of the name and no qualifier in the way, the call really is this"
+         " definition's and the default really is overridden. Stopping at a nearer binding must"
+         " not have stopped resolution altogether."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4912,29 +4994,18 @@ def _lambda_named(value):
         yield from _lambda_named(value.value)
 
 
-def _declared_owner(tree, places):
-    """Each (scope, name) that a global or nonlocal statement hands to a different scope.
+def _bound_names(tree, places):
+    """Every name each scope binds, by whatever construct binds it.
 
-    global answer inside a function writes the MODULE binding, so a name bound under that
-    declaration belongs to the module and a reader anywhere sees it. nonlocal hands it to the
-    function around this one. Filing such a binding under the scope that WROTE it hides it from
-    every reader outside that scope, and the consumer that really receives it goes unreported --
-    a place escaping the inventory, which is the direction that costs something.
-
-    Asked once and consulted by both the refusal side and the handle side, because these two
-    have answered the same question separately before and drifted apart.
-
-    nonlocal is resolved the way Python resolves it: outward to the NEAREST enclosing scope
-    that really binds the name, however many scopes that is. Filing it against the immediately
-    enclosing function instead was one scope short as soon as the declaration sat two functions
-    below its binding, and the sibling reading it at the owning scope was dropped.
+    A name is the scope's own if anything in it writes the name: an assignment, a loop target,
+    a with target, a walrus, a parameter, an import, an except handler, a def or a class. Two
+    questions need this -- which scope owns a nonlocal, and whether a nearer binding stands in
+    front of a definition a call might otherwise reach -- and they are asked here once rather
+    than answered twice, which is how most of the defects in this file have arrived.
     """
     binds = {}
     for node in ast.walk(tree):
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
-        # A nonlocal names whatever the enclosing scope binds, however it binds it. Reading
-        # assignments and parameters alone walked straight past a scope that owns the name
-        # through a loop target or an import, and filed the carrier one scope too deep.
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             # Assignments, loop targets, with targets, walrus and augmented writes all spell
             # the bound name as a Store, so one test covers the lot.
@@ -4953,15 +5024,35 @@ def _declared_owner(tree, places):
             if not isinstance(node, ast.Lambda):
                 # A def is labelled with the scope it OPENS, but binds its name in the one
                 # around it.
-                binds.setdefault(at.rpartition(".")[0] or MODULE_LEVEL,
-                                 set()).add(node.name)
+                binds.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, set()).add(node.name)
             # A parameter binds its name in the scope the definition opens.
             args = node.args
             for arg in (args.posonlyargs + args.args + args.kwonlyargs
                         + ([args.vararg] if args.vararg else [])
                         + ([args.kwarg] if args.kwarg else [])):
-                binds.setdefault(places.get(id(node), (MODULE_LEVEL, None))[0],
-                                 set()).add(arg.arg)
+                binds.setdefault(at, set()).add(arg.arg)
+    return binds
+
+
+def _declared_owner(tree, places):
+    """Each (scope, name) that a global or nonlocal statement hands to a different scope.
+
+    global answer inside a function writes the MODULE binding, so a name bound under that
+    declaration belongs to the module and a reader anywhere sees it. nonlocal hands it to the
+    function around this one. Filing such a binding under the scope that WROTE it hides it from
+    every reader outside that scope, and the consumer that really receives it goes unreported --
+    a place escaping the inventory, which is the direction that costs something.
+
+    Asked once and consulted by both the refusal side and the handle side, because these two
+    have answered the same question separately before and drifted apart.
+
+    nonlocal is resolved the way Python resolves it: outward to the NEAREST enclosing scope
+    that really binds the name, however many scopes that is. Filing it against the immediately
+    enclosing function instead was one scope short as soon as the declaration sat two functions
+    below its binding, and the sibling reading it at the owning scope was dropped.
+    """
+    # A nonlocal names whatever the enclosing scope binds, however it binds it.
+    binds = _bound_names(tree, places)
     owner = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Global, ast.Nonlocal)):
@@ -5009,6 +5100,24 @@ def _default_applies(tree, places):
     """
     supplied, defined, owned, receives = {}, {}, {}, set()
     by_spelling = _class_spellings(tree, places)
+    bound_here = _bound_names(tree, places)
+    _classes_here, holds_an, _built_here = _instance_classes(tree)
+
+    def in_a_class_body(body):
+        """Every def a class body makes, including ones written under an if or a try."""
+        for statement in body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if not isinstance(statement, ast.ClassDef):
+                    yield statement
+                continue
+            for child in ast.iter_child_nodes(statement):
+                yield from in_a_class_body([child])
+
+    # Which defs are methods, which is what decides whether a receiver is handed over
+    # unwritten. The SPELLING of the first parameter does not decide it: def helper(this, ...)
+    # is a method and a staticmethod whose first parameter happens to be named self is not.
+    methods_here = {id(made) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                    for made in in_a_class_body(node.body)}
 
     def names_a_class(scope, name):
         """Whether this spelling names a class here, innermost scope first.
@@ -5033,10 +5142,16 @@ def _default_applies(tree, places):
             owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL,
                              {}).setdefault(node.name, set()).add(at)
         spelled = node.args.posonlyargs + node.args.args
-        if spelled and spelled[0].arg in ("self", "cls"):
+        if spelled and id(node) in methods_here:
             # A bound method is handed its receiver before any written argument, so the slot a
-            # default sits in is one further along than the call's own arguments count.
-            receives.add(at)
+            # default sits in is one further along than the call's own arguments count. Only
+            # decorators known to keep that receiver qualify: staticmethod removes it, and a
+            # decorator this text cannot read might, so an unrecognised one means no offset --
+            # the direction that reports a place rather than dropping one.
+            worn = {(_dotted(dressed) or "").rpartition(".")[2]
+                    for dressed in getattr(node, "decorator_list", ())}
+            if worn <= {"property", "cached_property", "classmethod", "abstractmethod"}:
+                receives.add(at)
         given = list(node.args.defaults)
         for index, argument in enumerate(spelled[len(spelled) - len(given):] if given else []):
             defined[(at, argument.arg)] = len(spelled) - len(given) + index
@@ -5090,14 +5205,34 @@ def _default_applies(tree, places):
         if not isinstance(node, ast.Call):
             continue
         named = (_dotted(node.func) or "").rpartition(".")[2]
-        reach = ([] if places.get(id(node), (MODULE_LEVEL, None))[0] == MODULE_LEVEL
-                 else places.get(id(node), (MODULE_LEVEL, None))[0].split("."))
+        if not named:
+            continue
+        at = places.get(id(node), (MODULE_LEVEL, None))[0]
+        if isinstance(node.func, ast.Attribute):
+            # A qualified call reaches a definition written here only when the owner is a
+            # class written here or a name holding an instance of one. other.helper("fine")
+            # on an imported module is not this helper, and letting the terminal spelling
+            # answer for it made an unrelated call contradict this definition's default.
+            spelled_owner = (_dotted(node.func.value) or "").rpartition(".")[2]
+            if not (spelled_owner
+                    and (names_a_class(at, spelled_owner)
+                         or (isinstance(node.func.value, ast.Name)
+                             and id(node.func.value) in holds_an))):
+                continue
+        elif not isinstance(node.func, ast.Name):
+            continue
+        # Outward, stopping at the FIRST scope that binds the name: a definition there is the
+        # callee, and any other binding stands in front of it. Walking past a parameter named
+        # like the function let an unrelated call answer for the definition, which suppressed
+        # a default the real function never has supplied.
+        reach = [] if at == MODULE_LEVEL else at.split(".")
         target = set()
-        while reach and not target:
-            target = set(owned.get(".".join(reach), {}).get(named) or ())
+        while True:
+            here = ".".join(reach) if reach else MODULE_LEVEL
+            target = set(owned.get(here, {}).get(named) or ())
+            if target or named in bound_here.get(here, set()) or not reach:
+                break
             reach.pop()
-        if not target:
-            target = set(owned.get(MODULE_LEVEL, {}).get(named) or ())
         if not target:
             continue
         for (place, argument), where in defined.items():
@@ -9199,6 +9334,7 @@ HANDED = {
     "_defaults": NOTHING,
     "_default_applies": NOTHING,
     "_declared_owner": NOTHING,
+    "_bound_names": NOTHING,
     "_lambda_named": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
