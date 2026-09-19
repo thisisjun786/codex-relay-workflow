@@ -215,6 +215,25 @@ def read_hook(codex_home, event=None, *, destination=None):
     return answer
 
 
+def newest_retired(codex_home):
+    """The most recently retired settings document, and the file it came from.
+
+    Retiring is what disable does and what the transition does before it writes, so this is the
+    only place the operational locations survive once the live document is gone. Reading them is
+    the difference between re-enabling an installation and pointing it at a fresh empty store.
+    """
+    home = Path(codex_home)
+    found = sorted(p for p in home.glob(completion.CONFIG_NAME + ".superseded-*") if p.is_file())
+    for candidate in reversed(found):
+        try:
+            document = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(document, dict) and document.get("markerRoot"):
+            return document, candidate.name
+    return None, None
+
+
 def read_settings(codex_home):
     """This hook's settings, and who owns the registration they belong to."""
     path = completion.configuration_path(codex_home)
@@ -339,7 +358,15 @@ def read_in_flight(document):
 def snapshot(codex_home, *, repo_root, destination=None, event=None):
     """One reading of everything, taken once so every later decision sees the same host."""
     settings = read_settings(codex_home)
-    derived = destination_from(settings.get("document"))
+    document = settings.get("document")
+    if document is None:
+        # A host that has been disabled, or interrupted after the retire step, has no live
+        # document at all. The destination and the operational locations are still recorded in the
+        # file that was retired, so they are read from there rather than asked for again.
+        retired, name = newest_retired(codex_home)
+        settings["retiredFrom"] = name
+        document = retired
+    derived = destination_from(document)
     dest = destination or derived
     return {
         "codexHome": str(codex_home),
@@ -353,6 +380,6 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
         "settings": settings,
         "mcp": read_mcp(codex_home),
         "pointer": read_pointer(dest),
-        "inFlight": read_in_flight(settings.get("document")),
+        "inFlight": read_in_flight(document),
     }
 

@@ -396,5 +396,49 @@ class SwapStateReportsWhatItRead(TransitionCase):
         self.assertFalse(answer["pointerResolves"])
 
 
+class TheDryRunAndTheWayBack(TransitionCase):
+    def test_a_dry_run_of_a_normal_manual_install_settles_and_writes_nothing(self):
+        """A dry run has to project past the retire step, or it refuses a sequence that works."""
+        host = self.ready()
+        before = (host.config(), host.hooks_document(), host.settings(), host.record())
+        code, answer = host.transition()
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        install = [r for r in answer["results"] if r["step"] == "settings install"][0]
+        self.assertEqual(install["outcome"], "would_change")
+        self.assertTrue(install["projected"])
+        self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
+                         before)
+
+    def test_after_a_disable_the_transition_reads_the_retired_locations_back(self):
+        host = self.ready()
+        host.transition("--apply")
+        wanted = {field: host.settings()[field]
+                  for field in ("markerRoot", "dbPath", "journalRoot")}
+        host.call("disable", "--apply")
+        self.assertIsNone(host.settings())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        install = [r for r in answer["results"] if r["step"] == "settings install"][0]
+        self.assertIn("retired document", install["carriedFrom"])
+        for field, value in wanted.items():
+            self.assertEqual(host.settings()[field], value, field)
+
+    def test_a_disable_with_no_retired_document_anywhere_refuses_rather_than_guessing(self):
+        host = self.ready()
+        host.transition("--apply")
+        host.call("disable", "--apply")
+        for stale in host.home.glob("crw-completion-hook.json.superseded-*"):
+            stale.unlink()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        # Preflight is where this lands, and that is the better place for it: with no live and no
+        # retired document there is nothing to derive a destination from, so nothing is removed.
+        preflight = answer["results"][0]
+        self.assertEqual(preflight["outcome"], "refused")
+        self.assertIn("no install destination", preflight["detail"])
+        self.assertEqual({r["step"]: r["outcome"] for r in answer["results"][1:]},
+                         {r["step"]: "not_reached" for r in answer["results"][1:]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -269,18 +269,40 @@ def settings_retire(host, options, *, apply=False):
                    applied=True, wrote=True, retired=moved)
 
 
+def _newest_retired(host):
+    """The most recently retired settings document, and where it came from.
+
+    Retiring is what disable does, so this is the path back: the locations an operator is still
+    using are in that file, and reading them is the difference between re-enabling an installation
+    and quietly pointing it at a fresh empty store.
+    """
+    document, name = inventory.newest_retired(host["codexHome"])
+    return document, ("the retired document " + name) if name else None
+
 def settings_install(host, options, *, apply=False, previous=None):
     """Write the plugin-owned settings, carrying the operational locations forward.
 
     The marker root, the database and the journal come from the document being replaced. A
     transition that quietly relocated them would look like a success and lose the evidence.
+
+    Two things this has to handle that the first draft did not, both found by running the
+    contrasts rather than by reading. A dry run reaches here with the old settings still in place,
+    so deciding against the file on disk would report DIFFERS and refuse a sequence that would
+    have worked; the dry run projects the write that follows the retire step instead, and says so.
+    And after a disable there is no live document at all, while the locations it carried are in the
+    file that disable retired, so the newest retired document is read rather than refusing or,
+    worse, silently relocating an operational database.
     """
     interpreter, adapter = adapter_paths(host)
     source = previous if previous is not None else host["settings"]["document"]
+    carried = "the settings being replaced"
+    if source is None:
+        source, carried = _newest_retired(host)
     if source is None:
         return _answer("settings install", REFUSED,
                        "the settings being replaced were not read, so their marker root,"
-                       " database and journal could not be carried forward")
+                       " database and journal could not be carried forward, and no retired"
+                       " document was found to read them from either")
     timeout = source.get("timeoutSeconds") or completion.DEFAULT_TIMEOUT_SECONDS
     if timeout >= completion.LAUNCHER_CEILING_SECONDS:
         return _answer("settings install", REFUSED,
@@ -298,6 +320,14 @@ def settings_install(host, options, *, apply=False, previous=None):
     except ValueError as error:
         return _answer("settings install", REFUSED, str(error))
     path = completion.configuration_path(host["codexHome"])
+    if not apply:
+        # Projected past the retire step deliberately. Deciding against the file still on disk
+        # would answer DIFFERS and refuse a sequence that settles once step 2 has run.
+        return _answer("settings install", WOULD,
+                       "would write these settings after the retire step; nothing was written",
+                       configuration={"configuration": str(path), "wanted": wanted},
+                       adapterEntryPoint=adapter, adapterInterpreter=interpreter,
+                       carriedFrom=carried, projected=True)
     written = completion.write_configuration(path, wanted, apply=apply)
     outcome = written["outcome"]
     settled = SETTLED if outcome in (completion.CONFIG_CREATED,) else (
@@ -305,7 +335,8 @@ def settings_install(host, options, *, apply=False, previous=None):
             WOULD if outcome == completion.CONFIG_WOULD_CREATE else REFUSED))
     return _answer("settings install", settled, written.get("detail"),
                    configuration=written, adapterEntryPoint=adapter,
-                   adapterInterpreter=interpreter, wrote=written.get("wrote"),
+                   adapterInterpreter=interpreter, carriedFrom=carried,
+                   wrote=written.get("wrote"),
                    applied=written.get("applied"))
 
 
@@ -373,6 +404,14 @@ def mcp_record_install(host, options, *, apply=False):
             owner=bridgerecord.OWNER_PLUGIN)
     except ValueError as error:
         return _answer("mcp record install", REFUSED, str(error))
+    if not apply:
+        # Projected past the retire step for the same reason the settings step is: the user-owned
+        # record is still on disk here, and deciding against it would answer DIFFERS and refuse a
+        # sequence that settles once step 5a has run.
+        return _answer("mcp record install", WOULD,
+                       "would write this record after the retire step; nothing was written",
+                       record={"record": host["mcp"]["recordPath"], "wanted": wanted},
+                       projected=True)
     written = bridgerecord.write(Path(host["mcp"]["recordPath"]), wanted, apply=apply)
     outcome = written["outcome"]
     settled = SETTLED if outcome == bridgerecord.CREATED else (
@@ -506,4 +545,3 @@ def swap_state(host, options):
                  " host record or touches the store."),
         "preserved": preserved_paths(host),
     }
-
