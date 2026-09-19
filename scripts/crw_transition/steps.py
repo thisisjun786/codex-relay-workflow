@@ -2003,6 +2003,7 @@ def disable(host, options, *, apply=False):
     # one file and ignores the settings override, so retiring whatever an override happens to name
     # would leave the document the launcher actually reads in place and stop nothing.
     settings = home / completion.CONFIG_NAME
+    moved = None
     try:
         answer = decide("hook settings", settings, _settings_owner(settings))
         if apply and answer is not None and answer["outcome"] == ALREADY:
@@ -2013,21 +2014,34 @@ def disable(host, options, *, apply=False):
             with hostrecord.Locked(settings):
                 answer = decide("hook settings", settings, _settings_owner(settings))
                 if answer is None:
+                    moved = retire(settings)
                     answer = _answer("hook settings", SETTLED, "retired " + str(settings),
-                                     applied=True, wrote=True, retired=retire(settings))
+                                     applied=True, wrote=True, retired=moved)
         elif answer is None:
             with hostrecord.Locked(settings):
                 answer = decide("hook settings", settings, _settings_owner(settings))
                 if answer is None:
+                    moved = retire(settings)
                     answer = _answer("hook settings", SETTLED, "retired " + str(settings),
-                                     applied=True, wrote=True, retired=retire(settings))
+                                     applied=True, wrote=True, retired=moved)
         results.append(answer)
     except hostrecord.Busy as error:
         results.append(_answer("hook settings", BUSY, str(error)))
     except OSError as error:
         # Every surface answers for itself. Letting this escape lost the results list with it, so
         # the receipt could not say which surface is stopped and which is still live.
-        results.append(_answer("hook settings", REFUSED,
+        #
+        # Which of the two it is comes from what happened, not from where the failure landed: the
+        # region this guards includes releasing the lock, and a release that fails AFTER the move
+        # does not put the document back. Answering refused there reversed the host's actual
+        # state -- the launcher finds no settings while the receipt says new calls still run.
+        results.append(_answer("hook settings", SETTLED,
+                               "retired " + str(settings) + ", and the lock around it did not"
+                               " come apart cleanly afterwards (" + type(error).__name__ + ": "
+                               + str(error) + "), which does not put the document back",
+                               applied=True, wrote=True, retired=moved)
+                       if moved or not settings.exists() else
+                       _answer("hook settings", REFUSED,
                                "the settings could not be retired (" + type(error).__name__
                                + ": " + str(error) + "), so new adapter invocations are not"
                                " stopped"))
@@ -2044,15 +2058,25 @@ def disable(host, options, *, apply=False):
             record = Path(mcp["recordPath"])
             answer = decide("bridge record", record, mcp["recordOwner"])
             if answer is None:
+                taken = retire(record)
                 answer = _answer("bridge record", SETTLED, "retired " + str(record), applied=True,
-                                 wrote=True, retired=retire(record))
+                                 wrote=True, retired=taken)
             results.append(answer)
     except hostrecord.Busy as error:
         results.append(_answer("bridge record", BUSY, str(error)))
     except OSError as error:
-        # The same reason as the settings above: the hook may already be stopped, and a receipt
-        # that lost its results cannot say that the bridge is still live.
-        results.append(_answer("bridge record", REFUSED,
+        # The same two reasons as the settings above: the hook may already be stopped and the
+        # receipt has to say so, and whether THIS surface stopped is decided by what happened
+        # rather than by where the failure landed. The guarded region includes releasing the
+        # lock, and a release that fails after the move leaves the record retired.
+        gone = not Path(host["mcp"]["recordPath"]).exists()
+        results.append(_answer("bridge record", SETTLED,
+                               "retired " + str(host["mcp"]["recordPath"]) + ", and the lock"
+                               " around it did not come apart cleanly afterwards ("
+                               + type(error).__name__ + ": " + str(error) + "), which does not"
+                               " put the record back", applied=True, wrote=True)
+                       if gone else
+                       _answer("bridge record", REFUSED,
                                "the record could not be retired (" + type(error).__name__ + ": "
                                + str(error) + "), so new bridge starts are not stopped"))
     return results

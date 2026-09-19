@@ -3493,6 +3493,41 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue((host.home / "crw-bridge-mcp.json").is_file())
 
     @needs_reader
+    def test_a_lock_that_will_not_release_does_not_reverse_the_stop(self):
+        """A release that fails after the move does not put the document back."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        code, _ = host.transition("--apply")
+        self.assertEqual(code, 0)
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        original = hostrecord.Locked
+
+        class Releasing(original):
+            """The move lands and the lock comes apart badly afterwards."""
+
+            def __exit__(self, *arguments):
+                super().__exit__(*arguments)
+                raise OSError(errno.EIO, "the lock file could not be removed")
+
+        hostrecord.Locked = Releasing
+        try:
+            results = steps.disable(snapshot, {}, apply=True)
+        finally:
+            hostrecord.Locked = original
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook settings"], "settled", json.dumps(results)[:800])
+        self.assertEqual(outcomes["bridge record"], "settled", json.dumps(results)[:800])
+        # And the host really is stopped: both documents are gone and archived.
+        self.assertFalse((host.home / "crw-completion-hook.json").exists())
+        self.assertFalse((host.home / "crw-bridge-mcp.json").exists())
+        self.assertIn("did not come apart cleanly",
+                      [item for item in results if item["step"] == "hook settings"][0]["detail"])
+
+    @needs_reader
     def test_a_suffixed_archive_left_behind_still_decides_the_next_name(self):
         """The whole key orders these, not the stamp alone."""
         import sys as _sys
