@@ -178,7 +178,13 @@ def moment(value, what):
         raise Refused(what + " is not an ISO-8601 timestamp",
                       value=value, detail=str(error)) from error
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+        # Assigning UTC to a value that never named an offset silently moves it. A ledger line
+        # written at 03:30 in UTC+02:00 read as 03:30Z, which placed an intervention made during
+        # the window into the preparation stretch and let the window pass with one in it. A
+        # date-only value is the same thing with a bigger error. The record is documented as
+        # ISO-8601 UTC, so a value that does not say which offset it is in is refused.
+        raise Refused(what + " does not name a UTC offset, and a time without one is not a moment"
+                      " this can place", value=value)
     return parsed
 
 
@@ -2139,11 +2145,15 @@ def preflight(record, *, sleeper=time.sleep):
     }
 
     # Everything above took real time: the witness delay sits inside it, and so does every probe
-    # after it. The gate is graded against a fresh read rather than the one taken before them.
+    # after it. These are the reads the gate is graded against, and they are ordered so the
+    # assignment — the one the gate itself compares — is the last taken. The gap left between
+    # that read and the dispatch is not closed here and is named in the stand-ins: these are
+    # readings at moments, not one transaction, and the relay's own refusal at delivery is what
+    # makes the race impossible.
+    capability_cells.extend(settings_now(record, relay, settings_seen))
+    assignment_cells.append(criteria_now(record, relay))
     current, store_payload, entry = assignment_now(record, relay)
     assignment_cells.append(current)
-    assignment_cells.append(criteria_now(record, relay))
-    capability_cells.extend(settings_now(record, relay, settings_seen))
 
     assembled = {}
     for name, cells in readings.items():
@@ -2199,6 +2209,11 @@ def preflight(record, *, sleeper=time.sleep):
                                  " supervisor's own claim; that witness is CRW-102's",
             "hostRecord": "a trusted inventory. The launcher agrees with the installed-runtime"
                           " record rather than being proven to be the relay",
+            "storeSnapshot": "one transaction across the store. These readings are taken at"
+                             " moments, and the last of them is the assignment the gate compares"
+                             " against, so what remains between that read and the dispatch is"
+                             " unread. The order is what narrows it and the relay's own refusal"
+                             " at delivery is what closes it; this does not stand in for that",
             "peerAttribution": "a doctor payload that names the participant that ran it. It does"
                                " not, so a peer capture is the operator's attribution: what this"
                                " establishes is that the peers are distinct readings, not that"

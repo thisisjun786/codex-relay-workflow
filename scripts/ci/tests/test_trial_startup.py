@@ -3184,7 +3184,8 @@ class ThirtySecondHostedRound(TrialCase):
 
 
 class ThirtyThirdHostedRound(TrialCase):
-    """The command a host actually reaches the runtime through."""
+    """The command a host actually reaches, the order of the final reads, and a time with no
+    offset."""
 
     def test_the_launcher_is_the_owned_pointer_the_record_names(self):
         # The fixture writes the shape runtime_install.py writes: an install's location is where
@@ -3212,6 +3213,43 @@ class ThirtyThirdHostedRound(TrialCase):
         source = (ROOT / "scripts" / "crw_runtime" / "pointer.py").read_text(encoding="utf-8")
         self.assertIn('POINTER_NAME = "current"', source)
         self.assertIn("Path(destination) / POINTER_NAME", source)
+
+
+class ThirtyFourthHostedRound(TrialCase):
+    """The order the final reads are taken in, and a time that never said which offset it is in."""
+
+    def test_the_assignment_the_gate_compares_is_the_last_read_taken(self):
+        self.world.start_supervisor()
+        self.world.preflight()
+        asked = [json.loads(line)["subcommand"]
+                 for line in self.world.calls.read_text().splitlines() if line.strip()]
+        self.assertEqual(asked[-1], "assignment-find",
+                         "a later probe ran after the answer the gate compares against")
+        self.assertEqual(asked.count("assignment-find"), 2)
+
+    def test_a_time_without_an_offset_is_refused(self):
+        # Read directly, because the consequence is a ledger line placed in the wrong stretch:
+        # 03:30 written in UTC+02:00 and read as 03:30Z lands outside a 01:00Z to 02:00Z window,
+        # so an intervention made during the window is counted as preparation and the window
+        # passes with one in it.
+        for value in ("2026-09-19T01:30:00", "2026-09-19", "2026-09-19 03:30:00"):
+            with self.subTest(value=value):
+                with self.assertRaises(startup.Refused) as caught:
+                    startup.moment(value, "a ledger line")
+                self.assertIn("UTC offset", caught.exception.reason)
+
+    def test_an_offset_that_is_not_utc_is_still_placed(self):
+        # Support: naming an offset is what is required, not naming Z. The same instant written
+        # in another offset is the same instant.
+        here = startup.moment("2026-09-19T03:30:00+02:00", "a ledger line")
+        there = startup.moment("2026-09-19T01:30:00Z", "a ledger line")
+        self.assertEqual(here, there)
+
+    def test_a_naive_time_is_not_quietly_optional_either(self):
+        # maybe_moment answers None where a time is optional, and None says it could not be read
+        # rather than standing in for one.
+        self.assertIsNone(startup.maybe_moment("2026-09-19T01:30:00"))
+        self.assertIsNotNone(startup.maybe_moment("2026-09-19T01:30:00Z"))
 
 
 if __name__ == "__main__":                                           # pragma: no cover
