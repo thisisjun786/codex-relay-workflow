@@ -688,7 +688,18 @@ def settings_retire(host, options, *, apply=False):
             # them takes a live installation's configuration away.
             now, outcome, detail, _found = completion.read_configuration(Path(candidate))
             was = known.get(candidate)
-            if was is not None and now != was:
+            if was is None:
+                # No prior reading means this file was not one of the documents the snapshot
+                # proved. Absent then and valid now is a supported installer's settings written
+                # while this ran, and treating a missing prior value as permission archived it
+                # unread -- then replaced a live installation's marker root, store and journal
+                # with the ones from the stale snapshot.
+                return _answer("settings retire", REFUSED,
+                               str(candidate) + " was not one of the documents this host was read"
+                               " with, so it appeared after the reading and nothing here proved"
+                               " it. Nothing was archived; rerun to decide against the settings"
+                               " as they now stand", retired=[])
+            if now != was:
                 return _answer("settings retire", REFUSED,
                                str(candidate) + " changed after it was read (" + str(outcome or "")
                                + str(detail or "") + "), so nothing was archived; rerun to decide"
@@ -1150,13 +1161,27 @@ def _restore_retired(results):
     restored, kept = [], []
     for moved in (retire or {}).get("retired") or []:
         origin, archive = Path(moved["from"]), Path(moved["to"])
-        if origin.exists() or not archive.is_file():
-            kept.append(str(archive))
-            continue
         try:
-            os.replace(str(archive), str(origin))
-            restored.append(str(origin))
-        except OSError as error:
+            # The same lock the writer of that path takes, held across the question and the
+            # answer. Asking whether the path is free and then writing it without the lock is a
+            # race with a supported installer, and losing it means replacing that installation's
+            # configuration with a document from before it existed.
+            with hostrecord.Locked(origin):
+                if origin.exists() or not archive.is_file():
+                    kept.append(str(archive))
+                    continue
+                try:
+                    os.replace(str(archive), str(origin))
+                except OSError as error:
+                    if error.errno != errno.EXDEV:
+                        raise
+                    # The retire crosses filesystems by copying, and so does the way back. Without
+                    # this the original path stays absent on exactly the layout retire was taught
+                    # to handle, and the registration still installed reads nothing.
+                    shutil.copy2(str(archive), str(origin))
+                    os.unlink(str(archive))
+                restored.append(str(origin))
+        except (OSError, hostrecord.Busy) as error:
             kept.append(str(archive) + " (" + type(error).__name__ + ": " + str(error) + ")")
     return restored, kept
 

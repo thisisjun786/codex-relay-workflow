@@ -1962,6 +1962,83 @@ class TheFindingsFromReview(TransitionCase):
                          if "releases the turn without recording" in item],
                         json.dumps(answer["windows"]))
 
+    def test_settings_that_appeared_after_the_reading_are_not_archived(self):
+        """A missing prior reading is not permission: it means this file was never proved."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        document = json.loads(fixed.read_text(encoding="utf-8"))
+        fixed.unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        # A supported installer writing the fixed path between the reading and the retire.
+        document["markerRoot"] = str(host.marker / "somebody-else")
+        fixed.write_text(json.dumps(document), encoding="utf-8")
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("appeared after the reading", answer["detail"])
+        self.assertEqual(json.loads(fixed.read_text(encoding="utf-8")), document)
+        self.assertTrue(custom.is_file())
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
+    def test_a_rollback_takes_the_lock_that_path_is_written_under(self):
+        """Asking whether the path is free and then writing it is a race with its writer."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        retired = steps.settings_retire(snapshot, {}, apply=True)
+        self.assertEqual(retired["outcome"], "settled", json.dumps(retired)[:400])
+        origin = Path(retired["retired"][0]["from"])
+        archive = Path(retired["retired"][0]["to"])
+        held = Path(str(origin) + hostrecord.LOCK_SUFFIX)
+        held.write_text("1", encoding="utf-8")
+        self.addCleanup(held.unlink, missing_ok=True)
+        original = hostrecord.LOCK_TIMEOUT_SECONDS
+        hostrecord.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, hostrecord, "LOCK_TIMEOUT_SECONDS", original)
+        restored, kept = steps._restore_retired([retired])
+        self.assertEqual(restored, [])
+        self.assertTrue([item for item in kept if "Busy" in item], json.dumps(kept))
+        self.assertTrue(archive.is_file())
+
+    def test_a_rollback_across_filesystems_still_restores(self):
+        """retire crosses a filesystem by copying, and the way back has to as well."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        retired = steps.settings_retire(snapshot, {}, apply=True)
+        origin = Path(retired["retired"][0]["from"])
+        self.assertFalse(origin.exists())
+        # The layout retire already handles, forced here rather than mounted: the first rename
+        # answers EXDEV the way a cross-device rename does.
+        genuine, refused = os.replace, []
+
+        def crossing(source, target):
+            if not refused:
+                refused.append((source, target))
+                raise OSError(errno.EXDEV, "Invalid cross-device link")
+            return genuine(source, target)
+
+        os.replace = crossing
+        self.addCleanup(setattr, os, "replace", genuine)
+        restored, kept = steps._restore_retired([retired])
+        self.assertEqual(kept, [], json.dumps(kept))
+        self.assertEqual(restored, [str(origin)])
+        self.assertTrue(refused, "the cross-device path was not the one taken")
+        self.assertEqual(host.settings(), settings)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
