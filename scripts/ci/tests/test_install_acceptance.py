@@ -276,6 +276,9 @@ SOURCE_UNDECIDED_CALLS = {
     "type": (EVERY_INTERPRETER, "a builtin type; calling it asks an object what it is"),
     "KeyError": (EVERY_INTERPRETER, "a builtin exception being raised"),
     "TimeoutError": (EVERY_INTERPRETER, "the same, raised to bound a derivation being measured"),
+    "min": (EVERY_INTERPRETER,
+            "a builtin whose signature is not introspectable; calling it takes the first line"
+            " at which the module binds open"),
     "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
     "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
@@ -391,6 +394,21 @@ DECORATOR_ALIAS_CONTROLS = {
 # this inventory would not have caught it. The control below requires that blindness to stay
 # true, so it is a known gap rather than a surprise -- but a known gap is what it is, and the
 # next site of that shape will reach a reviewer before it reaches this list.
+#
+# A fifth, and it is the sharpest so far because the sites in question were ALREADY RECOGNISED.
+# This sweep asks WHETHER a site measures distance. It cannot ask WHICH OWNER SHAPES it
+# measures it for. _source_spelled and _refusal_spelled both call _nearest and both appeared
+# clean here while measuring distance only for a bare ast.Name owner -- so a parameter taking
+# the root of a qualified owner, io in io.open or crw_runtime in crw_runtime.reading.UNREADABLE,
+# walked past a site this list called covered. A name in the recognised set therefore says the
+# question is asked somewhere in that function and nothing about the shapes it is asked for.
+# There is no control for this one: which owner shapes a site covers is not readable from the
+# fact that it calls _nearest, and inventing a predicate that claimed to read it would be the
+# same fallacy again. It is written down instead.
+#
+# A sixth thing this list does not cover at all, said so it is not mistaken for silence:
+# execution position. Whether a binding exists YET relative to a statement is a different axis
+# from which scope owns a name, and _opens_here decides it alone.
 #
 # COVERAGE IS NOT CORRECTNESS. This says every site asks the question; the paired cases in
 # RESOLVES_LIKE_PYTHON say the answers match Python. Neither claim substitutes for the other.
@@ -3331,10 +3349,90 @@ RESOLVES_LIKE_PYTHON = {
           "        return path.read_text()",
           "    def reader():",
           "        return helper()",
-          "    return reader"),
-         "bad.reader", True,
-         "the other half of the same sample: separating the two definitions must not stop the"
-         " one that really is left to its default from being read."),
+         "    return reader"),
+        "bad.reader", True,
+        "the other half of the same sample: separating the two definitions must not stop the"
+        " one that really is left to its default from being read."),
+    "a qualified opener whose module name a parameter takes":
+        (TEXT,
+         ("import io",
+          "",
+          "def helper(io):",
+          "    stream = io.open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", False,
+         "the nearest-binding rule reached a bare owner and not the root of a qualified one, so"
+         " a parameter called io left io.open still reading as the imported builtin. The helper"
+         " names HERE and is reported either way; what must not propagate is the read to its"
+         " caller."),
+    "a qualified opener whose module name nothing takes":
+        (TEXT,
+         ("import io",
+          "",
+          "def helper():",
+          "    stream = io.open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "its pair: io.open really is the builtin under its module's name when nothing takes"
+         " that name, so reaching the root must not have stopped the qualified opener being"
+         " read at all."),
+    "a qualified owner whose root a parameter takes":
+        (REFUSAL,
+         ("import crw_runtime.reading",
+          "",
+          "def helper(crw_runtime):",
+          "    return crw_runtime.reading.UNREADABLE"),
+         "helper", False,
+         "the same extension on the refusal side. The guard ran only when the immediate owner"
+         " was a bare Name, so a two-part owner skipped it entirely and the parameter was read"
+         " as the imported module."),
+    "a qualified owner whose root nothing takes":
+        (REFUSAL,
+         ("import crw_runtime.reading",
+          "",
+          "def helper():",
+          "    return crw_runtime.reading.UNREADABLE"),
+         "helper", True,
+         "its pair: the import really does make the module readable here, so walking to the"
+         " root must not have rejected every qualified owner."),
+    "a handle opened above a later binding of the opener":
+        (TEXT,
+         ("stream = open(HERE)",
+          "",
+          "def helper():",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()",
+          "",
+          "open = None"),
+         "consumer", True,
+         "a FALSE NEGATIVE rather than a false positive, and the only one of its round: the"
+         " statement ran with the builtin before anything took the name, so the handle is real"
+         " and the consumer below it is owed a declaration. A flag for the whole file erased"
+         " both. This is when a binding exists relative to a statement, not which scope owns a"
+         " name, which is why it is decided apart from the two above."),
+    "a handle opened below an earlier binding of the opener":
+        (TEXT,
+         ("open = None",
+          "",
+          "stream = open(HERE)",
+          "",
+          "def helper():",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "its pair, and the reason the rule is positional rather than simply relaxed: the same"
+         " two statements in the other order really do read whatever the module bound, so"
+         " honouring position must not have turned the shadow off."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -6160,8 +6258,15 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             # and the held table is keyed that way.
             if through in known_keys:
                 reader = through
-            if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
-                    and id(node.value) in shadowed and id(node.value) not in built
+            # The ROOT of the chain is what a parameter takes: import crw_runtime.reading with
+            # def helper(crw_runtime) binds the root, and crw_runtime.reading.UNREADABLE then
+            # reads whatever the caller handed over. Asking only when the immediate owner is a
+            # bare Name covered one-part owners and left every longer one assuming the import.
+            stem = node.value
+            while isinstance(stem, ast.Attribute):
+                stem = stem.value
+            if (through not in ("self", "cls") and isinstance(stem, ast.Name)
+                    and id(stem) in shadowed and id(stem) not in built
                     and not (_names_module(qualifies,
                                            places.get(id(node), (MODULE_LEVEL, None))[0],
                                            through, None) & owners
@@ -6170,7 +6275,7 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                                           through)
                              >= _nearest(taken_at,
                                          places.get(id(node), (MODULE_LEVEL, None))[0],
-                                         through))):
+                                          stem.id))):
                 # The scope binds that qualifier itself, so neither an imported module nor an
                 # instance bound at module level under the same spelling is what this reads.
                 # Unless what binds it is an import of the module that owns the answer: a
@@ -6218,6 +6323,23 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     return spelled
 
 
+def _opens_here(shadowed_at, line, scope):
+    """Whether open is still the builtin at this point in the module.
+
+    A module-level binding of open shadows the builtin from ITS OWN LINE onward. A statement
+    written above it already ran with the builtin, so erasing it for the whole file loses a
+    handle the module really did open -- which is a different question from WHICH SCOPE owns a
+    name, and is why it is decided here rather than by the nearest-binding rule.
+
+    Inside a function the answer depends on when the function is called, and that is not a fact
+    about this text. There the binding shadows throughout: the direction that costs a place
+    rather than inventing one.
+    """
+    if shadowed_at is None:
+        return True
+    return scope == MODULE_LEVEL and line < shadowed_at
+
+
 def _opener_spellings(tree, places):
     """Every spelling this source can call the builtin opener by, derived from its own imports.
 
@@ -6248,7 +6370,7 @@ def _opener_spellings(tree, places):
             continue
         if held is builtins.open:
             holders.add(module_name)
-    bare, dotted = {named}, set()
+    bare, dotted, holders_at = {named}, set(), {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             if not node.level and node.module in holders:
@@ -6266,6 +6388,11 @@ def _opener_spellings(tree, places):
             for alias in node.names:
                 if alias.name in holders:
                     dotted.add((alias.asname or alias.name) + "." + named)
+                    # Which scope wrote the import, so a nearer binding of the module's own
+                    # name can take it back.
+                    holders_at.setdefault(
+                        places.get(id(node), (MODULE_LEVEL, None))[0], set()).add(
+                            (alias.asname or alias.name).split(".")[0])
     # fopen = open is the same rebinding written as an assignment, and b = fopen is one more
     # step of it, so the statements are followed until they stop adding names. A function may
     # write one too, and the scope it wrote it in is kept: the name is then bound there rather
@@ -6295,7 +6422,7 @@ def _opener_spellings(tree, places):
                 if target.id not in rebound.get(where, ()):
                     rebound.setdefault(where, set()).add(target.id)
                     growing = True
-    return frozenset(bare), frozenset(dotted), rebound
+    return frozenset(bare), frozenset(dotted), rebound, holders_at
 
 
 def _opener_call(func, bare, dotted):
@@ -6317,7 +6444,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
     """
     places, known, where_from, growing = _places(tree), set(handles), {}, True
     declared = frozenset(handles)
-    bare, dotted, rebound = openers or _opener_spellings(tree, places)
+    bare, dotted, rebound, holders_at = openers or _opener_spellings(tree, places)
     taken_at = taken_at or {}
     # Once, not per node: which defaults any call actually leaves to the default.
     left_to_the_default = _default_applies(tree, places)
@@ -6344,14 +6471,23 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
                     # shadowed the builtin: what that call answers with is not this file.
                     # Unless the binding IS the opener: fopen = open written in a function
                     # binds the name there, and what it holds is still this file's opener.
-                    if not opens_a_file or (id(opener) in shadowed
+                    if not _opens_here(opens_a_file, expression.lineno, scope) or (
+                                            id(opener) in shadowed
                                             and _nearest(rebound, scope, opener.id)
                                             < _nearest(taken_at, scope, opener.id)):
                         return False
                 elif (_dotted(opener) or "") in dotted:
                     # io.open is the builtin under its module's name rather than an object's
                     # own method, so the module is not one of the things handed to it.
-                    pass
+                    # Unless a nearer binding took the module's name: def helper(io) makes io
+                    # whatever the caller passed, and io.open is then that object's method.
+                    stem = opener.value
+                    while isinstance(stem, ast.Attribute):
+                        stem = stem.value
+                    if (isinstance(stem, ast.Name) and id(stem) in shadowed
+                            and _nearest(holders_at, scope, stem.id)
+                            < _nearest(taken_at, scope, stem.id)):
+                        return False
                 elif not (isinstance(opener, ast.Attribute)
                           and reaches(opener.value, scope)):
                     # innocent.open is that object's own method. Only a handle's own open --
@@ -6398,7 +6534,8 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                     astray=(), built=(), opens_a_file=True, openers=None, places=None,
                     reader_at=None, taken_at=None, derived_at=None):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
-    bare, dotted, rebound = openers or (frozenset({builtins.open.__name__}), frozenset(), {})
+    bare, dotted, rebound, holders_at = openers or (
+        frozenset({builtins.open.__name__}), frozenset(), {}, {})
     places = places or {}
     reader_at, taken_at = reader_at or {}, taken_at or {}
     derived_at = derived_at or {}
@@ -6491,7 +6628,8 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             # what this recovers is the helper handing the text ON to its caller.
             if (isinstance(node.func, ast.Attribute) and node.func.attr.startswith("read")
                     and isinstance(node.func.value, ast.Call)
-                    and opens_a_file
+                    and _opens_here(opens_a_file, node.lineno,
+                                    places.get(id(node), (MODULE_LEVEL, None))[0])
                     and _opener_call(node.func.value.func, bare, dotted)):
                 # HERE.open().read() names the handle as the receiver of open rather than as
                 # its argument, and it is the same read either way.
@@ -6510,7 +6648,16 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 elif (_dotted(opener) or "") in dotted:
                     # io.open is the builtin under its module's name: the module is not a
                     # handle, and what it was handed is all in the arguments.
-                    pass
+                    # Unless a nearer binding took the module's name, the same way a bare
+                    # alias loses to a parameter written closer to the read.
+                    stem = opener.value
+                    while isinstance(stem, ast.Attribute):
+                        stem = stem.value
+                    at = places.get(id(stem), (MODULE_LEVEL, None))[0]
+                    if (isinstance(stem, ast.Name) and id(stem) in shadowed
+                            and _nearest(holders_at, at, stem.id)
+                            < _nearest(taken_at, at, stem.id)):
+                        return None
                 elif not (isinstance(opener, ast.Attribute)
                           and spelled(opener.value, klass)):
                     # Only a handle's own open opens the file this module asks about.
@@ -6692,13 +6839,15 @@ def source_text_reached(source):
     shadowed, taken_at = _shadowing_names(tree)
     # Whether open is the builtin here. A module that defines its own open has shadowed it, and
     # what that one answers with is a question about the run rather than a file's text.
-    opens_a_file = not any(
-        (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-         and statement.name == "open")
-        or any(inner.id == "open"
-               for target in (_assigned(statement) or ((), None))[0]
-               for inner in ast.walk(target) if isinstance(inner, ast.Name))
-        for statement in getattr(tree, "body", ()))
+    # The LINE the module first binds open, rather than a flag for the whole file: a read
+    # written above that line took the builtin and really did open the file.
+    takes_the_name = [statement.lineno for statement in getattr(tree, "body", ())
+                      if (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                 ast.ClassDef)) and statement.name == "open")
+                      or any(inner.id == "open"
+                             for target in (_assigned(statement) or ((), None))[0]
+                             for inner in ast.walk(target) if isinstance(inner, ast.Name))]
+    opens_a_file = min(takes_the_name) if takes_the_name else None
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
     openers = _opener_spellings(tree, places)
@@ -8427,6 +8576,7 @@ HANDED = {
     "_handle_names": NOTHING,
     "_opener_spellings": NOTHING,
     "_opener_call": NOTHING,
+    "_opens_here": NOTHING,
     "refusal_spellings": NOTHING,
     "source_spellings": NOTHING,
     "refusals_reached": NOTHING,
