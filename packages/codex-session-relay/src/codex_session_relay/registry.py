@@ -272,12 +272,19 @@ class Registry:
                 # replacement exists the answer for the predecessor is no - so archiving it
                 # afterwards would skip releasing the issue scope and the successor would
                 # collide with a binding nobody let go of.
+                outgoing_before = db.execute(
+                    "SELECT status FROM relationships WHERE relationship_id = ?",
+                    (supersedes,),
+                ).fetchone()
                 db.execute(
                     "UPDATE relationships SET superseded_by = ?, status = 'archived',"
                     " updated_at = ? WHERE relationship_id = ?",
                     (rid, now, supersedes),
                 )
-                self.linkage.apply_relationship_status_in(db, supersedes, "archived")
+                self.linkage.apply_relationship_status_in(
+                    db, supersedes, "archived",
+                    previous_status=(outgoing_before["status"]
+                                     if outgoing_before is not None else None))
             db.execute(
                 "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id,"
                 " parent_host_id, parent_cwd, parent_cxc_session, child_task_id, child_host_id,"
@@ -532,6 +539,11 @@ class Registry:
         self.get(rid)
         now = self.clock.iso()
         with self.store.transaction() as db:
+            # Read BEFORE the write. The lower level has to know whether this relationship was
+            # still live, and after the UPDATE below that fact is gone.
+            before = db.execute(
+                "SELECT status FROM relationships WHERE relationship_id = ?", (rid,)
+            ).fetchone()
             db.execute(
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (status, now, rid),
@@ -539,7 +551,9 @@ class Registry:
             # The lower level moves with the assignment, in the same transaction. A no-op for
             # a relationship with no recorded project, which is every relationship registered
             # without one.
-            self.linkage.apply_relationship_status_in(db, rid, status)
+            self.linkage.apply_relationship_status_in(
+                db, rid, status,
+                previous_status=before["status"] if before is not None else None)
             self.store.journal("status_changed", rid, {"status": status, "actor": actor}, at=now)
         return self.get(rid)
 
@@ -621,14 +635,15 @@ class Registry:
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (ACTIVE, now, rid),
             )
-            self.linkage.apply_relationship_status_in(db, rid, ACTIVE)
+            self.linkage.apply_relationship_status_in(
+                db, rid, ACTIVE, previous_status=row["status"])
             self.store.journal(
                 "status_changed", rid, {"status": ACTIVE, "actor": actor}, at=now
             )
         return self.get(rid)
 
     def supersede(self, old_rid: str, *, new_relationship_id: str) -> None:
-        self.get(old_rid)
+        before = self.get(old_rid)["status"]
         now = self.clock.iso()
         with self.store.transaction() as db:
             db.execute(
@@ -636,7 +651,8 @@ class Registry:
                 " WHERE relationship_id = ?",
                 (new_relationship_id, now, old_rid),
             )
-            self.linkage.apply_relationship_status_in(db, old_rid, "archived")
+            self.linkage.apply_relationship_status_in(
+                db, old_rid, "archived", previous_status=before)
             self.store.journal("superseded", old_rid, {"by": new_relationship_id}, at=now)
 
     # ---------------------------------------------------------------- records

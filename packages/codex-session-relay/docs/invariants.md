@@ -235,6 +235,7 @@ they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
 | I-161 | A settled directive is not re-decided; restating the same disposition converges and a different one refuses | `linkage.settle_directive` → `link_conflict` | implemented |
 | I-162 | A read reports ambiguity rather than choosing a row | `linkage.up` and `counterpart` answer `ambiguous` with the candidates | implemented |
 | I-163 | A lookup failure is never reported as absence or as completion | `up`, `down` and `counterpart` carry `readable` and a `detail`, and answer `unreadable` rather than empty | implemented |
+| I-164 | A relationship releases its issue scope once, when it stops being live, so a later write from an already-dead row cannot take a scope claimed directly in the meantime | `linkage.apply_relationship_status_in` compares the status the relationship held BEFORE the write | implemented |
 
 ## Recorded limits, so a row above is not read as more than it is
 

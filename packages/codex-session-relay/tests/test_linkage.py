@@ -1446,5 +1446,31 @@ class TheTenthRoundFoundTheseToo(LinkageTestCase):
             directive["directiveId"], "chosen", decided_by="a replaying caller")
         self.assertEqual(again["decidedBy"], "the parent that ruled")
 
+    def test_a_directly_rebound_child_scope_survives_a_late_relationship_write(self):
+        """The guard read "no live assignment anywhere" as "the scope is still mine".
+
+        Archiving an assignment frees its issue scope, and bind_scope can then claim it
+        directly - with the same child, which derives the SAME binding id. A direct claim
+        writes no relationship row, so _owns_its_issue found nothing live and answered that
+        the archived relationship still owned the scope; repeating the status write on that
+        dead row then archived the new standalone claim and owner(issue) went back to None.
+
+        A relationship releases its issue scope once, when it stops being live.
+        """
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "archived", actor="test")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, HOST))
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+        self.registry.set_status(rid, "cancelled", actor="test")
+        held = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertIsNotNone(
+            held, "a late write from an already-released relationship took the new claim")
+        self.assertEqual(held["taskId"], CHILD)
+
 if __name__ == "__main__":
     unittest.main()

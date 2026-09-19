@@ -797,12 +797,17 @@ class Linkage:
             if issue_key else None,
         }
 
-    def apply_relationship_status_in(self, db, relationship_id, status):
+    def apply_relationship_status_in(self, db, relationship_id, status,
+                                     *, previous_status=None):
         """Move an assignment's lower level with the assignment itself.
 
         Called from registry._write_status, from resume's write transaction and from
         supersede's - not from set_status, which delegates and owns no transaction. A
         relationship and its lower level therefore move together or not at all.
+
+        previous_status is what the relationship was BEFORE this write. The caller has to
+        supply it because by the time this runs the row already says the new status, and a
+        relationship that had already stopped being live has already given up its scope.
 
         An explicit NO-OP when the relationship has no relationship_scope row. That is what
         keeps every relationship registered without a project exactly as it was, which is every
@@ -838,6 +843,15 @@ class Linkage:
         # paused into archived released the issue scope while registry still reported the
         # child as responsible, so one store answered two ways about the same assignment.
         lower = status if status in LIVE else ARCHIVED
+        if lower != ACTIVE and previous_status is not None and previous_status not in LIVE:
+            # Already released. A relationship gives up its issue scope ONCE, at the moment it
+            # stops being live, and a later deactivation of an already-dead row must not reach
+            # the binding again. In between, that scope can have been claimed directly through
+            # bind_scope by the same child - which derives the SAME binding id - and a second
+            # archive from a relationship holding nothing would take the new claim down.
+            # _owns_its_issue cannot see this: a direct claim writes no relationship row for it
+            # to find, and "no live assignment anywhere" is exactly what it reads as its own.
+            return "released"
         if lower != ACTIVE and not self._owns_its_issue(
                 db, relationship_id, row["issue_key"]):
             # Deactivating, and this relationship no longer owns the scope. A superseded one
