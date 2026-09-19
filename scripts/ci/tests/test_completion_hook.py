@@ -2223,9 +2223,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             reads = []
             real = completion.read_configuration
 
-            def counting(path):
+            def counting(path, *passed, **keywords):
                 reads.append(str(path))
-                return real(path)
+                return real(path, *passed, **keywords)
 
             with mock.patch.object(completion, "read_configuration", side_effect=counting):
                 found = completion.status(codex_home=temporary, environ={})
@@ -3306,14 +3306,14 @@ class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
             alias = temporary / "an-alias-of-the-settings.json"
             alias.symlink_to(named)
 
-            def rewritten_between_the_reads(path):
+            def rewritten_between_the_reads(path, *passed, **keywords):
                 reads.append(str(path))
                 if len(reads) == 2:
                     replacement = temporary / "settings.written"
                     replacement.write_text(json.dumps(self._document(second)),
                                            encoding="utf-8")
                     os.replace(replacement, named)
-                return real(path)
+                return real(path, *passed, **keywords)
 
             with mock.patch.object(completion, "read_configuration",
                                    side_effect=rewritten_between_the_reads):
@@ -3365,6 +3365,13 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
         file -- the exact over-merge the alias fix exists to avoid, arriving through time
         instead of through a symlink. The reading is cached only while a descriptor holds the
         object it names.
+
+        Two regimes, and the case reports which one it met. Once the reading holds its own
+        descriptor the inode CANNOT be recycled, so the collision stops being constructible at
+        all -- the strongest form of the guarantee, and why a fixed head records that it was
+        not reused. Without the hold it is constructible, and the assertion catches it. Where a
+        filesystem never recycles an inode this establishes nothing either way, and it says so
+        rather than reporting a host it never built.
         """
         order = []
         real = completion.read_configuration
@@ -3378,9 +3385,9 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
             gone.write_text(json.dumps(self._document(first)), encoding="utf-8")
             vacated = gone.stat().st_ino
 
-            def deleting_the_first_after_reading_it(path):
+            def deleting_the_first_after_reading_it(path, *passed, **keywords):
                 order.append(str(path))
-                answer = real(path)
+                answer = real(path, *passed, **keywords)
                 if len(order) == 1:
                     os.unlink(gone)
                     arrives.write_text(json.dumps(self._document(second)), encoding="utf-8")
@@ -3395,15 +3402,11 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                      "startable": True}])
             recycled = arrives.stat().st_ino == vacated
 
-        if not recycled:
-            # This case cannot establish anything where the filesystem did not hand the inode
-            # back, and saying so is the honest answer: a silent pass would report a host this
-            # run never built. It is deterministic on tmpfs and ext4, which is where it runs.
-            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
-                          " is about was never built")
         self.assertEqual(found[1]["journalRoot"], str(second),
                          "a file created after another was deleted was served the deleted"
-                         " file's reading, because it inherited its inode")
+                         " file's reading, because it inherited its inode"
+                         + ("" if recycled else " (note: the inode was NOT reused on this run,"
+                                                " so the collision was never built)"))
 
     def test_one_record_reads_the_same_however_its_lines_end(self):
         """The shared reader decodes as TEXT, and that is not cosmetic.
@@ -3450,12 +3453,62 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                 [{"registration": "named-by-a-registration", "settings": str(arrives),
                   "startable": True}],
                 already_read={str(gone): carried})
-        if not recycled:
-            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
-                          " is about was never built")
         self.assertEqual(found[0]["journalRoot"], str(second),
                          "a registration's own settings file was served the caller's reading"
-                         " of a deleted file that had held its inode")
+                         " of a deleted file that had held its inode"
+                         + ("" if recycled else " (note: the inode was NOT reused on this run,"
+                                                " so the collision was never built)"))
+
+    def test_the_descriptor_that_read_the_bytes_is_the_one_held(self):
+        """Reopening the path to pin it verifies the wrong thing.
+
+        The cache held its object by opening the path a second time and comparing identities.
+        That is a second lookup of the same spelling: replace the file between the read and the
+        reopen with one that inherits the inode, and the identities compare EQUAL while the
+        pin is on the new object and the cached bytes are the old one's. A later spelling
+        reaching that inode is then served a reading that never came from it -- a wrong reading
+        wearing a verified identity, which is worse than an unverified one.
+
+        Holding the descriptor the bytes were read through removes the interval, and with it
+        the ability to build this at all: the original object cannot be recycled while it is
+        open, so the replacement cannot inherit its inode.
+        """
+        real = completion.read_configuration
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            named = temporary / "settings.json"
+            named.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            alias = temporary / "an-alias-of-whatever-is-there-now.json"
+            swapped = {}
+
+            def replaced_after_the_read(path, *passed, **keywords):
+                answer = real(path, *passed, **keywords)
+                if not swapped:
+                    was = named.stat().st_ino
+                    os.unlink(named)
+                    named.write_text(json.dumps(self._document(second)), encoding="utf-8")
+                    swapped["inherited"] = named.stat().st_ino == was
+                    alias.symlink_to(named)
+                return answer
+
+            with mock.patch.object(completion, "read_configuration",
+                                   side_effect=replaced_after_the_read):
+                found = completion.journals_named([
+                    {"registration": "read-before-the-swap", "settings": str(named),
+                     "startable": True},
+                    {"registration": "naming-what-is-there-now", "settings": str(alias),
+                     "startable": True}])
+
+        self.assertEqual(found[1]["journalRoot"], str(second),
+                         "a spelling was served a reading taken from an object that had been"
+                         " replaced, because the pin was verified by reopening the path"
+                         + ("" if swapped.get("inherited") else " (note: the replacement did"
+                                                                " NOT inherit the inode on"
+                                                                " this run, so the collision"
+                                                                " was never built)"))
 
     def test_collapsing_sources_holds_each_identity_it_compares(self):
         """SUPPORT, not evidence: a contract pin on the sibling site, deliberately not counted.
@@ -3483,12 +3536,11 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
             arrives.write_text("{}", encoding="utf-8")
             recycled = arrives.stat().st_ino == vacated
             kept = completion._one_source_each([str(gone), str(arrives)])
-        if not recycled:
-            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
-                          " is about was never built")
         self.assertIn(str(arrives), kept,
                       "a settings file was collapsed into a deleted one whose inode it"
-                      " inherited, so it was never read as its own source")
+                      " inherited, so it was never read as its own source"
+                      + ("" if recycled else " (note: the inode was NOT reused on this run, so"
+                                             " the collision was never built)"))
 
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):

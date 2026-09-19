@@ -162,7 +162,7 @@ class Reading:
     """A value and the state of the attempt that produced it."""
 
     def __init__(self, value=None, state=PRESENT, *, exception=None, source=None,
-                 at=None, detail=None, field=None, identity=None):
+                 at=None, detail=None, field=None, identity=None, holder=None):
         self.value = value
         self.state = state
         self.exception = exception
@@ -177,6 +177,13 @@ class Reading:
         # never came from, which is a wrong reading rather than a missing one. None wherever it
         # was not established, and a None must never compare equal to anything.
         self.identity = identity
+        # A descriptor still open on the very object these bytes were read through, for a
+        # caller that will use 'identity' as a KEY. An identity stops being one the moment the
+        # object can be recycled, and reopening the path to hold it is a second lookup: if the
+        # path was replaced in between and the replacement inherited the inode, the check
+        # passes while the caller pins the new object and keeps the old one's bytes. Only the
+        # original descriptor closes that. Whoever asked for it closes it; release() is that.
+        self.holder = holder
 
     @property
     def ok(self):
@@ -295,18 +302,43 @@ def observe(path, what):
     return None
 
 
-def read_json(path, what, *, absent=None, shape=None):
+def release(found):
+    """Close a descriptor a reading is holding, once its identity is no longer a key."""
+    holder = getattr(found, "holder", None)
+    if holder is None:
+        return
+    found.holder = None
+    try:
+        os.close(holder)
+    except OSError:
+        pass
+
+
+def _held(opened):
+    """A private duplicate of the descriptor the bytes came through, or None."""
+    try:
+        return os.dup(opened.fileno())
+    except (OSError, ValueError):
+        return None
+
+
+def read_json(path, what, *, absent=None, shape=None, hold=False):
     """Read one JSON record, returning a Reading rather than a sentinel.
 
     'absent' is the value an established absence carries, so a caller can start from an empty
     record without that being mistaken for one it read. 'shape' is called with the parsed
     value and may raise to reject a shape the caller cannot use.
+
+    'hold' keeps a descriptor open on the object that was read, for a caller that will use the
+    reading's identity as a cache key. It must be released, and only a caller that asked for it
+    has anything to release.
     """
     settled = observe(path, what)
     if settled is not None:
         if settled.state == ABSENT:
             settled.value = absent() if callable(absent) else absent
         return settled
+    holder = None
     try:
         with region(path, what):
             # Opened ONCE, and the identity taken from that descriptor. Reading the bytes and
@@ -322,11 +354,19 @@ def read_json(path, what, *, absent=None, shape=None):
             with open(str(path), "r", encoding="utf-8") as opened:
                 identity = descriptor_identity(opened)
                 value = json.loads(opened.read())
+                # Taken last, inside the open, so nothing that raises above it can leave a
+                # descriptor behind for a reading this call never returns.
+                holder = _held(opened) if hold else None
             if shape is not None:
                 shape(value)
     except Refused as refused:
+        if holder is not None:
+            try:
+                os.close(holder)
+            except OSError:
+                pass
         return refused.reading
-    return Reading(value=value, state=PRESENT, source=path, identity=identity)
+    return Reading(value=value, state=PRESENT, source=path, identity=identity, holder=holder)
 
 
 def read_text(path, what, *, absent=""):

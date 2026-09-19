@@ -498,14 +498,17 @@ def complaints(document):
     return found
 
 
-def read_configuration(path):
+def read_configuration(path, hold=False):
     """Read the settings as a reading, so absent, unreadable and unreachable stay three answers.
 
     The shape is checked outside the reading region on purpose. Handing the shape check to
     read_json would report a readable file that says the wrong thing as an unreadable one, and
     an operator would go looking for a permission problem that is not there.
+
+    'hold' is passed through for a caller that will use the reading's identity as a cache key,
+    and that caller releases it.
     """
-    found = reading.read_json(path, "the completion hook configuration")
+    found = reading.read_json(path, "the completion hook configuration", hold=hold)
     if not found.usable:
         return None, CONFIG_OUTCOMES[found.state], found.detail, found
     if found.state == reading.ABSENT:
@@ -1688,8 +1691,8 @@ def journals_named(registrations, already_read=None):
         # descriptor it was read through was closed before this call began, so its identity is
         # exactly this recyclable too, and seeding it unheld left one entry skipping the rule
         # every other entry follows.
-        for spelling, taken in (already_read or {}).items():
-            _keep(spelling, taken, read_by, held)
+        for taken in (already_read or {}).values():
+            _keep(taken, read_by)
         _read_named(registrations, already_read, read_by, held, found, scanned, aliases)
     finally:
         for descriptor in held:
@@ -1775,37 +1778,31 @@ def _journal_answer(cell):
     return answer
 
 
-def _keep(path, taken, read_by, held):
-    """Cache this reading only while a descriptor holds the object it was read from.
+def _keep(taken, read_by, held=None):
+    """Cache this reading only while a descriptor holds the object it was read THROUGH.
 
     The identity read_json reports is true of the bytes it returned. It stops being a usable
     KEY the moment that inode can be recycled: a settings file deleted after it was read hands
     its (device, inode) to whatever is created next, and a later spelling stat-ing to that pair
-    would be served the deleted file's reading. Opening it here pins it for the rest of this
-    call.
+    would be served the deleted file's reading.
 
-    The descriptor is checked against the identity the READING carries, because the open is a
-    second lookup of the same spelling: if the path moved in between, this pins some other
-    object and establishes nothing about the one that was read. Not caching is the cost then,
-    and a second reading of one file is cheaper than one file's reading served for another's --
-    the same direction the journal aliasing takes.
+    Reopening the path to pin it is NOT enough, and that is the whole reason the reading
+    carries its own descriptor. The reopen is a second lookup of the same spelling: replace the
+    file between the read and the reopen with one that inherits the inode, and the identities
+    compare equal while this pins the NEW object and caches the OLD one's bytes -- a wrong
+    reading dressed as a verified one. The descriptor the bytes came through cannot be
+    retargeted, so there is no interval left.
+
+    'held' is the list of descriptors this call will close. A reading handed in by the caller
+    is held by the CALLER for longer than this call lives, so it is cached without being
+    adopted.
     """
     identity = getattr(taken[3], "identity", None)
-    if identity is None:
+    holder = getattr(taken[3], "holder", None)
+    if identity is None or holder is None:
         return
-    try:
-        # NONBLOCK so a named pipe left at a settings path cannot stall this command waiting
-        # for a writer. On a regular file it changes nothing.
-        descriptor = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
-    except OSError:
-        return
-    if reading.descriptor_identity(descriptor) != identity:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-        return
-    held.append(descriptor)
+    if held is not None:
+        held.append(holder)
     read_by[identity] = taken
 
 
@@ -1821,8 +1818,8 @@ def _read_named(registrations, already_read, read_by, held, found, scanned, alia
             mine = reading.path_identity(path)
             taken = read_by.get(mine) if mine is not None else None
         if taken is None:
-            taken = read_configuration(path)
-            _keep(path, taken, read_by, held)
+            taken = read_configuration(path, hold=True)
+            _keep(taken, read_by, held)
         config, refused, detail, read_back = taken
         entry = {"registration": registration.get("registration"),
                  "startable": registration.get("startable"),
@@ -1953,7 +1950,12 @@ def status(codex_home=None, environ=None, event=EVENT):
         path = _settled(carried[0]) if carried else configuration_path(home, environ)
         source = ("the registered command" if carried
                   else "this command's own resolution; no registration named one")
-        config, failed, detail, found = read_configuration(path)
+        # Held, because this reading's identity is about to be a cache key in journals_named:
+        # one file read once has to answer both the configuration cell and the entry any
+        # registration naming that same file gets. An identity released before it is used as a
+        # key is recyclable, and a file deleted in between would hand it to whatever is created
+        # next. Released immediately after that call, which is the only thing that uses it.
+        config, failed, detail, found = read_configuration(path, hold=True)
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
@@ -2054,6 +2056,8 @@ def status(codex_home=None, environ=None, event=EVENT):
         # The reading the configuration cell above is built from, so one file read once answers
         # both. 'found' is None in the branches where no file was read at all.
         already_read=({str(path): (config, failed, detail, found)} if found is not None else {}))
+    # Its identity has stopped being a key, so the object no longer has to be held.
+    reading.release(found)
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
                          configurationSource=source)
