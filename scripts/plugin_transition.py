@@ -92,6 +92,9 @@ def cmd_transition(args):
           "destinationFrom": host.get("destinationDerivedFrom"),
           "preserved": steps.preserved_paths(host),
           "windows": [
+              "between the settings retire and the hook standdown the old registration still"
+              " fires and finds no settings to read, so it releases the turn without recording"
+              " anything for that Stop",
               "between the hook standdown and the new settings no completion hook fires, so no"
               " observe-mode record is written for a Stop in that window",
               "between the table removal and the plugin record a session that starts finds no"

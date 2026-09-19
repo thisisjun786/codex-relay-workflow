@@ -1905,6 +1905,63 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(victim.is_symlink())
         self.assertEqual(victim.resolve(), host.root.resolve())
 
+    def test_an_entry_naming_the_packaged_adapter_appended_late_is_reported(self):
+        """The recheck asked about our own registrations only, so the other half went unseen."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        self.assertEqual(host.transition("--apply")[0], 0)
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        document = host.hooks_document()
+        document["hooks"].setdefault("Stop", []).append({"hooks": [{
+            "type": "command",
+            "command": str(host.version / "bin" / "crw-completion-hook"),
+        }]})
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        answer = steps.hook_recheck(snapshot)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
+        self.assertIn("naming the packaged adapter or the destination", answer["detail"])
+        self.assertEqual(host.hooks_document(), document)
+
+    def test_a_standdown_that_refuses_puts_the_settings_back(self):
+        """The retire happens for the standdown; if that will not happen, it is undone."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        # A foreign hook appended into the same matcher group after the snapshot: preflight saw
+        # nothing to renumber, and the standdown re-derives it and asks for consent it was never
+        # given.
+        document = host.hooks_document()
+        document["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "/bin/true"})
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        results = steps.transition(snapshot, {"accept_hook_renumbering": False,
+                                              "accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook standdown"], "refused", json.dumps(results)[:800])
+        standdown = [item for item in results if item["step"] == "hook standdown"][0]
+        # The host first: the document the still-registered adapter reads has to be back at its
+        # own path, and the receipt saying so comes after.
+        self.assertEqual(host.settings(), settings, json.dumps(standdown)[:600])
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+        self.assertTrue(standdown.get("settingsRestored"), json.dumps(standdown)[:600])
+        self.assertEqual(host.hooks_document(), document)
+
+    def test_the_receipt_prints_all_three_windows(self):
+        """The documentation promises three; the receipt listed two."""
+        host = self.ready()
+        code, answer = host.transition()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(answer["windows"]), 3, json.dumps(answer["windows"]))
+        self.assertTrue([item for item in answer["windows"]
+                         if "releases the turn without recording" in item],
+                        json.dumps(answer["windows"]))
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

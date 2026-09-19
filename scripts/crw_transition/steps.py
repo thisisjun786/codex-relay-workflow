@@ -1105,7 +1105,7 @@ def hook_recheck(host):
     it: the file is read again at the end, and a registration that reappeared is named.
     """
     again = inventory.read_hook(host["codexHome"], host["hook"]["event"],
-                               repo_root=host["repoRoot"])
+                               destination=host.get("destination"), repo_root=host["repoRoot"])
     if again["reading"] is not None:
         return _answer("hook recheck", REFUSED,
                        "the hook file could not be read back, so whether a registration reappeared"
@@ -1118,8 +1118,48 @@ def hook_recheck(host):
                        " plugin declaration would run on every " + str(host["hook"]["event"])
                        + ". Rerun this transition to remove it",
                        identities=[item["identity"] for item in again["entries"]])
+    if again["unrecognised"]:
+        # The other half of the same question. preflight refuses on an entry naming the packaged
+        # adapter or the destination, and one appended while this ran passed unseen: this read
+        # looked only at the registrations this repository writes, so the run reported success
+        # with that entry firing beside the plugin's declaration on every Stop.
+        return _answer("hook recheck", REFUSED,
+                       "a registration naming the packaged adapter or the destination is in the"
+                       " hook file ("
+                       + ", ".join(item["identity"] for item in again["unrecognised"])
+                       + "), and this transition did not write it. It and the plugin declaration"
+                       " would both run on every " + str(host["hook"]["event"])
+                       + ". Decide what happens to it by hand",
+                       identities=[item["identity"] for item in again["unrecognised"]])
     return _answer("hook recheck", SETTLED,
                    "no registration of this adapter is in the hook file")
+
+
+def _restore_retired(results):
+    """Put the settings back when the standdown they were retired for refused.
+
+    The retire goes first on purpose: a custom settings path lives only in the hook command, so
+    removing the command first leaves a file the next run cannot rediscover. The cost is this
+    case -- a hook file that changed in between makes the standdown ask a consent question again
+    and refuse, with the settings already archived, so the still-registered adapter releases in
+    silence and the next run needs a flag the operator has not agreed to yet. The archive is moved
+    back. Never over a file that appeared at the original path meanwhile: that one belongs to
+    whoever wrote it, and the archive stays where the recovery can still find it.
+    """
+    retire = next((item for item in results if item["step"] == "settings retire"), None)
+    restored, kept = [], []
+    for moved in (retire or {}).get("retired") or []:
+        origin, archive = Path(moved["from"]), Path(moved["to"])
+        if origin.exists() or not archive.is_file():
+            kept.append(str(archive))
+            continue
+        try:
+            os.replace(str(archive), str(origin))
+            restored.append(str(origin))
+        except OSError as error:
+            kept.append(str(archive) + " (" + type(error).__name__ + ": " + str(error) + ")")
+    return restored, kept
+
 
 def transition(host, options, *, apply=False):
     """Run the steps in order, stopping at the first refusal."""
@@ -1177,6 +1217,19 @@ def transition(host, options, *, apply=False):
                 lock.__exit__(None, None, None)
                 lock = None
             if answer["outcome"] == REFUSED:
+                if name == "hook standdown":
+                    # The one refusal that can arrive with something already taken away. The
+                    # settings were retired for this standdown; if it will not happen, they go
+                    # back, so the still-registered adapter keeps reading the document it was
+                    # installed with instead of releasing in silence until an operator agrees to
+                    # a consent question this run raised.
+                    restored, kept = _restore_retired(results)
+                    answer["settingsRestored"] = restored
+                    answer["settingsLeftArchived"] = kept
+                    if restored:
+                        answer["detail"] = str(answer["detail"]) + ". The settings this run had"
+                        answer["detail"] += " already archived were put back at " + ", ".join(
+                            restored) + ", so the registration still there keeps working"
                 remaining = [n for n, _ in ORDER][
                     [n for n, _ in ORDER].index(name) + 1:]
                 results += [_answer(n, NOT_REACHED, "an earlier step refused") for n in remaining]
