@@ -4708,7 +4708,10 @@ class FortyFifthHostedRound(TrialCase):
                       # Absolute only once something takes the whitespace off, which the relay
                       # does not do. A tidied copy passing the check is a check about a value
                       # nothing will use.
-                      [" /leading-space"], ["\t/leading-tab"], ["  "]):
+                      [" /leading-space"], ["\t/leading-tab"], ["  "],
+                      # Absolute, and holding a character no artifact path may hold, so no path
+                      # a manifest can carry begins with it.
+                      ["/repo\x00"], ["/repo/~x"], ["/good", "/repo\x00"]):
             with self.subTest(roots=roots):
                 world = World(self.base)
                 self.addCleanup(world.stop)
@@ -4823,10 +4826,46 @@ class FortyFifthHostedRound(TrialCase):
         self.addCleanup(setattr, startup, "time", time)
         document = self.world.preflight()
         gate = document["supervisorStillRunning"]
-        self.assertTrue(gate["advanceRequired"],
+        self.assertTrue(gate["advanced"],
                         "a corrected clock excused the counter from having to move")
-        self.assertGreaterEqual(gate["elapsedSeconds"],
-                                self.world.record["supervisor"]["witnessAdvanceSeconds"])
+        # An interval cannot be negative. Measured on a wall clock that stepped backwards, this
+        # is exactly as negative as the correction was large.
+        self.assertGreaterEqual(gate["elapsedSeconds"], 0)
+
+    def test_a_supervisor_that_hangs_before_its_interval_elapses_is_caught(self):
+        # The counter had to move only once the declared interval had passed, and a pass that
+        # finished sooner asked nothing of it. A supervisor that hung the moment the first
+        # reading ended is alive, detached and in a running state, so every other reading at the
+        # gate said it was there while it polled nothing.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        hung = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                start_new_session=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(hung.wait)
+        self.addCleanup(hung.terminate)
+        witness = self.world.trial / "supervisor.jsonl"
+
+        def write(lines):
+            witness.write_text("".join(json.dumps(line) + "\n" for line in lines),
+                               encoding="utf-8")
+
+        # It advanced while the first reading watched, and stopped there. Longer than the rest of
+        # the pass takes, so nothing after that reading would have required it to move again.
+        write([{"pid": hung.pid, "progress": 1}])
+        self.world.record["supervisor"]["pid"] = hung.pid
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 2
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 0.05
+        self.world.flush()
+        document = self.world.preflight_with(
+            lambda seconds: write([{"pid": hung.pid, "progress": 1},
+                                   {"pid": hung.pid, "progress": 2}]))
+        self.assertEqual(cells_of(document, "processPersistence")["witnessAdvance"]["value"],
+                         VERIFIED, "the first reading did not see the advance this case needs")
+        self.assertFalse(document["readyToStart"],
+                         "a poller that stopped advancing was published as running")
+        self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
+        self.assertFalse(document["supervisorStillRunning"]["advanced"])
 
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
@@ -4906,6 +4945,25 @@ class FortyFifthHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "assignmentState")["relationship"]["value"], VERIFIED)
         self.assertFalse(document["readyToStart"],
                          "an assignment that advanced while the probes ran was published ready")
+
+    def test_an_assignment_that_advances_inside_the_confirmation_is_caught(self):
+        # The confirmation compares its own read against the one the gate was graded on, and an
+        # emit changes neither the relationship nor its participants nor its generation. A
+        # summary without the state reported no movement while the generation gained a head.
+        advanced = json.loads(json.dumps(self.world.payloads["assignment-find"]["payload"]))
+        advanced["assignments"][0]["state"] = "received"
+        advanced["assignments"][0]["nextExpectedAction"] = "daemon_delivers"
+        # Two asks happen before the confirmation's own, so the third is its.
+        self.world.payloads["after"] = {"subcommand": "assignment-find", "calls": 2,
+                                        "payloads": {"assignment-find": {"payload": advanced}}}
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "assignmentState")["relationship"]["value"], VERIFIED)
+        self.assertEqual(
+            cells_of(document, "assignmentState")["relationshipStillCurrent"]["value"], VERIFIED)
+        self.assertFalse(document["readyToStart"],
+                         "an emit inside the confirmation window was published as ready")
+        self.assertIn("readings.assignmentState.cells[4].met", document["judgmentsThatFailed"])
 
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement

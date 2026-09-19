@@ -160,6 +160,14 @@ RECEIPT_IDENTITY_REQUIRED = ("threadId", ("creation", "thread", "id"))
 RECEIPT_IDENTITY_OPTIONAL = ("taskId",)
 RECEIPT_IDENTITIES = RECEIPT_IDENTITY_REQUIRED + RECEIPT_IDENTITY_OPTIONAL
 
+# What no artifact path may contain, from the relay's own MANIFEST-CANON-01 normalisation, which
+# refuses a NUL and a tilde by name. A root holding one of these is not the beginning of any path
+# a manifest can carry.
+FORBIDDEN_IN_A_PATH = ("\x00", "~")
+
+# How often the final gate looks at the witness while it waits out that counter's own interval.
+WITNESS_POLL = 0.05
+
 # What an assignment that has not started yet answers with, from the relay's own state machine.
 # Its generation carries no head revision, so nothing has been emitted into it: that is the state
 # a trial's first dispatch goes into, and every later one means this generation already has a
@@ -531,10 +539,17 @@ def usable_root(value):
     absolute to the relay at all, so a scope that authorised nothing passed a check that said it
     authorised something. Everywhere else in this module a strip decides that a value is blank,
     which refuses more rather than accepting more; this one was deciding what the value is.
+
+    The characters are the relay's own too. An artifact path is MANIFEST-CANON-01: absolute, and
+    carrying neither a NUL nor a tilde, because normalize_declared_path refuses both by name.
+    Containment is a prefix test over whole components, so a root holding a character no artifact
+    path may hold cannot be the start of one, and it authorises nothing however absolute it
+    looks. Taken from what a path may be rather than extended one refused byte at a time.
     """
     if not isinstance(value, str) or not value:
         return False
-    return posixpath.isabs(posixpath.normpath(value))
+    root = posixpath.normpath(value)
+    return posixpath.isabs(root) and not any(c in root for c in FORBIDDEN_IN_A_PATH)
 
 
 def names_participant(payload, task, required=(), optional=()):
@@ -2403,6 +2418,11 @@ def assignment_summary(payload, entry):
     """The values the assignment cell and the gate are decided on, for comparing two reads."""
     return {"responsible": shown(field(payload, "responsibleRelationship")),
             "status": shown(field(entry, "relationshipStatus")),
+            # The state and what it waits for, because an emit arriving between two of these
+            # reads changes neither the relationship nor its participants nor its generation, and
+            # a summary without them reported no movement while the generation gained a head.
+            "state": shown(field(entry, "state")),
+            "nextExpectedAction": shown(field(entry, "nextExpectedAction")),
             "child": shown(field(entry, "childTaskId")),
             "parent": shown(field(entry, "parentTaskId")),
             "generation": shown(field(entry, "executionGeneration"))}
@@ -2894,7 +2914,7 @@ def same_file(left, right):
         return False
 
 
-def supervisor_still_running(record, relay=None):
+def supervisor_still_running(record, relay=None, sleeper=time.sleep):
     """The poller read once more, after every probe that follows the process reading.
 
     That reading is taken near the start of the pass, and the lifecycle, boundary, capability,
@@ -2917,17 +2937,32 @@ def supervisor_still_running(record, relay=None):
     pid = anchor.get("pid")
     still, theirs, caller = alive(pid), session_of(pid), os.getsid(0)
     detached = theirs is not None and theirs != caller
-    found = read_witness(anchor.get("witness"))
-    after = found.get("progress") if isinstance(found, dict) else None
-    named = isinstance(found, dict) and same(found.get("pid"), pid)
-    moved, held = witness_counter(anchor.get("progress")), witness_counter(after)
-    elapsed = time.monotonic() - anchor["at"]
+    moved = witness_counter(anchor.get("progress"))
     declared = witness_counter(anchor.get("advanceSeconds"))
-    must_advance = declared is not None and elapsed >= declared
-    if moved is None or held is None:
-        advanced = False
-    else:
-        advanced = held > moved if must_advance else held >= moved
+    deadline = anchor["at"] + (declared or 0)
+    found = read_witness(anchor.get("witness"))
+    held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+    named = isinstance(found, dict) and same(found.get("pid"), pid)
+    # Whatever is left of the interval the record declares for this counter is waited out here,
+    # for the counter rather than for the clock. A pass that finished faster than that interval
+    # had asked nothing of the counter at all, and a supervisor that hung the moment the first
+    # reading ended is alive, detached and in a running kernel state: the counter is the only
+    # thing left that says it is still working. This returns the moment it moves, so a poller
+    # ticking inside its own declared interval never waits for the whole of it.
+    #
+    # Only where the readings beside it still say there is something to wait for. A supervisor
+    # already answered gone, in the caller's own session or writing under another pid is refused
+    # on that, and waiting out its interval would spend the trial's time learning nothing.
+    while (still is True and detached and named
+           and moved is not None and not (held is not None and held > moved)
+           and time.monotonic() < deadline):
+        sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
+        found = read_witness(anchor.get("witness"))
+        held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+        named = isinstance(found, dict) and same(found.get("pid"), pid)
+    after = found.get("progress") if isinstance(found, dict) else None
+    elapsed = time.monotonic() - anchor["at"]
+    advanced = moved is not None and held is not None and held > moved
     # The intent the supervisor itself re-reads at every worker boundary, asked again for the
     # same reason everything else here is: an owner who disables the service while the pass runs
     # leaves the current worker holding the lock and no replacement after it.
@@ -2945,13 +2980,15 @@ def supervisor_still_running(record, relay=None):
     return {"passed": still is True and detached and named and advanced and serving,
             "pid": pid, "aliveAgain": still, "detached": detached, "namesTheSamePid": named,
             "progressBefore": shown(anchor.get("progress")), "progressAfter": shown(after),
-            "elapsedSeconds": round(elapsed, 3), "advanceRequired": must_advance,
+            "elapsedSeconds": round(elapsed, 3), "advanced": advanced,
+            "declaredAdvanceSeconds": declared,
             "service": shown(service),
             "readAt": stamp(),
             "detail": "a supervisor that exits while the probes run leaves every cell those"
                       " probes filled verified, so liveness and the counter are read again here."
-                      " The counter is held to the advance the record declares for it when that"
-                      " long has passed, and to not going backwards when it has not"}
+                      " The counter has to have moved across the interval the record declares for"
+                      " it, and whatever of that interval the pass did not use is waited out here"
+                      " for the counter rather than for the clock"}
 
 
 def store_still_the_same(record, relay):
@@ -3094,7 +3131,7 @@ def preflight(record, *, sleeper=time.sleep):
     store_held = store_still_the_same(record, relay)
     # Before the launcher is read, so the probe this may make is covered by that reading, and
     # after everything else, because its answer is the one that expires soonest.
-    supervisor = supervisor_still_running(record, relay)
+    supervisor = supervisor_still_running(record, relay, sleeper=sleeper)
     launcher = launcher_unchanged(record, relay)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
