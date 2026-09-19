@@ -1482,28 +1482,18 @@ def _interpreter_cell(ours):
     # executable, so an interpreter replaced or chmodded between probes gave them different
     # startability.
     probed = {}
-    # ... and one per resolved interpreter means one per FILE, not one per spelling.
-    # resource_key is lexical and refuses to resolve, so two registrations naming one
-    # interpreter through a real path and a symlink missed each other and it was probed twice:
-    # twice the executions, and two readings taken at two moments that an interpreter replaced
-    # in between can disagree about -- which is the very thing this cache was written to stop.
-    # Asked of the kernel instead, and held while the probes run so nothing can be swapped
-    # underneath them. A spelling that cannot be opened keeps its lexical key, which is one
-    # probe more rather than two answers merged on a guess.
-    held = []
-    words = [(registered_argv(one["command"]) or [None])[0] for one in ours]
-    pinned = _pin_spellings([shutil.which(word) or word for word in words if word], held)
-    try:
-        return _interpreter_probes(ours, checked, probed, pinned)
-    finally:
-        for descriptor in held:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+    # One probe per SPELLING, and deliberately not one per file. That was the right unit while
+    # this was a presence check -- a file either exists or does not, however it is named -- and
+    # it is the wrong one now that the probe RUNS the program. The kernel hands the invoked
+    # pathname to the program as argv[0], a script sees it as $0, and a dispatcher that branches
+    # on its own name answers one spelling and refuses another. Sharing one answer between two
+    # spellings of one inode published a working reading for a spelling that fails, and it also
+    # let a link retargeted after the identity was taken lend its answer to a spelling that
+    # still reaches the original. Two spellings are two invocations, so they are two questions.
+    return _interpreter_probes(ours, checked, probed)
 
 
-def _interpreter_probes(ours, checked, probed, pinned):
+def _interpreter_probes(ours, checked, probed):
     for entry in ours:
         first = (registered_argv(entry["command"]) or [None])[0]
         if not first:
@@ -1529,8 +1519,8 @@ def _interpreter_probes(ours, checked, probed, pinned):
         # for another, and the verdict differs, so the probe is shared only between the two
         # that ask the same question of it.
         interpreter_slot = first != entry["target"]
-        bound = pinned.get(str(resolved))
-        key = (bound[1] if bound is not None else resource_key(resolved), interpreter_slot)
+        # The spelling as the host will invoke it, because that is what the program is given.
+        key = (str(resolved), interpreter_slot)
         if key in probed:
             probe = probed[key]
         else:

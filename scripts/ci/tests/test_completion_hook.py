@@ -4075,43 +4075,45 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "an adapter script the interpreter cannot open was read as startable"
                          " because a regular file exists at its path")
 
-    def test_one_interpreter_is_probed_once_however_it_is_spelled(self):
-        """One executable is one probe, and resource_key cannot see that.
+    def test_two_spellings_of_one_interpreter_are_two_questions(self):
+        """The invoked spelling is an INPUT to the program, so it is part of the question.
 
-        This cache exists because probing per registration attached time-separated results to
-        commands sharing one executable. Its key was lexical, so two registrations naming one
-        interpreter through a real path and a symlink missed each other: it was executed twice,
-        and an interpreter replaced between those two moments hands the same host two different
-        startability answers. The identity is asked of the kernel and held while the probes
-        run.
+        Sharing one answer between two spellings of one inode was right while this was a
+        presence check and wrong once the probe runs the program: the kernel hands the invoked
+        pathname over as argv[0], a script reads it as $0, and a dispatcher that branches on
+        its own name answers one spelling and refuses another. Shared, the working spelling's
+        reading was published for the failing one, and the registration the host actually
+        cannot start read as startable.
         """
-        runs = []
-        real = completion._answers_as_an_interpreter
         with tempfile.TemporaryDirectory() as temporary:
             host = self._host(temporary)
-            alias = host / "an-alias-of-the-interpreter"
-            alias.symlink_to(sys.executable)
+            dispatcher = host / "python-dispatch"
+            alias = host / "python-alias"
+            dispatcher.write_text(
+                "#!/bin/sh\n"
+                "case \"$0\" in *python-alias) exit 0 ;; esac\n"
+                "exec " + shlex.quote(sys.executable) + " \"$@\"\n", encoding="utf-8")
+            dispatcher.chmod(0o755)
+            alias.symlink_to(dispatcher)
             register(temporary)
             second_registration(temporary, "journal-two")
             hook_file = host / "hooks.json"
             written = json.loads(hook_file.read_text(encoding="utf-8"))
             entries = written["hooks"][completion.EVENT][0]["hooks"]
+            entries[0]["command"] = entries[0]["command"].replace(
+                sys.executable, str(dispatcher), 1)
             entries[1]["command"] = entries[1]["command"].replace(
                 sys.executable, str(alias), 1)
             hook_file.write_text(json.dumps(written), encoding="utf-8")
-
-            def counting(resolved, *passed, **keywords):
-                runs.append(str(resolved))
-                return real(resolved, *passed, **keywords)
-
-            with mock.patch.object(completion, "_answers_as_an_interpreter",
-                                   side_effect=counting):
-                completion.status(codex_home=temporary, environ={})
-
-        self.assertEqual(len(runs), 1,
-                         "one interpreter named through two spellings was executed once per"
-                         " spelling, so two registrations carry readings taken at two"
-                         " moments: " + repr(runs))
+            found = completion.status(codex_home=temporary, environ={})
+        answers = {one["resolved"]: one["probe"]["value"]
+                   for one in (found["registeredInterpreter"].get("probes") or [])}
+        self.assertEqual(answers.get(str(dispatcher)), reading.PRESENT,
+                         "the fixture did not build a dispatcher that answers under its real"
+                         " name: " + repr(answers))
+        self.assertEqual(answers.get(str(alias)), firing.NOT_AN_INTERPRETER,
+                         "a spelling the dispatcher refuses was published with the reading"
+                         " taken from the spelling it accepts: " + repr(answers))
 
     def test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status(self):
         """Only a program that RAN the source can produce this nonce.
