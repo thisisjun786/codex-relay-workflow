@@ -1,0 +1,509 @@
+"""The ordered transition, and the refusals that protect a working host from it.
+
+One rule underneath all of it: nothing is removed that this repository cannot prove runs its own
+code, and nothing is removed before the replacement is proven able to serve it. Every step decides
+from what is on disk, so an interrupted run converges on the next one.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+from crw_runtime import bridgerecord, codexconfig, completion, hooks, hostrecord, reading
+
+from . import inventory
+
+SETTLED = "settled"
+ALREADY = "already_done"
+WOULD = "would_change"
+REFUSED = "refused"
+BUSY = "busy"
+NOT_REACHED = "not_reached"
+
+# Steps that changed something are reported apart from steps that found nothing to do, because
+# "converged" and "did the work" are different answers and a rerun has to be able to say which.
+DONE = (SETTLED, ALREADY)
+
+
+def stamp():
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def retire(path):
+    """Move a record aside under a name nothing reads, and never delete it.
+
+    Retiring rather than deleting is the whole difference between a transition and a data loss: the
+    old settings carry the marker root, the database and the journal an operator may still need to
+    read, and this tool is not entitled to decide they are finished with.
+    """
+    target = Path(str(path) + ".superseded-" + stamp())
+    os.replace(str(path), str(target))
+    return str(target)
+
+
+def _answer(step, outcome, detail, **extra):
+    return {"step": step, "outcome": outcome, "detail": detail, **extra}
+
+
+def _executable(path):
+    return bool(path) and Path(path).is_file() and os.access(str(path), os.X_OK)
+
+
+def bridge_command(host):
+    """The bridge the plugin record will name: what the host already used, or the pointer path."""
+    record = (host["mcp"].get("record") or {})
+    named = record.get("bridgeExecutable")
+    if named and bridgerecord.owner_of(record) == bridgerecord.OWNER_USER:
+        return named
+    registration = host["mcp"].get("registration") or {}
+    if registration.get("command"):
+        return registration["command"]
+    destination = host.get("destination")
+    return str(Path(destination) / "current" / "bin" / "codex-thread-bridge") \
+        if destination else None
+
+
+def adapter_paths(host):
+    destination = host.get("destination")
+    if not destination:
+        return None, None
+    base = Path(destination) / "current" / "bin"
+    return str(base / inventory.INTERPRETER_SCRIPT), str(base / inventory.ADAPTER_SCRIPT)
+
+
+def preflight(host, options):
+    """Every reason not to start, collected before anything is touched.
+
+    Ordered by what it protects: first that the plugin can actually serve what is about to be
+    removed, then that the recorded runtime exists, then that this tool owns what it would change,
+    then that no work is in flight.
+    """
+    refusals = []
+    notes = []
+    plugin = host["plugin"]
+
+    if plugin["configEntry"] != reading.PRESENT:
+        refusals.append("the plugin is not registered in " + str(inventory.config_path(
+            host["codexHome"])) + " (" + str(plugin["configEntry"]) + "), so removing the manual"
+            " install would leave this host with no CRW skills, no hook and no bridge")
+    if plugin.get("enabled") is False:
+        refusals.append("the plugin entry " + str(plugin.get("entryKey")) + " is disabled, so its"
+                        " skills, hook and server would not load")
+    if not plugin.get("cacheVersion"):
+        refusals.append("no installed plugin version was found under "
+                        + str(Path(host["codexHome"]) / "plugins" / "cache"))
+    else:
+        # The repository already owns a payload contract. A file census is not it: an empty hook
+        # document and an empty mcp.json satisfy existence and leave no hook and no bridge.
+        argv = [sys.executable, str(Path(host["repoRoot"]) / "scripts" / "ci" / "plugin.py"),
+                "--payload", plugin["cacheVersion"]]
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+            notes.append({"payloadCheck": argv, "exitCode": done.returncode})
+            if done.returncode != 0:
+                refusals.append("the installed payload at " + plugin["cacheVersion"]
+                                + " did not pass scripts/ci/plugin.py --payload, so what is"
+                                  " installed is not a package this transition can rely on: "
+                                + (done.stdout + done.stderr).strip()[:400])
+        except (OSError, subprocess.SubprocessError) as error:
+            refusals.append("the installed payload could not be validated: "
+                            + type(error).__name__ + ": " + str(error))
+        linked = {Path(item["path"]).name for item in host["skills"]["crwOwned"]}
+        missing = sorted(linked - set(plugin.get("skills") or []))
+        if missing:
+            refusals.append("the installed package does not carry " + ", ".join(missing)
+                            + ", which the links being removed provide")
+
+    if plugin.get("trusted") is not True and not options.get("accept_hook_trust_gap"):
+        refusals.append("no [hooks.state] entry records trust for this plugin's "
+                        + inventory.HOOK_DOCUMENT + ", and an untrusted declared hook fires zero"
+                        " times. Removing a trusted registration now would leave no completion"
+                        " hook at all. Nothing in this repository grants trust: trust the hook"
+                        " first, or pass --accept-hook-trust-gap to accept the window knowingly")
+
+    if not host.get("destination"):
+        refusals.append("no install destination was named or derivable from the recorded"
+                        " relayExecutable, so no adapter path could be recorded")
+    else:
+        point = host["pointer"]
+        if point.get("state") != "LINK" or not point.get("targetDirectory"):
+            refusals.append("the pointer at " + str(point.get("pointer")) + " is "
+                            + str(point.get("state")) + " (" + str(point.get("detail")) + ")."
+                            " A recorded adapter path has to resolve, and a dangling pointer"
+                            " still reads as a link")
+        else:
+            interpreter, adapter = adapter_paths(host)
+            for label, path in (("the adapter", adapter), ("its interpreter", interpreter),
+                                ("the bridge", bridge_command(host))):
+                if not _executable(path):
+                    refusals.append(label + " at " + str(path) + " is not an executable file, so"
+                                    " recording it would name something that cannot run")
+
+    for entry in host["hook"]["entries"]:
+        if not entry["proven"]:
+            refusals.append("the registration " + entry["identity"] + " runs a program this"
+                            " repository cannot prove is its own adapter (" + str(entry["why"])
+                            + "), so it is left alone. Edit or remove it by hand: " 
+                            + entry["command"])
+    for entry in host["hook"]["unrecognised"]:
+        refusals.append("the registration " + entry["identity"] + " names the packaged adapter or"
+                        " the destination and is not one this repository wrote, so this"
+                        " transition will not decide what happens to it: " + entry["command"])
+    if host["hook"]["reading"] is not None:
+        refusals.append("the hook file could not be read, so whether this adapter is registered"
+                        " was not established: " + json.dumps(host["hook"]["reading"])[:300])
+
+    settings = host["settings"]
+    if settings["outcome"] not in (None, completion.CONFIG_ABSENT):
+        refusals.append("the settings at " + settings["path"] + " could not be acted on ("
+                        + str(settings["outcome"]) + ": " + str(settings["detail"]) + ")")
+    elif settings["document"] and settings["owner"] == completion.OWNER_PLUGIN \
+            and host["hook"]["entries"]:
+        notes.append({"alreadyPluginOwned": True,
+                      "why": "the settings already name the plugin while a registration remains,"
+                             " which is the double fire this transition removes"})
+
+    mcp = host["mcp"]
+    if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
+        refusals.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
+                        + " is not the block this repository renders for the registration it"
+                          " holds, so it is somebody's own edit and is left in place")
+    if mcp["recordOutcome"] not in (None, bridgerecord.ABSENT):
+        refusals.append("the bridge record at " + mcp["recordPath"] + " could not be acted on ("
+                        + str(mcp["recordOutcome"]) + ")")
+
+    flight = host["inFlight"]
+    busy = bool(flight.get("markerEntries")) or bool(flight.get("snapshot"))
+    if busy and not options.get("allow_in_flight"):
+        refusals.append("the relay is carrying work (" + "; ".join(flight.get("how") or [])
+                        + "). Removing the hook now loses the completion record for a turn that"
+                          " is already running. Pass --allow-in-flight to proceed knowingly")
+    if flight.get("state") in reading.UNUSABLE and not options.get("allow_in_flight"):
+        refusals.append("whether the relay is carrying work could not be established ("
+                        + str(flight.get("detail")) + ")")
+
+    return _answer("preflight", REFUSED if refusals else SETTLED,
+                   "; ".join(refusals) if refusals else "nothing blocks this transition",
+                   refusals=refusals, notes=notes)
+
+
+def hook_standdown(host, options, *, apply=False):
+    """Remove the registration that runs our adapter, and nothing else in that file."""
+    entries = host["hook"]["entries"]
+    if not entries:
+        return _answer("hook standdown", ALREADY, "no registration of this adapter is in the file")
+    path = Path(host["hook"]["hookFile"])
+    event = host["hook"]["event"]
+    document = hooks.read(path)
+    if not document.usable:
+        return _answer("hook standdown", REFUSED, "the hook file could not be read",
+                       reading=document.refusal())
+    before = hooks.inventory(document.value)
+    shifted = [entry["identity"] for entry in host["hook"]["later"]] \
+        if host["hook"]["later"] and isinstance(host["hook"]["later"][0], dict) \
+        else list(host["hook"]["later"])
+    if shifted and not options.get("accept_hook_renumbering"):
+        return _answer("hook standdown", REFUSED,
+                       "removing " + entries[0]["identity"] + " shifts the index of "
+                       + ", ".join(shifted) + ", and Codex recorded trust against those"
+                       " positions, so they would need trusting again. Pass"
+                       " --accept-hook-renumbering to do it knowingly",
+                       shiftedIdentities=shifted)
+    if not apply:
+        return _answer("hook standdown", WOULD,
+                       "would remove " + ", ".join(e["identity"] for e in entries),
+                       identities=[e["identity"] for e in entries], shiftedIdentities=shifted)
+    removed = []
+    with hostrecord.Locked(path):
+        again = hooks.read(path)
+        if not again.usable or json.dumps(again.value, sort_keys=True) != json.dumps(
+                document.value, sort_keys=True):
+            return _answer("hook standdown", REFUSED,
+                           "the hook file changed after it was read, so nothing was removed")
+        groups = (again.value.get("hooks") or {}).get(event) or []
+        for entry in sorted(entries, key=lambda e: (e["identity"]), reverse=True):
+            matcher = int(entry["identity"].split(":")[-2])
+            index = int(entry["identity"].split(":")[-1])
+            if matcher < len(groups) and index < len(groups[matcher].get("hooks") or []):
+                groups[matcher]["hooks"].pop(index)
+                removed.append(entry["identity"])
+        # An emptied group is LEFT in place. Removing it would renumber every later matcher and
+        # detach the trust recorded against those identities; an empty group renumbers nothing.
+        hostrecord.atomic_write(path, json.dumps(again.value, indent=2) + "\n")
+        back = hooks.read(path)
+    if not back.usable:
+        return _answer("hook standdown", REFUSED, "the file was written and could not be read"
+                       " back", applied=True, wrote=True, removed=removed)
+    after = {item["identity"]: item["trustedHash"] for item in hooks.inventory(back.value)}
+    kept = [item for item in before if item["identity"] not in removed]
+    preserved = all(any(other["trustedHash"] == item["trustedHash"] for other in
+                        hooks.inventory(back.value)) for item in kept)
+    return _answer("hook standdown", SETTLED, "removed " + ", ".join(removed),
+                   applied=True, wrote=True, removed=removed,
+                   otherHooksPreserved=preserved, remaining=sorted(after))
+
+
+def settings_retire(host, options, *, apply=False):
+    """Move the settings the removed registration named aside, never delete them."""
+    named = [entry.get("settings") for entry in host["hook"]["entries"] if entry.get("settings")]
+    paths = []
+    for candidate in named + [host["settings"]["path"]]:
+        if candidate and candidate not in paths and Path(candidate).exists():
+            paths.append(candidate)
+    if not paths:
+        return _answer("settings retire", ALREADY, "no settings file is there to retire")
+    document = host["settings"]["document"]
+    if document and completion.owner_of(document) == completion.OWNER_PLUGIN:
+        return _answer("settings retire", ALREADY,
+                       "the settings already name the plugin as the owner")
+    if not apply:
+        return _answer("settings retire", WOULD, "would retire " + ", ".join(paths), paths=paths)
+    moved = []
+    for candidate in paths:
+        with hostrecord.Locked(Path(candidate)):
+            moved.append({"from": candidate, "to": retire(candidate)})
+    return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
+                   applied=True, wrote=True, retired=moved)
+
+
+def settings_install(host, options, *, apply=False, previous=None):
+    """Write the plugin-owned settings, carrying the operational locations forward.
+
+    The marker root, the database and the journal come from the document being replaced. A
+    transition that quietly relocated them would look like a success and lose the evidence.
+    """
+    interpreter, adapter = adapter_paths(host)
+    source = previous if previous is not None else host["settings"]["document"]
+    if source is None:
+        return _answer("settings install", REFUSED,
+                       "the settings being replaced were not read, so their marker root,"
+                       " database and journal could not be carried forward")
+    timeout = source.get("timeoutSeconds") or completion.DEFAULT_TIMEOUT_SECONDS
+    if timeout >= completion.LAUNCHER_CEILING_SECONDS:
+        return _answer("settings install", REFUSED,
+                       "the previous guard budget is " + str(timeout) + "s, and a plugin-owned"
+                       " document has to stay under " + str(completion.LAUNCHER_CEILING_SECONDS)
+                       + "s so the packaged launcher outlasts the adapter it runs")
+    try:
+        wanted = completion.configuration(
+            destination=host["destination"], marker_root=source.get("markerRoot"),
+            database=source.get("dbPath"), mode=source.get("mode") or completion.OBSERVE,
+            timeout=timeout, journal_root=source.get("journalRoot"),
+            codex_home=host["codexHome"], issue=source.get("installedBy"),
+            isolation=source.get("isolationAssertedBy"), owner=completion.OWNER_PLUGIN,
+            adapter_interpreter=interpreter, adapter_entry_point=adapter)
+    except ValueError as error:
+        return _answer("settings install", REFUSED, str(error))
+    path = completion.configuration_path(host["codexHome"])
+    written = completion.write_configuration(path, wanted, apply=apply)
+    outcome = written["outcome"]
+    settled = SETTLED if outcome in (completion.CONFIG_CREATED,) else (
+        ALREADY if outcome == completion.CONFIG_UNCHANGED else (
+            WOULD if outcome == completion.CONFIG_WOULD_CREATE else REFUSED))
+    return _answer("settings install", settled, written.get("detail"),
+                   configuration=written, adapterEntryPoint=adapter,
+                   adapterInterpreter=interpreter, wrote=written.get("wrote"),
+                   applied=written.get("applied"))
+
+
+def mcp_record_retire(host, options, *, apply=False):
+    """Retire the user-owned record, because owner is part of what makes a record the same one."""
+    record = host["mcp"].get("record")
+    path = Path(host["mcp"]["recordPath"])
+    if record is None:
+        return _answer("mcp record retire", ALREADY, "no bridge record is there")
+    if bridgerecord.owner_of(record) == bridgerecord.OWNER_PLUGIN:
+        return _answer("mcp record retire", ALREADY, "the record already names the plugin")
+    if not apply:
+        return _answer("mcp record retire", WOULD, "would retire " + str(path))
+    moved = retire(path)
+    return _answer("mcp record retire", SETTLED, "retired " + str(path), applied=True,
+                   wrote=True, retired=[{"from": str(path), "to": moved}])
+
+
+def mcp_table_standdown(host, options, *, apply=False):
+    """Remove the table this repository rendered, and prove every other byte survived."""
+    mcp = host["mcp"]
+    if mcp["table"] != reading.PRESENT:
+        return _answer("mcp table standdown", ALREADY, "no " + inventory.SERVER_NAME + " table")
+    if not mcp["tableProven"]:
+        return _answer("mcp table standdown", REFUSED,
+                       "the table is not the block this repository renders, so it is left alone")
+    path = Path(mcp["configPath"])
+    block = mcp["renderedTable"].strip()
+    if not apply:
+        return _answer("mcp table standdown", WOULD, "would remove the " + inventory.SERVER_NAME
+                       + " table from " + str(path))
+    with hostrecord.Locked(path):
+        text = reading.read_text(path, "the Codex configuration")
+        if not text.usable or block not in text.value:
+            return _answer("mcp table standdown", REFUSED,
+                           "the configuration changed after it was read, so nothing was removed")
+        before = text.value
+        stripped = before.replace(block + "\n", "", 1)
+        if stripped == before:
+            stripped = before.replace(block, "", 1)
+        # Everything outside the removed block, byte for byte. Checked rather than asserted.
+        if stripped.replace("\n", "") != before.replace(block, "", 1).replace("\n", ""):
+            return _answer("mcp table standdown", REFUSED,
+                           "removing the block would have changed bytes outside it")
+        hostrecord.atomic_write(path, stripped)
+        back = reading.read_text(path, "the Codex configuration")
+    view = codexconfig.scan(back.value) if back.usable else None
+    present = view and codexconfig.registration_of(view, inventory.SERVER_NAME)[0]
+    if present:
+        return _answer("mcp table standdown", REFUSED, "the table is still registered after the"
+                       " write", applied=True, wrote=True)
+    return _answer("mcp table standdown", SETTLED, "removed the table and left every other byte",
+                   applied=True, wrote=True,
+                   otherTablesPreserved=bool(view and view.readable))
+
+
+def mcp_record_install(host, options, *, apply=False):
+    command = bridge_command(host)
+    if not command:
+        return _answer("mcp record install", REFUSED, "no bridge executable could be named")
+    try:
+        wanted = bridgerecord.document(command=command, arguments=(
+            (host["mcp"].get("registration") or {}).get("args") or []),
+            name=inventory.SERVER_NAME, issue="CRW-115",
+            owner=bridgerecord.OWNER_PLUGIN)
+    except ValueError as error:
+        return _answer("mcp record install", REFUSED, str(error))
+    written = bridgerecord.write(Path(host["mcp"]["recordPath"]), wanted, apply=apply)
+    outcome = written["outcome"]
+    settled = SETTLED if outcome == bridgerecord.CREATED else (
+        ALREADY if outcome == bridgerecord.UNCHANGED else (
+            WOULD if outcome == bridgerecord.WOULD_CREATE else REFUSED))
+    return _answer("mcp record install", settled, written.get("detail"), record=written,
+                   applied=written.get("applied"), wrote=written.get("wrote"))
+
+
+def skill_unlink(host, options, *, apply=False):
+    owned = host["skills"]["crwOwned"]
+    if not owned:
+        return _answer("skill unlink", ALREADY, "no CRW-owned links are there")
+    if not apply:
+        return _answer("skill unlink", WOULD, "would remove "
+                       + ", ".join(item["path"] for item in owned),
+                       paths=[item["path"] for item in owned])
+    removed = []
+    for item in owned:
+        path = Path(item["path"])
+        if path.is_symlink():
+            path.unlink()
+            removed.append(str(path))
+    return _answer("skill unlink", SETTLED, "removed " + ", ".join(removed), applied=True,
+                   wrote=True, removed=removed,
+                   foreignLeft=[item["path"] for item in host["skills"]["foreign"]])
+
+
+ORDER = (("hook standdown", hook_standdown), ("settings retire", settings_retire),
+         ("settings install", settings_install), ("mcp record retire", mcp_record_retire),
+         ("mcp table standdown", mcp_table_standdown),
+         ("mcp record install", mcp_record_install), ("skill unlink", skill_unlink))
+
+# The MCP surface is decided and written under ONE lock, the same one register-mcp takes, because a
+# concurrent user-owned registration landing between the retire and the table removal would put the
+# record back, refuse the plugin record, and leave the host with no bridge.
+MCP_STEPS = ("mcp record retire", "mcp table standdown", "mcp record install")
+
+
+def transition(host, options, *, apply=False):
+    """Run the steps in order, stopping at the first refusal."""
+    results = [preflight(host, options)]
+    if results[0]["outcome"] == REFUSED:
+        results += [_answer(name, NOT_REACHED, "preflight refused") for name, _ in ORDER]
+        return results
+    previous = host["settings"]["document"]
+    lock = None
+    try:
+        for name, step in ORDER:
+            if name == MCP_STEPS[0] and apply:
+                lock = hostrecord.Locked(bridgerecord.ownership_lock_path(host["codexHome"]))
+                lock.__enter__()
+            answer = step(host, options, apply=apply) if name != "settings install" \
+                else step(host, options, apply=apply, previous=previous)
+            results.append(answer)
+            if name == MCP_STEPS[-1] and lock is not None:
+                lock.__exit__(None, None, None)
+                lock = None
+            if answer["outcome"] == REFUSED:
+                remaining = [n for n, _ in ORDER][
+                    [n for n, _ in ORDER].index(name) + 1:]
+                results += [_answer(n, NOT_REACHED, "an earlier step refused") for n in remaining]
+                break
+    except hostrecord.Busy as error:
+        results.append(_answer("mcp ownership lock", BUSY, str(error)))
+    finally:
+        if lock is not None:
+            lock.__exit__(None, None, None)
+    return results
+
+
+def disable(host, options, *, apply=False):
+    """Stop new calls by retiring the two records the packaged launchers read."""
+    results = []
+    for step, path in (("hook settings", completion.configuration_path(host["codexHome"])),
+                       ("bridge record", Path(host["mcp"]["recordPath"]))):
+        if not Path(path).exists():
+            results.append(_answer(step, ALREADY, str(path) + " is not there"))
+            continue
+        if not apply:
+            results.append(_answer(step, WOULD, "would retire " + str(path)))
+            continue
+        with hostrecord.Locked(Path(path)):
+            results.append(_answer(step, SETTLED, "retired " + str(path), applied=True,
+                                   wrote=True, retired=retire(path)))
+    return results
+
+
+def preserved_paths(host):
+    """What disable and remove do not touch, named so the output can say it rather than imply it."""
+    document = host["settings"]["document"] or {}
+    return {k: v for k, v in {
+        "relayStore": document.get("dbPath"),
+        "markerRoot": document.get("markerRoot"),
+        "hookJournal": document.get("journalRoot"),
+        "runtimeInstallation": host.get("destination"),
+        "pluginCache": host["plugin"].get("cacheVersion"),
+    }.items() if v}
+
+
+def remove(host, options, *, apply=False):
+    results = disable(host, options, apply=apply)
+    results.append(skill_unlink(host, options, apply=apply))
+    return results
+
+
+def swap_state(host, options):
+    """What a version replacement left, with the pointer and the record reported apart."""
+    point = host["pointer"]
+    recorded = None
+    detail = None
+    try:
+        path = hostrecord.record_path()
+        loaded = hostrecord.load(path, 1)
+        recorded = loaded
+    except Exception as error:  # noqa: BLE001 - a private receipt that cannot be read is a reading
+        detail = type(error).__name__ + ": " + str(error)
+    return {
+        "command": "swap-state",
+        "pointerState": point.get("state"),
+        "pointerTarget": point.get("target"),
+        "pointerResolves": bool(point.get("targetDirectory")),
+        "recordedHostRecord": bool(recorded),
+        "recordedDetail": detail,
+        "agrees": None,
+        "residualFromRun": None,
+        "note": ("residualPaths, residualOwnership and recoveryRequires exist only in the failed"
+                 " run's own result and cannot be recovered from any later reading, so they are"
+                 " reported as absent rather than invented. The retry is the owner's command:"
+                 " runtime_install.py install --apply. Nothing here moves a pointer, writes a"
+                 " host record or touches the store."),
+        "preserved": preserved_paths(host),
+    }
+
