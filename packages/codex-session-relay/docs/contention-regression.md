@@ -123,6 +123,8 @@ What each one waits on:
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
 - `test_bridge_adapter.py` waits before asserting a transport worker is still alive.
+- `test_stop_adapter.py` runs the Stop adapter's console entry point as a real process, because
+  exit 2 is the host's blocking code and only a real exit status can show that it never returns one.
 - `test_daemon_cadence.py` measures a real run spending its deadline polling.
 - `test_failure_recovery.py` waits a real SQLite busy timeout, because a timeout is
   the one thing an injected clock cannot produce. It is why criteria 2 and 3 are both

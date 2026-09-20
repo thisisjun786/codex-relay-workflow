@@ -129,6 +129,10 @@ unchanged. Both installations read the same source: `scripts/install.py` links t
 directory the manifest declares, and the repository root keeps `skills` as a link
 to it so links created before the move still resolve.
 
+A host carrying both runs two of everything. [Moving a manual install to the plugin
+install](plugin-transition.md) is how one becomes the other, and it owns the update, the failed
+update, the disable and the removal that follow.
+
 ## Skill names
 
 A linked installation exposes the skills as `crw-run`, `crw-plan`, and so on. A
