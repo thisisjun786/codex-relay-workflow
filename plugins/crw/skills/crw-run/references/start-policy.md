@@ -34,11 +34,21 @@ already has a goal reuses it, because a second goal opened for the same assignme
 rather than a resume.
 
 Recorded here, owned elsewhere, and unchanged by any of this: the initiative task runs the
-user-assigned Astra, a project parent runs swe-2 at max effort, and an issue child runs Opus 5 at
-xhigh. This is a readback, not an authority. The child default is owned by
+user-assigned Astra, a project parent runs xai/grok-4.6 at xhigh, and an issue child runs Opus 5
+at xhigh. A project parent ran swe-2 at max until Jun moved every parent on 2026-09-21. That pair
+is now a migration fixture, kept so the transition can be reproduced and so the old value is
+recognised as superseded rather than as a second valid answer; it is never the live default.
+
+One task may be excepted by name, and the consolidated coordinator 01a0b98e currently runs
+ollama-cloud/glm-5.3 at xhigh under Jun's exception. A named exception covers the task it names
+and nothing else: it does not become a default, it is not propagated to other parents or down to
+children, and it is recorded explicitly rather than inferred from an observed pair.
+
+This is a readback, not an authority. The child default is owned by
 [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
-and the role model policy by its own issue; where either disagrees with this paragraph, they win
-and this paragraph is stale. Nothing in this file changes a model, a permission, a worktree, a
+and the role model policy by its own issue, while the value a run actually reads is the roles
+section of the host's own execution policy; where any of them disagrees with this paragraph, they
+win and this paragraph is stale. Nothing in this file changes a model, a permission, a worktree, a
 project's scope or a child count.
 
 ## What is settled, and what is recorded with it
