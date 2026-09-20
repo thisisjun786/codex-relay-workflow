@@ -247,11 +247,26 @@ For repository-changing work, compare local and remote commit ancestry. Preserve
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
-At initial dispatch and after a completion, blocker, or integration, scan the
-agreed project scope for useful parallel work, including newly unblocked successors.
+At initial dispatch, after a child's completion, blocker or decision request, after an
+integration lands, and on every resume or recovery, scan the agreed project scope for useful
+parallel work, including newly unblocked successors. Before the turn ends that scan has run, or
+the reason it could not be read is recorded; a final answer describing what would be dispatched
+is not the scan. Which read observes each of those events, and what the pass records per
+candidate, are in [Re-evaluating the candidate set](references/reevaluation.md). A resume
+restores the recorded start adjudication and re-reads what it stands on rather than deciding it
+again ([Start policy](references/start-policy.md#re-read-on-every-entry-re-decide-only-on-a-change)).
 An explicitly limited batch or issue remains limited in both Run and Loop. Check
 verified prerequisites, overlapping edit surfaces, existing
-writers, shared runtime resources, and available execution capacity. Dispatch
+writers, shared runtime resources, and available execution capacity. An issue that already has a
+responsible child is not a candidate, and that is read rather than assumed: `doctor --issue`
+answers it from one non-constructing read before anything is created, `holds` true ends the
+evaluation for that issue, and `holds` null is an unproven answer rather than a free slot
+([Determine whether this store holds the assignment](references/relay.md#determine-whether-this-store-holds-the-assignment)).
+A child that stopped for a person is invisible to the reviewable reads, so enumerate the stopped
+children with `dispositions-show` ([Which children stopped](references/relay.md#which-children-stopped-and-whether-anyone-was-told))
+instead of reading their silence as progress; it reports what a child actually emitted, which is
+why [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting) still requires an
+emit path or a bounded observation path for the disposition itself. Dispatch
 the largest useful set of independent ready issues within explicit concurrency,
 budget, and host limits. A shared repository alone is not a reason to serialize;
 separate owned checkouts can carry independent changes.
@@ -260,9 +275,14 @@ Do not wait for an entire batch to finish before filling available capacity with
 eligible independent work inside that boundary. Independent issue statuses alone do not establish
 independence: serialize shared schema, persistence, contract, or central UI changes
 when separation would cost more than it saves. Keep integration into a shared
-target serial and recheck each candidate against the updated base. Record a
-concrete dependency, conflict, ownership, or capacity reason for deferring an
-otherwise ready issue. Do not invent extra issues or duplicate writers just to
+target serial and recheck each candidate against the updated base. Record why an otherwise ready
+issue was deferred in the closed set
+[Decisions and what clears them](references/reevaluation.md#decisions-and-what-clears-them)
+defines, so a later pass re-reads the condition that held it rather than the prose that described
+it. The set keeps apart what recovers differently: no capacity from capacity nobody measured, an
+owner that could not be proved from two the store reports, and a disposition that could not be
+read from one the store holds as contested. It carries no escalation value, because a review
+round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
 increase concurrency; reconcile an oversized issue through `crw-plan` when a
 useful split fits the authorized scope.
 Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
