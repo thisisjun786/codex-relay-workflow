@@ -335,6 +335,17 @@ Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
 Workflow/settings: [effective workflow, model/effort and actual permission profile]
 Working location: [permitted cwd/artifact roots; no invented Git repository]
+Workspace ownership: [what is already present at that working location and those artifact
+  roots, each entry labelled as already owned by this assignment or owned elsewhere, since
+  predating the run and belonging to it are separate facts: the temporary artifacts, evidence
+  roots, shared originals and running processes there. Do not adopt what is owned elsewhere.
+  Then this task's own working directory, artifact roots and cleanup authorization,
+  `none automatic` where no cleanup is authorized. Checkout, branch and Git metadata ownership
+  are inapplicable on this path]
+Resource delta to report at close: [measured against that baseline, what this task created,
+  changed, retained, shared or cleaned, each with its owner, release condition and next action;
+  the working directory, purpose, handle and running state of any process it started; and any
+  capacity actually reclaimed, kept apart from what was only proposed]
 Verification: [observable acceptance criteria and independent evidence needed]
 Return: [actual task ID, result link plus delivered revision/updated-at evidence,
   or durable artifact locator plus digest; verified output snapshot if needed;
