@@ -428,7 +428,7 @@ def cmd_settings_show(services, args) -> dict:
     settings = load_settings(services.store, args.task)
     if settings is None:
         return {"task": args.task, "settings": None, "usable": False,
-                "missing": list(REQUIRED_SETTINGS)}
+                "deliverable": False, "missing": list(REQUIRED_SETTINGS)}
     # The role side is reported beside the settings because the two are only meaningful
     # together: a record is stale relative to the policy for the role its task actually holds,
     # and reading one without the other is how a correct record and a wrong one look alike.
@@ -451,8 +451,16 @@ def cmd_settings_show(services, args) -> dict:
         }
     elif bound and policy:
         finding = rolepolicy.check_record(settings, bound, policy)
+    # Two questions, two fields, because folding them together loses one of the answers.
+    # "usable" is about the RECORD -- are the required fields there -- and it is paired with
+    # "missing", so making a complete record report false would contradict the field beside it
+    # and leave no way to say "complete, and refused for another reason". "deliverable" is the
+    # question a preflight actually asks. It exists because a consumer written before roles
+    # reads "usable", would have read true here, and would have gone on to a send this record
+    # cannot carry.
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
+            "deliverable": not settings.missing() and finding is None,
             "citedRole": rolepolicy.cited_role(settings),
             "citedException": rolepolicy.cited_exception(settings),
             "boundRole": None if contested else bound,

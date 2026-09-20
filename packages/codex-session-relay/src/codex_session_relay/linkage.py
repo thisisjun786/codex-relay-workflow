@@ -306,13 +306,13 @@ class Linkage:
         """
         scope_kind = ROLE_SCOPE[role]
         bid = binding_id(role, scope_kind, scope_key, endpoint.task_id)
-        # ------------------------------------------------------------------ role policy
-        # The other half of the comparison record_settings makes. Whichever of the two facts
-        # arrives second performs it, so neither order gets past it; and it is decided here,
-        # where a refusal is still a returned value, rather than after a row has been written.
-        refusal = self._role_policy_refusal(db, role, endpoint.task_id, scope_kind, scope_key)
-        if refusal is not None:
-            return None, refusal
+        # The role check lives in _binding_refusal, which the reactivate and insert paths below
+        # both run, rather than here. Asked at the top it was also asked of a replay that has
+        # nothing to establish: a task already live on a scope, re-claiming it with the same
+        # arguments, was refused after an unrelated policy edit even though the call writes
+        # nothing and the binding it names is already the one it wants. These APIs promise that
+        # repeating a claim converges on the existing record, and a record going stale against a
+        # new policy has its own refusal at send time; it is not a reason to break recovery.
         current = db.execute(
             "SELECT * FROM scope_bindings WHERE binding_id = ?", (bid,)
         ).fetchone()
@@ -414,11 +414,20 @@ class Linkage:
     def _binding_refusal(self, db, role, scope_kind, scope_key, endpoint, *, replacing=None):
         """Every competition and role read, before anything is written.
 
+        Reached only where a binding is actually established -- an insert, a reactivation or a
+        handover -- so an idempotent replay of a live binding never arrives here.
+
         replacing names the outgoing owner of a handover. That task is the incumbent by
         definition, so counting it as a rival would refuse the very operation that replaces it;
         excluding it keeps the rival check meaningful for everybody else, including a SECOND
         handover racing the first, which still sees a live owner it did not name.
         """
+        # The other half of the comparison record_settings makes. Whichever of the two facts
+        # arrives second performs it, so neither order gets past it; and it is decided here,
+        # where a refusal is still a returned value, rather than after a row has been written.
+        refusal = self._role_policy_refusal(db, role, endpoint.task_id, scope_kind, scope_key)
+        if refusal is not None:
+            return refusal
         rival = db.execute(
             "SELECT binding_id, task_id, status FROM scope_bindings"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"

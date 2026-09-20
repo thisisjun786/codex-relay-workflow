@@ -262,6 +262,13 @@ incomplete one is refused when it is written, and a recipient with no record at 
 withheld rather than sent under a host default. `settings-show --task <id>` reports what is held
 and what is missing.
 
+Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
+is about the record alone, whether the required fields are there, and it is the field `missing`
+pairs with. `deliverable` also accounts for the role the task is actually bound to, so a complete
+record that contradicts its binding or has gone stale against the current role policy reports
+`usable: true` and `deliverable: false`, with `roleFinding` saying which. A preflight that reads
+only `usable` will approve a send the relay then withholds.
+
 Registering a different child for an issue that already has an active or paused assignment is
 refused with `duplicate_assignment`, inside the same transaction that would have inserted it, so
 two concurrent registrations cannot both win. That prevents a duplicate REGISTERED owner. It does

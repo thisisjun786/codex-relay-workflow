@@ -954,6 +954,120 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         )
 
 
+    def test_replaying_a_live_binding_survives_a_policy_edit_that_postdates_it(self):
+        """Repeating a claim converges on the record; it does not re-adjudicate it.
+
+        The role check ran before the existing binding was read, so a retry of the original
+        claim -- same role, same scope, same endpoint, nothing to write -- started failing after
+        an unrelated edit to the parent pair. A record going stale against a new policy has its
+        own refusal at send time and is not a reason to break an idempotent recovery.
+        """
+        import os
+        from pathlib import Path
+
+        from codex_session_relay.models import Endpoint
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        endpoint = Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent")
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
+            source="creation_result", role="parent",
+        )
+        first = self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1", endpoint=endpoint,
+        )
+        # The operator moves the parent pair. The live binding is untouched by that edit.
+        superseded_model, superseded_effort = SUPERSEDED_PARENT
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            "roles": {
+                "supervisor": {"expectation": "record"},
+                "parent": {"model": superseded_model, "reasoningEffort": superseded_effort},
+                "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+            }
+        })
+        again = self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1", endpoint=endpoint,
+        )
+        self.assertEqual(again["bindingId"], first["bindingId"])
+        self.assertEqual(rolepolicy.bound_role(self.store, PARENT), "parent")
+
+
+    def test_a_new_binding_is_still_refused_under_the_policy_in_force(self):
+        """Moving the check to where a binding is established must not remove it. An insert
+        adjudicates against the current policy exactly as it did before."""
+        import os
+        from pathlib import Path
+
+        from codex_session_relay.errors import LinkageError
+        from codex_session_relay.models import Endpoint
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        # Created citing child, now being bound as a parent: the contradiction, on a fresh
+        # binding with nothing to replay.
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings("/parent", model="anthropic/claude-opus-5", reasoningEffort="xhigh"),
+            source="creation_result", role="child",
+        )
+        with self.assertRaises(LinkageError) as raised:
+            self.registry.linkage.bind_scope(
+                role="parent", scope_key="PROJ-9",
+                endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+            )
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
+        self.assertIsNone(rolepolicy.bound_role(self.store, PARENT))
+
+
+    def test_settings_show_separates_a_complete_record_from_a_deliverable_one(self):
+        """A preflight reads one field, and it was the field that could not see a role.
+
+        "usable" asks whether the record has its required fields, and it is paired with
+        "missing"; a record that is complete and still refused has to be able to say both. So
+        the role answer is its own field rather than folded into that one, and a consumer
+        written before roles existed reads true from "usable" only about what it always meant.
+        """
+        import argparse
+        import os
+        import types
+        from pathlib import Path
+
+        from codex_session_relay.cli import cmd_settings_show
+        from codex_session_relay.models import Endpoint
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        services = types.SimpleNamespace(
+            registry=self.registry, store=self.store, clock=self.clock,
+        )
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
+            source="creation_result", role="parent",
+        )
+        shown = cmd_settings_show(services, argparse.Namespace(task=PARENT))
+        self.assertTrue(shown["usable"])
+        self.assertTrue(shown["deliverable"])
+        self.assertIsNone(shown["roleFinding"])
+        # The operator moves the parent pair; the record is complete and now stale for its role.
+        superseded_model, superseded_effort = SUPERSEDED_PARENT
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            "roles": {
+                "supervisor": {"expectation": "record"},
+                "parent": {"model": superseded_model, "reasoningEffort": superseded_effort},
+                "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+            }
+        })
+        shown = cmd_settings_show(services, argparse.Namespace(task=PARENT))
+        self.assertTrue(shown["usable"], "the record itself did not become incomplete")
+        self.assertEqual(shown["missing"], [])
+        self.assertFalse(shown["deliverable"])
+        self.assertIsNotNone(shown["roleFinding"])
+
+
     def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
         """Clearing is the user-attributed transition's privilege, not every write's."""
         from pathlib import Path
