@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Run"
-  short_description: "부모 목표 없이 프로젝트의 이슈 배정·병렬 실행·검증·머지를 진행"
+  short_description: "부모 목표 없이 프로젝트 이슈를 배정·병렬 실행·검증·머지하고, 이니셔티브는 기존 부모를 통해 감독"
   default_prompt: "$crw-run [Linear 프로젝트 링크]"
 policy:
   allow_implicit_invocation: true
