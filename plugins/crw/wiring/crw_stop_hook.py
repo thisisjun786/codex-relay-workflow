@@ -39,10 +39,14 @@ PLUGIN_OWNER = "plugin"
 MARGIN_SECONDS = 2
 MAX_SECONDS = 9
 # MAX_SECONDS is the ceiling this launcher puts on its own deadline, and it is the same number
-# scripts/crw_runtime/completion.py calls LAUNCHER_CEILING_SECONDS. That module refuses to
-# install plugin-owned settings whose guard budget reaches it, so this deadline always outlasts
-# the adapter it runs. If one of the two moves, the other has to move with it; a test asserts
-# they still agree, because this file cannot import that module.
+# scripts/crw_runtime/completion.py calls LAUNCHER_CEILING_SECONDS. The deadline outlasts the
+# adapter only while the recorded budget stays at or under MAX_SECONDS - MARGIN_SECONDS: above
+# that the cap eats the margin, and at a budget just under MAX_SECONDS this deadline arrives
+# while the adapter is still writing the record of its own timeout. Settings that record such a
+# budget are refused where they are written -- scripts/crw_transition/steps.py, which derives its
+# limit from these two numbers -- rather than here, because this launcher cannot wait longer than
+# the hook it is registered under. If one of these numbers moves, that limit has to move with it;
+# a test asserts they still agree, because this file cannot import that module.
 
 
 def settings_path():
