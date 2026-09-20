@@ -120,16 +120,18 @@ changes what the next one sees.
    as unplanned scope where it does not. This runs first because a new issue changes every
    later step.
 2. Duplication. No two issues claim the same deliverable in the same repository, matched
-   by deliverable and target rather than by title. Keep one, move the other's relations
-   onto it, and drop nothing that was promised. This runs before relations are checked
-   because consolidating a duplicate moves relations.
+   by deliverable and target rather than by title. Keep one and move the other's relations
+   onto it under the relation rule below, dropping nothing that was promised. This runs
+   before relations are checked because consolidating a duplicate moves relations.
 3. Relations. Every prerequisite stated in prose exists as a real blocking relation, and
    walking the edges finds no cycle. A cycle means the boundary is wrong, so reapply the
-   boundary test to the issues in it rather than dropping an edge: make the part both sides
-   need its own first issue only where that part has an observable result and can be
-   verified alone, and otherwise consolidate the coupled issues into one merge, keeping
-   every criterion and every relation to work outside them; the edges between the
-   consolidated issues go with the boundary that created them. Where two
+   boundary test to the issues in it rather than dropping an edge. Where the part both sides
+   need has an observable result and can be verified alone, it becomes their first issue and
+   its relations replace the edges the invalid boundary created. Where it does not and the
+   coupled issues share one integration target, they consolidate into one merge that keeps
+   every criterion. Where it does not and they land in different repositories, no boundary
+   satisfies both rules: report the plan blocked on the contract decision or redesign that
+   would separate them, and do not consolidate across targets. Where two
    issues change the same surface, exactly one ordering exists and it is a relation, not a
    note. Two issues may hold the same file; two issues holding the same region at once is
    a collision.
@@ -139,6 +141,10 @@ changes what the next one sees.
    field that is absent is an incomplete write: repair it on the same IDs rather than
    creating the item again. Where the connector cannot read something back, report it
    written, unverified, and do not claim it exists.
+
+A boundary change carries its relations with it. Keep every relation to work outside the
+change, and drop one whose endpoints both fall inside it: it described a boundary that no
+longer exists, and keeping it makes an issue block itself.
 
 A draft-only or advisory request runs steps 1 to 3 against its draft items and their
 intended relations, omits step 4, and reports the result as checked but unwritten. Writing
@@ -175,9 +181,11 @@ wrong row, and both are fixed here.
 | 12 | An old issue carries five PRs from an agreed exception, some merged. | Exception recorded, required deliveries inventoried against the open criteria, reconciled with the current owner before dispatch, links and owner and history preserved, 0 silent splits or reassignments, pattern not copied into new issues. | Align a delivered issue: existing exception. |
 | 13 | A bare "PR 단위로 정리해줘" on a milestone with no prior plan. | Every issue written carries the full issue fields, each boundary decided by the rule above, the closing check run; issue count is whatever the boundary rule yields, standard unchanged by the request's length, scope unwidened. | Default output standard. |
 | 14 | A milestone outcome has no issue that delivers it, and the request authorizes the full plan. | 1 new issue created now for that outcome, relations recomputed after it, 0 promised outcomes left unplanned. | Closing check: coverage. |
-| 15 | Two planned issues name the same deliverable in the same repository under different titles, and one of them holds a relation. | 1 issue kept, the other's relation moved onto it before relations are checked, 0 duplicate deliverables, 0 promised work dropped. | Closing check: duplication. |
-| 16 | A contract was split across two issues, each now blocks the other, and the shared part can merge and be verified alone. | The shared part becomes 1 new first issue, both former issues blocked by it, 0 edges dropped to break the cycle. | Closing check: relations. |
+| 15 | Two planned issues name the same deliverable in the same repository under different titles, and one of them is blocked by a third issue. | 1 issue kept, the relation to the third issue moved onto it before relations are checked, 0 duplicate deliverables, 0 promised work dropped. | Closing check: duplication. |
+| 16 | A contract was split across two issues, each now blocks the other, and the shared part can merge and be verified alone. | The shared part becomes 1 new first issue blocking both, the 2 edges between them replaced by those relations, 0 external edges dropped. | Closing check: relations. |
 | 17 | The connector writes relations but cannot read them back. | Relations reported written, unverified; 0 relations claimed to exist; the intended list still reported with IDs. | Closing check: read-back unavailable. |
 | 18 | Two issues block each other, neither passes its checks without the other, and no smaller shared part can be verified alone. | The two consolidate into 1 issue keeping every criterion and every external relation, the 2 edges between them removed with the boundary that created them, 0 invented prerequisites, 0 external edges dropped. | Closing check: relations, coupled parts. |
 | 19 | The delivery PR was closed without merging and its branch is gone; the owner is active and the accepted scope is unchanged. | 1 replacement delivery PR designated with the superseded link kept, 0 new issues, scope unchanged. | Align a delivered issue: PR no longer usable. |
 | 20 | An unmerged delivery issue's owner is no longer active. | Ownership recovered or reassignment authorized first; 0 scope changes and 0 dispatch before that. | Align a delivered issue: owner inactive. |
+| 21 | Two duplicate issues name the same deliverable and one blocks the other. | 1 issue kept with its relations to outside work, the 1 edge between the duplicates dropped, 0 self-blocking issues. | Boundary change carries its relations. |
+| 22 | Two issues in different repositories block each other, neither verifies alone, and no standalone contract artifact exists. | 0 consolidations across targets, 0 invented prerequisites, plan reported blocked on the contract decision or redesign that would separate them. | Closing check: cross-target cycle. |
