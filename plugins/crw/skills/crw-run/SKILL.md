@@ -425,15 +425,14 @@ are reported explicitly, with no silent substitution of a different workflow.
 
 ### Start policy and child cap
 
-Before any child of this run is created or registered, including through the creation tool and the
-relay registration above, settle the start policy for this run and record it: the effective run
-mode, the child cap with the bounds that produced the number actually dispatched, each decision's
-source and scope, the host compatibility outcome, and the observation path already required for
-dispatch. A value the precedence settles is applied without asking; a value that genuinely needs a
-new decision is asked before anything is created, and only the action waiting on that answer is
-held while independent authorized work continues. On a resume, after a compaction or for a later
-batch, restore the recorded values and re-read the identities they stand on instead of deciding
-again. [Start policy](references/start-policy.md) owns the fields, the scope each decision carries,
+Before the first child-creation call of this run, which is also before the registration that
+follows it, settle the start policy and record it in full: every field
+[Start policy](references/start-policy.md) names, each carrying its source, its scope and the
+conditions it stands on. A value the precedence settles is applied without asking; a value that
+genuinely needs a new decision is asked before any child is created, and only the action waiting on
+that answer is held while independent authorized work continues. On a resume, after a compaction or
+for a later batch, re-read the identities those values stand on, restore what has not changed, and
+adjudicate again only the field whose conditions did. [Start policy](references/start-policy.md) owns the fields, the scope each decision carries,
 the re-adjudication triggers and the cases this is judged by; the standing cap and its precedence
 are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
@@ -443,7 +442,6 @@ reuses its own goal for the approved project scope, and an issue child creates o
 goal and keeps its CXC Loop. Record the role beside the goal state with its objective and approved
 scope, the hook compatibility, the observation path, and whether the approval policy in force can
 carry the callback this run depends on.
-
 
 Editing these instructions does not alter a turn that already loaded them, but where an installation
 links this checkout a later read of them loads the edited text, so a run spanning sessions can

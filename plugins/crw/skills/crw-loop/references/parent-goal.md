@@ -31,12 +31,14 @@ this file transfers to initiative scope; the roles themselves are in
 
 ## Record the start adjudication
 
-The preflight above is performed once and its outcome is recorded, not repeated as a new user
-decision in every session. Write it into the coordination record as the `run_mode` and
-`host_compatibility` fields of [Start policy](../../crw-run/references/start-policy.md), together
-with the installed identities it was read at and the issue that owns an unresolved blocker, and
-restore it from there on the next entry. A later session re-reads those identities; it decides
-again only where one of them differs.
+The preflight above runs at start, on recovery and after an App Server restart, and its outcome is
+recorded rather than repeated as a new user decision in every session. Write it into the
+coordination record as the start-policy record: `run_mode` and `host_compatibility` are the fields
+this lifecycle owns, and the delivery-path and approval-policy results land beside them in
+`observation_path` and `approval_policy`, together with the installed identities each was read at
+and the issue that owns an unresolved blocker. Restore it from there on the next entry. A later
+session re-reads what those values stand on and decides again only where one differs, under the
+trigger list in [Start policy](../../crw-run/references/start-policy.md).
 
 The recorded mode says which of these actually holds, in the words it will be reported in:
 
@@ -57,10 +59,10 @@ Disabling a hook, replaying hook events, manufacturing CXC evidence and force-co
 existing goal are forbidden above. They are also not offered to the user as options, because
 presenting one as a choice is how it becomes an approved plan.
 
-
 Since the 2026-09-20 role decision a project parent creates or reuses its own goal for the approved
-project scope as its default and uses automatic continuation, while still building no CXC goalplan
-or FSM and never fabricating a source change to close it. That supersedes the temporary arrangement
+project scope as its default, while still building no CXC goalplan or FSM and never fabricating a
+source change to close it. Its continuation is the bounded Stop nudge recorded below, not a durable
+loop. That supersedes the temporary arrangement
 in which a parent ran goal-free unless a Loop was separately requested, and it carries activation
 authority for a parent already running. It opens no goal on a completed project or an unapproved
 backlog item, and an explicit user no-goal limit is a different thing that still wins.
@@ -81,7 +83,6 @@ mechanism and its budget, the three compatibility facts including approval-polic
 the five pieces of evidence that must stay separate, and what is returned to CRW-29 when the host
 cannot support the goal at all. The table below still governs an existing paused, blocked or
 differently scoped goal.
-
 
 ## Create or reuse the parent's goal
 
