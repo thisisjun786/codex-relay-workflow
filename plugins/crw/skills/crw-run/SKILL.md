@@ -511,10 +511,9 @@ the work continues there; establish that a lock is stale before removing it, bec
 a lock file records only that somebody took it. Another task still holding that path
 or that lock is not a restriction to clear but an ownership conflict: leave its work
 as it is, serialize behind it or settle it with its owner, and report the blocker
-rather than displacing a live writer.
-Where the refusal is the child's own permission profile, nothing here widens
-it: a running task keeps the settings it was created with, and the supported answer
-is the
+rather than displacing a live writer. Where the refusal is the child's own permission
+profile, nothing here widens it: a running task keeps the settings it was created
+with, and the supported answer is the
 [OPS-5.3](references/operations.md#ops-53-who-commits-and-the-fallback-when-a-task-cannot)
 fallback taken deliberately and recorded, with the child still owning the source
 edits in that checkout and returning a frozen diff against the recorded baseline
