@@ -85,6 +85,13 @@ Context:
   generation only where the assignment is already registered, since a newly created
   child's registration needs the task id creation has not returned yet and resolves its
   own relationship by issue lookup]
+- Determined execution mode: [relay-managed or explicitly direct, with the reason where it is
+  direct; the resolved state directory and socket; the store identity the determination's own
+  reading reported; the delivery owner; and what availability was measured rather than assumed.
+  Determined at managed start or resume per
+  [Determine the execution mode](../SKILL.md#determine-the-execution-mode). Carried here because
+  a child that is told only the state directory cannot tell an agreed direct assignment from a
+  relay one nobody decided about, and those two call for different behaviour on completion]
 - Canonical criteria, when registered: [criterion ids and the document they came from]
 - Canonical Linear documents: [IDs/URLs and observed revision/date]
 

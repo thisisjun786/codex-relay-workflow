@@ -1,6 +1,6 @@
 ---
 name: crw-plan
-description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, and scoped plan updates; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
+description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation, and carry the standard for explaining a system's design to somebody who does not know it yet. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, scoped plan updates, and requests to understand or review how a system works or should work; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
 ---
 
 # CRW Plan
@@ -27,12 +27,20 @@ Distinguish proposed, implemented, reviewed, merged, deployed, and behaviorally 
 
 Identify the goal, product classification, and finishable outcome separately using the shared [Linear operating model](references/integrations.md#linear-operating-model). Reuse existing initiative/project IDs and team conventions. Do not infer product identity from a checkout folder name or merge distinct products because their repositories are related.
 
+## Explain the design
+
+When the request is to understand or review a system rather than to plan one, what a component is for, whether an existing owner can be left where it is, how the parts fit, or whether a proposed change actually helps, follow [Design explanation](references/design-explanation.md). It fixes what the answer must carry: the visible result first, then which process runs and which store keeps, what actually refuses, how far each claim is built with the evidence that earned the label, and how an improvement would be judged before anyone measures it. The same standard applies to design reasoning written into a plan for a later reader.
+
+Two rules hold without opening it. A registered hook, a line in a prompt and a merged source edit establish no enforcement, no installation and no live behaviour; each of those is a separate fact needing its own evidence. And an explanation-only request executes nothing, while a Linear reflection the request or its existing scope already covers is applied, read back, and not sent for the same approval again.
+
+This standard governs how an explanation is delivered. Checking delivered work against what was agreed stays with [crw-check](../crw-check/SKILL.md), which owns that comparison whether or not an explanation is what produced the question.
+
 ## Shape the plan
 
 - **Initiative input:** the agreed goal, finish condition, scope and open decisions from `crw-define` or an existing accepted definition. Preserve its identity. When the request covers initiative or full-plan updates, link contributing projects and align the page body using the shared [initiative body standard](references/integrations.md#initiative-body-standard): explain each project's contribution and handoff, leaving issue-level detail below. A project/issue-only update reads the parent as context and proposes any needed parent change without writing it. Return material goal changes to definition within the request's scope.
 - **Project:** a finishable outcome created when the user requests a project. Name the result naturally; do not require a product prefix. A product name can appear when it helps explain the result.
 - **Milestone:** an observable result or coherent delivery boundary. Follow explicit user grouping, such as one milestone per character or module.
-- **Issue:** one implementation PR, with scope, acceptance criteria, canonical document links, dependencies, and meaningful verification. Apply the shared [issue-to-PR rule](references/integrations.md#issue-to-pr-mapping), including its non-PR work exception.
+- **Issue:** one implementation PR, stating the problem or user-visible outcome, the deliverable that will exist when it is finished, its PR target repository, the scope and what it deliberately leaves out, acceptance criteria, canonical document links, prerequisite issues, and meaningful verification. Apply the shared [issue-to-PR rule](references/integrations.md#issue-to-pr-mapping), including its non-PR work exception; a non-PR issue names its agreed result where the PR target would be.
 
 Use the smallest structure within the requested scope. An authorized full-plan write includes the projects needed for that agreed outcome; issue count, repository count, or estimated size alone does not authorize extra projects. Planning or updating issues can reuse a project or keep standalone issues without creating missing upper levels. A project may have no initiative or contribute to several; reuse its ID instead of duplicating the project or its issues. Execution ownership for a shared project follows the shared [supervisor, parent and child scope](references/integrations.md#supervisor-parent-and-child-scope): one execution supervisor and one parent, with the other initiatives referencing its outcome. Do not invent dates, owners, status transitions, or a team per product. Record unknowns plainly.
 
@@ -40,9 +48,9 @@ Apply product-family labels to projects and actual edit-target repository labels
 
 Carry the definition’s accepted direction and unresolved decisions into the plan. Develop project-specific design detail when needed; Strategy/Scope/Structure/Skeleton/Surface are document lenses, never required initiative/project/milestone/issue levels.
 
-Split by deliverable and shared contract, not file count. Derive order from dependency edges and overlapping edit surfaces. A schema/API contract may precede several apparently independent issues. Avoid dependency cycles and distinguish speculative backlog ideas from approved requirements.
+Split by deliverable and shared contract, and decide each boundary with [issue boundaries](references/issue-boundaries.md). A second issue exists because a second merge must happen: a different target repository, a part that must already be landed before the rest can be written or verified, or a part already delivered or owned by a live issue. Parts that cannot pass verification apart land together. File count, diff size, equal sizing and the wish to parallelize never split an issue. Derive order from dependency edges and overlapping edit surfaces. A schema/API contract may precede several apparently independent issues. Avoid dependency cycles and distinguish speculative backlog ideas from approved requirements.
 
-If an outcome needs several PRs, plan a separate implementation issue for each and connect prerequisites. Put the combined outcome in the project or milestone. Multiple repositories can belong to one project; code changes needing a PR in each repository require separate issues. Reading a dependency repository alone does not require another issue.
+If an outcome needs several PRs, plan a separate implementation issue for each and connect prerequisites. Put the combined outcome in the project or milestone. Multiple repositories can belong to one project; code changes needing a PR in each repository require separate issues. Reading a dependency repository alone does not require another issue. A request to organize work by PR, however short, applies that boundary rule and the closing check in full to its requested scope; a milestone-only or draft-only request applies them within that scope and writes nothing outside it.
 
 Make criteria observable: user behavior, data/state that must survive, and important failure cases. Do not weaken criteria to match code already written. Reuse completed work as evidence or a prerequisite instead of reopening it as a new implementation task.
 
@@ -61,18 +69,20 @@ Keep the schedule baseline and each change's time, reason, scope and before and 
 
 ## Reconcile and apply
 
-For an existing plan, compute a compact change set: reuse, create, update, or leave unresolved. Match stable IDs and semantic scope before titles. Re-running the same request should converge on the same items.
+For an existing plan, compute a compact change set: reuse, create, update, or leave unresolved. Match stable IDs and semantic scope before titles. Re-running the same request converges on the same items because the split follows deliverables derived from accepted criteria rather than a file layout that moves with every commit.
 
 A request to create, update, or apply the full plan in Linear authorizes its scoped hierarchy and document/item writes, including needed projects; an explicit project request or already accepted proposal also authorizes that project. Resolve write intent from the full conversation and existing authorization, not from the skill name or hierarchy depth. An advisory planning request remains a proposal until an apply/create/update request covers it. A narrower update does not authorize unrelated new projects. Prepare concrete changes, apply them within scope, and read back the resulting documents, items, and relations. Do not add a second approval step for routine authorized writes. A draft-only request stays a draft. Deletion, archival, issue closure, messages to others, or a material change to agreed scope need authorization covering that action.
 
 Preserve unrelated content, labels, history, and human edits. Refresh before updating if another actor may have changed an item. After an uncertain write, look up the existing result before retrying; report partial completion with actual IDs. If a project was created but its labels or relations failed, repair those fields on that ID. Do not repeat the project create. Resolve same-name candidates by IDs and semantic scope; ask only if the supplied target and current binding cannot distinguish them.
 
+Before reassigning any remaining scope of an issue that already has a PR, align its boundary under [delivered issues](references/issue-boundaries.md#align-a-delivered-issue): compare the scope agreed at assignment, the criteria still open and the current owner, then either keep the remainder in that same unmerged PR or move it to a new issue with the merged one as its prerequisite. An instrumentation or reference PR that satisfies no accepted criterion is not a delivery, a live assignment is never narrowed before its owner has agreed the new boundary, and leaving the issue open with unchanged criteria is not alignment. Narrowing a delivered issue is carried by the authorization the request already gave; it is not a second approval step.
+
 Link issues to the canonical Linear item body or supporting document instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source.
 
 ## Deliver
 
-Return Linear document/item links, meaningful changes, unresolved decisions, and the next ready issue or batch with prerequisites. Check requested scope coverage, duplicate work, coherent dependencies, and read-back evidence for reported writes.
+Return Linear document/item links, meaningful changes, unresolved decisions, and the next ready issue or batch with prerequisites. Close the plan in the order the [closing check](references/issue-boundaries.md#close-the-plan) sets: every promised outcome maps to an issue criterion, no two issues claim one deliverable, every stated prerequisite is a real blocking relation with no cycle and one ordering per shared surface, and each written item and relation is read back and reported as observed rather than as sent.
 
-For a full plan, do not stop at an initiative, project outline, or the first batch. Cover the entire agreed scope with issue-level criteria, repository/PR boundaries for implementation, dependencies, and verification. When discovery is necessary, define its question, output, and which later work it blocks instead of inventing implementation details. Report any unplanned scope or incomplete writes explicitly; an outline is not a completed plan. Creating the plan does not execute its issues.
+For a full plan, do not stop at an initiative, project outline, or the first batch. Cover the entire agreed scope with issue-level criteria, repository/PR boundaries for implementation, dependencies, and verification. When discovery is necessary, define its question, output, and which later work it blocks instead of inventing implementation details. Report any unplanned scope or incomplete writes explicitly; an outline is not a completed plan. Creating the plan does not execute its issues, and aligning a canonical document, its milestones and its issues in one authorized pass is still planning: it starts no task, opens no branch or pull request, and approves no merge.
 
 Provide a standalone handoff to `crw-run` with source IDs and embedded criteria when worker connector access is unproven. Do not launch work unless execution was requested.

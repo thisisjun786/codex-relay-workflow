@@ -46,6 +46,13 @@ blockers and next actions. Reuse compatible children and reconcile uncertain sen
 a missing transcript or elapsed wait does not permit a second writer. Keep future
 backlog outside this run unless the user expands its scope.
 
+That record includes the determined execution mode, and a resume reads it back rather than
+deciding again from scratch: re-deciding after a context loss is how one assignment acquires
+two routes. Where it is missing, determine it once under
+[Determine the execution mode](../crw-run/SKILL.md#determine-the-execution-mode) and record it
+before dispatching or correcting anything. An unavailable relay is recorded as such, never as a
+silent fallback to direct, and direct sends are never counted as relay completion evidence.
+
 The parent's native goal tracks verified results and integrations for the agreed
 scope. It has no CXC implementation goalplan/FSM and needs no source diff in the
 parent checkout. Children retain their effective workflow, normally CXC Loop. Load

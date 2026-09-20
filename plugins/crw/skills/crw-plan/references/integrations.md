@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, `crw-logic`, and `crw-tidy`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Skill names under each installation
 
@@ -136,6 +136,7 @@ Load the existing owner for the requested operation:
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+| Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
@@ -590,7 +591,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
@@ -667,6 +668,24 @@ Jun authorizes a pull request workflow in which the implementation child carries
 The coordinator then checks the Linear criteria and the pull request's latest diff, base, head, checks, and review resolution, and merges without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid merging. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted merge request. An explicit diff-only, no-merge, or narrower instruction still overrides this default, and the child never merges.
 
 Release and deployment are not covered and still require the user. Where merging a branch is known to trigger a release or a deployment, obtain that approval before merging, since the branch name alone does not carry it. A repository requirement that genuinely needs a new decision remains a blocker for that action.
+
+### Whether a relay holds this assignment
+
+Every relay rule in this workflow is written as a condition — "where a relay holds the assignment" — and for a long time nothing said how that is decided. An undecided condition does not read as false; it reads as nothing, so the question was never asked and execution stayed on direct send and steer by default. There are two answers here and no third. Managed start and managed resume decide which one applies, and record the decision.
+
+A relay holds this assignment when all three hold together: the packet's relay block names a shared state directory this process actually resolved; the issue lookup in that directory returns a responsible relationship; and the reading came from the store this process measured rather than some other file at the same path. One command answers all three, because the order between them used to be the hazard rather than the answer: `codex-session-relay --state "$RELAY_STATE" doctor --issue <the exact issue identity>` reports `issue.holds`, the responsible child and relationship, and `issue.storeAgreement`. Act on it only where that agreement reads `same`. Before registration has landed the assignment is still relay-managed if the state directory is agreed and the declared intent names that store; `assignment-find --issue` carries the same provenance under `relay.store` for the same comparison.
+
+Treat a lookup that cannot name its own store as no answer at all. Run the lookup first against a mistyped state directory and it creates an empty store, then truthfully reports that nothing is assigned — and a coordinator that believes it opens a second writer for an issue that already has an owner. That is why the answer carries the store it came from and why a disagreeing store is refused rather than reported beside a usable result.
+
+Where the determination says no relay holds it, that is a decision and it is recorded with its reason: the state directory is not writable, no socket is configured or reachable, or this assignment is deliberately direct. Record it in the same coordination record that holds the rest of the assignment, with the mode, the resolved state directory and socket, the store identity the reading reported, the delivery owner, and what availability was actually measured rather than assumed. A resume reads that record back before acting, so the mode survives the coordinator's own context loss.
+
+Three things this must never become. An unavailable relay is never recorded as deliverable, because a receipt nobody can deliver is not progress that a parent may claim. An unavailable relay is never a silent fallback either: direct is chosen and written down, never arrived at by a command that failed quietly. And direct send and steer remain a transport and nothing more — a delivered instruction is not a receipt, an acknowledgement or a verdict, so a direct send is never counted as relay completion evidence, and the same logical instruction never travels both routes at once.
+
+Ordinary conversation is not managed transport. What the relay carries is the assignment's own traffic: the completion receipt, the acknowledgement, the verdict, and the revision request a needs-changes verdict queues. A question to a peer parent, a status answer, a clarification are peer conversation and stay on the ordinary path; forcing them through an assignment event would file conversation as delivery and make the record useless for the thing it exists to prove.
+
+Relay resume and native-goal continuation are different mechanisms and take different proof, and the word "resume" covers both, which is how they get confused. A relay resume is about an assignment: undelivered messages, an unsettled attempt, a generation waiting on its anchor, all recovered from the store. A native goal continuing is about a task deciding to keep working across turns. Neither establishes the other. A recovered assignment says nothing about whether the coordinator's goal is still active, and an active goal is not evidence that a queued correction ever reached the child. Record and prove them separately, and name which one a report is about.
+
+Existing work is not migrated by this. A project already running direct keeps its records, its owners and its pull requests, and switches only at a boundary where switching is safe and explicit. Reporting that current execution is still direct is part of the record, not something the determination hides.
 
 ### Durable cross-task delivery
 

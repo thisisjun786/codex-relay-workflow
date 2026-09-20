@@ -40,7 +40,7 @@
       "packageLocation": "packages/codex-session-relay/src/codex_session_relay",
       "subdirectoryTree": "5df3a2e018c32a33790240ad1f266fbff961c655",
       "packageTree": "7373b61237e1a60e54a2c0489982c4165b66fc15",
-      "sourceDigest": "1a025dcf03f8686a79fa4aedece1c51ff1223115d796d593b8a4c9031e092bc6",
+      "sourceDigest": "3bb61ac68f36c6e85dfb40c2cbcf427766c6c467617bf669f061cc56a5fb96ad",
       "version": "0.1.0",
       "requiresPython": ">=3.11",
       "licencePath": "LICENSE",

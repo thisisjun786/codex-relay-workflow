@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Tidy"
+  short_description: "합의된 규칙에 미흡한 문서·이슈를 찾아 근거 있는 공백만 보완"
+  default_prompt: "$crw-tidy 이 Linear 프로젝트의 문서와 이슈가 합의된 작성·관리 규칙에 맞는지 살피고, 근거가 분명한 공백만 보완한 뒤 예외·충돌·확인 못 한 범위를 함께 알려줘."
+policy:
+  allow_implicit_invocation: true
