@@ -42,6 +42,40 @@ state directory under the user state home and could not connect to the App Serve
 which is why the split below existed there. Reuse that as a recorded observation, not as a rule
 that holds everywhere.
 
+## Determine whether this store holds the assignment
+
+    codex-session-relay --state "$RELAY_STATE" doctor --issue <the exact issue identity>
+
+Adds an `issue` block to the doctor report: `holds`, `responsibleChild`,
+`responsibleRelationship`, the `storeId` the rows actually came from, and `storeAgreement`.
+
+It exists because the proof was a conjunction split across two commands with nothing ordering
+them. `doctor` said which store this process reached; `assignment-find` said who owns the issue;
+and running the second one first against a mistyped state directory CREATES an empty store, which
+then answers "no assignment" perfectly honestly. A coordinator that believes that answer opens a
+second writer for an issue that already has one. Asking both halves of one read-only connection is
+what removes the gap, because a single read cannot disagree with itself about which file it read.
+
+`storeAgreement` compares the store id returned by that read, and the device and inode the read
+itself measured, against what the probe measured. `same` is the only value to act on. `changed`
+means the rows came from a file this process did not measure, and it returns `holds: null` and
+exits 2 rather than reporting a relationship you would then adopt out of an unverified store.
+`unknown` means one side could not be established. None of this is proof of store identity on its
+own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
+`--expect-nonce` still exist and still refuse anything short of `proven`.
+
+An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
+are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
+constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
+create the database it was asked to look at, and a rename during the read returns no rows rather
+than rows attributed to the wrong file.
+
+`assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
+block with `storeId`, `dbPath`, `realPath`, `device`, `inode` and `recordedSocket`.
+`recordedSocket` is the socket the store recorded when it was created, first write wins, and
+deliberately not the socket this process resolved — so a participant pointing somewhere else can
+see the two disagree instead of the later one quietly winning.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
