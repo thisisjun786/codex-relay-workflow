@@ -213,6 +213,20 @@ resumes the held deliveries. `doctor` reports the policy digest this process res
 compares it with the bridge's, because two processes reading two different files is a second
 source of truth that neither one can see on its own.
 
+
+A message to a task states the RECIPIENT's authorized pair, not the sender's. A child reporting
+to its parent states the parent's, and its own settings are unaffected by what the parent runs
+on; copying the recipient's pair into the sender is how a correction to one level spreads to
+another. Where the recipient's role has a declared pair, that pair is the one to state, read from
+the declared policy at the time of the send rather than from a record of what it used to be.
+
+The recipient's runtime state decides the mechanism as well as the settings. An idle or unloaded
+recipient is resumed and therefore carries its settings; an ACTIVE recipient is steered into the
+turn it is already running, and a steer carries no model or effort at all, so there is nothing to
+state and nothing that could be applied. Reading the state before choosing is what keeps those
+two apart, and it is also what a report must not skip: a send accepted on a resumed recipient and
+a steer accepted into a live turn are different facts.
+
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
 `activePermissionProfile`, carry it into the record's `expectedPermissionProfile` field, which is
