@@ -343,9 +343,10 @@ Workspace ownership: [what is already present at that working location and those
   roots, each entry labelled as already owned by this assignment or owned elsewhere, since
   predating the run and belonging to it are separate facts: the temporary artifacts, evidence
   roots, shared originals and running processes there. Do not adopt what is owned elsewhere.
-  Then this task's own working directory, artifact roots and cleanup authorization,
-  `none automatic` where no cleanup is authorized. Checkout, branch and Git metadata ownership
-  are inapplicable on this path]
+  Then this task's own working directory and artifact roots, each with the owners OPS-5.1
+  requires on this path: creator, editing owner, retention owner and cleanup authorization,
+  `none automatic` where no cleanup is authorized. Git metadata ownership is inapplicable
+  here, and so are checkout and branch ownership]
 Resource delta to report at close: [measured against that baseline, what this task created,
   changed, retained, shared or cleaned, each with its owner, release condition and next action;
   the working directory, purpose, handle and running state of any process it started; and any
