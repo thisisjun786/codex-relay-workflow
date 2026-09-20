@@ -6,35 +6,34 @@ with its reason, not a projection.
 
 ## The shared baseline contract
 
-The dates and their meaning come from the shared schedule baseline contract at
+The dates and their meaning come from
 [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
-which `crw-plan` owns and CRW-143 lands. It supplies the stable ID of each tracked target, its
-original baseline date and its currently approved date, the baseline time and timezone, the kind
-of target the date applies to, the evidence that counts as actually achieving it, the source of
-any change, and the predecessors it requires.
+which `crw-plan` owns. Read its fields, their sources and their precedence there. This file keeps
+no second copy of them, because two operations paraphrasing one contract stop agreeing about the
+same item, and `crw-check` reads that same section, which is what makes a status verdict and a
+check verdict comparable at all.
 
-**Pending CRW-143.** Until that section is on `dev`, do not invent a substitute contract, a local
-field set, or a second place where baselines live: two schedule contracts is the problem the shared
-one exists to prevent, and `crw-check` verifies the same contract under CRW-144, so a private
-variant here would break the agreement check depends on.
+Two of its values carry most of the work here. `Schedule baseline` is what the subject was first
+expected by and `Current target` is what it is expected by now, and a verdict that reads only one
+of them cannot tell a plan that held from a date that moved. `Target nature` decides whether there
+is an agreed date to judge against in the first place.
 
-Without it, two of the five verdicts are unavailable and saying so is the verdict. 계획대로 and
-앞섬 both assert that a date was met as originally agreed, and neither can be established while
-nothing distinguishes an original baseline from a date that was moved to wherever the work had
-reached. The other three survive, because none of them claims that: 지연 needs only a currently
-visible approved date that has passed with the result it names visibly absent; 지연 위험 warns
-about a date still ahead and promises nothing; and 판단 불가 covers everything else, reported as
-판단 불가, 공유 일정 기준 계약 미도입 so the reason reads as the missing contract rather than
-missing work. Whatever dates the project and its milestones carry are reported as the unstructured
-dates they are, as context beside the verdict and never as the baseline that produced it.
+Where `Schedule baseline` is `unconfirmed`, two verdicts are unavailable for that subject and
+saying so is the verdict. 계획대로 and 앞섬 both assert that a date was met as originally agreed,
+and with no baseline record nothing separates an original target from one moved to wherever the
+work had reached. The other three survive, because none of them claims that: 지연 needs only a
+`Current target` that has passed with its named result absent, 지연 위험 warns about a date still
+ahead and promises nothing, and 판단 불가 covers the rest, reported with the missing record as its
+reason so it does not read as missing work. A `Target nature` of `undetermined` or `awaiting
+authority` is 판단 불가 for the same reason: there is no agreed date to be early or late against.
 
-Postponement history is one of the things the missing contract would have preserved, so it is not
-available at this stage either. A date that was missed and then moved forward now reads as a date
-still ahead, and 지연 cannot be carried on a date nobody can see: two projects with the same
-visible record would otherwise get different verdicts depending on who remembered what. Use the
-earlier date only where another trustworthy source explicitly holds it together with its target
-and its achievement state, and name that source in the report. The replan rules below apply once
-the contract supplies that history.
+Postponement history comes from `Change source`, which carries the time, the decider, the reason,
+the scope and the before and after dates. Where it is there, a date that was missed and then moved
+forward is visible as exactly that and the replan rules below apply. Where it is absent, the
+earlier date is not observable and 지연 cannot be carried on a date nobody can see: report the
+current target, say the change record is missing, and leave that subject 판단 불가 rather than
+inferring a miss. Where `Current target` disagrees with the latest change record's after value, the
+comparison is unverified until the two are reconciled and neither side is quietly preferred.
 
 ## Read these, and not the issue count
 

@@ -48,18 +48,20 @@ working; a task that answered an hour ago may have ended waiting for something.
 
 ### A turn and a goal are different readings
 
-Three roles carry three different lifecycles, and the policy is `crw-run/references/start-policy.md`,
-which CRW-118 lands. Read it there rather than from a copy here; until that file is on `dev` this
-reference is **pending CRW-118** and is deliberately not a link, and the shape it fixes is that an
-initiative supervision task runs without a native goal of its own, a project parent runs a native
-goal with automatic continuation and no CXC goalplan or FSM, and an issue child runs a native goal
-under CXC Loop.
+A parent has two states worth reading and they answer different questions. The turn says whether it
+is working right now. The goal says whether anything brings it back when this turn ends. Read both
+and report both, and read the parent's effective workflow before judging either.
 
-So a parent has two states worth reading and they answer different questions. The turn says whether
-it is working right now. The goal says whether anything will bring it back when this turn ends.
-A parent between turns with an active goal and working continuation is fine; the same parent with
-no goal, a paused one, or a goal that cannot activate is not, and it will stay quiet either way.
-Read both and report both.
+The workflow is what makes a missing goal a fact or a fault. A parent running goal-free `crw-run`
+is in a supported mode: it does not resume itself, and the ordinary message path is how its next
+handoff reaches it, so absent goal is normal there and not a stall. A parent running
+[crw-loop](../../crw-loop/SKILL.md) was given a goal and automatic continuation on purpose, so a
+missing, paused or unactivatable goal on that parent is a real stall cause and the report leads
+with it. Judge against the mode the parent is actually in, taken from the
+[workflow ownership](../../crw-plan/references/integrations.md#workflow-ownership) rules in force
+now. CRW-118's `crw-run/references/start-policy.md` will fix which role carries which lifecycle by
+default; it is not on `dev`, it is deliberately not linked here yet, and until it lands nothing in
+this file treats its shape as the current contract.
 
 Neither reading decides a contact on its own, and this is where the two rows would otherwise
 disagree. The goal says whether the parent returns; the outstanding item says whether there is
@@ -69,26 +71,34 @@ unprocessed at the read you are acting on has not been carried, whatever continu
 and an active goal is not evidence that a particular result was delivered.
 
 So send nothing while the item is no longer outstanding, while the parent is inside a turn that
-would consume it, or while a handoff carrying that same item has already been accepted and is
-simply not reflected yet, which is M12's case and is recorded rather than resent. Resume where the
-parent is idle at the current read, the item is still unprocessed, and nothing already accepted
-covers it, even where continuation ran after that item landed: a continuation that has already run
-and left it outstanding has had its chance, and waiting for a second one is how approved work sits.
-The timing of an earlier observation is context for the report, never the reason for silence.
+would consume it, or while a handoff carrying that same item is still genuinely in flight, which is
+M12's case and is recorded rather than resent. In flight means its turn has not finished or its
+outcome is not yet resolved. An acceptance receipt has no lifetime of its own: once that turn has
+terminated with the item still outstanding, the handoff did not land, and treating the old receipt
+as a reason for silence would suppress every future checkpoint and leave the item with no recovery
+path at all. Classify that outcome as a delivery that failed, and send a recovery handoff under a
+new identity so it is distinguishable from the first rather than a blind resend, or route it to the
+execution owner where the same delivery has already failed that way.
+
+Resume where the parent is idle at the current read, the item is still unprocessed, and nothing in
+flight covers it, even where continuation ran after that item landed: a continuation that has
+already run and left it outstanding has had its chance, and waiting for a second one is how
+approved work sits. The timing of an earlier observation is context for the report, never the
+reason for silence.
 
 Three readings get confused with each other and are kept apart. A goal that exists is not a goal
 that activated. A goal that activated is not continuation observed actually happening. And a parent
 blocked by a goal compatibility problem is neither idle nor complete: reporting it as either hides
 the one fact that explains why nothing is moving. Say which of the three you observed and when.
 
-A status call creates no goal. Where a parent needs one, that is the existing execution policy's
-decision and its owner's action, routed to them with what you observed rather than performed here.
-The owner is the task recorded as that parent's coordinator in its coordination record, reached
-through [crw-run](../../crw-run/SKILL.md) as the execution owner; where the record names none, it is
-Jun's decision and goes in the report as one. Do not hold the routing for `start-policy.md` to land:
-that file fixes which role carries which lifecycle, not who is told about a broken one.
-The goal-free parent some tasks ran under early on was a temporary state, not the default to copy
-forward.
+A status call creates, activates or repairs no goal. Find the task by its stable coordinator binding
+in that parent's coordination record, and route the goal work as [crw-loop](../../crw-loop/SKILL.md)
+lifecycle work, because that is the operation owner for a goal's creation, activation and recovery;
+`crw-run` executes the project and does not make a parent's goal. Where the record names no
+coordinator, or ownership cannot be established, it is Jun's decision and goes in the report as one.
+Do not hold this routing for `start-policy.md` to land: that file fixes which role carries which
+lifecycle by default, not who is told about a broken one. The goal-free parent some tasks ran under
+early on is a supported mode rather than a defect, and also not a default to copy forward.
 
 Per delivery, from GitHub: the current head, the CI attempt that applies to that head, the reviews
 paged to the end, whether the pull request actually merged into its intended target, and whether
@@ -158,7 +168,7 @@ growing inside Status where Run already owns one.
 | Observed on a responsible parent | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no accepted handoff already covering it | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working |
+| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
 | paused, cancelled or archived, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take ([OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)) |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
@@ -266,8 +276,10 @@ has been idle since before that result landed, with the result unprocessed in th
 record.
 Action: on the checkpoint branch, re-read the result's state and the parent's. Send nothing where
 that read shows the result is no longer outstanding, where the parent has entered a turn that will
-consume it, or where a handoff carrying the same item was already accepted and has not been
-reflected yet. Otherwise resume that parent through the existing supported path with the
+consume it, or where a handoff carrying the same item is still in flight. Where such a handoff was
+accepted but its turn has since ended with the result still unprocessed, that delivery failed:
+record it as failed and send a recovery handoff under a new identity. Otherwise resume that parent
+through the existing supported path with the
 restoration block, then read its state again and report both what was sent and what was observed
 after. A parent that is idle now with the result still unprocessed is resumed whether or not its
 continuation was seen working at some point after the result landed. On the reading branch, report
@@ -323,26 +335,33 @@ Observed: the transport returned a receipt for the handoff, and the parent has n
 acting on it yet.
 Action: record the receipt as the transport accepting the input, and the parent's state as not yet
 observed to have resumed. Two rows, not one. Do not resend to make the second row appear, and do
-not report the project as progressing on the strength of a receipt.
-Preserved: the five facts as five, which is the whole point of writing them separately.
+not report the project as progressing on the strength of a receipt. That silence lasts only while
+the handoff is in flight: once its turn has ended with the item still outstanding, the delivery
+failed and the next checkpoint recovers it under a new identity rather than matching the old
+receipt forever.
+Preserved: the five facts as five, which is the whole point of writing them separately, and a
+recovery path for a handoff that was accepted and then went nowhere.
 
 ### M13 The parent is quiet and the reason is its goal
 
 Observed: a parent has no running turn. In one variant its goal is active with continuation
 working; in another it has no goal, or a paused one, or one that cannot activate.
-Action: report the turn and the goal as two readings. The first variant is a parent between turns,
-and it needs nothing only while nothing is outstanding for it; where something is outstanding, the
-item decides under the precedence above and a working goal is not a reason for silence. The second
-variant will stay quiet whatever arrives for it, and that is the fact the report leads with rather
-than calling it idle. Distinguish a goal that exists, a goal that activated, and continuation
-observed actually happening; say which you saw.
-Preserved: the difference between quiet and stopped, and between a healthy goal and a delivered item.
+Action: read its effective workflow, then report the turn and the goal as two readings. A goal-free
+`crw-run` parent is in a supported mode and its absent goal is not the stall; a Loop parent with a
+missing, paused or unactivatable goal will stay quiet whatever arrives, and that is the fact the
+report leads with rather than calling it idle. Either way the parent needs nothing only while
+nothing is outstanding for it; where something is, the item decides under the precedence above and
+a working goal is not a reason for silence. Distinguish a goal that exists, a goal that activated,
+and continuation observed actually happening; say which you saw.
+Preserved: the difference between quiet and stopped, between a supported mode and a fault, and
+between a healthy goal and a delivered item.
 
 ### M14 A parent needs a goal it does not have
 
 Observed: the checkpoint establishes that a parent cannot continue because of its goal state.
-Action: report it and route it to that parent's recorded coordinator through Run, or to Jun where
-the record names no coordinator. Do not create, activate or repair a goal from a status call, and
-do not treat the temporary goal-free arrangement some parents started under as the default to
-restore. A checkpoint moves approved work; it does not change how a task is run.
-Preserved: the execution policy's ownership, and an accurate reason for the stall.
+Action: confirm first that this parent is one a goal is expected of, because a goal-free Run parent
+is not stalled by lacking one. For a Loop parent, report the block and route it as crw-loop
+lifecycle work to the task named by the parent's stable coordinator binding, or to Jun where none
+is named. Do not create, activate or repair a goal from a status call. A checkpoint moves approved
+work; it does not change how a task is run.
+Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
