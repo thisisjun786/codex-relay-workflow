@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Refactor"
+  short_description: "사이클 검증 후 다음 변경을 어렵게 하는 구조적 부채 진단"
+  default_prompt: "$crw-refactor 이번 이니셔티브 사이클의 목표와 실제 변경을 확인하고, 다음 변경을 어렵게 하는 구조적 부채 후보를 3개 이내로 추천해줘. 기능과 외부 계약을 유지하며 근거·최소 개선안·검증 기준을 제시하고, 이번에는 진단과 계획까지만 진행해."
+policy:
+  allow_implicit_invocation: true

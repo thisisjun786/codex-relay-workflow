@@ -1,6 +1,6 @@
 {
   "name": "crw",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Linear-driven workflow skills for Codex: define an initiative, plan projects and issues, run delivery, and check the result against its canonical criteria.",
   "author": {
     "name": "thisisjun786",
@@ -24,7 +24,7 @@
   "interface": {
     "displayName": "CRW",
     "shortDescription": "Linear-driven planning and delivery workflow skills.",
-    "longDescription": "CRW turns a Linear product record into executable work. Define explores intent and fixes an initiative goal, Plan decomposes it into projects and one-PR issues, Run and Loop execute one project through independent tasks, Status reports where that work stands and how it compares with the agreed schedule, Check and Logic verify delivery and internal consistency against the canonical criteria, and Tidy supplements records that fall short of the rules already agreed. The skills share one integration guide and keep product decisions in Linear. The package also declares the task-bridge MCP server and the completion Stop hook, and ships the small launchers that start them. It carries no runtime: the bridge, the session relay and the Python environment are installed separately, and the launchers read a record naming that installation. A declared hook does not run until it is trusted.",
+    "longDescription": "CRW turns a Linear product record into executable work. Define explores intent and fixes an initiative goal, Plan decomposes it into projects and one-PR issues, Run and Loop execute one project through independent tasks, Status reports where that work stands and how it compares with the agreed schedule, Check and Logic verify delivery and internal consistency against the canonical criteria, and Tidy supplements records that fall short of the rules already agreed. Refactor diagnoses structural debt after a verified cycle, recommends up to three bounded repairs, and executes only selected authorized work. The skills share one integration guide and keep product decisions in Linear. The package also declares the task-bridge MCP server and the completion Stop hook, and ships the small launchers that start them. It carries no runtime: the bridge, the session relay and the Python environment are installed separately, and the launchers read a record naming that installation. A declared hook does not run until it is trusted.",
     "developerName": "thisisjun786",
     "category": "Developer Tools",
     "capabilities": [
