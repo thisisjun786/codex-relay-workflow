@@ -2032,6 +2032,29 @@ def _trial_payload(name):
 # Check 6 - past the exclusive mkdir, every exit releases what this run created
 # =========================================================================================
 
+# The exits that keep the environment BECAUSE it became the runtime. They are exempt from the
+# release rule for the opposite reason a refusal is not: past the promotion the directory is not
+# a leftover somebody has to clean up, it is the installation a host now reaches, and releasing
+# it would delete what the run just put into service. Two of them, because replacing a runtime
+# and recording that it was replaced are different results with different statuses.
+PROMOTED_EXITS = ("EXIT_OK", "EXIT_INCOMPLETE")
+
+
+def _promotion_exit(value):
+    """Whether a returned value is one of the promoted exits, choice between them included.
+
+    The tail chooses between them on one reading -- whether the claim that RECORDS the
+    replacement was written -- so it is one return site with two answers. Read as two returns it
+    would satisfy the rule below while letting a second, unexamined exit sit beside the one this
+    check was written for.
+    """
+    if isinstance(value, ast.Name):
+        return value.id in PROMOTED_EXITS
+    if isinstance(value, ast.IfExp):
+        return _promotion_exit(value.body) and _promotion_exit(value.orelse)
+    return False
+
+
 def _unreleased_exits(tree):
     """Returns inside cmd_install after the exclusive mkdir that do not go through release.
 
@@ -2060,15 +2083,15 @@ def _unreleased_exits(tree):
                         else getattr(called, "id", None))
                 if name == "_install_failed":
                     continue
-            # The success return is identified by its VALUE, not by its position. The last
+            # The promoted return is identified by its VALUE, not by its position. The last
             # return in this function is an exception handler, so exempting the last one
             # exempted a failure path and flagged the success.
-            if isinstance(value, ast.Name) and value.id == "EXIT_OK":
+            if _promotion_exit(value):
                 successes.append("line " + str(statement.lineno))
                 continue
             offenders.append("line " + str(statement.lineno))
         if len(successes) > 1:
-            offenders.append("more than one success return: " + ", ".join(successes))
+            offenders.append("more than one promoted return: " + ", ".join(successes))
         return offenders
     return ["cmd_install was not found"]
 
@@ -5884,6 +5907,11 @@ class UpdateRecoveryTests(unittest.TestCase):
                               return_value={"readable": True, "objects": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
                               side_effect=fake_classification),
+            # The settle path waits for the promotion lock before it can report "could not be
+            # established", and several cases here deliberately make it wait. Five seconds of
+            # real time each is wall clock this suite has no reason to spend: what those cases
+            # assert is the ANSWER on the busy path, never how long it took to give up.
+            mock.patch.object(runtime_install, "SETTLE_SNAPSHOT_TIMEOUT_SECONDS", 0.2),
         ]
         if breaking == "replace the owned pointer":
             # The link LANDS and then the call fails, which is the case the code claims to
@@ -5914,6 +5942,298 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.pointer, "names",
                                              side_effect=flaky_names))
+        if breaking == "settle the staging claim":
+            # The claim that RECORDS a finished replacement, and only that one. The STAGING
+            # claim written before the build has to land or the run never reaches a promotion
+            # to record, and then this injects a different failure than the one it names.
+            real_write = runtime_install.staging.write_claim
+
+            def write_unless_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_unless_settling))
+        if breaking == "settle the staging claim after it lands":
+            # What a failing RELEASE really leaves: the claim replaced, the lock file it could
+            # not unlink still there, and the call raising on its way out. Raising before the
+            # write would leave nothing to honour and the case would pass without exercising
+            # the readback; leaving no lock file would model a release that failed without
+            # failing to release anything.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def write_then_strand(environment, state, **kwargs):
+                written = real_write(environment, state, **kwargs)
+                if state == staging.COMPLETE:
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("stranded", encoding="utf-8")
+                    raise OSError("the claim lock could not be released")
+                return written
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_then_strand))
+        if breaking == "settle the staging claim while another run holds it and the selection moves":
+            # Both at once: a competing claim writer AND a promotion that landed elsewhere.
+            # The lock this call lost says nothing about what the next run will do with this
+            # directory, so the two answers have to be composed rather than one hiding the
+            # other.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def busy_after_moving_on(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("a rival", encoding="utf-8")
+                    raise hostrecord.Busy("another run holds the claim lock")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=busy_after_moving_on))
+        if breaking == "settle the staging claim with only part of it selected":
+            # One configured component inside this environment and the other elsewhere.
+            # protected_environment folds with any() and reads "selected"; _names_environment
+            # requires all of them and a resume refuses.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def split_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    parts = list(host.data["components"])
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={parts[0]["component"]:
+                                str(Path(environment) / "site" / parts[0]["module"]),
+                                parts[1]["component"]:
+                                str(host.previous_site / parts[1]["module"])})
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=split_then_fail))
+        if breaking == "settle the staging claim unreadably with no snapshot":
+            # The claim cannot be read AND the selection could not be established: unknown,
+            # which is not the same as superseded.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+            real_exclusive = runtime_install.hostrecord.Exclusive
+            taken = []
+
+            def corrupt_only(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            def exclusive_then_unusable(path, **kwargs):                      # noqa: F811
+                taken.append(path)
+                if len(taken) > 1:
+                    raise OSError("the lock directory is read-only")
+                return real_exclusive(path, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_only))
+            patches.append(mock.patch.object(runtime_install.hostrecord, "Exclusive",
+                                             side_effect=exclusive_then_unusable))
+        if breaking == "supersede after the claim becomes unreadable":
+            # Ownership cannot be established AND the environment is superseded. decide()
+            # answers KEEP for every unreadable claim, so the guard must agree.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def corrupt_and_supersede(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_and_supersede))
+        if breaking == "settle the staging claim with a record this command accepts":
+            # A host record that passes hostrecord.shape() -- it checks that 'selected' is a
+            # table, not what its values are -- carrying a truthy non-path in an unrelated
+            # entry. protected_environment hands each value to Path(), which raises TypeError
+            # rather than OSError.
+            #
+            # The entries this run selected are removed as well, and that is not decoration:
+            # protected_environment folds them with any(), which short-circuits on the first
+            # match, so a selection that still names this environment never reaches the bad
+            # value at all. Only a superseded one does.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def poison_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    loaded = hostrecord.load(host.record_path,
+                                             host.data["definitionVersion"]).value
+                    loaded["selected"] = {"some-other-component": 17}
+                    hostrecord.save(host.record_path, loaded)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=poison_then_fail))
+        if breaking == "supersede after the claim settles":
+            # The claim lands, and a competing install promotes its own environment before the
+            # snapshot takes the promotion lock. Nothing raises: this is a SUCCESSFUL update
+            # whose environment has since been superseded, and staging.decide() keeps such a
+            # directory for ever because a process may still be running out of it.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def supersede_after_settling(environment, state, **kwargs):
+                written = real_write(environment, state, **kwargs)
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                return written
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=supersede_after_settling))
+        if breaking == "settle the staging claim after the pointer goes":
+            # The record still selects this environment and the owned pointer no longer names
+            # it. A rerun is then not bookkeeping: _finish_promotion replaces the link before
+            # it writes the claim.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def unlink_pointer_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(host.pointer_path).unlink()
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=unlink_pointer_then_fail))
+        if breaking == "settle the staging claim with the promotion lock unusable":
+            # The claim write fails AND the lock the snapshot needs cannot be taken for a
+            # reason that is not contention. Exclusive makes a directory, opens a file and
+            # takes a lock, and any of those can fail on their own. The promotion's own use of
+            # the lock has to succeed or there is no completed promotion to misreport, so only
+            # the second acquisition -- the snapshot's -- is broken.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+            real_exclusive = runtime_install.hostrecord.Exclusive
+            taken = []
+
+            def write_refused(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            def exclusive_then_unusable(path, **kwargs):
+                taken.append(path)
+                if len(taken) > 1:
+                    raise OSError("the lock directory is read-only")
+                return real_exclusive(path, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_refused))
+            patches.append(mock.patch.object(runtime_install.hostrecord, "Exclusive",
+                                             side_effect=exclusive_then_unusable))
+        if breaking == "settle the staging claim while a promotion is in flight":
+            # Somebody else is mid-promotion, holding the lock that serialises the two writes
+            # this snapshot reads. Taken outside it, the record load and the pointer reading
+            # can straddle that promotion and describe a state that never existed.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def hold_promotion_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    host.held.append(
+                        hostrecord.Exclusive(host.record_path, timeout=1.0).__enter__())
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=hold_promotion_then_fail))
+        if breaking == "settle the staging claim after the record vanishes":
+            # The host record disappears between the promotion and the claim write. It reads
+            # back as ABSENT, which is USABLE and carries an empty record -- so an empty
+            # selection and a superseded one look identical unless the state is consulted.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def unlink_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(host.record_path).unlink()
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=unlink_then_fail))
+        if breaking == "settle the staging claim after the selection alone moves on":
+            # The selection moves and the POINTER does not, which is what a promotion that
+            # died between its two writes leaves. staging.decide() keeps a directory the
+            # pointer still names, so this is not the abandoned-staging case however the
+            # selection reads.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def deselect_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=deselect_then_fail))
+        if breaking == "settle the staging claim after the selection moves on":
+            # An install that was queued on the promotion lock promotes its OWN environment the
+            # moment this run releases it, which is the window _settle_claim runs in. Both
+            # truths move, because that is what a promotion writes: the selection and the
+            # pointer. Then the settle fails, and the advice is composed against a record that
+            # no longer names this environment.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def move_on_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=move_on_then_fail))
+        if breaking == "settle the staging claim while another run holds it":
+            # A COMPETING writer, as hostrecord.Locked leaves the world when it gives up: the
+            # lock file is there, it is somebody else's, and this run never took it. The file
+            # has to be real, because the whole question is what this command says about it.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def busy_instead_of_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("a rival", encoding="utf-8")
+                    raise hostrecord.Busy("another run holds "
+                                          + str(staging.claim_path(environment))
+                                          + hostrecord.LOCK_SUFFIX)
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=busy_instead_of_settling))
+        if breaking == "settle the staging claim unreadably":
+            # The third shape: the claim at that path can no longer be read at all. Absence and
+            # unreadability are not one answer here, because the next run repairs one and
+            # refuses the other.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def corrupt_instead_of_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    raise OSError("the claim could not be replaced")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_instead_of_settling))
         for entered in patches:
             entered.__enter__()
         try:
@@ -6069,6 +6389,746 @@ class UpdateRecoveryTests(unittest.TestCase):
                             "the predecessor survives, which is what keeps a process that is"
                             " already running from it alive")
 
+
+
+def _advice(payload, host):
+    """A claim's recovery sentence with this host's temporary paths taken out of it.
+
+    Two cases run in two temporary directories, so every path in their advice differs no
+    matter what the advice SAYS. Comparing them raw is a test that passes for the wrong
+    reason -- which it did, and it hid a case it was written to catch.
+    """
+    return ((payload.get("claim") or {}).get("recoveryRequires") or "").replace(
+        str(host.root), "<root>")
+
+
+class SettledRecordTests(unittest.TestCase):
+    """The record of a replacement is not the replacement.
+
+    The staging claim settles last, after the selection is committed and the owned pointer is
+    placed and read back, so by the time writing it can fail a host already reaches the new
+    runtime through the registered command. Reported as an update failure, that told an
+    operator nothing had been replaced -- about a host that had already moved -- gave them a
+    null pointer for a link that had in fact been swapped, and offered a destination that
+    'cannot be retried until the selection moves' when what was actually needed was to run the
+    very same command again. Every assertion here is about telling the two apart.
+    """
+
+    def test_a_replacement_whose_record_fails_is_not_a_failed_replacement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, breaking="settle the staging claim")
+            after = host.snapshot()
+            candidate_survived = host.candidate.is_dir()
+            predecessor_survived = host.previous.is_dir()
+
+        self.assertTrue(payload.get("promoted"),
+                        "the selection was committed and the pointer was read back naming this"
+                        " environment, so the replacement happened: "
+                        + json.dumps(payload)[:900])
+        self.assertIs(payload.get("claimSettled"), False,
+                      "and the record of it did not land, which is the other outcome")
+        self.assertTrue(payload.get("applied"),
+                        "a run that replaced the runtime a host reaches applied something")
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not an update failure, however its"
+                            " bookkeeping ended")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the host really does reach the new runtime")
+        self.assertNotEqual(after["selected"], before["selected"],
+                            "and the new runtime really is the selected one")
+        self.assertTrue(candidate_survived,
+                        "the environment is in service, so nothing releases it")
+        self.assertTrue(predecessor_survived,
+                        "and a promotion removes nothing, this one included")
+
+    def test_the_result_says_what_the_next_run_must_do_when_only_the_record_failed(self):
+        """Read against what the next run actually does, not against its wording.
+
+        An operator left to guess is the defect. A sentence nobody checked against behaviour is
+        the same defect with better prose, so the advice is asserted and then carried out.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(host, breaking="settle the staging claim")
+            # Exactly what the result says to do, with nothing injected this time.
+            again, second = UpdateRecoveryTests()._run(host)
+            left = staging.read_claim(host.candidate)
+            rebuilt = sorted(p.name for p in host.candidate.iterdir())
+            after = host.snapshot()
+
+        claim = payload.get("claim")
+        self.assertIsInstance(claim, dict,
+                              "the record has an outcome of its own to report: "
+                              + json.dumps(payload)[:900])
+        self.assertIs(claim["settled"], False)
+        self.assertTrue(claim["detail"], "naming what would not write")
+        self.assertTrue(payload.get("recoveryRequires"),
+                        "and the result says what the next run must do")
+        self.assertEqual(again, 0, json.dumps(second)[:900])
+        self.assertEqual(second["stagingDecision"], staging.RESUME,
+                         "the next run reads it as the interrupted promotion it is")
+        self.assertTrue(second.get("claimSettled"),
+                        "and settles the record the previous run could not")
+        self.assertEqual((left.value or {}).get("state"), staging.COMPLETE,
+                         "the claim on disk now says the staging finished")
+        self.assertIn("site", rebuilt, "and nothing was rebuilt to get there")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the runtime a host reaches never moved")
+
+    def test_a_resume_whose_record_fails_reports_it_rather_than_raising(self):
+        """The same failure on the path that finishes somebody else's promotion.
+
+        It settles the claim outside its own lock and outside every handler the command has, so
+        the failure did not even reach the misleading report: it escaped cmd_install through a
+        finally with no except, and a repair that had already written the pointer ended as a
+        traceback with no result and no exit status at all.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # The state a kill between the two writes leaves: selected, unreachable, unsettled.
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            try:
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="settle the staging claim")
+            except OSError as error:
+                self.fail("a resume that has already written the pointer must report the"
+                          " record failure rather than raise it out of the command: "
+                          + type(error).__name__ + ": " + str(error))
+            after = host.snapshot()
+
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertTrue(payload.get("applied"),
+                        "the missing half of the promotion was written")
+        self.assertIs(payload.get("promoted"), True,
+                      "and this result carries the same promotion marker the ordinary exit"
+                      " does, because it can return the same non-zero status and a consumer"
+                      " reading only 'applied' would take it for an unused destination")
+        self.assertIs(payload.get("claimSettled"), False,
+                      "and the claim recording it was not")
+        self.assertTrue(payload.get("recoveryRequires"),
+                        "so the result says what is still outstanding")
+        self.assertNotEqual(code, 1, "a repair that landed is not a refusal")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the pointer agrees with the selection, which is the repair itself")
+
+    def test_a_record_that_landed_before_the_call_failed_is_settled(self):
+        """The record has the same split the result does: the write landed, the release did not.
+
+        write_claim replaces the claim under a lock and unlinks the lock file afterwards, so a
+        failure while releasing raises with the new bytes already on disk. Deciding the record
+        from the exception is this same substitution one layer down, and it sends an operator
+        to repair bookkeeping that is already correct.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after it lands")
+            claim = staging.read_claim(host.candidate)
+            stranded = str(staging.claim_path(host.candidate)) + hostrecord.LOCK_SUFFIX
+
+        self.assertTrue(staging.settled(claim),
+                        "the claim really is COMPLETE on disk, whatever the call did next")
+        self.assertIs(payload.get("claimSettled"), True,
+                      "so the record settled: " + json.dumps(payload.get("claim"))[:600])
+        self.assertEqual(code, 0,
+                         "the runtime was replaced and the record says so, which is a success")
+        self.assertEqual(payload["claim"]["readBack"]["saying"], staging.COMPLETE,
+                         "decided on the evidence of the claim itself")
+        # And what failed afterwards is named as itself rather than as the record failing.
+        self.assertIs(payload["claim"]["released"], False,
+                      "the call did not finish, which is its own outcome")
+        self.assertTrue(payload["claim"]["detail"],
+                        "naming what raised, rather than hiding it behind the readback")
+        self.assertEqual(payload["claim"]["residualPaths"], [stranded],
+                         "the lock the release could not unlink is named, because the next"
+                         " claim write at this path waits on it and then refuses")
+        self.assertIn(stranded, payload["claim"]["recoveryRequires"] or "",
+                      "with the action it implies, so a success is not silently residual")
+
+    def test_a_record_nobody_could_read_back_is_not_reported_as_settled(self):
+        """Fail closed, and say something different, because the next run does something
+        different: staging.decide() answers KEEP for a claim it cannot read, so rerunning
+        repairs the ordinary case and refuses this one.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim unreadably")
+            # What the next run actually does with a claim it cannot read.
+            again, second = UpdateRecoveryTests()._run(host)
+        with tempfile.TemporaryDirectory() as temporary:
+            ordinary = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim")[1]
+
+        self.assertIs(payload.get("claimSettled"), False,
+                      "a reading that failed establishes nothing, least of all success")
+        claim = payload.get("claim") or {}
+        self.assertIn("readBack", claim,
+                      "the readback is what decides settlement, so it travels with the answer"
+                      " as the evidence for it: " + json.dumps(claim)[:400])
+        self.assertIn(claim["readBack"]["state"], reading.UNUSABLE)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(again, 1, json.dumps(second)[:600])
+        self.assertEqual(second["stagingDecision"], staging.KEEP,
+                         "the next run refuses this directory rather than repairing it")
+        self.assertNotEqual(claim["recoveryRequires"],
+                            ordinary["claim"]["recoveryRequires"],
+                            "so it must not be given the advice that fits the case a rerun"
+                            " does repair")
+
+    def test_a_competing_writers_lock_is_never_called_this_runs_residue(self):
+        """A lock this run never took is not a lock it stranded.
+
+        hostrecord.Busy is an OSError, so a handler that catches only the broad type reads a
+        live writer's lock file as leftover and tells an operator to delete it. Locked excludes
+        by O_EXCL on that filename, so deleting it admits a second writer into a
+        read-modify-write that is still running -- the result would be advising the accident.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim while another run holds it")
+            lock = str(staging.claim_path(host.candidate)) + hostrecord.LOCK_SUFFIX
+            lock_survived = Path(lock).exists()
+        with tempfile.TemporaryDirectory() as temporary:
+            # The same lock file, in the case where this run really could have stranded it.
+            leftover = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim after it lands")[1]
+
+        claim = payload.get("claim") or {}
+        self.assertEqual(claim.get("residualPaths"), [],
+                         "a lock this run never took is not this run's leftover: "
+                         + json.dumps(claim)[:500])
+        self.assertTrue(leftover["claim"]["residualPaths"],
+                        "the contrast only means something if the other case does report one")
+        self.assertNotEqual(claim.get("recoveryRequires"),
+                            leftover["claim"]["recoveryRequires"],
+                            "and the two are told different things, because one lock may be"
+                            " cleared and the other belongs to a writer that is still running")
+        self.assertTrue(lock_survived, "nothing here removed it either")
+        self.assertIs(payload.get("claimSettled"), False,
+                      "the record still did not land, which is reported as itself")
+        self.assertTrue(claim.get("recoveryRequires"),
+                        "with what to do instead: wait for the run that holds it")
+
+    def test_in_service_is_read_after_the_promotion_and_not_asserted(self):
+        """A consumer keys "do not release this destination" on it, so it cannot be a constant.
+
+        A competing install can promote its own environment between this run releasing the
+        promotion lock and the result being emitted. Hard-coded true, the result then tells a
+        wrapper that a superseded environment is the one the host reaches.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            superseded = UpdateRecoveryTests()._run(
+                _Host(temporary),
+                breaking="settle the staging claim after the selection moves on")[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            ours = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim")[1]
+
+        self.assertIs(ours.get("inService"), True,
+                      "this environment is selected and the pointer names it")
+        self.assertIs(superseded.get("inService"), False,
+                      "and one a later promotion superseded is not, whatever this run did: "
+                      + json.dumps(superseded.get("claim") or {})[:400])
+
+    def test_an_unknown_selection_is_not_reported_as_a_superseded_one(self):
+        """None is a third answer here, and it was being folded into False.
+
+        The superseded arm reads a record that positively selects nothing here. A snapshot
+        that could not be taken says nothing at all, and telling an operator to leave an
+        unreadable claim alone is wrong if this environment is in fact still the selected one:
+        that case needs the claim repaired before a rerun can finish anything.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            unknown = _advice(UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim unreadably with no snapshot")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            superseded = _advice(UpdateRecoveryTests()._run(
+                other, breaking="supersede after the claim becomes unreadable")[1], other)
+
+        self.assertTrue(superseded, "the contrast needs the other case to say something")
+        self.assertNotEqual(unknown, superseded,
+                            "an unestablished selection must not be told what a positively"
+                            " superseded one is told: " + unknown[:300])
+
+    def test_a_partly_selected_environment_is_not_promised_a_bookkeeping_retry(self):
+        """recordSelectsIt folds with any(); _finish_promotion requires all of them.
+
+        One component here and the other elsewhere reads as selected -- rightly, for keeping
+        the directory -- while a resume refuses, so promising a bookkeeping-only rerun would
+        promise something that cannot happen.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            split = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with only part of it selected")[1]
+            partly = _advice(split, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            whole = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        self.assertIs(((split.get("claim") or {}).get("selection") or {}).get("selects"), True,
+                      "the directory is still kept, which is what any() is right about")
+        self.assertTrue(whole, "the contrast needs the other case to say something")
+        self.assertNotEqual(partly, whole,
+                            "but a rerun cannot finish a promotion split across two"
+                            " environments, and must not be promised one: " + partly[:300])
+
+    def test_unreadable_claim_advice_accounts_for_supersession(self):
+        """What the prescribed repair leads to depends on the selection it must consult.
+
+        decide() keeps a directory whose claim it cannot read either way, but rewriting that
+        claim as STAGING over a selection that has moved on makes the NEXT run read an
+        abandoned staging and rebuild, and removing it leaves a populated claimless directory
+        that reads as somebody else's for ever. Prescribing the repair without the selection
+        walks an operator into one of those.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            superseded = _advice(UpdateRecoveryTests()._run(
+                host, breaking="supersede after the claim becomes unreadable")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim unreadably")[1], other)
+
+        self.assertTrue(ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(superseded, ours,
+                            "an unreadable claim over a superseded environment must not be"
+                            " told what one still selected is told: " + superseded[:300])
+
+    def test_the_keep_guard_is_decides_own_answer(self):
+        """Every case this cell got wrong was the rule restated instead of consulted.
+
+        staging.decide() is what removes directories, and the documented contract points a
+        wrapper at inService, so any disagreement between them is a wrapper deleting what this
+        command refuses to. The guard is decide()'s answer now, so the two are checked against
+        each other rather than against a restatement.
+        """
+        cases = {
+            "settled then superseded": "supersede after the claim settles",
+            "unreadable then superseded": "supersede after the claim becomes unreadable",
+            "snapshot unavailable": "settle the staging claim with the promotion lock unusable",
+            "still ours": "settle the staging claim",
+        }
+        for label, breaking in cases.items():
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as temporary:
+                    host = _Host(temporary)
+                    code, payload = UpdateRecoveryTests()._run(host, breaking=breaking)
+                    decision, why = staging.decide(
+                        staging.read_claim(host.candidate), staging.DEAD,
+                        occupied=staging.directory_occupied(host.candidate)[0],
+                        protected=True, selected=None)
+                self.assertNotIn(decision, staging.REMOVES,
+                                 label + ": this command keeps it (" + why + ")")
+                self.assertIs(payload.get("inService"), True,
+                              label + ": so the result must not say it may be released: "
+                              + json.dumps(payload.get("claim") or {})[:400])
+
+    def test_a_record_shape_this_command_accepts_cannot_erase_the_promotion(self):
+        """The snapshot handler caught OSError only.
+
+        A host record that passes the shape check can still carry a truthy non-path in an
+        unrelated selected entry, and reading it raises TypeError -- which escaped into the
+        generic failure path and reported exit 1 for a promotion whose selection, pointer and
+        claim had all landed.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with a record this command accepts")
+            after = host.snapshot()
+
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not a refusal: "
+                            + json.dumps(payload)[:400])
+        self.assertIs(payload.get("promoted"), True)
+        self.assertIs(payload.get("inService"), True, "and it is kept")
+        # Where the shape failure is caught is not this case's business, and it moved: the
+        # reading boundary in protected_environment now answers RESOLVE_FAILURES itself, so
+        # nothing reaches the settle handler. What must hold either way is that a shape this
+        # command accepts cannot turn a landed promotion into a refusal, and that the
+        # selection comes back unestablished rather than guessed.
+        self.assertIsNone(((payload.get("claim") or {}).get("selection") or {}).get("selects"),
+                          "the selection is unestablished rather than invented: "
+                          + json.dumps((payload.get("claim") or {}).get("selection"))[:300])
+        self.assertEqual(after["pointerTarget"], str(host.candidate))
+
+    def test_a_settled_claim_keeps_the_destination_after_supersession(self):
+        """staging.decide() never reclaims a COMPLETE claim, and this cell must agree.
+
+        A runtime promoted once may still have a process running out of it, which is why the
+        COMPLETE branch keeps such a directory however the selection has moved. The documented
+        contract points a wrapper at 'inService' for that decision, so leaving it to the
+        selection and pointer alone would have a compliant wrapper delete exactly what this
+        command refuses to.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="supersede after the claim settles")
+            claim = staging.read_claim(host.candidate)
+            decision, why = staging.decide(
+                claim, staging.DEAD, occupied=True, protected=False, selected=False)
+
+        self.assertTrue(staging.settled(claim), "the claim really did settle")
+        self.assertEqual(code, 0, "and the update itself succeeded")
+        self.assertIs(payload.get("claimSettled"), True)
+        self.assertEqual(decision, staging.KEEP,
+                         "this command would keep the directory: " + why)
+        self.assertIs(payload.get("inService"), True,
+                      "so the result must not tell a wrapper it may be released: "
+                      + json.dumps(payload.get("claim") or {})[:400])
+
+    def test_an_unreadable_snapshot_keeps_the_destination(self):
+        """The one direction this cell may not fail in.
+
+        'inService' is exported as "do not release this destination". A snapshot that could
+        not be taken does not establish that an environment is out of service -- the promotion
+        placed and read back its pointer before any of this ran -- and JSON null is falsey in
+        most things that will read it, so a three-valued answer turns an unreadable safety
+        check into permission to clean up.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with the promotion lock unusable")
+            selection = (payload.get("claim") or {}).get("selection") or {}
+
+        self.assertIsNone(selection.get("selects"),
+                          "the snapshot really could not be taken")
+        self.assertIs(payload.get("inService"), True,
+                      "and an environment nobody could establish as free is not free: "
+                      + json.dumps(payload.get("claim") or {})[:400])
+
+    def test_a_pointer_that_does_not_agree_is_not_a_bookkeeping_only_retry(self):
+        """The selection alone does not make a rerun bookkeeping.
+
+        _finish_promotion replaces the owned pointer before it writes the claim, and refuses
+        outright for a link this record does not account for. Telling an operator a rerun will
+        "only settle the claim" understates a write, which is how somebody authorises one they
+        did not mean to.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            gone = _advice(UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the pointer goes")[1], host)
+            selection = (UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the pointer goes")[1]
+                .get("claim") or {}).get("selection") or {}
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            agreeing = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        self.assertIsNot(selection.get("pointerNames"), True,
+                         "the pointer no longer names it, and that reading is kept: "
+                         + json.dumps(selection)[:300])
+        self.assertTrue(agreeing, "the contrast needs the other case to say something")
+        self.assertNotEqual(gone, agreeing,
+                            "so it must not be told a rerun only settles the claim: "
+                            + gone[:300])
+
+    def test_an_adoption_that_replaced_nothing_does_not_report_a_replacement(self):
+        """_finish_promotion serves two decisions and only one of them replaces anything.
+
+        RESUME finishes a promotion somebody else committed. RECORDED adopts bookkeeping for
+        an installation the record already selected -- that caller says in so many words that
+        this run replaced nothing, so a non-zero exit describing a replacement would describe
+        a swap that never happened. What the exit needs a reader to know is 'inService'.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # An installation older than claims: populated, selected, and carrying no claim.
+            for component in host.data["components"]:
+                (host.candidate / "site" / component["module"]).mkdir(parents=True,
+                                                                      exist_ok=True)
+            hostrecord.update(
+                host.record_path, host.data["definitionVersion"],
+                select={c["component"]: str(host.candidate / "site" / c["module"])
+                        for c in host.data["components"]})
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+
+        self.assertEqual(payload["stagingDecision"], staging.RECORDED,
+                         json.dumps(payload)[:400])
+        self.assertIs(payload.get("promoted"), False,
+                      "this run replaced nothing and must not say it did")
+        self.assertIs(payload.get("inService"), True,
+                      "but the environment is selected and reached, which is what a non-zero"
+                      " exit needs a reader to know")
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertNotEqual(code, 1)
+
+    def test_a_snapshot_that_could_not_be_taken_does_not_erase_the_promotion(self):
+        """The lock added to fix one defect must not reintroduce the one this PR is about.
+
+        Exclusive can fail for reasons that are not contention, and caught too narrowly that
+        escaped into the generic failure path -- reporting applied false and exit 1 for a
+        promotion that had already landed, which is exactly the misreport this whole change
+        exists to remove.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with the promotion lock unusable")
+            after = host.snapshot()
+
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not a refusal, whatever failed while"
+                            " describing it: " + json.dumps(payload)[:500])
+        self.assertIs(payload.get("promoted"), True)
+        self.assertIs(payload.get("claimSettled"), False)
+        selection = (payload.get("claim") or {}).get("selection") or {}
+        self.assertIsNone(selection.get("selects"),
+                          "an unknown snapshot, however it failed to be taken")
+        self.assertTrue(selection.get("detail"), "and it says which way it failed")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the host still reaches the runtime this run promoted")
+
+    def test_the_snapshot_reads_the_pointer_the_promotion_uses(self):
+        """A run invoked against a different --dest keeps the pointer the RECORD names.
+
+        Asking about <new-dest>/current reads a link nothing uses, so an environment the owned
+        pointer still reaches is reported unprotected -- and that is the difference between
+        'leave this alone' and 'the next run would remove and rebuild it'.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "elsewhere"
+            elsewhere.mkdir()
+            moved_dest = UpdateRecoveryTests()._run(
+                host, dest=str(elsewhere),
+                breaking="settle the staging claim after the selection alone moves on")[1]
+            elsewhere_advice = _advice(moved_dest, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            same_dest = _advice(UpdateRecoveryTests()._run(
+                other,
+                breaking="settle the staging claim after the selection alone moves on")[1],
+                other)
+
+        self.assertIs((moved_dest.get("claim") or {}).get("selection", {}).get("protected"),
+                      True,
+                      "the recorded pointer still names this environment: "
+                      + json.dumps(moved_dest.get("claim"))[:500])
+        self.assertTrue(same_dest, "the contrast needs the other case to say something")
+        self.assertEqual(elsewhere_advice, same_dest,
+                         "so a differently-invoked destination gets the same answer, because"
+                         " the pointer the promotion uses is the same link")
+
+    def test_a_lost_claim_lock_does_not_speak_for_the_selection(self):
+        """The lock this call did not take says nothing about what the next run will do.
+
+        Answered as a branch of its own, it sat in front of every state-dependent answer and
+        asserted a selection it had never read -- so a contended settle whose promotion had
+        been superseded was still told to rerun this install, which would rebuild the old
+        staging and could repromote it over the newer runtime.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            moved = _advice(UpdateRecoveryTests()._run(
+                host,
+                breaking="settle the staging claim while another run holds it and the"
+                         " selection moves")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim while another run holds it")[1],
+                other)
+
+        self.assertTrue(ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(moved, ours,
+                            "a contended settle whose selection has moved on must not be told"
+                            " what one still holding the selection is told: " + moved[:300])
+
+    def test_the_recovery_snapshot_is_taken_under_the_promotion_lock(self):
+        """Read outside it, the record and the pointer can straddle another promotion.
+
+        A snapshot that cannot be taken consistently is reported as not established rather
+        than assembled from two readings of two different moments.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.held = []
+            try:
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="settle the staging claim while a promotion is in flight")
+                contested = _advice(payload, host)
+            finally:
+                for holder in host.held:
+                    holder.__exit__(None, None, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            settled_state = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        selection = (payload.get("claim") or {}).get("selection")
+        self.assertIsInstance(selection, dict,
+                              "the snapshot the advice came from travels with it: "
+                              + json.dumps(payload.get("claim"))[:400])
+        self.assertIsNone(selection["selects"],
+                          "a snapshot that could not be taken under the lock establishes"
+                          " nothing about the selection")
+        self.assertTrue(selection["detail"], "and says why it could not be taken")
+        self.assertNotEqual(contested, settled_state,
+                            "so it must not be given the advice that reads the selection")
+
+    def test_a_host_record_that_vanished_is_not_reported_as_a_selection_that_moved(self):
+        """ABSENT is usable, and an absent record carries an empty one.
+
+        An empty selection reads exactly like a selection that names somewhere else, so
+        without consulting the reading's STATE this command reports a host record that was
+        LOST as another run having moved on -- and tells the operator nothing needs doing.
+        Losing the authority for what this host selected is not the same event as being
+        superseded by a promotion that succeeded.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the record vanishes")
+            vanished = _advice(payload, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            moved = _advice(UpdateRecoveryTests()._run(
+                other,
+                breaking="settle the staging claim after the selection alone moves on")[1],
+                other)
+
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(moved, "the contrast needs the other case to say something")
+        self.assertNotEqual(vanished, moved,
+                            "a record that is gone and a record that says something else are"
+                            " different events and need different recovery: " + vanished[:300])
+
+    def test_a_directory_the_pointer_still_names_is_not_called_abandoned(self):
+        """The next run decides on a PAIR, so advice drawn from the selection alone is wrong.
+
+        A promotion writes the selection before it moves the pointer, so one that dies between
+        them leaves the record naming somewhere else while the host still reaches this
+        environment through the pointer. staging.decide() keeps a directory the pointer names.
+        Reading only the selection called that abandoned and promised a reclaim the next run
+        will never perform.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the selection alone moves on")
+            kept = _advice(payload, host)
+            again, second = UpdateRecoveryTests()._run(host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            abandoned = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim after the selection moves on")[1],
+                other)
+
+        self.assertEqual(second["stagingDecision"], staging.KEEP,
+                         "the next run keeps a directory the pointer still names: "
+                         + json.dumps(second)[:400])
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(abandoned, "the contrast needs the other case to say something")
+        self.assertNotEqual(kept, abandoned,
+                            "so this must not be told what the genuinely abandoned case is"
+                            " told: " + kept[:300])
+
+    def test_advice_is_not_promised_from_a_selection_that_has_moved_on(self):
+        """Settling runs outside the promotion lock, so the selection can move under it.
+
+        An install queued on that lock promotes its own environment the moment this run
+        releases it. "Rerun and it will finish the bookkeeping" is then false in the expensive
+        direction: with the selection moved, staging.decide() reads this directory as an
+        abandoned staging, so following that advice removes and rebuilds it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the selection moves on")
+            # What a rerun would actually decide, now that the selection has moved.
+            again, second = UpdateRecoveryTests()._run(host)
+            moved_on = _advice(payload, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            still_ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        reclaimed = [step for step in second.get("steps", [])
+                     if step.get("step") == "reclaim abandoned staging"]
+        self.assertTrue(reclaimed,
+                        "a rerun here removes and rebuilds rather than recording, which is"
+                        " the hazard the advice must not walk an operator into: "
+                        + json.dumps(second)[:400])
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(still_ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(moved_on, still_ours,
+                            "so it must not be given the advice written for the case where"
+                            " this environment is still the selected one: " + moved_on[:300])
+
+    def test_rerunning_while_the_write_still_fails_loses_nothing(self):
+        """The advice names a precondition, and the case where it is not met is safe.
+
+        If whatever stopped the claim write is still there, a rerun reaches the same failure
+        and returns the same answer. That has to be harmless and it has to be visible: the
+        result says the rerun only settles the record once the write can succeed, and the rerun
+        itself rebuilds nothing, removes nothing and leaves the runtime in service.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            first_code, first = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+            before = host.snapshot()
+            again_code, again = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim")
+            after = host.snapshot()
+            still_built = sorted(p.name for p in host.candidate.iterdir())
+            predecessor_survived = host.previous.is_dir()
+
+        self.assertEqual(again_code, first_code,
+                         "the same cause gives the same answer rather than degrading")
+        self.assertIs(again.get("claimSettled"), False)
+        self.assertEqual(again["stagingDecision"], staging.RESUME,
+                         "the rerun is the interrupted-promotion repair, attempted again")
+        self.assertEqual(after["selected"], before["selected"],
+                         "and it undoes nothing it cannot finish")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the runtime stays in service across the retry")
+        self.assertIn("site", still_built, "nothing is rebuilt")
+        self.assertTrue(predecessor_survived, "and nothing is removed")
+        self.assertIn("only once the write can succeed",
+                      (first["claim"]["recoveryRequires"] or "").lower(),
+                      "the result states the precondition rather than prescribing a loop")
+
+    def test_the_three_outcomes_are_three_exit_statuses(self):
+        """A caller reading only the status still has to be able to tell them apart.
+
+        Collapsed into the refusal status, a completed replacement looked to every script like
+        a run that had changed nothing.
+        """
+        codes = {}
+        for label, breaking in (("settled", None), ("unrecorded", "settle the staging claim"),
+                                ("refused", "install packages")):
+            with tempfile.TemporaryDirectory() as temporary:
+                host = _Host(temporary)
+                codes[label], _payload = UpdateRecoveryTests()._run(host, breaking=breaking)
+
+        self.assertEqual(codes["settled"], 0,
+                         "a replacement whose record landed is a plain success")
+        self.assertEqual(codes["refused"], 1,
+                         "a run that replaced nothing is a refusal")
+        self.assertNotIn(codes["unrecorded"], (codes["settled"], codes["refused"]),
+                         "and a replacement whose record did not land is neither of those,"
+                         " because it is neither: " + json.dumps(codes))
 
 
 class IdempotentRepeatTests(unittest.TestCase):
@@ -6372,6 +7432,115 @@ class InterruptedPromotionTests(unittest.TestCase):
                         " pointer moved first can be deleted by recovery reading the other"
                         " truth")
 
+
+
+class ResumeGateTests(unittest.TestCase):
+    """What a resume takes over is durable; what the gate reads is not.
+
+    A kill between the selection and the pointer leaves a state that sits on disk for however
+    long it takes somebody to notice, and all three gate cells read things that move in the
+    meantime: a supervisor can be started, attempts open and close, the store's schema is
+    whatever the selected runtime has since migrated it to. The interrupted run died before
+    recording any verdict, so there is not even a stale reading to reuse -- this path was
+    moving a host's runtime having never asked.
+    """
+
+    def _interrupted(self, host):
+        """Exactly what a kill in that window leaves: selected, unreachable, unsettled."""
+        host.candidate.mkdir(parents=True)
+        (host.candidate / "site").mkdir()
+        staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+        hostrecord.update(host.record_path, host.data["definitionVersion"],
+                          select={c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]})
+
+    def test_a_resume_does_not_move_the_pointer_when_the_gate_blocks(self):
+        for gate in ("running daemon", "handover in flight", "store would be downgraded"):
+            with self.subTest(gate):
+                with tempfile.TemporaryDirectory() as temporary:
+                    host = _Host(temporary)
+                    self._interrupted(host)
+                    before = host.snapshot()
+                    code, payload = UpdateRecoveryTests()._run(host, gate=gate)
+                    after = host.snapshot()
+                    kept = host.candidate.is_dir()
+
+                self.assertEqual(
+                    after["pointerTarget"], before["pointerTarget"],
+                    gate + ": finishing this promotion replaces the runtime a host reaches,"
+                    " so a blocked gate must leave the pointer where it is: "
+                    + json.dumps(payload)[:500])
+                self.assertEqual(payload.get("stagingDecision"), staging.RESUME)
+                self.assertEqual(code, 1, gate + ": and it refuses")
+                self.assertEqual((payload.get("swapGate") or {}).get("verdict"),
+                                 swapgate.BLOCKED)
+                self.assertEqual(after["selected"], before["selected"],
+                                 gate + ": the selection it found is left as it was")
+                self.assertTrue(kept, gate + ": and the candidate is not released")
+
+    def test_a_gate_it_could_not_read_refuses_by_name_and_stays_retriable(self):
+        """A cell that could not answer keeps the installation, and says which cell.
+
+        "The gate said no" sends an operator to read this command's source. The verdict and
+        the cell send them to the daemon, the attempts or the store.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._interrupted(host)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, gate="unreadable daemon")
+            after = host.snapshot()
+            kept = host.candidate.is_dir()
+            # Retriable is not a claim about a flag: the same destination is run again, with
+            # the cell readable, and has to finish.
+            again, second = UpdateRecoveryTests()._run(host)
+            final = host.snapshot()
+            rebuilt = sorted(p.name for p in host.candidate.iterdir())
+
+        self.assertEqual(after["pointerTarget"], before["pointerTarget"],
+                         "a cell that could not be read keeps the installation: "
+                         + json.dumps(payload)[:500])
+        self.assertEqual(code, 1)
+        gate = payload.get("swapGate") or {}
+        self.assertEqual(gate.get("verdict"), swapgate.UNESTABLISHED)
+        refused = payload.get("refused") or ""
+        self.assertIn(swapgate.UNESTABLISHED, refused,
+                      "the refusal names the verdict rather than gesturing at one: " + refused)
+        self.assertTrue(any(cell in refused for cell in (gate.get("unreadable") or [])),
+                        "and names the cell that could not answer: " + refused)
+        self.assertTrue(kept, "the candidate is kept")
+        self.assertEqual(again, 0, json.dumps(second)[:500])
+        self.assertEqual(final["pointerTarget"], str(host.candidate),
+                         "and the destination really was retriable")
+        self.assertIn("site", rebuilt, "without rebuilding anything")
+
+    def test_an_adoption_that_replaces_nothing_is_not_gated(self):
+        """The gate is asked where something is replaced, and adoption replaces nothing.
+
+        An installation older than claims has no link at all, so writing the first one changes
+        which PATH reaches a runtime the record already selects rather than which runtime is
+        reached. Gating it would refuse the whole installed base this path exists to move
+        forward, for a swap that is not happening.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            for component in host.data["components"]:
+                (host.candidate / "site" / component["module"]).mkdir(parents=True,
+                                                                      exist_ok=True)
+            hostrecord.update(
+                host.record_path, host.data["definitionVersion"],
+                select={c["component"]: str(host.candidate / "site" / c["module"])
+                        for c in host.data["components"]})
+            Path(host.pointer_path).unlink()
+            code, payload = UpdateRecoveryTests()._run(host, gate="running daemon")
+            after = host.snapshot()
+
+        self.assertEqual(payload.get("stagingDecision"), staging.RECORDED,
+                         json.dumps(payload)[:400])
+        self.assertEqual(code, 0, "a daemon does not block bookkeeping nothing replaces: "
+                         + json.dumps(payload)[:400])
+        self.assertTrue(payload.get("adopted"))
+        self.assertEqual(after["pointerTarget"], str(host.candidate))
 
 
 class ReclaimRaceTests(unittest.TestCase):
@@ -8189,7 +9358,16 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                               select={c["component"]: str(host.candidate / "site" / c["module"])
                                       for c in host.data["components"]})
             emitted = []
-            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            # The swap gate is stubbed, and only because this case is about the OWNERSHIP
+            # binding rule. Finishing an interrupted promotion moves a host from the
+            # predecessor to the candidate, so it now asks OPS-4.4 first -- and asked for real
+            # against a relay that was never built, every cell answers UNESTABLISHED and the
+            # refusal would come from the gate rather than from the guard under test. The
+            # gate's own behaviour on this path is ResumeGateTests.
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append), \
+                 mock.patch.object(runtime_install, "_swap_gate",
+                                   return_value={"verdict": swapgate.ALLOWED, "blockedBy": [],
+                                                 "unreadable": [], "cells": {}}):
                 code = runtime_install._finish_promotion(
                     host.record_path, host.data, host.candidate, host.pointer_path,
                     {"command": "install", "applied": False}, issue="CRW-95", reported={})

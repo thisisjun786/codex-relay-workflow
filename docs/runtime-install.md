@@ -572,9 +572,86 @@ The candidate is then exercised, and the recorded pointer moves only after a qua
 exists for it. OPS-2.4 sequences an update as measure, install, measure again, and the second
 measurement is the one that produces the point; promoting before it would select a runtime that
 imports cleanly and fails the moment it is used. A candidate whose exercise fails stays unselected
-and the previously selected runtime remains selected. A failure at any step leaves the previous
-runtime in place, and nothing here removes, moves or recreates the store: update failure and store
-loss are different accidents and the recovery for one must not cause the other.
+and the previously selected runtime remains selected. A failure at any step **up to the
+promotion** leaves the previous runtime in place, and nothing here removes, moves or recreates
+the store: update failure and store loss are different accidents and the recovery for one must
+not cause the other. Past the promotion there is one exception, and it carries its own exit
+status.
+
+### The record is not the replacement
+
+The staging claim is written last. It says this staging finished, and until the selection is
+committed and the owned pointer names the environment there is nothing finished to say -- so by
+the time writing it can fail, the registered command already resolves into the new runtime. The
+replacement has happened and only its record has not, and those are reported as two outcomes
+rather than folded into one.
+
+| Field | Answers |
+| --- | --- |
+| `promoted` | whether THIS run replaced a runtime. A resumed promotion did; adopting bookkeeping for an installation the record already selected did not |
+| `inService` | whether this destination must be kept. True while the record selects this environment or the owned pointer names it, true once its claim has settled -- a runtime promoted once may still have a process running out of it, which is why `staging.decide()` never reclaims a settled claim either -- and true when none of that could be read, because an environment nobody could establish as free is not one that is free. False only when the readings say so |
+| `claimSettled` | whether the claim recording it was written |
+| `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
+| `recoveryRequires` | what has to be done next, under the same key a refusal reports it |
+
+So `install` has three exit statuses rather than two:
+
+| Status | What this run changed | The record | What it means |
+| --- | --- | --- | --- |
+| `0` | it landed | written | the run finished |
+| `3` | it landed | not written | what this run changed on the host landed and the record of it did not |
+| `1` | nothing | not written | this run changed nothing and recorded nothing; whatever the host selected and reached before it, it still does |
+
+"What this run changed" is not always a replacement. Promoting a candidate replaces the
+selected runtime; finishing an interrupted promotion places the pointer a dead run never
+wrote; adopting an installation older than claims changes only its bookkeeping and replaces
+nothing at all. All three reach `0` or `3` on the same rule -- whether the claim settled --
+and `promoted` is what distinguishes them.
+
+Exit 1 says what this run did, not that the host is consistent. A resume refuses with it when
+the owned pointer is unreadable or names something this record does not account for, and in
+that case a previous run had already committed the new selection before it died -- so the
+record names the new environment while the pointer still names the old one. The run changed
+nothing; the disagreement it found was already there, and the result names it.
+
+**Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
+what it means everywhere else in this command: what the run changed on the host landed, and a
+process may be running out of the environment it changed. A wrapper that reads every non-zero
+install status as "nothing changed" would report the old runtime as selected, or clean up an
+environment that is still in service. This command releases a candidate only on exit 1.
+
+It does not follow that an exit-3 environment is still the one the host reaches. A competing
+install can supersede it during the claim write, and then the same result carries
+`selection.selects: false`, `selection.pointerNames: false` and `inService: false`. The status
+says the run's change landed; `inService` says whether the destination must be kept. Read the
+second for any cleanup decision.
+
+The status says what this run did; it does not promise what is true when you read it. A
+competing install can supersede this environment between the promotion and the result, and
+then status 3 is still correct about this run while `inService` is `false`. Key a cleanup
+decision on `inService` and never on the status alone, and read `promoted` for the narrower
+question of whether this run replaced anything: an adoption reports neither.
+
+Which accident happened, and what to do about it, is in `recoveryRequires` -- derived from the
+claim as it reads back and from a selection snapshot taken under the promotion lock, never from
+the exception alone:
+
+| What the result says | What happened | What to do |
+| --- | --- | --- |
+| `settled` true, `released` false | the claim landed and the call failed on its way out | nothing about the record; any lock file left behind is named, and the next claim write clears one older than `STALE_LOCK_SECONDS` |
+| the record still selects this environment | the write failed and the promotion stands | clear what stopped the write, then rerun: the next run reads an interrupted promotion and records it, rebuilding nothing. Rerunning before the write can succeed returns this same result and changes nothing |
+| the record selects only part of this environment | the selection is split across two environments | read the record before rerunning; a resume requires every configured component in the same place and refuses otherwise, so there is no single promotion here to finish |
+| the record selects elsewhere but something still reaches this environment | a promotion moved on, or died before its pointer | leave the directory alone; the next run keeps and reports it rather than repairing it |
+| the record selects elsewhere and nothing reaches it | a later promotion superseded this staging | nothing; do not rerun here to settle it, because the next run reads an abandoned staging and would remove and rebuild it |
+| the claim could not be read, and the record still selects this environment | the claim at that path is unreadable | make it readable or remove it first; an unreadable claim is not one this command may act on, so a rerun reports the directory and leaves it |
+| the claim could not be read, and the record selects elsewhere | the claim is unreadable for a staging that has been superseded | leave it alone. Repairing it as `STAGING` has the next run read an abandoned staging and rebuild the directory, and removing it leaves one populated and claimless that every later install refuses as somebody else's |
+| the claim could not be read, and the selection could not be either | both readings failed | read the host record first; which of the two rows above applies depends on it, and nothing is at risk meanwhile because a claim this command cannot read is one it leaves alone |
+| the host record is gone | the authority for what this host selected was lost | restore the record before rerunning, and do not remove the environment: the owned pointer may still reach it |
+| the selection could not be established | the snapshot could not be taken | read the host record before acting; it decides whether a rerun records, keeps or rebuilds |
+
+The snapshot is consistent, not durable. Nothing holds the promotion lock until an operator
+reads the result, so what is reported is what the record said at that moment; re-read it before
+acting if time has passed.
 
 ## Updating an installation
 
@@ -708,8 +785,8 @@ gate is not asked, because this replaces nothing: the directory can only be at t
 was built from these sources, and the record already selects it, so the runtime a host reaches
 afterwards is the one it was already running. And where a pointer exists naming a different
 recorded environment, aiming it at the selected one is the documented repair for a selection and
-a pointer that disagree — the same repair a resume performs, and with the same limit, which is
-that neither re-runs the gate conditions.
+a pointer that disagree — the same repair a resume performs, and under the same gate, which both
+re-run rather than inherit.
 
 A directory taken over with `rmdir` first has this command's own two files cleared from it, and
 only those two. A run whose claim write failed used to leave its lock file behind, and `rmdir`
@@ -722,6 +799,33 @@ promotion does. It cannot ask for agreement, because a resume necessarily finds 
 disagreeing with the selection — that IS the interruption it repairs. It asks instead whether the
 link still names a runtime this host record accounts for, and refuses one repointed by hand while
 the run was dead.
+
+It also asks OPS-4.4 again, and not the reading the interrupted run took. What a resume takes
+over is durable — a selection on disk and a claim beside it, sitting there for however long it
+took somebody to notice — while all three gate cells read state outside the process and all
+three move in the meantime: a supervisor can be started, attempts open and close, the store’s
+schema is whatever the selected runtime has since migrated it to. None of them is reusable, and
+the daemon is the strongest case, where a prior `ALLOWED` cannot cross a process boundary at all.
+
+There is nothing to reuse in any case, which states the point more exactly. The interrupted run
+died before recording a verdict, so the durable state holds no gate reading: the resume was not
+carrying a stale `ALLOWED`, it was moving a host’s runtime having never asked. The candidate’s own
+declared schema is the one input that cannot have changed, being derived from bytes already
+built, but it is read only as half of a comparison against a store that can.
+
+The gate is asked where something is REPLACED, which is not every caller of this path. A resume
+finds a link naming the predecessor and moves a host from it to this environment. An installation
+older than claims has no link at all, and writing the first one changes which path reaches a
+runtime the record already selects rather than which runtime is reached — so it is not gated, for
+the same reason its result says its bytes were not re-measured. The test is the link and not the
+caller: a link that already names this environment, or no link, replaces nothing.
+
+A verdict that is not `ALLOWED` refuses by name, carrying the verdict and the cells that blocked
+or could not answer, because "the gate said no" sends an operator to this command’s source while
+the cell sends them to the daemon, the attempts or the store. It refuses before the ownership
+entry, which is this call’s first write, so nothing is written and nothing removed: the selection
+is left as found, the pointer still names what it named, and the destination can be retried as it
+stands once the named condition is cleared.
 
 "Accounts for" is equality against a recorded environment or install location, and containment in
 neither direction. A target that CONTAINS a recorded path is not a recorded runtime: the
