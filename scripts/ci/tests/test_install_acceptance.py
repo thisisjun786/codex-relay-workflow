@@ -875,7 +875,7 @@ class ComposedLifecycleTests(unittest.TestCase):
                         "the fixture built a store with nothing in it, so there is nothing here"
                         " a run could have been told the wrong thing about")
 
-        tables = cells["storeTables"]
+        tables = cells["storeSchema"]
         self.assertTrue(tables["readable"], str(tables.get("detail")))
         self.assertEqual(tables["answer"], swapgate.AGREES,
                          "the run read " + repr(tables["answer"]) + " about a store holding "
@@ -1928,10 +1928,10 @@ class DistinctionTests(unittest.TestCase):
     def test_a_store_that_is_not_there_is_not_a_store_nobody_could_read(self):
         """The distinction the clean-host install depends on, kept here as a distinction."""
         schema = {"relationships": "CREATE TABLE relationships (relationship_id TEXT)"}
-        candidate = {"readable": True, "tables": dict(schema)}
-        absent = swapgate.tables_cell(
+        candidate = {"readable": True, "objects": dict(schema)}
+        absent = swapgate.schema_cell(
             {"readable": True, "present": False, "dbPath": "/nowhere/relay.sqlite3"}, candidate)
-        unopenable = swapgate.tables_cell(
+        unopenable = swapgate.schema_cell(
             {"readable": False, "present": None, "detail": "permission denied"}, candidate)
 
         self.assertEqual(absent["answer"], swapgate.NO_STORE)
@@ -1948,11 +1948,11 @@ class DistinctionTests(unittest.TestCase):
             "fork": ownership.classify(self.signals(working_tree_clean=False))[0],
             "configuration claimed": ownership.classify(
                 self.signals(registration_conflict="registered with another command"))[0],
-            "store unreadable": swapgate.tables_cell(
-                {"readable": False, "present": None}, {"readable": True, "tables": schema}
+            "store unreadable": swapgate.schema_cell(
+                {"readable": False, "present": None}, {"readable": True, "objects": schema}
             )["answer"],
-            "store absent": swapgate.tables_cell(
-                {"readable": True, "present": False}, {"readable": True, "tables": schema}
+            "store absent": swapgate.schema_cell(
+                {"readable": True, "present": False}, {"readable": True, "objects": schema}
             )["answer"],
         }
         self.assertEqual(len(set(answers.values())), len(answers),

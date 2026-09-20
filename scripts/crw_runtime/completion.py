@@ -32,13 +32,14 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import hooks, hostrecord, pointer, reading
+from . import firing, hooks, hostrecord, pointer, reading
 
 # The event whose contract this adapter implements. Stop is the host's response-turn boundary,
 # and it is the only event whose output schema carries a blocking decision at all.
@@ -340,6 +341,16 @@ GUARD_HELP_MARKER = "--marker-root"
 # workspace, so no single file answers for it and the one this process would resolve is not it.
 REGISTRATION_RELATIVE_TARGET = "registration_names_a_relative_adapter"
 
+# The cache key for a configuration that names no journal root at all. A sentinel rather than a
+# normalised empty string, because that normalises to "/" -- a directory a configuration may
+# legitimately name, which would then share this one's snapshot.
+NO_ROOT = "<no journal root>"
+
+# Refuse to open anything but a directory, where the platform can. Zero elsewhere, which only
+# costs a later NotADirectoryError from scandir -- the same reading, taken one step later.
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+
+
 # A spelling this command cannot judge from here: relative, with a separator, so it names one
 # program from the hook's workspace and another from wherever a diagnosis happens to run.
 WORKSPACE_DEPENDENT = "workspace_dependent_spelling"
@@ -488,14 +499,18 @@ def complaints(document):
     return found
 
 
-def read_configuration(path):
+def read_configuration(path, hold=False, descriptor=None):
     """Read the settings as a reading, so absent, unreadable and unreachable stay three answers.
 
     The shape is checked outside the reading region on purpose. Handing the shape check to
     read_json would report a readable file that says the wrong thing as an unreadable one, and
     an operator would go looking for a permission problem that is not there.
+
+    'hold' is passed through for a caller that will use the reading's identity as a cache key,
+    and that caller releases it.
     """
-    found = reading.read_json(path, "the completion hook configuration")
+    found = reading.read_json(path, "the completion hook configuration", hold=hold,
+                              descriptor=descriptor)
     if not found.usable:
         return None, CONFIG_OUTCOMES[found.state], found.detail, found
     if found.state == reading.ABSENT:
@@ -867,12 +882,12 @@ def _require_python(candidate):
         raise ValueError(str(candidate) + " could not be run as an interpreter: "
                          + str(error)) from error
     said = (finished.stdout or b"").decode("utf-8", "replace").strip()
-    parts = said.split(".")
-    if finished.returncode != 0 or len(parts) != 2 or not all(p.isdigit() for p in parts):
+    version = _python_said(said)
+    if finished.returncode != 0 or version is None:
         raise ValueError(str(candidate) + " is executable but does not run Python; every Stop"
                                           " would succeed at running it and never reach the"
                                           " adapter")
-    if (int(parts[0]), int(parts[1])) < SUPPORTED_PYTHON:
+    if version < SUPPORTED_PYTHON:
         raise ValueError(str(candidate) + " runs Python " + said + ", below the supported "
                          + ".".join(str(part) for part in SUPPORTED_PYTHON)
                          + "; the adapter would fail on every Stop before evaluating or"
@@ -1299,6 +1314,44 @@ def _cell(value, evidence, **extra):
     return answer
 
 
+def resource_key(path):
+    """One key for one resource, for the spellings that are provably one resource.
+
+    Caching a reading by the raw string read the same file twice when two registrations wrote
+    it differently, and the host opens one file: two readings of it in one status call can
+    disagree, and the payload then gives two registrations different answers about the same
+    thing. So equivalent spellings share a key.
+
+    But only the transformations that PRESERVE what the kernel does. normpath() does two very
+    different jobs, and the second one is not sound here:
+
+      - dropping '.' components and duplicate separators names the same file, always;
+      - cancelling 'X/..' does not, because the kernel follows X first when X is a symlink, so
+        /srv/link/../hook.py and /srv/hook.py are two different files that normpath calls one.
+        Sharing a cached reading between them would report another resource's answer -- a wrong
+        reading rather than a missing one, which is the failure this whole module exists to
+        avoid.
+
+    A trailing separator is left alone for the same reason: it requires a directory, so
+    /tmp/hook.py/ and /tmp/hook.py are not interchangeable to lstat. A trailing '.' is the same
+    demand written differently and is kept for the same reason.
+
+    So a spelling carrying '..' keys only to itself, and resolve() is not used at all: it walks
+    symlinks, which would make the key depend on what a link points at and fail on a loop. What
+    this costs is a second reading of one file. What it refuses to cost is a reading of the
+    wrong one.
+    """
+    expanded = os.path.expanduser(str(path))
+    parts = expanded.split(os.sep)
+    if os.pardir in parts:
+        return expanded
+    trailing = len(parts) > 1 and parts[-1] in ("", os.curdir)
+    kept = [part for index, part in enumerate(parts)
+            if part != os.curdir and (part != "" or index == 0)]
+    key = os.sep.join(kept) or os.sep
+    return key + os.sep if trailing else key
+
+
 def presence(path, what, *, directory=False):
     """Whether something is at this path, keeping "could not look" apart from "not there".
 
@@ -1425,6 +1478,23 @@ def _interpreter_cell(ours):
     not write.
     """
     checked = []
+    # One probe per resolved interpreter, mapped back to every registration that names it.
+    # Probing per registration attached time-separated results to commands that share one
+    # executable, so an interpreter replaced or chmodded between probes gave them different
+    # startability.
+    probed = {}
+    # One probe per SPELLING, and deliberately not one per file. That was the right unit while
+    # this was a presence check -- a file either exists or does not, however it is named -- and
+    # it is the wrong one now that the probe RUNS the program. The kernel hands the invoked
+    # pathname to the program as argv[0], a script sees it as $0, and a dispatcher that branches
+    # on its own name answers one spelling and refuses another. Sharing one answer between two
+    # spellings of one inode published a working reading for a spelling that fails, and it also
+    # let a link retargeted after the identity was taken lend its answer to a spelling that
+    # still reaches the original. Two spellings are two invocations, so they are two questions.
+    return _interpreter_probes(ours, checked, probed)
+
+
+def _interpreter_probes(ours, checked, probed):
     for entry in ours:
         first = (registered_argv(entry["command"]) or [None])[0]
         if not first:
@@ -1439,17 +1509,33 @@ def _interpreter_cell(ours):
                               "the registration names its interpreter with the relative path "
                               + first + ", which resolves differently in every workspace; it"
                               " was not probed here", path=first)
-                checked.append({"word": first, "resolved": first, "probe": probe})
+                checked.append({"registration": entry["identity"], "word": first,
+                                "resolved": first, "probe": probe})
                 continue
             resolved = first
         else:
             # A bare name is looked up on PATH, which is what the host does with it too.
             resolved = shutil.which(first) or first
-        probe = presence(resolved, "the registered interpreter")
-        if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
-            probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
-                          path=str(resolved))
-        checked.append({"word": first, "resolved": str(resolved), "probe": probe})
+        # The same program can be an interpreter for one registration and the adapter itself
+        # for another, and the verdict differs, so the probe is shared only between the two
+        # that ask the same question of it.
+        interpreter_slot = first != entry["target"]
+        # The spelling as the host will invoke it, because that is what the program is given.
+        key = (str(resolved), interpreter_slot)
+        if key in probed:
+            probe = probed[key]
+        else:
+            probe = presence(resolved, "the registered interpreter")
+            if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
+                probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
+                              path=str(resolved))
+            elif probe["value"] == reading.PRESENT:
+                probe = (_answers_as_an_interpreter(resolved, "the registered interpreter")
+                         if interpreter_slot
+                         else _unjudged_interpreter(resolved, "the registered interpreter"))
+            probed[key] = probe
+        checked.append({"registration": entry["identity"], "word": first,
+                        "resolved": str(resolved), "probe": probe})
     if not checked:
         return _cell(NOT_READ, "no registration named a program to run the adapter")
     unusable = next((one for one in checked if one["probe"]["value"] != reading.PRESENT), None)
@@ -1458,16 +1544,311 @@ def _interpreter_cell(ours):
                  chosen["probe"]["evidence"]
                  + "; this is the first word of the registered command, and a wrapper's own"
                    " target is not followed",
-                 interpreters=[one["resolved"] for one in checked])
+                 interpreters=[one["resolved"] for one in checked],
+                 # The worst probe is the cell's value, and every probe is carried beside it.
+                 # A consumer asking whether THIS host can start the adapter at all has to be
+                 # able to tell one broken registration from every registration being broken,
+                 # and the worst-of value alone answers the second question for the first.
+                 probes=checked)
 
 
-def _recorded_program_cell(named, label):
+# Bounded, because this runs a program on a real host. A slower answer is not a better one:
+# past this the reading is unestablished and says so, rather than waiting for a definite
+# answer it cannot have.
+INTERPRETER_PROBE_SECONDS = 5
+
+# What the probe's own answer can be, beside PRESENT. Declared so a consumer can be checked
+# against the whole vocabulary rather than against the cases someone remembered.
+INTERPRETER_UNESTABLISHED = (NOT_READ,)
+
+
+def _startable_from(halves):
+    """What a registration's two probe answers say about starting: cannot, could not judge, or
+    nothing establishes that it cannot.
+
+    Three answers, and the first of them is deliberately NOT "this registration starts". No
+    reading here establishes that. The interpreter probe asks the registered first word to
+    answer as a supported Python at the spelling the host resolves, and that is what it
+    establishes -- not that the REGISTRATION would start, because the adapter path, its
+    readability and the argument convention are separate facts and a wrapper's own target is
+    deliberately not followed. Reading a present pair as startability would pick one cause
+    among several by guess, which is the thing this answer set exists to stop.
+
+    So True here means "nothing establishes that it cannot start", which is what the rules
+    downstream actually need to scope a count, and the payload says as much rather than
+    claiming the stronger thing. None stays "could not judge at all" -- a workspace-dependent
+    spelling, one this command could not reach, one that did not answer in time -- because that
+    is neither, and recording it as cannot-start dropped that registration's journal from every
+    question while a blocked neighbour supplied a settled explanation for the whole host.
+
+    The cannot-start side reads firing's DECLARED set rather than restating its members. It was
+    written out as two of them, and when the probe learned to answer two more the new ones were
+    dropped here while the rule that reads the same set acted on them -- one payload saying a
+    registration cannot start and, beside it, counting its journal as a startable peer's.
+    """
+    if halves == {reading.PRESENT}:
+        return True
+    if halves & set(firing.CANNOT_START):
+        return False
+    return None
+
+
+def _script_cell(named, label):
+    """A script some program has to READ to run, probed for what that requires.
+
+    Presence is not the question here either, one step down from the interpreter: the
+    interpreter opens this file, and a regular file it cannot open is a file it cannot run. A
+    target with no read permission answered PRESENT and the registration read as startable,
+    while every Stop died before the adapter's first line.
+
+    Readability is the whole of what is establishable about a script from here -- it is not a
+    program this command can ask anything of -- so the cell claims that and no more.
+    """
+    probe = presence(named, label)
+    if probe["value"] == reading.PRESENT and not os.access(str(named), os.R_OK):
+        return _cell(reading.UNREADABLE, label + " cannot be read, so the interpreter"
+                     " registered to run it cannot open it", path=str(named))
+    return probe
+
+
+def _python_said(said):
+    """The version a Python reported, as a pair, or None when that is not what it said.
+
+    One rule for the installer's refusal and the diagnosis probe, because they were two: the
+    installer already knew that being executable is not the question and that being a Python is
+    not the whole question, and refused an interpreter below the floor -- while diagnosis, on
+    the same host, reported the registration startable. A predicate the writer enforces and the
+    reader does not is the two of them disagreeing about one host.
+    """
+    parts = said.split(".")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    return (int(parts[0]), int(parts[1]))
+
+
+def _interpreter_question():
+    """A question only a program that RAN the source can answer.
+
+    A marker printed by the source and looked for in the output is answered by any program
+    that repeats its arguments -- /bin/echo prints the source, marker and all -- so "the marker
+    appeared" and "this ran Python" are different claims, which is the same mismatch this cell
+    was fixed for one round ago. The source therefore asks for something COMPUTED: a nonce this
+    call invents, written back reversed. Echoing the source shows the nonce forward, and the
+    exact answer is compared rather than searched for.
+
+    It asks for the VERSION in the same breath, because being a Python is not the whole
+    question either: one too old to run this adapter fails every Stop and looks identical from
+    the hook file. One execution answers both, so the stronger check costs no more.
+    """
+    nonce = os.urandom(12).hex()
+    source = ("import sys;sys.stdout.write(''.join(reversed(" + repr(nonce) + "))"
+              " + ' %d.%d' % (sys.version_info[0], sys.version_info[1]))")
+    return source, nonce[::-1]
+
+
+# What this probe accepts as an ANSWER, and what it does with everything else. Stated once,
+# because every branch below and both call sites follow from it rather than each deciding for
+# itself -- which is how one site came to discard an answer it had already received while
+# another produced no verdict at all:
+#
+#   AN ANSWER      the exact nonce this call invented, computed and written back, beside a
+#                  version. Only a program that ran the source can produce it, so it is
+#                  evidence whatever the program does with its exit status afterwards. A
+#                  version below the floor is still an answer, and its own repair.
+#   REFUSED        it ran and would not take the question, which is what a wrapper around an
+#                  interpreter does. Nothing about running Python was established.
+#   NO ANSWER      it exited cleanly and did not answer. This is where the probe STOPS, and it
+#                  is the whole reason it establishes nothing: a program that is not an
+#                  interpreter and a wrapper that ignores an option meant for one are both
+#                  exactly this, and no reading here separates them. Rounds of narrowing the
+#                  non-answers taught that; the observation cannot distinguish its cases, so
+#                  it does not answer as though it can, which is what this issue is about.
+#   UNJUDGED       the command's shape does not put an interpreter in this word at all. There
+#                  is no question to ask, so none is asked and nothing is run.
+#
+# Only an ANSWER establishes anything, because only a program that ran the source can produce
+# it. Every non-answer is an unestablished reading that says which explanations remain open --
+# which still closes the defect this probe was added for, since a presence check alone used to
+# report "startable" and an unestablished reading does not. The last case never reaches this
+# function: its caller answers it, because a gap that produces no verdict is read as a clean
+# one.
+def _said_invocation(resolved):
+    """What this command actually ran, in the words an operator can repeat.
+
+    A reading that runs host programs and does not say so is itself a missing piece of
+    evidence, which is the failure this whole answer set exists to close. The receipt has to
+    name the program and the invocation, not merely the conclusion drawn from it.
+
+    The source is summarised rather than printed: it is a generated nonce, so the literal text
+    differs on every probe and would be noise in a receipt meant to be compared.
+    """
+    return str(resolved) + " -c <version-and-nonce probe>"
+
+
+def _end_the_session(started, session):
+    """Kill everything the probe started, not only the process it made.
+
+    A wrapper that forks and then hangs leaves its own children running when the direct child
+    is killed, so each timeout left a descendant of this diagnosis behind. The probe opens its
+    own session for exactly this, and the whole group goes.
+
+    The group is the one taken when the process was STARTED. Asking for it now would ask about
+    a leader that may already have exited while a child of its own holds the pipes open --
+    which is precisely the shape that times out -- and the lookup fails just when it is needed.
+
+    What this does NOT reach, stated rather than implied: a descendant that calls setsid() puts
+    itself in a session no group named here contains, and nothing portable can name it
+    afterwards. So the pipes are CLOSED rather than drained -- waiting on a descendant that
+    escaped would hang this reading on the very process it failed to kill -- and such a
+    descendant outlives the probe. It cannot write a journal record, which is the boundary this
+    command is held to; it is a resource this command could not reclaim, and that is a limit
+    and not a claim.
+    """
+    try:
+        os.killpg(session, signal.SIGKILL)
+    except (OSError, ValueError):
+        try:
+            started.kill()
+        except OSError:
+            pass
+    for pipe in (started.stdout, started.stderr):
+        try:
+            if pipe is not None:
+                pipe.close()
+        except OSError:
+            pass
+    try:
+        started.wait(timeout=INTERPRETER_PROBE_SECONDS)
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        pass
+
+
+def _unjudged_interpreter(resolved, label):
+    """The UNJUDGED outcome, reaching the caller as a reading rather than as nothing.
+
+    A registration can execute the adapter directly through its shebang, so the first word is
+    the script. Running it with an interpreter's own option would run the ADAPTER with an
+    argument it never expected, and any verdict drawn from that would be about a question this
+    command invented. So it is not run, and the answer says which question was not asked.
+    """
+    return _cell(NOT_READ, label + " is the adapter itself rather than a program registered to"
+                 " run it, so no interpreter question applies to this word and none was asked",
+                 path=str(resolved))
+
+
+def _answers_as_an_interpreter(resolved, label):
+    """Whether this program runs Python, asked by running it.
+
+    A file being there and executable establishes that the path is not empty. It establishes
+    nothing about what the host gets when it runs it, and reporting the registration startable
+    from that is a capability claimed from a presence check. An interpreter replaced by any
+    program that exits quietly -- /bin/true is the whole family, and it is the same family this
+    module already refuses to accept for the relay's guard subcommand -- read as a working
+    hook.
+
+    Asked the way _offers_guard asks the runtime, and for the same reason exit 0 is not enough
+    there: the answer has to come from the program's own output. And not merely CONTAIN the
+    answer -- a program that repeats its arguments prints the source back, marker and all --
+    so the source asks for something computed and the exact reply is compared.
+
+    What this establishes is a MOMENT. It ran as a Python interpreter when this was asked, and
+    the evidence says so, because the host runs it again on the next Stop and this command
+    cannot speak for that one.
+
+    Called only where the command's shape puts an interpreter in this word. Where it does not,
+    the caller answers with _unjudged_interpreter and nothing is run.
+    """
+    source, expected = _interpreter_question()
+    try:
+        # Its OWN session, so a timeout can reap everything it started. subprocess kills the
+        # process it created and leaves that process's own children running, so a wrapper that
+        # forks left a descendant of this diagnosis behind on every timeout.
+        started = subprocess.Popen([str(resolved), "-c", source],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+    except OSError as error:
+        return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
+                     path=str(resolved),
+                     # Attempted, not run: the host refused to create the process, so no
+                     # program of this host's executed and the receipt must not imply one did.
+                     attempted=_said_invocation(resolved),
+                     errno=errno.errorcode.get(error.errno, error.errno))
+    # Taken NOW, while the leader is certainly alive and is certainly the group leader.
+    try:
+        session = os.getpgid(started.pid)
+    except (OSError, ValueError):
+        session = started.pid
+    try:
+        spoke, _complained = started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _end_the_session(started, session)
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and did not answer within " + str(INTERPRETER_PROBE_SECONDS)
+                     + "s, so whether it runs Python was not established",
+                     path=str(resolved), ran=_said_invocation(resolved))
+    except OSError as error:
+        # It STARTED, and reading its answer is what failed. Saying it could not be run would
+        # be false twice: a program of this host's did execute, and COULD_NOT_BE_RUN is one of
+        # firing.CANNOT_START, so the word would settle a startability question this reading
+        # never reached. It reports what it ran and claims nothing further from it.
+        _end_the_session(started, session)
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and its answer could not be read: " + str(error) + ", so whether it"
+                     " runs Python was not established",
+                     path=str(resolved), ran=_said_invocation(resolved),
+                     errno=errno.errorcode.get(error.errno, error.errno))
+    answered = _text(spoke).strip().split(" ")
+    version = _python_said(answered[1]) if len(answered) == 2 else None
+    # The ANSWER is read before the exit status, because only a program that ran the source can
+    # produce this nonce and a wrapper is free to replace the status afterwards -- a launcher
+    # ending in 'exit 1' would otherwise throw away the one piece of positive evidence there is.
+    if answered[0] == expected and version is not None:
+        if version < SUPPORTED_PYTHON:
+            return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " was RUN as "
+                         + _said_invocation(resolved) + " and answered Python "
+                         + ".".join(str(part) for part in version) + ", below the supported "
+                         + ".".join(str(part) for part in SUPPORTED_PYTHON) + ", so the"
+                         " adapter fails on every Stop before evaluating or journalling"
+                         " anything", path=str(resolved), ran=_said_invocation(resolved))
+        return _cell(reading.PRESENT, label + " was RUN as " + _said_invocation(resolved)
+                     + " and answered as a supported Python interpreter. That is what this"
+                     " establishes: the registered first word answers at the spelling the host"
+                     " resolves. It does not establish that the registration starts -- the"
+                     " command was never run as written and a wrapper's own target is not"
+                     " followed -- and whether it answers on the next invocation is that"
+                     " invocation's own fact",
+                     path=str(resolved), ran=_said_invocation(resolved))
+    if started.returncode != 0:
+        # It REFUSED the question rather than answering it wrongly, and those are different
+        # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an
+        # interpreter and exits non-zero while starting the adapter perfectly well through the
+        # words that follow it, which this command deliberately does not follow. Establishing
+        # "not an interpreter" from that condemned a working registration.
+        return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                     + " and did not accept the question, which is also what a wrapper around"
+                     " an interpreter does, so whether it runs Python was not established"
+                     " here", path=str(resolved), ran=_said_invocation(resolved))
+    return _cell(NOT_READ, label + " was RUN as " + _said_invocation(resolved)
+                 + " and did not answer as a Python interpreter. Two hosts look exactly like"
+                 " this -- a program that is not an interpreter at all, and a wrapper that"
+                 " ignores an option meant for the interpreter behind it and starts the adapter"
+                 " perfectly well -- and nothing here separates them, so whether this can start"
+                 " the adapter was not established",
+                 path=str(resolved), ran=_said_invocation(resolved))
+
+
+def _recorded_program_cell(named, label, asks=False):
     """A program these settings name, probed the way a registered one is.
 
     A plugin-owned hook has no entry in the hook file, so the cell above receives nothing and
     answers that no registration named a program. That is true about the hook file and useless
     about this host: the launcher starts the two programs recorded here, and if either is gone
     every Stop is released without a word. Same probe, different source.
+
+    'asks' is for a program that can be RUN to answer for itself. The entry point is a script
+    the interpreter runs, not a program this command can ask anything of, so presence is the
+    whole of what is establishable about it here; the interpreter is asked. Said as a parameter
+    rather than read off the label, because a label is prose and this is a decision.
     """
     if not named:
         return None
@@ -1478,11 +1859,21 @@ def _recorded_program_cell(named, label):
     probe = presence(named, label)
     if probe["value"] == reading.PRESENT and not os.access(str(named), os.X_OK):
         return _cell(reading.UNREADABLE, label + " is not executable", path=str(named))
+    if asks and probe["value"] == reading.PRESENT:
+        return _answers_as_an_interpreter(named, label)
     return probe
 
 
-def _journal_cell(config):
-    """What this hook recorded about its own invocations."""
+def _journal_cell(config, held=None):
+    """What this hook recorded about its own invocations.
+
+    'held' is a list a caller passes when it will use the reported journalIdentity as a KEY.
+    The descriptor this listing was read through is appended to it and stays open, because an
+    identity stops being a key the moment its object can be recycled: a journal directory
+    deleted after it was listed hands its (device, inode) to whatever is created next, and a
+    later registration's journal reaching that pair would be given this one's snapshot. The
+    caller closes what it collects.
+    """
     root = (config or {}).get("journalRoot")
     policy = (config or {}).get("journalPolicy") or EVERY_INVOCATION
     if not root:
@@ -1490,25 +1881,456 @@ def _journal_cell(config):
                                  " its own invocations", journalPolicy=policy)
     directory = Path(root).expanduser()
     try:
-        days = sorted(entry.name for entry in os.scandir(str(directory)) if entry.is_dir())
+        # Opened ONCE, and every reading below is taken through this descriptor. Two separate
+        # path lookups around a listing cannot promise they described the directory it read:
+        # a link can point away and back between them, and the count is then filed under the
+        # identity of a directory it never came from. A descriptor cannot be retargeted.
+        handle = os.open(str(directory), os.O_RDONLY | _DIRECTORY)
     except FileNotFoundError:
+        if os.path.islink(str(directory)):
+            # A link whose target is gone is NOT an established absence. Nothing could be read
+            # through it, and the hook cannot create its dated directory through it either, so
+            # reporting "the directory does not exist" settled a count of zero for a host whose
+            # journal path is broken -- an unreadable path answered as an empty journal, which
+            # is the substitution this whole answer set exists to remove.
+            return _cell(reading.ACCESS_ERROR,
+                         "the journal path is a link whose target is not there, so nothing"
+                         " could be read through it and the hook cannot create its own"
+                         " directory through it: no count was established",
+                         journalRoot=str(directory), journalPolicy=policy)
         return _cell(reading.ABSENT, "the journal directory does not exist, so this hook has"
                                      " recorded no invocation into it",
                      journalRoot=str(directory), journalPolicy=policy)
-    except OSError as error:
-        return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
+    except (OSError, ValueError) as error:
+        # ValueError as well: complaints() accepts any absolute string, and one carrying a
+        # NUL cannot name a path at all, so scandir raises it. A settings document that
+        # reads back fine must still produce a journal reading rather than a traceback.
+        return _cell(reading.ACCESS_ERROR, "the journal could not be opened: " + str(error),
+                     # No identity. An open that yielded no descriptor established nothing
+                     # about WHICH object refused it, and every way of naming it afterwards is
+                     # another lookup of the same spelling: a link retargeted after the refusal
+                     # publishes it under a readable directory's identity, and the next
+                     # registration naming that directory inherits a failure belonging to
+                     # something else. Opening the object merely to NAME it was tried and has
+                     # the same window, which the case below caught.
+                     #
+                     # The cost is that two spellings reaching one unreadable object stay two
+                     # journal roots, so recorded_on_another_path is NOT_RULED_OUT for them.
+                     # That is an unestablished answer rather than a false one, and this is the
+                     # direction this reading fails in on purpose. Closing it would need the
+                     # listing re-opened through the descriptor that named the object -- on
+                     # Linux, /proc/self/fd -- which is a larger change than this contract.
                      journalRoot=str(directory), journalPolicy=policy)
-    days = [day for day in days if JOURNAL_DAY.match(day)]
-    counted = 0
-    for day in days:
+    try:
+        # The identity of what was actually opened, reported beside the count so a caller can
+        # tell two spellings apart by what they REACHED rather than by how they were written.
+        taken = os.fstat(handle)
+        identity = (taken.st_dev, taken.st_ino)
         try:
-            counted += sum(1 for entry in os.scandir(str(directory / day))
-                           if entry.is_file() and JOURNAL_NAME.match(entry.name))
-        except OSError:
-            return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
-                         journalRoot=str(directory), journalPolicy=policy, days=days)
-    return _cell(str(counted), "invocations this hook recorded for itself",
-                 journalRoot=str(directory), journalPolicy=policy, days=days)
+            days = sorted(entry.name for entry in os.scandir(handle) if entry.is_dir())
+        except (OSError, ValueError) as error:
+            return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
+                         journalRoot=str(directory), journalPolicy=policy,
+                         journalIdentity=identity)
+        days = [day for day in days if JOURNAL_DAY.match(day)]
+        counted = 0
+        for day in days:
+            try:
+                # Opened RELATIVE to the journal's own descriptor, so a day is read under the
+                # directory that was listed rather than under whatever the spelling names now.
+                inner = os.open(day, os.O_RDONLY | _DIRECTORY, dir_fd=handle)
+            except OSError:
+                return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
+                             journalRoot=str(directory), journalPolicy=policy, days=days,
+                             journalIdentity=identity)
+            try:
+                counted += sum(1 for entry in os.scandir(inner)
+                               if entry.is_file() and JOURNAL_NAME.match(entry.name))
+            except OSError:
+                return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
+                             journalRoot=str(directory), journalPolicy=policy, days=days,
+                             journalIdentity=identity)
+            finally:
+                os.close(inner)
+        return _cell(str(counted), "invocations this hook recorded for itself",
+                     journalRoot=str(directory), journalPolicy=policy, days=days,
+                     journalIdentity=identity)
+    finally:
+        if held is None:
+            os.close(handle)
+        else:
+            held.append(handle)
+
+
+def journals_named(registrations, already_read=None, pinned=None):
+    """Each REGISTRATION's own settings file, and what the journal under it holds.
+
+    This exists because "no record" had several causes and the command answered none of them.
+    Every registration in the hook file runs, so when they name different settings files they
+    record into different journals; reading one of those and reporting an absence says nothing
+    about the others, and reading none of them -- which is what happened -- makes a hook that
+    fired into one journal indistinguishable from a hook that never fired.
+
+    Keyed by the registration and not by the path, because the journal and the program that
+    writes into it are one registration's pair. Reduced to a bare set of paths, a journal
+    could not be attributed to the command that fills it: an unstartable registration's empty
+    journal then read as evidence that its startable neighbour had recorded somewhere else.
+
+    It writes nothing and opens only files a registration already named.
+
+    'already_read' carries readings this call's caller has already taken, keyed by path. A
+    settings file read twice in one status call is a payload that can contradict itself: the
+    configuration cell reported PRESENT from the first read while namedSettings reported ABSENT
+    from the second, about one file, in one answer. A reading is taken once and used wherever
+    it is needed.
+
+    Each entry answers its own records question with one of three values, never with a
+    stand-in. Settings that are absent, or that this hook's own reader rejects, keep no journal
+    AT ALL: run() reads them before it looks at the payload, so every invocation releases
+    without writing anywhere. That is an established "nothing is kept here". A settings file
+    this process could not reach is different and stays unestablished, because a permission
+    failure here says nothing about what the hook can open inside a session.
+    """
+    found = []
+    # One snapshot per JOURNAL, not per registration. Two registrations can name different
+    # settings files that configure the same journalRoot, and listing that one directory twice
+    # let a Stop landing between the reads report two different counts for one directory --
+    # enough to establish "recorded on another path" when there is only one path.
+    scanned = {}
+    # The kernel's identity for each snapshot, captured when it was taken, so a later
+    # registration can ask whether its own spelling reaches that same directory. Kept beside
+    # the snapshots rather than derived from their keys, because a key is lexical and this
+    # question is not -- and stored as the ANSWER rather than as the spelling, so a link
+    # retargeted afterwards cannot make a stale snapshot look current.
+    aliases = {}
+    # One reading per settings FILE, not per registration. Two registrations can name ONE file
+    # through two absolute spellings -- a symlink alias is not a lexical difference, and
+    # _settled deliberately does not resolve one, because resolving would make a key depend on
+    # what a link points at. Read twice, an atomic rewrite landing between the reads reported
+    # the old journalRoot in one entry and the new one in another, about one file, in one
+    # answer; _recorded_on_another_path then read that as two journals disagreeing on a host
+    # that has one. It is the same shape as the journal aliasing directly below, one level up.
+    #
+    # Keyed by the identity the READING carries, which read_json took from the descriptor the
+    # bytes came through. A path lookup may ASK this cache, because it reports what a spelling
+    # reached at the moment it was asked; what a reading is PUBLISHED under may not come from
+    # a lookup, or a link retargeted between the lookup and the open files those bytes under an
+    # identity they never came from.
+    # An identity is only a key while this call HOLDS the object it names. An inode is recycled
+    # the moment its last name and its last descriptor are gone, so a file deleted after it was
+    # read can hand its (device, inode) to an unrelated file created afterwards -- and a cache
+    # keyed on that pair would then serve one file's reading for another's. Holding a descriptor
+    # open removes the interval: the kernel cannot reuse an inode something still has open.
+    read_by = {}
+    held = []
+    try:
+        # The caller's own reading goes through the same gate rather than straight in. The
+        # descriptor it was read through was closed before this call began, so its identity is
+        # exactly this recyclable too, and seeding it unheld left one entry skipping the rule
+        # every other entry follows.
+        for spelling, taken in (already_read or {}).items():
+            bound = (pinned or {}).get(str(spelling))
+            if bound is not None:
+                # The CALLER pinned this one and holds it for longer than this call lives, so
+                # its identity is a key already. Going through _keep instead asked for a holder
+                # the caller never took -- it read through the pin rather than asking for one
+                # -- so the seed was reachable by its exact spelling and by nothing else, and
+                # an alias of that same file read it again. An in-place rewrite between the two
+                # then gave one file two contents in one answer.
+                read_by[bound[1]] = taken
+            else:
+                _keep(taken, read_by)
+        _read_named(registrations, already_read, read_by, held, found, scanned, aliases,
+                    pinned)
+    finally:
+        for descriptor in held:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    return found
+
+
+def _stated_path_cell(named, what, read):
+    """Read one launcher path a rejected document still states, or answer that it stated none.
+
+    Only an absolute spelling, because a relative one is resolved by the host against something
+    this command is not running under, and reading the path THIS process would resolve would
+    report an unrelated file as the registration's own.
+
+    Absolute LITERALLY, and not after expansion. The recorded launcher is handed to the
+    interpreter as it is written -- unlike the settings path, which this adapter expands before
+    it opens it -- so a tilde spelling is one the packaged launcher never resolves. Judging it
+    on its expanded form while reading the literal one answered "startable" from a file the
+    launcher would never reach.
+    """
+    if not isinstance(named, str) or not os.path.isabs(named):
+        return NOT_READ
+    found = read(named, what)
+    return NOT_READ if found is None else found["value"]
+
+
+def _pin_spellings(spellings, held):
+    """Open and HOLD every spelling before any of them is read.
+
+    A descriptor taken now fixes what each spelling named at ONE moment. Everything downstream
+    -- the merge that decides whether two of them are one file, the reading this command
+    settles on, and each registration's own reading -- then asks about the objects this set
+    holds rather than about whatever the pathnames reach later. That is what makes their
+    answers comparable: a replacement arriving at a pathname afterwards cannot move one
+    consumer onto a different object from another.
+
+    A spelling nobody could open or identify is not in the set, and its consumer falls back to
+    reading the path. Its answer is then a moment later than the rest, which is the honest cost
+    of a spelling the kernel would not hold still.
+    """
+    pinned = {}
+    for spelling in spellings:
+        spelling = str(spelling)
+        if spelling in pinned:
+            continue
+        try:
+            # NONBLOCK so a named pipe at a settings path cannot stall this command.
+            descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, ValueError):
+            continue
+        mine = reading.descriptor_identity(descriptor)
+        if mine is None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            continue
+        held.append(descriptor)
+        pinned[spelling] = (descriptor, mine)
+    return pinned
+
+
+def _one_source_each(spellings, pinned=None):
+    """Collapse the spellings the kernel says name one file, holding each while it is a key.
+
+    Two registrations can name ONE settings file through two absolute spellings, and counting
+    that as two sources reported the configuration unreadable as ambiguous while the cause
+    partition beside it read the one file once and answered from it.
+
+    Every identity compared here is taken from a descriptor this function HOLDS until it has
+    finished comparing. An identity read and released is recyclable: a file deleted after it
+    was identified hands its (device, inode) to the next file created, and a later, unrelated
+    spelling would then be collapsed into it and never read at all -- one source reported where
+    there are two, which is the opposite error and the worse one. Holding removes the interval.
+
+    A spelling nobody could open or identify keeps its own place rather than being merged on a
+    guess, because describing two files as one is what this check exists to prevent.
+
+    Returns the spellings that keep a place, and the identity each identified spelling was
+    judged under, so a caller that goes on to READ one can tell whether it read the object the
+    judgement was made about.
+    """
+    seen, kept, held = {}, [], []
+    judged = {}
+    borrowed = pinned or {}
+    try:
+        for spelling in spellings:
+            bound = borrowed.get(str(spelling))
+            if bound is not None:
+                # Already held by the caller, for longer than this call lives, so it is judged
+                # against the same objects everything else here will read.
+                if bound[1] not in seen:
+                    seen[bound[1]] = spelling
+                    kept.append(spelling)
+                judged[spelling] = bound[1]
+                continue
+            try:
+                # NONBLOCK so a named pipe at a settings path cannot stall this command.
+                descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
+            except (OSError, ValueError):
+                # ValueError is a spelling the kernel is never asked about at all -- an
+                # embedded NUL, which a registration can carry. It is a path this command
+                # cannot identify, which is a reading, and letting it out of here ended the
+                # whole status payload in a traceback over one malformed registration.
+                kept.append(spelling)
+                continue
+            mine = reading.descriptor_identity(descriptor)
+            if mine is None or mine in seen:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                if mine is None:
+                    kept.append(spelling)
+                else:
+                    judged[spelling] = mine
+                continue
+            seen[mine] = spelling
+            judged[spelling] = mine
+            held.append(descriptor)
+            kept.append(spelling)
+    finally:
+        for descriptor in held:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    return kept, judged
+
+
+def _journal_answer(cell):
+    """What one journal cell says about records kept under it, as the rules read it.
+
+    One function because there are two hosts and they must not drift: a registration in the
+    hook file names its own settings, and a plugin-owned host names none there while this
+    command still settles on one. The second used to carry no journal answer at all, so the
+    policy causes had nothing to read on exactly the host whose repair they name.
+    """
+    value = cell["value"]
+    policy = cell.get("journalPolicy")
+    answer = {"journalRoot": cell.get("journalRoot"), "journalPolicy": policy,
+              "faultsOnly": policy == FAULTS_ONLY,
+              "records": None, "recordsAnswer": firing.UNESTABLISHED}
+    # The POLICY is what decides whether a record is ever written, and journal() returns
+    # without writing on no_journal whatever root is configured. Keying this on the cell's
+    # NO_JOURNAL value alone read a host that keeps no journal by configuration as one whose
+    # journal happens to be empty, which is the substitution this whole answer set exists to
+    # remove.
+    if value == NO_JOURNAL or policy == NO_JOURNAL:
+        answer["recordsAnswer"] = firing.NO_RECORDS_KEPT
+    elif value == reading.ABSENT:
+        # The journal directory is established absent, so it holds nothing. That is a count
+        # this command read, not one nobody could take.
+        answer["records"], answer["recordsAnswer"] = 0, firing.COUNTED
+    elif str(value).isdigit():
+        answer["records"], answer["recordsAnswer"] = int(value), firing.COUNTED
+    return answer
+
+
+def _keep(taken, read_by, held=None):
+    """Cache this reading only while a descriptor holds the object it was read THROUGH.
+
+    The identity read_json reports is true of the bytes it returned. It stops being a usable
+    KEY the moment that inode can be recycled: a settings file deleted after it was read hands
+    its (device, inode) to whatever is created next, and a later spelling stat-ing to that pair
+    would be served the deleted file's reading.
+
+    Reopening the path to pin it is NOT enough, and that is the whole reason the reading
+    carries its own descriptor. The reopen is a second lookup of the same spelling: replace the
+    file between the read and the reopen with one that inherits the inode, and the identities
+    compare equal while this pins the NEW object and caches the OLD one's bytes -- a wrong
+    reading dressed as a verified one. The descriptor the bytes came through cannot be
+    retargeted, so there is no interval left.
+
+    'held' is the list of descriptors this call will close. A reading handed in by the caller
+    is held by the CALLER for longer than this call lives, so it is cached without being
+    adopted.
+    """
+    identity = getattr(taken[3], "identity", None)
+    holder = getattr(taken[3], "holder", None)
+    if identity is None or holder is None:
+        return
+    if held is not None:
+        held.append(holder)
+    read_by[identity] = taken
+
+
+def _read_named(registrations, already_read, read_by, held, found, scanned, aliases,
+                pinned=None):
+    # Every spelling this call will read, opened and HELD before any of them is read.
+    # Discovering aliases one spelling at a time left a window: an atomic rewrite landing
+    # between the first snapshot and the next spelling's lookup made two registrations that now
+    # name one file receive two different journalRoots, which recorded_on_another_path reads as
+    # two sources disagreeing. Pinned together they are compared as they were at one moment,
+    # and each reading is taken THROUGH the descriptor that pinned it, so no reading can come
+    # from an object the comparison was not about.
+    #
+    # The caller may supply the set. status() does, because its OWN reading has to come from
+    # the same objects: pinning here and reading there left a window between them, and the
+    # carried reading then held one object while these pins held another.
+    if pinned is None:
+        pinned = _pin_spellings(
+            [_settled(one["settings"]) for one in registrations if one.get("settings")], held)
+    for registration in registrations:
+        if not registration.get("settings"):
+            # A relative spelling or no settings at all. There is no file here to open, and
+            # record_path_unidentified is the cause that owns that state.
+            continue
+        path = _settled(registration["settings"])
+        bound = pinned.get(str(path))
+        taken = (already_read or {}).get(str(path))
+        if taken is None:
+            mine = bound[1] if bound is not None else reading.path_identity(path)
+            taken = read_by.get(mine) if mine is not None else None
+        if taken is None:
+            if bound is not None:
+                # The pin is the hold, so nothing further has to be kept open for it.
+                taken = read_configuration(path, descriptor=bound[0])
+                read_by[bound[1]] = taken
+            else:
+                taken = read_configuration(path, hold=True)
+                _keep(taken, read_by, held)
+        config, refused, detail, read_back = taken
+        entry = {"registration": registration.get("registration"),
+                 "startable": registration.get("startable"),
+                 "settings": str(path), "settingsState": read_back.state,
+                 "usable": config is not None, "refusedAs": refused, "detail": detail,
+                 "journalRoot": None, "journalPolicy": None, "faultsOnly": False,
+                 "records": None, "recordsAnswer": firing.UNESTABLISHED, "journal": None}
+        if config is None:
+            entry["recordsAnswer"] = (firing.UNESTABLISHED
+                                      if read_back.state == reading.ACCESS_ERROR
+                                      else firing.NO_RECORDS_KEPT)
+            found.append(entry)
+            continue
+        # A missing root is not a path and must not be normalised into one: resource_key("")
+        # answers "/", which is a real directory a configuration may legitimately name, and the
+        # two would then share a snapshot. NO_ROOT is a sentinel no path can equal.
+        configured = config.get("journalRoot")
+        # A journal root is opened as a DIRECTORY and _journal_cell puts it through
+        # Path, which drops a trailing separator, so /tmp/journal and /tmp/journal/
+        # reach one scandir. The trailing separator resource_key keeps is a real
+        # distinction for an executable and not for this, so it is dropped here rather
+        # than weakened there.
+        root = (resource_key(str(Path(configured))) if configured else NO_ROOT)
+        # resource_key is lexical on purpose -- it refuses to resolve, because resolving would
+        # make a cache key depend on what a link points at. That leaves one case it cannot see:
+        # two registrations naming ONE directory, one through a real path and one through a
+        # symlink alias. Listed twice, that directory produced two readings, and a Stop landing
+        # between them showed one alias empty beside the other holding records -- which this
+        # answer set reads as two journals disagreeing, on a host that has one journal.
+        #
+        # So identity is asked of the kernel, and only where the kernel can answer. Where it
+        # cannot, the spellings keep their own keys rather than being merged on a guess: a
+        # second reading of one directory is the cost, and a shared reading of two different
+        # ones is what that refuses to cost.
+        # This spelling's identity, to look up a snapshot already taken from that directory.
+        # A lookup may ask a path: it reports what the spelling reached at the moment it was
+        # asked, which is all any reading of a live filesystem claims. What may NOT come from
+        # a path lookup is the identity a snapshot is PUBLISHED under, and that one is taken
+        # from the descriptor the listing itself was read through.
+        mine = reading.path_identity(configured) if configured else None
+        if mine is not None and root not in scanned:
+            alias = next((key for key, taken in aliases.items() if taken == mine), None)
+            if alias is not None:
+                root = alias
+        if root in scanned:
+            # The policy is this registration's own; the listing is the directory's, and the
+            # directory is the same one.
+            cell = dict(scanned[root], journalPolicy=config.get("journalPolicy")
+                        or EVERY_INVOCATION)
+        else:
+            cell = _journal_cell(config, held=held)
+            scanned[root] = cell
+            # Published under the identity the READING reports, which it took from the
+            # descriptor it listed. Bracketing the listing with two path lookups was not
+            # enough: a link pointing away and back again agrees with itself across the
+            # brackets while the listing in between came from somewhere else, and the count
+            # was then filed under an identity it never came from. A descriptor cannot be
+            # retargeted, so there is no interval left to race.
+            taken = cell.get("journalIdentity")
+            if taken is not None:
+                aliases[root] = taken
+        entry["journal"] = cell
+        entry.update(_journal_answer(cell))
+        found.append(entry)
+    return found
 
 
 def status(codex_home=None, environ=None, event=EVENT):
@@ -1538,8 +2360,37 @@ def status(codex_home=None, environ=None, event=EVENT):
     # registrations naming different relative files, or one relative beside one absolute, look
     # like a single source, and the reader then described one hook while suppressing another
     # that may carry a different mode or relay.
-    distinct = sorted({str(_settled(named)) for named in carried if named not in relative}
-                      | set(relative))
+    # Two spellings the kernel says are ONE file are one source, however they are spelled.
+    # _settled removes lexical differences and deliberately does not resolve a symlink, so a
+    # second registration naming this same file through an alias counted as a second source:
+    # the configuration went unread as ambiguous and reported not_read, while the cause
+    # partition -- which does ask the kernel -- read that one file once and answered
+    # records_found from it. One payload, two answers about one file.
+    #
+    # Asked of the kernel here too, and only where the kernel can answer. Where it cannot, the
+    # spellings keep their own places rather than being merged on a guess: describing two files
+    # as one is the error this check exists to prevent, and a second entry is the cheaper cost.
+    absolute = sorted({str(_settled(named)) for named in carried if named not in relative})
+    # Pinned HERE, before the merge and before this command reads anything, and held until the
+    # last consumer is done. The merge, the reading settled on below, and every registration's
+    # own reading in journals_named then ask about one set of objects. Pinning inside that last
+    # call left a window in front of it: a replacement arriving after this command had read and
+    # revalidated its own snapshot, but before those pins were taken, left the carried reading
+    # holding the old object while the pins held the new one -- and two registrations naming
+    # ONE file received the old journalRoot and the new one, though there was no instant at
+    # which they named different files. recorded_on_another_path establishes off exactly that
+    # disagreement, so the payload named another path that was never another path.
+    #
+    # Detecting the disagreement instead was the other shape offered and it cannot produce a
+    # coherent answer: the configuration cell is already built from the carried reading by the
+    # time the pins exist, so a later consumer finding them different would have to report two
+    # answers about one path, which is the contradiction the carried reading exists to prevent.
+    # Removing the interval is the fix; there is then nothing to detect.
+    held = []
+    pinned = _pin_spellings(absolute + [configuration_path(home, environ)], held)
+    named_once, judged = _one_source_each(absolute, pinned)
+    collapsed = len(named_once) < len(absolute)
+    distinct = sorted(set(named_once) | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
@@ -1564,10 +2415,41 @@ def status(codex_home=None, environ=None, event=EVENT):
         path = _settled(carried[0]) if carried else configuration_path(home, environ)
         source = ("the registered command" if carried
                   else "this command's own resolution; no registration named one")
-        config, failed, detail, found = read_configuration(path)
+        # Held, because this reading's identity is about to be a cache key in journals_named:
+        # one file read once has to answer both the configuration cell and the entry any
+        # registration naming that same file gets. An identity released before it is used as a
+        # key is recyclable, and a file deleted in between would hand it to whatever is created
+        # next. Released immediately after that call, which is the only thing that uses it.
+        settled_pin = pinned.get(str(path))
+        config, failed, detail, found = (
+            read_configuration(path, descriptor=settled_pin[0]) if settled_pin is not None
+            else read_configuration(path, hold=True))
+        # The merge above was judged on descriptors this call no longer holds, and this read is
+        # a fresh lookup of the spelling. Where the two spellings were collapsed into one
+        # source and the object read is NOT the one that judgement was made about -- a symlink
+        # retargeted in between -- the single source was never established, and reporting the
+        # reading as it would describe one file while two registrations run. Said as the
+        # unsettled reading it is rather than presented as settled.
+        # EVERY spelling the merge judged, not only the one that was read. A discarded alias
+        # retargeted before this read is the same broken judgement seen from the other side:
+        # the two registrations were reported as one source on a finding that no longer holds,
+        # and checking only the retained spelling caught half of it.
+        moved = [spelling for spelling, was in judged.items()
+                 if reading.path_identity(spelling) != was]
+        read_elsewhere = (found is not None and found.identity is not None
+                          and judged.get(str(path)) is not None
+                          and found.identity != judged[str(path)])
+        if collapsed and (moved or read_elsewhere):
+            reading.release(found)
+            config, failed, found = None, REGISTRATION_AMBIGUOUS, None
+            detail = ("the registrations' settings spellings were read as one file and the"
+                      " file at " + ", ".join(sorted(moved) or [str(path)]) + " changed"
+                      " before it could be read, so no single source was established and none"
+                      " was read")
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
+    adapter_probes = {}
     if ours:
         # No expansion here, unlike the settings path. The settings path is expanded by this
         # adapter before it opens it; the adapter's own path is handed to the interpreter
@@ -1575,7 +2457,23 @@ def status(codex_home=None, environ=None, event=EVENT):
         # effect, and judging it with expanduser would report a file the host never runs.
         loose = [entry["target"] for entry in ours if not os.path.isabs(entry["target"])]
         firm = [entry for entry in ours if os.path.isabs(entry["target"])]
-        probes = [presence(entry["target"], "the adapter script") for entry in firm]
+        # Probed once, and kept against the registration each probe belongs to. Probing the
+        # same file again for the cause meant two readings of one path in one call: an adapter
+        # created or removed between them produced a payload whose target cell said PRESENT
+        # while the cause established adapter_cannot_run about the same registration.
+        # Keyed by the TARGET PATH and mapped back to identities. Two registrations can run one
+        # adapter with different settings arguments, and probing that one file twice let the
+        # payload give them different startability -- a file created or removed between the two
+        # probes establishing adapter_cannot_run for one of two registrations that execute the
+        # same program.
+        by_target = {}
+        for entry in firm:
+            key = resource_key(entry["target"])
+            if key not in by_target:
+                by_target[key] = _script_cell(entry["target"], "the adapter script")
+        adapter_probes = {entry["identity"]: by_target[resource_key(entry["target"])]
+                          for entry in firm}
+        probes = [adapter_probes[entry["identity"]] for entry in firm]
         worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
         if worst is not None:
             # An absolute target that is missing is reported even when another registration
@@ -1603,6 +2501,58 @@ def status(codex_home=None, environ=None, event=EVENT):
         # decision, no journal entry, and a registration that still looks correct.
         interpreter = _interpreter_cell(ours)
 
+    # Startability PER REGISTRATION, paired by the registration's own identity. The two cells
+    # above report the worst probe they took, which answers "is anything broken" and was read
+    # as "is everything broken": one missing target among several registrations then claimed
+    # the hook could not have run while its neighbour was running all along. And the two halves
+    # have to stay paired, because a registration starts only when its adapter AND its
+    # interpreter are both there; flattening them let a present interpreter under a missing
+    # adapter read as something that could start.
+    interpreter_probes = {one["registration"]: one["probe"]["value"]
+                          for one in (interpreter.get("probes") or [])}
+    start_probes = [
+        {"registration": entry["identity"],
+         "adapter": (adapter_probes[entry["identity"]]["value"]
+                     if entry["identity"] in adapter_probes else REGISTRATION_RELATIVE_TARGET),
+         "interpreter": interpreter_probes.get(entry["identity"], NOT_READ)}
+        for entry in (ours or [])
+    ]
+    # Every registration's OWN settings file and journal, read, and carried with whether that
+    # registration can be started at all. Reading one file is the right answer when one
+    # registration names one file; when several name several, every one of them runs, and this
+    # command used to answer by reading none of them. A hook that had fired into one journal
+    # and a hook that had never fired at all then produced identical cells, which is the
+    # distinction the operator procedure had to write down as missing. None is elected, because
+    # electing one would make the answer depend on which path happened to sort first.
+    # Three answers, not two. A probe this command did not judge -- a workspace-dependent
+    # spelling, or one it could not reach -- is neither "starts" nor "cannot start", and
+    # recording it as the latter dropped that registration's journal from every question while
+    # a blocked neighbour supplied a settled explanation for the whole host.
+    startable = {probe["registration"]:
+                 _startable_from({probe["adapter"], probe["interpreter"]})
+                 for probe in start_probes}
+    named_journals = journals_named(
+        [
+        {"registration": entry["identity"],
+         "startable": startable.get(entry["identity"], False),
+         "settings": (entry["settings"]
+                      if entry.get("settings") and entry["settings"] not in relative else None)}
+            for entry in (ours or [])
+        ],
+        # The reading the configuration cell above is built from, so one file read once answers
+        # both. 'found' is None in the branches where no file was read at all.
+        already_read=({str(path): (config, failed, detail, found)} if found is not None else {}),
+        # The same objects this command read its own settings through, so the carried reading
+        # and every registration's reading provably came from one file rather than from one
+        # pathname at two moments.
+        pinned=pinned)
+    # Every consumer of the pinned set is done, so the objects no longer have to be held.
+    reading.release(found)
+    for descriptor in held:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
                          configurationSource=source)
@@ -1616,7 +2566,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # settings that deliberately configure no journal are different answers. Reporting the
         # first as an empty journal would say this hook has recorded nothing, when what
         # happened is that nobody could tell where it would record.
-        firing = _cell(NOT_READ, "no usable configuration names a journal to read")
+        journal_cell = _cell(NOT_READ, "no usable configuration names a journal to read")
     else:
         settings = _cell(found.state, "settings read", configuration=str(path),
                          configurationSource=source, mode=config.get("mode"),
@@ -1630,7 +2580,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # band, where an operator can see it: the entry point lives in a checkout this command
         # does not own, and a checkout that moved or was deleted leaves a registration that
         # still looks correct and a Stop that is never judged.
-        adapter = (presence(config["adapterEntryPoint"], "the recorded adapter entry point")
+        adapter = (_script_cell(config["adapterEntryPoint"], "the recorded adapter entry point")
                    if config.get("adapterEntryPoint")
                    else _cell(NOT_READ, "these settings record no adapter entry point, which is"
                                         " the " + OWNER_USER + " owner's shape: its registered"
@@ -1640,7 +2590,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # gone, and then nothing runs at all: the same outage, a different repair.
         adapter_interpreter = (
             _recorded_program_cell(config.get("adapterInterpreter"),
-                                   "the recorded adapter interpreter")
+                                   "the recorded adapter interpreter", asks=True)
             or _cell(NOT_READ, "these settings record no adapter interpreter, which is the "
                      + OWNER_USER + " owner's shape: its registered command line carries the"
                      " interpreter instead"))
@@ -1650,7 +2600,154 @@ def status(codex_home=None, environ=None, event=EVENT):
                   else _cell(NOT_READ, "the configured runtime could not be asked: "
                                        + relay["evidence"]))
         marker = presence(config["markerRoot"], "the configured marker root", directory=True)
-        firing = _journal_cell(config)
+        # Taken from the registration that named this very file rather than read a
+        # second time. Two reads of one journal in one status call opened a window: a
+        # Stop landing between them produced a payload whose count said ABSENT while
+        # the cause beside it said records_found, so the explanation contradicted the
+        # cell it was explaining. One reading, two outputs.
+        journal_cell = next((entry["journal"] for entry in named_journals
+                             if entry["settings"] == str(path) and entry.get("journal")),
+                            None)
+        if journal_cell is None:
+            journal_cell = _journal_cell(config)
+
+    # Attached to the settings cell rather than replacing it: the cell above still answers
+    # about the one file this command settled on, and this says what every registration named.
+    settings["namedSettings"] = named_journals
+    # Why there is no record, decided over the cells above and over no reading of its own.
+    # 'ours' is None only when the hook file itself could not be read, which is why whether a
+    # registration exists is passed as the readability of that file and not as a count of zero.
+    # What the journal this command settled on holds where NO registration named one. It is the
+    # same reading published as firingJournal below, passed rather than taken a second time, so
+    # the cause and the count in one payload cannot disagree. Without it the absence cause was
+    # decided from the hook file alone and claimed no record of an invocation could exist,
+    # beside a count in the same answer saying one does.
+    unregistered_records = (int(journal_cell["value"])
+                            if not named_journals and str(journal_cell.get("value")).isdigit()
+                            else None)
+    # Whether the hook file is where this host's registration would BE. The plugin owner
+    # registers through its package manifest, which this command does not read, so on a
+    # correctly plugin-owned host an empty hook file is exactly what a working installation
+    # looks like and establishes nothing at all about registration.
+    #
+    # Three states, not two. Where NO document was read -- undecodable bytes, a file this
+    # process cannot open -- nothing establishes who owns the registration, so the hook file
+    # establishes nothing either and the question stays open. Where a document WAS read, the
+    # owner comes from the document rather than from the validated configuration: a file that
+    # reads back fine and fails some other check still records who owns the registration, and
+    # taking the default there established an absence for a plugin-owned host and suppressed
+    # settings_unusable, the cause that would have named the actual repair. An ABSENT document
+    # is neither, and it establishes nothing here: owner_of answers an absent KEY as the user
+    # owner, but a document that is not there at all is a host this reading cannot identify.
+    if found is None or not found.usable or found.state == reading.ABSENT:
+        # Nothing read, or nothing there, and neither establishes an owner. An ABSENT document
+        # used to answer "the hook file is where the registration lives", borrowing owner_of's
+        # rule about an absent KEY in a document that exists. That rule does not reach a
+        # document that does not: a plugin-owned installation whose settings file was deleted
+        # while its package remains installed looks exactly like a host where nothing was ever
+        # installed, and reading the absence as the user owner established not_registered for
+        # it -- suppressing the plugin-side settings and launcher diagnoses and pointing
+        # recovery at the wrong registration. One observation, two explanations, and no reading
+        # here separates them, so the answer carries both rather than choosing.
+        registration_read_here = False
+    elif config is not None:
+        registration_read_here = owner_of(config) != OWNER_PLUGIN
+    elif not isinstance(found.value, dict):
+        # Valid JSON that is not an object records no owner at all, and that is not the same
+        # as a document written before the key existed.
+        registration_read_here = False
+    else:
+        stated = found.value.get("owner")
+        # An OMITTED owner is the legacy user document owner_of is written for. An owner this
+        # reader does not know is the opposite: somebody wrote something here, and reading it
+        # as the default would establish an absence from a hook file that may not be where
+        # this host's registration lives.
+        registration_read_here = (True if stated is None
+                                  else (stated in OWNERS and stated != OWNER_PLUGIN))
+    # Hoisted, because two observations below read it: whether the settings causes may answer
+    # from the settled reading, and whether the launcher those settings record is the probe.
+    registration_elsewhere = (found is not None and found.usable
+                              and isinstance(found.value, dict)
+                              and found.value.get("owner") == OWNER_PLUGIN)
+    # The launcher those settings record, as a probe of what is there NOW. Both halves are
+    # already read for the cells this payload publishes, so this carries a present reading
+    # rather than re-deriving one -- and an old journal record can never stand in for it.
+    recorded_launcher = (found.value if (found is not None and found.usable
+                                         and isinstance(found.value, dict)) else {})
+    probed, probed_interpreter = adapter["value"], adapter_interpreter["value"]
+    if registration_elsewhere and NOT_READ in (probed, probed_interpreter):
+        # The document was READ; some OTHER field failed validation -- a mode this reader does
+        # not know, say. The launcher paths it records are present readings whatever that
+        # field says, and taking the validated cells' NOT_READ as the answer dropped the probe
+        # entirely: a deleted entry point then hid behind an unrelated complaint, on the one
+        # host whose repair this probe exists to name. Read here only because the branch above
+        # had no reading to carry, and only for paths the document states absolutely.
+        #
+        # Each half on its own. Requiring BOTH to be usable was a conjunctive guard over two
+        # independent readings: an entry point this host cannot start stayed unreported because
+        # the interpreter beside it was omitted or relative, which is the shape of hiding a
+        # repair behind an unrelated fact. The cause reads the halves separately too -- one
+        # half that cannot start establishes it whatever the other says.
+        if probed == NOT_READ:
+            probed = _stated_path_cell(recorded_launcher.get("adapterEntryPoint"),
+                                       "the recorded adapter entry point", _script_cell)
+        if probed_interpreter == NOT_READ:
+            probed_interpreter = _stated_path_cell(
+                recorded_launcher.get("adapterInterpreter"),
+                "the recorded adapter interpreter",
+                lambda path, label: _recorded_program_cell(path, label, asks=True))
+    launcher_probe = ([{"registration": "the launcher these settings record",
+                        "adapter": probed,
+                        "interpreter": probed_interpreter}]
+                      if registration_elsewhere
+                      and not (probed == NOT_READ and probed_interpreter == NOT_READ)
+                      else [])
+    absence = firing.decide({
+        "registrationReadable": ours is not None,
+        "adapterRegistrations": len(ours or []),
+        "registrationReadHere": registration_read_here,
+        # Whether the registration is POSITIVELY established to live somewhere this command
+        # does not read. Narrower than the negation above on purpose: that one is also false
+        # when nobody could read who owns the registration, and the settings causes may only
+        # answer from the settled reading where the owner was actually read as the plugin's.
+        "registrationElsewhere": registration_elsewhere,
+        # The settings this command SETTLED on, described the way a registration's own entry is
+        # so the rules read one shape. Built from the reading already taken above rather than
+        # from a second one, so this and the configuration cell cannot disagree. A plugin-owned
+        # host names no settings in the hook file, and without this the settings causes had
+        # nothing to read on exactly the host whose repair they exist to name.
+        "settledSettings": {"settings": str(path),
+                            "settingsState": None if found is None else found.state,
+                            "usable": config is not None,
+                            "refusedAs": failed,
+                            "detail": detail,
+                            # The journal half of the same host, derived from the very cell
+                            # published as firingJournal below rather than from a second
+                            # reading, so the cause and the count in one payload cannot
+                            # disagree. Without it the POLICY causes had nothing to read here:
+                            # a plugin-owned host whose settings say no_journal or faults_only
+                            # carries that answer in a file this command did read, and the
+                            # payload reported only that the registration could not be settled
+                            # while showing the policy one cell over.
+                            **_journal_answer(journal_cell)},
+        "relativeSettings": bool(relative),
+        "silentRegistrations": silent,
+        "namedJournals": named_journals,
+        # A plugin-owned host registers nothing in the hook file, so start_probes is empty and
+        # the startability question had no PRESENT reading to answer from. The launcher those
+        # settings record is the one that has to start, and both of its halves are already read
+        # for the cells beside this. Carried here, an entry point or interpreter deleted since
+        # the last invocation is named as the repair, instead of an old journal record standing
+        # in for a reading of what is there now.
+        # APPENDED, not substituted. Plugin-owned settings can sit beside a hook-file
+        # registration on a hand-edited host, and dropping the recorded launcher whenever the
+        # hook file named anything let the other registration's records hide its failure.
+        # Supplied only where those settings actually record a launcher: where they record
+        # none, there is nothing present to read and inventing an unjudged probe would put
+        # uncertainty on the table that no reading pointed at.
+        "startProbes": start_probes + launcher_probe,
+        "unregisteredRecords": unregistered_records,
+    })
 
     return {
         "command": "hook-status",
@@ -1685,7 +2782,11 @@ def status(codex_home=None, environ=None, event=EVENT):
         "relayExecutable": relay,
         "guardEvaluateOffered": offers,
         "markerRoot": marker,
-        "firingJournal": firing,
+        "firingJournal": journal_cell,
+        "firingRecordAbsence": _cell(
+            absence["value"], absence["evidence"], candidates=absence["candidates"],
+            ruledOut=absence["ruledOut"], notEvaluated=absence["notEvaluated"],
+            note=absence["note"]),
         "budget": _budget_cell(config, ours),
         "guardRecords": _cell(NOT_READ, "the guard's own per-observation records live in the"
                                         " marker and belong to the relay, not to this command"),
