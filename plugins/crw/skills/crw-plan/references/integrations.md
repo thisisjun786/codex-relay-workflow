@@ -587,6 +587,7 @@ Read the selected installed `SKILL.md` and follow its workflow. Load only skills
 | Packet/report must stand alone | `shower`: fresh-context cold read when justified and delegation is available |
 | Revised document accumulated noise | `re0`: refresh only the authorized artifact |
 | Where to start or what follows finished work | [crw-next](../../crw-next/SKILL.md): gather scoped state, use `readchk` for ambiguity and `nba` for one next action |
+| Where the work currently stands | [crw-status](../../crw-status/SKILL.md): report the situation at the depth the question needs, reusing `catchup`'s evidence-first brief without its returning-reader assumption |
 
 `hate`, `prism`, `feynman`, and other skills marked `disable-model-invocation` or an equivalent explicit-only policy remain deliberate user choices. The user's current operative request must name the skill or explicitly authorize that named chain. A wrapper selection, quoted example, pasted log, or skill document mentioning it is not opt-in. Preserve the selected skill's output and independence rules.
 
