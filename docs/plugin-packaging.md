@@ -98,6 +98,24 @@ Installing creates no credential. The marketplace entry sets
 `authentication: ON_USE`, so Linear and repository access are checked when a skill
 needs them, and a skill says so and stops when they are missing.
 
+### Before you add or update, on a host that gates the bridge
+
+A host whose `config.toml` gates `create_thread` or `send_message_to_thread` keeps that gate only
+because the package declares the same one. Check the package you are about to install, not the one
+already there:
+
+```sh
+python3 scripts/plugin_transition.py check-declaration --package <candidate>   # exits 1 if it would not preserve
+codex plugin add crw@crw
+python3 scripts/plugin_transition.py check-declaration --package "$CODEX_HOME/plugins/cache/crw/crw/<version>"
+```
+
+Both receipts carry `payloadDigest`. Equal digests are what tie the first verdict to the bytes that
+landed; a mismatch says the package changed between the check and the add. The same two steps apply
+to `codex plugin update`, which is otherwise checked by nothing at the moment it replaces the
+declaration. This is a gate you run: nothing in this repository invokes `codex plugin add`,
+`update` or `remove`. See [approval policy](plugin-transition.md#approval-policy).
+
 ## Turning the wired surfaces on
 
 Installing the package installs the skills, and registers nothing else that works on
