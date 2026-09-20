@@ -3203,6 +3203,36 @@ class LinkedWorktreesAreOneRepository(TrialCase):
         self.assertEqual(cells["repositoryIdentity:B"]["value"], UNKNOWN)
         self.assertFalse(cells["repositoryIdentity:B"]["met"])
 
+    def test_two_boundaries_sharing_a_repository_are_found_with_another_between_them(self):
+        # Every other case here declares exactly two boundaries, where comparing each against
+        # every other and comparing each against its neighbour are the same thing. They are not
+        # the same thing: a record may declare more, and the pair that shares a repository need
+        # not be adjacent. This puts a separate repository between the two linked worktrees, so a
+        # comparison that only looked at neighbours would find no sharing and verify all three.
+        import copy
+
+        third = self.world.root / "repo-C"
+        third.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(third)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        middle = copy.deepcopy(self.world.record["boundaries"][0])
+        middle["name"] = "C"
+        middle["issueKey"] = "TRIAL-3"
+        middle["scopeRef"] = "scope-C"
+        middle["repositoryRoot"] = str(third)
+        for index, participant in enumerate(middle["participants"]):
+            participant["taskId"] = "task-c-" + str(index)
+            participant["cwd"] = str(third)
+        self.world.record["boundaries"].insert(1, middle)
+        self.world.flush()
+        cells = cells_of(self.world.preflight(), "boundaries")
+        for name, other in (("A", "B"), ("B", "A")):
+            self.assertEqual(cells["repositoryIdentity:" + name]["value"], NOT_VERIFIED,
+                             name + " was read as a repository of its own")
+            self.assertIn(other, cells["repositoryIdentity:" + name]["evidence"])
+        self.assertEqual(cells["repositoryIdentity:C"]["value"], VERIFIED,
+                         "the boundary between them is a separate repository and stays one")
+
 
 class TwentyNinthHostedRound(TrialCase):
     """A gate graded from an answer taken before the delay, and absences graded as disagreements.
