@@ -102,6 +102,12 @@ Authorized execution:
   a frozen diff. Publication is never inferred from the delivery line alone]
 - External actions: [actions covered by the assignment and shared defaults, with any narrower user limits]
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
+- Operations clauses carried to this child: [OPS-5.5 and OPS-9 from
+  [Operations contract](operations.md), cited by id where this child can read this
+  repository and quoted in full where it cannot. Carry the clause text rather than a
+  summary of it: a quotation can be diffed against its source and regenerated when the
+  clause moves, and it is the paraphrase that drifts unnoticed. A packet carrying neither
+  sends the child the previous workflow]
 - Runtime/test data access: [agreed sources and operational limits]
 
 Outcome and scope:
@@ -131,6 +137,17 @@ Execution:
   invalidated by the change. Apply the [disabled reviewer policy](merge-readiness.md#disabled-reviewer-policy)
   before requesting or waiting for a review. Ready is review entry, not merge permission. See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
+- Finishing the review is part of finishing the work. Read every applicable review to the
+  end of its pagination on the CURRENT head, judge each finding against the code, fix what
+  needs fixing, reply where a finding does not apply and say why, and recheck. Then state
+  that result rather than summarising it: a handoff record naming the pull request, the head
+  it is about, the base you verified, the check runs by id and attempt, the review coverage
+  you actually read, and a judged disposition for every thread you saw. Resolving a thread is
+  a button; `fixed`, `not_applicable`, `duplicate`, `already_resolved` and `disputed` are
+  judgments, and `fixed` names the commit that did it. If a required check has not passed or
+  a mandatory review has not finished, that is BLOCKED and is reported as blocked. Do not
+  report completion with a note about what is still open, because the note is what gets
+  skimmed past.
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
@@ -214,6 +231,15 @@ Return:
 - For a pull request: URL, base and head SHAs, `isDraft`, the review receipts for the
   current head, and any unresolved finding. Record the relay receipt's own outcome
   separately; `ready_for_review` there is not `isDraft=false` here.
+- Merge-readiness handoff, for a pull request you are handing over: the repository and pull
+  request number, the head all of this evidence is about, the base you verified and when,
+  the check names this branch declares required, the check runs as
+  `{runId, name, headSha, conclusion, attempt}`, the review coverage as
+  `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, a judged disposition with
+  evidence for every thread in `threadsSeen`, your per-criterion evidence, and the
+  limitations that remain. State every field: an absent one used to read as satisfied, so a
+  record that said nothing passed every check. The parent restates these values immediately
+  before merging rather than collecting them again, which is why they are yours to produce.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 - Proposed changes to a Linear record, returned rather than written: the document or issue ID,
   the revision you read, the reason, the smallest sufficient change and its evidence.
