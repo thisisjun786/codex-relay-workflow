@@ -170,15 +170,19 @@ paused time is not subtracted from elapsed time.
 
 ## Trace the impact
 
-Walk forward along required-predecessor edges only, and let the predecessor's state
-decide what the walk may say. A subject known to be achieved blocks nothing, however
-late it landed, so no walk starts from it. A subject known to be unachieved and judged
-late or at risk blocks, and its successors are named. A subject whose achievement is
-unknown, which is what an undecidable verdict from stale or missing evidence means,
-blocks nothing that can be asserted and nothing that can be ruled out either: its
-successors' impact is reported unverified with that reason rather than omitted. A
-subject that is on plan blocks nothing yet, so work waiting on it is not reported as
-blocked merely because it has not finished.
+Walk forward along required-predecessor edges only, and read two facts about the
+predecessor separately, because they fail independently: whether it is achieved, and
+whether its schedule can be decided. Four branches follow and they are exhaustive.
+A subject known to be achieved blocks nothing, however late it landed, so no walk starts
+from it. A subject known to be unachieved and judged late or at risk blocks, and its
+successors are named. A subject known to be unachieved whose verdict is undecidable,
+whether because a date or a Timezone is missing or because its Current target disagrees
+with its latest Change source, blocks in a way this check cannot size: walk it and report
+its successors' impact unverified, naming the reason. A subject whose achievement itself
+is unknown, which is what stale evidence leaves behind, is walked the same way and
+reported unverified for that reason instead. Only a subject that is on plan and
+unachieved blocks nothing yet, so work waiting on it is never reported as blocked merely
+because it has not finished.
 For each starting subject, name the successors it reaches through at least one path
 made entirely of required edges,
 and the nearest unachieved successor milestone or project. Another path that is not
@@ -416,7 +420,10 @@ current one worth discussing.
     unfinished predecessor turned into a blocked successor. Where I-15 instead completed
     2026-09-16 against its 2026-09-15 target, it is late by +1 day and M3 is still not
     blocked by it, because a subject that has landed blocks nothing however late it was.
-    Not a historical delay read as a current block.
+    Not a historical delay read as a current block. Where I-15 is known unachieved but its
+    Current target reads 2026-09-28 while its latest Change source records 2026-09-24,
+    its verdict is undecidable and M3's impact is reported unverified naming that
+    disagreement, rather than M3 being dropped from the report or asserted blocked.
 
 14. **A Target nature that carries no date.** I-18 carries only an Actual start and
     a Target nature of `undetermined`; I-19's Target nature is `awaiting authority`.
