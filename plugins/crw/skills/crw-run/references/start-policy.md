@@ -38,9 +38,9 @@ user-assigned Astra, a project parent runs devin/swe-2 at max, and an issue chil
 at xhigh. The parent pair has a history rather than one value, and this row carries the latest
 recorded decision rather than an observation of what any task is running. swe-2 at max was the
 recorded pair until 2026-09-21, when Jun moved every parent to xai/grok-4.6 at xhigh; Jun's
-restoration decision, carrying the date 2026-09-22, puts swe-2 at max back and is the decision
-this row records. Each superseded step is kept so the transitions can be reproduced and
-recognised as superseded rather than as second valid answers.
+restoration decision later that same day puts swe-2 at max back and is the decision this row
+records. Each superseded step is kept so the transitions can be reproduced and recognised as
+superseded rather than as second valid answers.
 
 A single task may be excepted by name. The consolidated CRW-127 coordinator ran
 ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception, a bounded trial that has since

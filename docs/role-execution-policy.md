@@ -23,19 +23,20 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | Role | Model | Reasoning effort | Who decides |
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
-| `parent` | `xai/grok-4.6` | `xhigh` | this policy |
+| `parent` | `devin/swe-2` | `max` | this policy |
 | `child` | `anthropic/claude-opus-5` | `xhigh` | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
 itself is Linear CRW-127; the values that are actually enforced are the ones in the host's policy
 file. If the two disagree, the file is what runs and the disagreement is the bug.
 
-That separation is what a change of pair costs. The parent ran on `devin/swe-2` at `max` until
-2026-09-21 and now runs on `xai/grok-4.6` at `xhigh`; moving it was an edit to the policy file
+That separation is what a change of pair costs, and the parent row has now paid it twice in a
+day. It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, and was
+restored to `devin/swe-2` at `max` later that same day. Each move was an edit to the policy file
 and a restart, with no line of code changed, because no pair is written in code to go stale. A
-superseded pair is not a second valid answer: once the file declares the new one, the old one is
-refused for that role like any other wrong pair, and the tests keep it as a fixture proving
-exactly that rather than as an alternative the checks still accept.
+superseded pair is not a second valid answer: once the file declares the current one, every other
+pair is refused for that role like any other wrong pair, and a superseded pair is kept as a
+regression fixture proving exactly that rather than as an alternative the checks still accept.
 
 The supervisor row is deliberately not a pair. Its model is Jun's selection, so the policy
 declares `{"expectation": "record"}` for it and the supervisor's authorization is whatever its own
@@ -49,12 +50,12 @@ Reasoning-effort names are catalog values, and two models that both offer a name
 offer the same thing. Nothing maps one onto another: there is no alias table, no normalisation
 step, and every comparison in both packages is exact string equality.
 
-The clearest case is the pair this policy just left behind. The host's catalog reports SWE-2 at
-medium, high, max and ultra, and the parent's requested value under that model was exactly
-`max`, while Opus 5 runs the child at `xhigh`. A request stating `xhigh` for that parent was
-refused, and so was one stating `max` for a child. The parent and the child now happen to share
-the name `xhigh` under different models, which changes nothing about the rule and is why the
-superseded pair is kept as a regression fixture: it is the case where the two names differ.
+The clearest case is the parent row itself. The host's catalog reports SWE-2 at medium, high, max
+and ultra, and the parent's requested value under that model is exactly `max`, while Opus 5 runs
+the child at `xhigh`. A request stating `xhigh` for that parent is refused, and so is one stating
+`max` for a child. The interim grok pair made the two names coincide at `xhigh` under different
+models, which changed nothing about the rule; the restored pair makes them differ again, which is
+why a pair whose two effort names differ is the case the regression fixture is built on.
 
 This is worth stating because the failure it prevents already happened in prose rather than in
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
@@ -73,7 +74,7 @@ show the shape. Do not copy it as a default.
     {
       "roles": {
         "supervisor": {"expectation": "record"},
-        "parent": {"model": "xai/grok-4.6", "reasoningEffort": "xhigh"},
+        "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
         "child":  {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
       }
     }
@@ -104,9 +105,10 @@ the role. That is what a named exception is for, and it is the only supported wa
 the operator writes an id, its single pair and the directories it covers, a request cites the id,
 and nothing else about the role changes.
 
-One is in force as this is written. Jun authorized the CRW-127 coordinator, on 2026-09-21, to
-receive its idle callbacks on `ollama-cloud/glm-5.3` at `xhigh`; every other project parent stays
-on the parent pair. The shape is:
+None is in force as this is written. The one this section was written around has ended: Jun
+authorized the CRW-127 coordinator, on 2026-09-21, to receive its idle callbacks on
+`ollama-cloud/glm-5.3` at `xhigh` while every other project parent stayed on the parent pair, and
+that trial is over. The shape it took is still the shape:
 
     {
       "exceptions": {
@@ -136,7 +138,7 @@ task works in, and treat "one task" as a property of how you scoped it rather th
 the checks enforce.
 
 The `roles` section is untouched either way. A reader asking what a project parent runs on still
-gets `xai/grok-4.6` at `xhigh`, because an exception is an exemption from the answer and never a
+gets `devin/swe-2` at `max`, because an exception is an exemption from the answer and never a
 replacement for it.
 
 The receipt says so too. A creation or send citing this id records `exception` and, under
