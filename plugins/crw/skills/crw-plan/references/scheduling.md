@@ -75,7 +75,9 @@ and never overwrites the earlier one, so two plans stay comparable across added 
 scope. When this write establishes a subject's first target, the dated record it writes is that
 subject's baseline record and the target it sets is the schedule baseline. Leave the schedule
 baseline `unconfirmed` only where a target already exists and no record establishing it can be found,
-and never infer one from the current field.
+and never infer one from the current field. A retry repairing this same operation is not that case:
+where the target landed and its record did not, write the missing baseline record from this
+operation's own recorded time and target instead of reclassifying a date this request just set.
 
 Moving a target date does not settle a delay. The entry that moves it records what it moved from,
 so a result that is late against the schedule baseline still reads as late after the move.
