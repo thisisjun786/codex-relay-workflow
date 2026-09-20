@@ -89,6 +89,18 @@ re-derives are not disagreeing about it; they are both going to regenerate it, a
 pull request is itself in that situation with `scripts/crw_runtime/components.json`.
 
 ## What this is not
+- **`reaffirm` spans three transactions, and that is a choice with a stated reason.** It
+  validates the chain and retires the predecessor in one, proposes the successor through the
+  ordinary `propose` path in a second, and links them in a third. Folding them would mean
+  duplicating the shape, overlap, peer and classification validation `propose` owns, and a
+  second copy of those rules going stale is the failure this package keeps closing. The
+  order is chosen so the reachable interruptions are a retired predecessor with no successor,
+  or a successor not yet pointing back - both recoverable by proposing again. Neither leaves
+  two live agreements on one carry-forward, which is the state the guard index cannot catch.
+- **A review record states every field or none of it counts.** `hasNextPage`, `pagesRead`,
+  `totalCount`, `threadsSeen` and `unresolved` must all be present before any is read.
+  Absent used to read as satisfied at every one of them, so a record saying nothing passed
+  the whole check.
 - **Every identity here is asserted, not authenticated.** `--actor`, `--task` and the forge
   evidence passed to `merge-turn-check` are all caller-supplied, and this package has no
   transport authentication to check them against. What the ownership rules buy is that a
