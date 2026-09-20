@@ -34,19 +34,22 @@ already has a goal reuses it, because a second goal opened for the same assignme
 rather than a resume.
 
 Recorded here, owned elsewhere, and unchanged by any of this: the initiative task runs the
-user-assigned Astra, a project parent runs xai/grok-4.6 at xhigh, and an issue child runs Opus 5
-at xhigh. A project parent ran swe-2 at max until Jun moved every parent on 2026-09-21. That pair
-is now a migration fixture, kept so the transition can be reproduced and so the old value is
-recognised as superseded rather than as a second valid answer; it is never the live default.
+user-assigned Astra, a project parent runs devin/swe-2 at max, and an issue child runs Opus 5
+at xhigh. The parent pair has a history rather than one value, and this row carries the latest
+recorded decision rather than an observation of what any task is running. swe-2 at max was the
+recorded pair until 2026-09-21, when Jun moved every parent to xai/grok-4.6 at xhigh; Jun's
+restoration decision, carrying the date 2026-09-22, puts swe-2 at max back and is the decision
+this row records. Each superseded step is kept so the transitions can be reproduced and
+recognised as superseded rather than as second valid answers.
 
-A single task may be excepted by name, and the consolidated CRW-127 coordinator currently runs
-ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception. A named exception does not become
-a default: it is not propagated to other parents or down to children, and it is recorded
-explicitly rather than inferred from an observed pair. It is also less exclusive than its name
-suggests: the policy file has no task-identity field and scopes an exception by role and
-directory, so exclusivity comes from choosing a directory one task works in. The id, that
-directory and the authorization behind them are read from the host policy and the Linear record
-rather than from here.
+A single task may be excepted by name. The consolidated CRW-127 coordinator ran
+ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception, a bounded trial that has since
+ended. A named exception does not become a default: it is not propagated to other parents or down
+to children, and it is recorded explicitly rather than inferred from an observed pair. It is also
+less exclusive than its name suggests: the policy file has no task-identity field and scopes an
+exception by role and directory, so exclusivity comes from choosing a directory one task works in.
+The id, that directory and the authorization behind them are read from the host policy and the
+Linear record rather than from here.
 
 This is a readback, not an authority. The child default is owned by
 [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
