@@ -295,6 +295,31 @@ CREATE TABLE IF NOT EXISTS work_reports (
     PRIMARY KEY (event_id, submission_no)
 );
 
+-- CRW-128: the merge-readiness evidence a child hands to its parent, beside the report it
+-- belongs to rather than inside it. A separate table rather than new columns on work_reports,
+-- because this store has no migration path and CREATE TABLE IF NOT EXISTS never alters an
+-- existing one: added columns would exist only on databases created afterwards, and every
+-- insert naming them would fail on the stores already out there. A new table is created on
+-- both.
+--
+-- Its absence for an event is meaningful and is not a defect: a report that names no pull
+-- request has no merge readiness to state, and a correction travelling the other way is the
+-- parent's judgment rather than the child's evidence.
+CREATE TABLE IF NOT EXISTS work_report_handoffs (
+    event_id           TEXT NOT NULL,
+    submission_no      INTEGER NOT NULL DEFAULT 1,
+    is_draft           INTEGER NOT NULL,
+    base_verified_at   TEXT,
+    required_declared  TEXT NOT NULL,
+    checks             TEXT NOT NULL,
+    review_coverage    TEXT NOT NULL,
+    thread_dispositions TEXT NOT NULL,
+    criterion_evidence TEXT,
+    limitations        TEXT,
+    recorded_at        TEXT NOT NULL,
+    PRIMARY KEY (event_id, submission_no)
+);
+
 -- Which report submission the bytes frozen for one attempt were rendered from. The message
 -- itself says so, which is what a recipient needs, but the relay needs it programmatically:
 -- a submission that has never been frozen into an attempt can still be corrected in place,
