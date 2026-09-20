@@ -43,7 +43,7 @@ where the question "where is the database" comes from. Give the state its own re
 | What it is | The fact being kept, not the file format |
 | Where it lives | The store, and whether it is durable, shared or per run |
 | Who writes it | The single process that may write, and who may only read |
-| Who keeps and restores it | Who is responsible after a crash, a reinstall or a wrong write, and what is simply lost |
+| Who keeps and restores it | Who is responsible after a crash, a reinstall or a wrong write, by name. Where nobody is, say that and say what is lost with it |
 
 Keep three readings of a location apart, because they are routinely collapsed into one sentence and
 only the second one is a fact about the run being discussed:
@@ -59,8 +59,11 @@ honest entry and an invented default is not.
 
 Two settings that sound like one are worth stating explicitly: a store selector and a ledger or
 cache selector often default to different roots, so moving one and not the other leaves two
-processes reading different truths while both report success. A store nobody is responsible for
-restoring is a store this explanation has not finished describing.
+processes reading different truths while both report success.
+
+Some state has no restorer, and that is a finding rather than a gap in the writing. Name it: this
+one is rebuilt by nobody, and losing it costs exactly this. What leaves an explanation unfinished
+is not an unrecoverable store; it is a store whose recovery nobody asked about.
 
 ## Say what actually refuses
 
@@ -155,24 +158,31 @@ writes the assignment's own facts, a child writes only under its own session, th
 process writes only its own hook directory, and the relay daemon writes none of it and reads none
 of it. It sits outside both the source checkout and the relay's database. Retention belongs to
 whoever owns that root, and [the hook contract](../../crw-run/references/hook-contract.md) says
-plainly that no owner is fixed inside it, so assignments accumulate with no natural bound. That is
-the honest entry: an unowned cost named as unowned, rather than a restorer invented to fill the
-row.
+plainly that no owner is fixed inside it, so assignments accumulate with no natural bound. Nothing
+restores it either: a lost or wrongly written marker is not rebuilt, and what is lost with it is
+the record of what each party declared for those assignments. That is the honest entry, an unowned
+cost named as unowned rather than a restorer invented to fill the row.
 
 The relay's store holds the assignment itself, and it is the piece that survives everything else.
-A process reaching its deadline, restarting or failing outright leaves the assignment where it
-was, because recovery continues from the existing store and never from an empty one; merging two
-stores that already exist in one scope is a migration with its own decision and its own backup,
-per [the operations contract](../../crw-run/references/operations.md).
+Every process in the assignment writes it through the relay, all of them passing the same store
+selector. A process reaching its deadline, restarting or failing outright leaves the assignment
+where it was, because recovery continues from the existing store and never from an empty one. The
+store itself is backed up and restored by whoever installed and operates it, under
+[the operations contract](../../crw-run/references/operations.md), which also makes merging two
+stores that already exist in one scope a migration with its own decision and its own backup. The
+relay does not restore itself, and no other component rebuilds it.
 
-The adapter's ledger, where duplicate suppression and delivery recovery live, is selected by a
-different setting than that store. Move one with a command-line option and not the other and a run
-reports one location while recovery reads another; lose the ledger and recovery reads a ledger that
-never saw the earlier attempts, so it can miss a delivery or repeat one. Nothing rebuilds it, which
-is why the two settings are worth one sentence in any explanation of this system.
+The adapter's ledger is written by the adapter, and it is where duplicate suppression and delivery
+recovery live. It is selected by a different setting than the store: move one with a command-line
+option and not the other and a run reports one location while recovery reads another. Lose the
+ledger and recovery reads a ledger that never saw the earlier attempts, so it can miss a delivery
+or repeat one. Nothing rebuilds it, and nobody is responsible for restoring it, which is why the
+two settings are worth a sentence in any explanation of this system.
 
-The coordination summary belongs in the Linear document, and raw run records are private receipts
-kept outside this repository. The defaults and the one-store-per-operating-scope rule belong to
+The coordination summary is written by the parent into the Linear document, which is the only
+piece here with a durable owner outside the host; raw run records are private receipts written by
+whoever ran the thing, kept outside this repository, and restored from no backup this explanation
+knows of. The defaults and the one-store-per-operating-scope rule belong to
 [the relay reference](../../crw-run/references/relay.md), named here rather than copied. What a
 given run actually resolved is a receipt value, and this explanation has none.
 
@@ -185,7 +195,9 @@ not have forged the facts the decision read. The rules are in
 appearing in a configuration file has established none of it.
 
 How far it is built. The contract, the comparison harness and the document recording which of its
-six measures were performed are in this checkout; two are recorded as not performed. Nobody here
+six measures were performed are in this checkout, at the revision this explanation was written
+against, which a reader should expect to see named in a real answer; two of the six are recorded
+as not performed. Nobody here
 re-ran it, no run result is committed, and no host is claimed to have this installed, active or
 live. CXC is an existing owner and is left alone: the contract modifies no CXC state, and the
 comparison deliberately keeps a foreign CXC Stop entry in the same hook file, reads it back after
@@ -224,11 +236,14 @@ never sends it. The person seeing the thumbnail is the verification.
 State. Four pieces with different owners and lifetimes: the upload row, written by the web process
 and restored from the database's own backups by whoever operates it; the job, written and
 redelivered by the queue and lost with it if that queue is not durable; the thumbnail, written by
-the worker into object storage and restored by re-running the job rather than from a backup; and
+the worker into object storage and restored by re-running the job rather than from a backup, which
+a sweep over rows still marked pending is what starts; and
 the notification record, written by the worker and rebuilt by nobody, because a notification that
 was never sent cannot be recovered after the fact. The row and the stored object survive a restart
-and the worker's in-memory handle does not. No process rebuilds a thumbnail whose row no longer
-says pending, which is the one recovery path deliberately left closed.
+and the worker's in-memory handle does not. A job lost with a non-durable queue has no restorer
+either; the same sweep over pending rows is the only thing that brings it back. No process rebuilds
+a thumbnail whose row no longer says pending, which is the one recovery path deliberately left
+closed.
 
 What refuses. One thing refuses: the unique constraint on the thumbnail's upload key, which makes
 a second insert fail rather than produce a second thumbnail. At-least-once redelivery is recovery,
@@ -238,8 +253,10 @@ notifies twice however carefully it was written. Refusing nothing at all: the se
 README asking workers to be idempotent, the naming convention, and the retry helper nobody is
 obliged to call.
 
-How far it is built. The web process and the row run in production; the worker exists in source and
-runs only in staging; the notification is a drawing.
+How far it is built. The web process, the row, the queue, the object store and the unique
+constraint all run in production; the worker exists in source and runs only in staging; the
+notification is a drawing. Every piece named above gets one of those labels, because a piece left
+unlabelled is the one a reader will assume is running.
 
 How an improvement is judged. Adding a retry answers a counted miss: uploads still pending after
 ten minutes. The comparison replays one recorded day's workload against the same code with the
