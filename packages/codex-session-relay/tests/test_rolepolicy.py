@@ -791,6 +791,56 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertNotIn("citedException", stored)
         self.assertEqual(stored["citedRole"], "supervisor")
 
+
+    def test_a_citation_can_be_cleared_when_the_pair_never_moved(self):
+        """An exception can stop applying without the pair moving at all.
+
+        The operator removes it and the user confirms the task stays where it is. Keying the
+        carry-forward on pair equality restored a citation the policy no longer authorized and
+        then refused its own write, leaving the task undeliverable with no command able to
+        release it. Clearing is therefore said rather than inferred.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.registry import CLEAR_EXCEPTION
+        from codex_session_relay.models import Endpoint
+
+        self.registry.linkage.bind_scope(
+            role="supervisor", scope_key="INIT-2",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        here = str(Path(self.tmp).resolve())
+        import os
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            **POLICY,
+            "exceptions": {
+                "temporary": {
+                    "model": "gpt-6-astra", "reasoningEffort": "high",
+                    "cwd": [here], "role": "supervisor",
+                }
+            },
+        })
+        settings = task_settings(here, model="gpt-6-astra", reasoningEffort="high")
+        record_settings(
+            self.store, self.clock, PARENT, settings,
+            source="creation_result", role="supervisor", exception="temporary",
+        )
+        # The operator removes the exception; the pair itself does not move.
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), POLICY)
+        record_settings(
+            self.store, self.clock, PARENT, settings,
+            source="user_transition", exception=CLEAR_EXCEPTION,
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertNotIn("citedException", stored)
+        self.assertEqual(stored["citedRole"], "supervisor")
+
+
     def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
         """Clearing is the user-attributed transition's privilege, not every write's."""
         from pathlib import Path

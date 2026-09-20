@@ -1085,6 +1085,13 @@ def project_key(record: dict) -> str:
 # is what makes the documented transition reachable for a supervisor.
 USER_TRANSITION = "user_transition"
 
+# An explicit instruction to drop a citation, told apart from simply not restating one. Inferring
+# it from the pair cannot work: an exception can stop applying without the pair moving at all --
+# the operator removes it and the user confirms the task stays where it is -- and with no way to
+# say so the recorder restored a citation this policy no longer authorizes and then refused its
+# own write, leaving the task undeliverable with no command able to release it.
+CLEAR_EXCEPTION = "__clear__"
+
 
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                     role: str | None = None, exception: str | None = None) -> dict:
@@ -1107,6 +1114,13 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
     settings = dict(settings)
     if role is not None:
         settings["citedRole"] = role
+    if exception == CLEAR_EXCEPTION:
+        # Said, not inferred. Nothing is carried forward and nothing is recorded.
+        exception = None
+        settings.pop("citedException", None)
+        clearing = True
+    else:
+        clearing = False
     if exception is not None:
         # The operator exception the creation cited, where one did. A role-scoped exception
         # replaces the role-pair comparison by design, so a task created under one carries a
@@ -1145,7 +1159,7 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                 )
             if carried is not None and role is None:
                 settings["citedRole"] = carried
-        if exception is None and existing is not None:
+        if exception is None and existing is not None and not clearing:
             previous = json.loads(existing["settings"])
             carried = rolepolicy.cited_exception(previous)
             # Carried only while it is still doing work, and only while this write is not the

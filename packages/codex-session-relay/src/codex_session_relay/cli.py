@@ -27,7 +27,12 @@ from .manifest import build as build_manifest, freeze as freeze_manifest, revisi
 from .models import Endpoint, TurnRef
 from .receipts import ReceiptIntake, contract_record
 from .reconcile import Reconciler
-from .registry import Registry, contract_record as relationship_record, record_settings
+from .registry import (
+    CLEAR_EXCEPTION,
+    Registry,
+    contract_record as relationship_record,
+    record_settings,
+)
 from .settings import REQUIRED as REQUIRED_SETTINGS
 from .store import (
     Store, canonical_socket, compare_store, nonce_lookup, probe, resolve_state_dir,
@@ -377,7 +382,8 @@ def cmd_settings_record(services, args) -> dict:
     """
     return record_settings(
         services.store, services.clock, args.task, _settings_json(args.settings),
-        source=args.source, role=args.role, exception=args.exception,
+        source=args.source, role=args.role,
+        exception=CLEAR_EXCEPTION if args.clear_exception else args.exception,
     )
 
 
@@ -2338,6 +2344,10 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="the role this task's creation cited")
     settings_record.add_argument("--exception",
                                  help="the operator exception this task's creation cited")
+    settings_record.add_argument("--clear-exception", action="store_true",
+                                 help="drop the citation recorded for this task. An exception"
+                                      " can stop applying without the pair moving, so this is"
+                                      " said rather than inferred")
     settings_record.set_defaults(handler=cmd_settings_record)
 
     settings_show = subparsers.add_parser("settings-show")
