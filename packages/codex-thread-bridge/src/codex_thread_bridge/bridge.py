@@ -8,7 +8,7 @@ from pathlib import Path
 from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import RETRYABLE_STATUSES, Ledger
-from .roles import PAIR as ROLE_PAIR
+from .execution import ROLE_PAIR_VERIFIED
 from .roles import ROLE_MAXIMUM
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import (
@@ -938,16 +938,19 @@ class Bridge:
                 # the user made -- which is the whole of the supervisor's case, since its pair is
                 # the user's own selection and policy deliberately declares none.
                 #
-                # The bridge cannot see scope bindings, so it cannot tell which role a thread
-                # really holds; it only knows what this request claimed. A guard that trusts the
-                # claim protects a supervisor the caller remembered to name and nothing else, so
-                # the predicate is the pair's provenance rather than the name: refuse unless this
-                # request's pair was checked against a declared role pair. Scoped to hosts that
-                # declared roles, so a host that never opted in behaves exactly as before and a
-                # source merge changes nothing until the operator turns it on.
-                expectation = self.policy.role_expectation(role)
-                verified = expectation is not None and expectation.expectation == ROLE_PAIR
-                if self.policy.declares_roles and not verified:
+                # The predicate is the pair's PROVENANCE, taken from the authorization that just
+                # ran rather than re-derived here. Only a pair actually compared against a
+                # declared role pair counts. An exception deliberately skips that comparison, so
+                # it is not evidence of one -- and an exception written for a supervisor would be
+                # precisely the stale operator value this guard exists to keep off the wire.
+                #
+                # It fires only where a role was NAMED. This bridge cannot read scope bindings,
+                # so on a send that names none it cannot tell an unnamed supervisor from a task
+                # with no role at all, and refusing both would stop unrelated work on every host
+                # that declared a role for entirely different tasks. Guarding what it cannot know
+                # is the relay's job, because the relay can read the binding. What this bridge
+                # can say for itself, it now says.
+                if role is not None and built["execution"].provenance != ROLE_PAIR_VERIFIED:
                     raise RpcError(
                         "thread/read",
                         {
@@ -958,9 +961,9 @@ class Bridge:
                             "thread the host has to load first it may apply them, which would "
                             "silently restore a pair the user has since changed -- the case a "
                             "supervisor is always in, because its pair is the user's own "
-                            "selection. State the role this recipient holds so the pair is "
-                            "verified, or read the thread's current settings and re-record the "
-                            "authorization from that reading before sending.",
+                            "selection, and the case an exception is in whenever the operator's "
+                            "file has fallen behind. Read the thread's current settings and "
+                            "re-record the authorization from that reading before sending.",
                         },
                     )
                 # A resume that transmits a pair to a thread the host has to materialize cannot

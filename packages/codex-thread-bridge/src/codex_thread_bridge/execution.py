@@ -61,6 +61,13 @@ EXCEPTION_UNKNOWN = "execution_exception_unknown"
 EXCEPTION_OUT_OF_SCOPE = "execution_exception_out_of_scope"
 POLICY_UNREADABLE = "execution_policy_unreadable"
 
+# How a pair came to be authorized. Only the first means "this was compared against the pair the
+# policy declares for this role"; the other two are approvals that deliberately did not ask that
+# question, and a caller that needs a policy-derived pair must not read them as one.
+ROLE_PAIR_VERIFIED = "role_pair"
+EXCEPTION_AUTHORIZED = "exception"
+UNVERIFIED = "unverified"
+
 # The ceiling the bridge already applies to its other free-text arguments. Long enough for any
 # provider-qualified model id, short enough that a runaway string cannot travel as a setting.
 MAXIMUM = 500
@@ -106,11 +113,17 @@ class Execution(NamedTuple):
 
     Everything downstream reads this rather than the original arguments, so a pair cannot be
     approved under one value and dispatched or compared under another.
+
+    `provenance` says WHICH question approved it, because callers downstream need to tell a pair
+    that was compared against a declared role pair apart from one that was approved some other
+    way. Reconstructing that from the receipt would mean re-deriving a decision this object
+    already made, and the two could disagree.
     """
 
     model: str
     reasoning_effort: str
     receipt: dict
+    provenance: str = "unverified"
 
 
 def _stated(value, field: str) -> str:
@@ -343,6 +356,7 @@ class ExecutionPolicy:
         stated_effort = _stated(reasoning_effort, "reasoning_effort")
         expectation = None
         overridden_by = None
+        provenance = UNVERIFIED
         if exception is not None:
             entry = self._exceptions.get(exception)
             if entry is None:
@@ -405,6 +419,7 @@ class ExecutionPolicy:
             # Recorded rather than silent. A reader of this receipt can see that a role
             # expectation existed and exactly which exception replaced it.
             overridden_by = exception
+            provenance = EXCEPTION_AUTHORIZED
         elif role is not None:
             expectation = self._roles.get(role)
             if role not in roles.ROLES or expectation is None:
@@ -432,6 +447,7 @@ class ExecutionPolicy:
                             f"role {role!r} runs {field} {authorized!r} on this host",
                             allowed=[authorized],
                         )
+                provenance = ROLE_PAIR_VERIFIED
         # The allowlist is the last question, and an exception has already answered it: the
         # operator wrote that pair down themselves, which is what an exception is for.
         if exception is None and self._allowed is not None:
@@ -479,6 +495,7 @@ class ExecutionPolicy:
                 "reasoningEffort": stated_effort,
                 "limits": LIMITS,
             },
+            provenance,
         )
 
 

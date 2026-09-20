@@ -1026,32 +1026,66 @@ async def test_a_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
     assert fake.count("turn/start") == 0
 
 
-async def test_omitting_the_role_does_not_buy_a_way_past_the_unloaded_guard(
+async def test_an_exception_is_not_evidence_that_a_pair_matches_its_roles_policy(
     configured_bridge, fake_server, tmp_path
 ):
-    """The guard has to key on the pair's provenance, not on the caller naming the risk.
+    """An exception exists to SKIP the role comparison, so it cannot stand in for one.
 
-    A guard that triggers on role == supervisor protects a supervisor whose sender remembered to
-    say so, and nothing else: the same send with the argument left off reached the host, resumed
-    the thread and restored the stale pair. This bridge cannot read scope bindings, so it cannot
-    know a recipient's real role -- which is why the question it asks instead is whether THIS
-    request's pair was checked against a declared role pair.
+    Gating on "the named role declares a pair" rather than on what actually happened let an
+    exception-authorized pair through whenever that role separately declared one, which is how a
+    parent exception carrying Astra/high reached a thread whose declared pair was SWE-2/max. The
+    guard reads the provenance the authorization recorded instead.
     """
     fake, _ = fake_server
-    bridge = configured_bridge(roles_policy(allowed=False))
+    bridge = configured_bridge({
+        **roles_policy(allowed=False),
+        "exceptions": {
+            "one-task": {
+                "model": "gpt-6-astra",
+                "reasoningEffort": "high",
+                "cwd": [str(tmp_path.resolve())],
+                "role": "parent",
+            }
+        },
+    })
     created = await bridge.create_thread(
-        "unnamed", str(tmp_path), model="gpt-6-astra", reasoning_effort="high", role="supervisor",
+        "excepted", str(tmp_path), model="gpt-6-astra", reasoning_effort="high",
+        policy_exception="one-task", role="parent",
     )
     fake.resident = set()
     fake.resume_adopts = True
     delivered = await bridge.send_message_to_thread(
-        "unnamed-send", created["threadId"], "work",
-        {"model": "gpt-6-astra", "reasoning_effort": "high"},
+        "excepted-send", created["threadId"], "work",
+        {"model": "gpt-6-astra", "reasoning_effort": "high", "cwd": str(tmp_path.resolve())},
+        "one-task", "parent",
     )
     assert delivered["status"] == "failed"
     assert delivered["rpcError"]["code"] == "unverified_pair_for_unloaded_thread"
     assert fake.count("thread/resume") == 0
     assert fake.count("turn/start") == 0
+
+
+async def test_a_send_that_names_no_role_is_not_guarded_here_and_that_boundary_is_deliberate(
+    configured_bridge, fake_server, tmp_path
+):
+    """What this bridge cannot know, it does not pretend to guard.
+
+    Blocking every unnamed send on a host that declared a role for unrelated tasks would stop
+    work that has nothing to do with this policy, and the bridge has no way to tell an unnamed
+    supervisor from a task with no role at all: it cannot read scope bindings. So the unnamed
+    case is the relay's to refuse, and this case exists to record that boundary rather than to
+    leave it as an assumption someone has to notice.
+    """
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    created = await bridge.create_thread("unrelated", str(tmp_path), **EXECUTION)
+    fake.resident = set()
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "unrelated-send", created["threadId"], "work", dict(EXECUTION)
+    )
+    assert delivered["status"] == "accepted"
+    assert delivered["echoIndependence"] == "not_established"
 
 
 async def test_a_verified_role_pair_may_still_be_sent_to_a_thread_the_host_has_not_loaded(
