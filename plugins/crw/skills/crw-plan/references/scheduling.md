@@ -103,7 +103,9 @@ both subjects.
 
 An edge comes from two things and nothing else: a result this subject cannot finish without, and a
 region two subjects would both have to change, which the closing check records as exactly one
-ordering ([issue boundaries](issue-boundaries.md#close-the-plan)). Separate regions of one file are
+ordering ([issue boundaries](issue-boundaries.md#close-the-plan)). Where neither of them needs the
+other's result, either order is valid, so record the order chosen and the reason for it; an
+unrecorded choice reads later as a dependency that never existed. Separate regions of one file are
 not an edge. Delivery does not delete an edge either: once the contract a successor waited on has
 landed, the relation stays as the record of what that successor needed and the active wait ends, so
 the implementations and verifications behind it proceed together.
@@ -117,7 +119,10 @@ begins after the deferral is met rather than around it.
 ## Placing independent work in the same window
 
 Subjects with no edge between them and no shared region are placed together in the earliest window
-the result that frees them allows, up to the concurrency the execution side states. Because these
+the result that frees them allows, up to the concurrency the execution side states. A stated limit
+bounds the work in flight rather than the window: where the records show a subject finishing inside
+that window, the slot it frees is open again within it, and only the subjects that still do not fit
+carry `host`. Because these
 targets are calendar dates, that usually reads as one date carrying several subjects, which is the
 point: a plan that spreads independent work one subject to a day has recorded a wait that nothing
 causes. Four shapes do exactly that, and none of them is written: placing subjects serially day by
@@ -250,22 +255,22 @@ rule here states a period.
 | # | Given | Plan outcome | Clause |
 | --- | --- | --- | --- |
 | 1 | Three issues, no edge between them, no shared region, the execution side states room for three, records show hours. | All three carry target D0 and wait cause `none`, all three in the startable batch; 0 serial day placements, 0 buffers added. | Placing independent work. |
-| 2 | The same three where the execution side states room for two. | All three still carry D0, because the records show the third fits that day; the third carries `host` naming the stated limit; 0 days added, 0 limits invented. Had nothing stated a limit, 0 subjects would carry `host`. | Concurrency is read, not created. |
+| 2 | The same three where the execution side states room for two and the records show each of them finishing inside that window. | All three carry D0 and `none`, because the stated limit bounds the work in flight and the slot the first pair frees is open again inside the window; 0 days added, 0 limits invented. A third the records did not fit inside the window would carry `host` naming the stated limit instead. | Concurrency is read, not created. |
 | 3 | Prerequisite A is confirmed merged on the morning of D0; successor B's current target is D2 and `provisional`; the checkpoint carries schedule-change authority; records show hours. | B re-evaluated in that same turn to D0, with 1 entry opening `pulled in` naming A, before D2 and after D0, and the schedule baseline still D2 and readable; 0 entries overwritten, 0 waits for D2. | Checkpoint: pull-in. |
 | 4 | The same as 3 with no schedule-change authority. | 0 writes; 1 replan request to the parent naming B and A's confirmed result; B still reads D2 in the data. | Authority. |
 | 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the child already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the child. |
 | 6 | Issues D and E change separate regions of one file and need nothing from each other. | 0 ordering relations, both carry D0 and `none`, both in the startable batch. | Separate regions are not an edge. |
-| 7 | The same two where the regions overlap; records show hours. | Exactly 1 ordering relation; the later subject carries `shared surface` naming the region and still targets D0; 0 extra days. | A region two subjects change. |
-| 8 | Contract G lands; the three implementations and the verification that waited on it are otherwise independent. | The 4 relations stay as the record of what they needed; all 4 wait causes leave `prerequisite`; all 4 placed in the same window; 0 relations deleted, 0 subjects held for a second round. | Delivery ends the wait, not the edge. |
+| 7 | The same two where the regions overlap, records show hours, and neither needs the other's result. | Exactly 1 ordering relation, in whichever direction the plan records, with the reason for that choice recorded; the later subject carries `shared surface` naming the region and still targets D0; 0 extra days, 0 unrecorded orderings. | A region two subjects change. |
+| 8 | Contract G lands; the three implementations and the verification that waited on it are otherwise independent; the plan write is authorized. | The 4 relations stay as the record of what they needed; all 4 wait causes leave `prerequisite`; all 4 placed in the same window; 0 relations deleted, 0 subjects held for a second round, 0 baselines overwritten. | Delivery ends the wait, not the edge. |
 | 9 | Successor F needs the API shape that decision issue G has not settled, and G is `awaiting authority`. | F is `undetermined` with wait cause `prerequisite` naming G and the decision as the event that ends it; 0 invented dates, 0 `provisional` targets assuming the decision. | Undetermined where the prerequisite carries no date. |
 | 10 | The user states that the GUI project follows the port; the port targets D10; the GUI's design, API, screens and verification issues have no edges among themselves. | 1 project-level prerequisite on the GUI whose record line names the user's decision; every GUI issue carries `prerequisite`; 0 GUI issues in the startable batch and 0 placed before D10; their own parallelism recorded behind it. | An authority decides the level. |
 | 11 | Issue H's pull request merged; its criteria include an installation nobody has approved. | H unfinished with its actual finish empty and wait cause `decision`; 0 target moves, 0 criteria dropped, 0 finishes recorded from the merge. | A wait is never a finish. |
 | 12 | Same-class records show implementation landing within hours and review completing days after the pull request opens. | The target is read from the whole record and falls on the day review completes; after delivery the subject carries `review`, which also covers its required checks and the merge; 0 review or check criteria reduced, 0 claims about another class. | The record runs to acceptance. |
 | 13 | A class with no comparable record; prerequisites confirmed; a slot exists. | Target D0, `provisional`, delivery evidence `no sample`, the gap named in the record that sets it; 0 default periods, 0 `undetermined`, 0 precision claimed. | No sample. |
 | 14 | Two comparable records match equally well; one landed in three hours, the other in nine. | The target follows the nine-hour record and the roadmap names the spread; 0 targets read from the faster run alone. | Which record the target follows. |
-| 15 | The user adds a criterion to issue I on D1. | 1 entry opening `scope changed` with the IDs added and the before and after dates; the schedule baseline unchanged and still readable; 0 overwrites. | Recording a change. |
-| 16 | A checkpoint on D3 finds I unfinished against its D1 target, with no scope change, no blocker and no predecessor move; a checkpoint on D4 finds the same and is asked to extend it again. | 0 target moves on either day; I reads late against both datums with its real wait cause; the second extension is refused and returns 1 explicit replan need naming what has not changed. | No auto-roll; a repeated extension is drift. |
+| 15 | The user adds a criterion to issue I on D1, and the records covering the added work put I's earliest day past its current target. | 1 move with 1 entry opening `scope changed`, carrying the IDs added and the before and after dates; the schedule baseline unchanged and still readable; 0 overwrites. Had the added work still fitted the current target, 0 moves and 0 entries. | Recording a change. |
+| 16 | A checkpoint on D3 finds I unfinished against its D1 target, with no scope change, no blocker and no predecessor move, and refuses the extension it was asked for; on D4 the same extension is requested again for the same reason. | 0 target moves on either day; I reads late against both datums with its real wait cause; the D4 request is refused as drift and returns 1 explicit replan need naming what has not changed since D3. | No auto-roll; a repeated extension is drift. |
 | 17 | A request to rewrite every target from the current date. | 0 writes and a refusal; what is offered instead is a scoped replan naming a cause per subject, leaving every other target and baseline where it stands. | Regeneration refused. |
 | 18 | Predecessor J's target moves later with `blocked`; K follows J with no room between them; L does not depend on J. | K moves with 1 entry opening `critical path` naming J's entry, its baseline preserved; L: 0 moves. | The critical path carries a legal move. |
 | 19 | Predecessor J is merely late at its target; K depends on J. | 0 moves on either; both read late and K carries `prerequisite`; 0 `critical path` entries. | Lateness travels as lateness, not as dates. |
-| 20 | A project of eight issues whose class records show hours each, and the user asks for the project's target. | The project target is the latest target on its critical path; 0 issue counts multiplied by a sample, 0 speed claims recorded. | No multiplier. |
+| 20 | A project of eight issues whose class records show hours each, where seven are independent and the eighth follows one of them, and the user asks for the project's target. | The project target is the later of those two chained targets, which is the latest on its critical path; 0 issue counts multiplied by a sample, 0 speed claims recorded. | No multiplier. |
