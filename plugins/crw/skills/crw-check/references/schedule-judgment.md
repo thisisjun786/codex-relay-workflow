@@ -301,14 +301,22 @@ worth discussing.
    source is merged, wait class internal coordination wait, and the report keeps
    source merged 2026-09-18, seven days before target, installation unverified. Where
    an installation attempt on 2026-09-20 failed because an upstream registry was
-   unreachable, still at risk with wait class external failure. Not ahead or complete
+   unreachable, still at risk with wait class external failure. Where that failed attempt
+   coincides with an approval the criteria require and the user has not given, still
+   at risk with both observations reported, one as external failure and one as user
+   decision wait, rather than one class chosen over the other. Not ahead or complete
    read from the early merge.
 
 8. **Stale evidence past a deadline.** I-11, current target 2026-09-15, required
    level merged; the last read, 2026-09-10, showed it unachieved and not terminal; it
    was not read again at this query; observed 2026-09-21. Undecidable, reason evidence
    not re-read since 2026-09-10, carrying last known unachieved at 2026-09-10. Not
-   late, which asserts a state nobody observed.
+   late, which asserts a state nobody observed. Where the scope holds only
+   this I-11 and a decidable I-22 that is unachieved, due 2026-10-10 and carrying no
+   risk, the aggregation set is empty because I-22 is neither due nor achieved nor at
+   risk, yet the already-due I-11 is undecidable, so the overall result is undecidable
+   and the scope partially checked. Not nothing due yet, which would report a deadline
+   that passed unchecked as though nothing had.
 
 9. **Late against the baseline, on plan against a moved target.** M2, baseline target
    2026-09-10, current target 2026-09-25, moved 2026-09-12, change source replan with
@@ -353,7 +361,13 @@ worth discussing.
     I-16 and I-17 on plan, nothing due yet; M3 blocked by the unachieved I-15, with
     I-16 and I-17 named as not blocking; the project affected at M3 while M4 and the
     parallel issues continue, and not reported blocked. Not whole-project blockage,
-    and not I-17 named because it is the newest.
+    and not I-17 named because it is the newest. Where M3 is reachable from
+    I-15 both through that required edge and through a second path that is not
+    required, M3 is still blocked, because one wholly required path is enough, and
+    where the only path from a late I-16 to M3 is not required, M3 is not blocked by
+    I-16. Where M3 additionally requires I-16 and I-16 is achieved, M3 is blocked by
+    I-15 alone and I-16 is named as required but satisfied. Not a successor dropped
+    because some other path to it was not required.
 
 14. **A kind that carries no commitment.** The contract records I-18's kind as
     carrying no commitment date because it records when work actually began, and
@@ -378,7 +392,13 @@ worth discussing.
     target and with no new evidence, the verdict is not carried forward and I-20 is
     undecidable pending a re-read rather than late. Not a stale verdict carried past
     the deadline, not a current-state claim treated as a settled event, and not the
-    full criterion audit rerun to answer a schedule question.
+    full criterion audit rerun to answer a schedule question. Where instead I-20 had
+    completed its required installation on 2026-09-22 against a target of 2026-09-30
+    and was recorded ahead by 8 days, and the approved current target later moves to
+    2026-09-18, the installation receipt is reused unchanged with its original
+    observed-at while the current-axis verdict is recomputed to late by 4 days. Not
+    the recorded ahead carried forward on the ground that the achievement itself did
+    not change.
 16. **A checkpoint inside an approved execution.** An initiative execution the user
     already approved is running, and its project parent holds that approval. A
     checkpoint here finds M5 late by 4 days against a current target of 2026-09-17,
@@ -396,4 +416,6 @@ worth discussing.
     contact. Where instead M5 sits in project A and the approved successor waiting on
     it is in project B, the finding returns through the invoking supervisor, which
     coordinates both parents. Not project A's parent deciding whether project B
-    proceeds, which is an ordering it does not own.
+    proceeds, which is an ordering it does not own. Where this check runs as a
+    bounded helper for a coordinator rather than holding the assignment itself, the
+    finding goes back to that coordinator and the helper contacts no owner directly.
