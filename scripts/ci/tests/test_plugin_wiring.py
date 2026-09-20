@@ -1013,3 +1013,99 @@ class TheDeclaredApprovalPolicyIsChecked(unittest.TestCase):
                 if "codex" in words and "plugin" in words:
                     offenders.append(str(path) + ": " + repr(words))
         self.assertEqual(offenders, [])
+
+
+class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
+    """CRW-142, the register-mcp half. Escalated to the operations lane and authorised by it.
+
+    _mcp_ownership already refuses a user registration when the ownership record names the plugin,
+    and _other_bridge_tables catches the same bridge under a different table name. The path left
+    open is exactly: the plugin declares the server, no plugin-owned record blocks the write, and
+    the run registers that same table name. The record check passes on absent, the other-names
+    check excludes the name being written, and codexconfig.register appends a user table.
+
+    It is reachable in one ordinary sequence. transition --apply writes a plugin-owned record;
+    remove --apply retires it and deliberately leaves the plugin cache and its config entry alone,
+    because codex plugin remove owns those. A register-mcp run after that finds no record and a
+    plugin that still declares the server. Measured: a user table wins over the declaration, so the
+    appended table shadows it, and with no approval fields it serves the bridge ungated.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Home(self.stack)
+
+    def install_plugin(self, declares=True):
+        cache = (self.home.codex_home / "plugins" / "cache" / "crw" / "crw" / "0.2.0")
+        (cache / ".codex-plugin").mkdir(parents=True)
+        (cache / ".codex-plugin" / "plugin.json").write_text(
+            (ROOT / "plugins" / "crw" / ".codex-plugin" / "plugin.json").read_text(
+                encoding="utf-8"), encoding="utf-8")
+        (cache / "wiring").mkdir(parents=True)
+        document = json.loads(
+            (ROOT / "plugins" / "crw" / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+        if not declares:
+            document["mcpServers"] = {"something-else": document["mcpServers"]["codex-thread-bridge"]}
+        (cache / "wiring" / "mcp.json").write_text(json.dumps(document), encoding="utf-8")
+        config = self.home.codex_home / "config.toml"
+        existing = config.read_text(encoding="utf-8") if config.is_file() else ""
+        config.write_text(existing + '\n[plugins."crw@crw"]\nenabled = true\n', encoding="utf-8")
+        return cache
+
+    def register(self, *extra):
+        return run("register-mcp", "--owner", "user", "--codex-home", str(self.home.codex_home),
+                   "--bridge-command", str(self.home.destination / "current" / "bin"
+                                           / "codex-thread-bridge"), *extra)
+
+    def config(self):
+        path = self.home.codex_home / "config.toml"
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def test_the_shadowing_write_is_refused_and_nothing_is_written(self):
+        self.install_plugin()
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 1, output)
+        self.assertIn("declares", emitted["detail"])
+        self.assertIn("codex-thread-bridge", emitted["detail"])
+        self.assertIs(emitted["applied"], False)
+        self.assertIs(emitted["wrote"], False)
+        self.assertIs(emitted["otherTablesPreserved"], True)
+        self.assertEqual(self.config(), before)
+        self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
+
+    def test_a_dry_run_refuses_the_same_way(self):
+        self.install_plugin()
+        status, emitted, output = self.register()
+        self.assertEqual(status, 1, output)
+        self.assertIs(emitted["wrote"], False)
+
+    def test_without_the_plugin_the_ordinary_registration_still_works(self):
+        """The manual install is the whole reason this command exists; it must be untouched."""
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertIn("[mcp_servers.codex-thread-bridge]", self.config())
+        self.assertNotEqual(self.config(), before)
+
+    def test_a_plugin_that_declares_another_server_does_not_block_this_one(self):
+        self.install_plugin(declares=False)
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertIn("[mcp_servers.codex-thread-bridge]", self.config())
+
+    def test_a_different_table_name_is_a_separate_gap_and_is_pinned_not_guarded(self):
+        """Measured, and deliberately NOT closed by this guard. Reported to the operations lane.
+
+        The authorised guard is about SHADOWING: a user table under the name the package declares,
+        which wins over the declaration. Registering the same bridge under another name is a
+        different failure -- two bridge servers side by side rather than one hidden behind the
+        other -- and _other_bridge_tables only compares against tables already in the
+        configuration, never against what a package declares. Widening this guard to cover it
+        would be a second contract, so it is measured and handed back instead of absorbed.
+        """
+        self.install_plugin()
+        status, emitted, output = self.register("--apply", "--name", "my-bridge")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["serversNow"], ["my-bridge"])

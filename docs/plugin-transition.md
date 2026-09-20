@@ -367,26 +367,33 @@ round trip through it, succeeded.
 
 ### Three limits, stated rather than implied
 
-**`register-mcp` can re-open the gate. Known limitation, owner pending, not fixed here.**
+**`register-mcp` could re-open the gate. Now guarded, with one narrower gap left open.**
 `runtime_install.py register-mcp` writes `command` and `args` only. Run again on a host that has
-already transitioned, it creates a table with no policy, and by the measurement above that table
-wins over the declaration.
+already transitioned, it used to create a table with no policy, and by the measurement above that
+table wins over the declaration.
 
-**The window is real and this is its shape.** It opens the moment `register-mcp` writes that table
-and stays open until something removes it again — normally the next `transition --apply`, which
-does remove it, because a table with no policy is a subset of what the declaration grants. For as
-long as it is open, `create_thread` and `send_message_to_thread` are ungated on that host, and
-nothing announces it. `inspect` reports `policyInEffect`, so the state is readable if somebody
-looks; nothing makes them look.
+The path was real and is measured: `transition --apply` writes a plugin-owned record, which the
+ownership check already refuses to register beside. `remove --apply` retires that record and
+deliberately leaves the plugin cache and its config entry alone, because `codex plugin remove`
+owns those. A `register-mcp --owner user` run after that found no record and a package that still
+declared the server, and appended the shadowing table reporting success.
 
-`scripts/runtime_install.py` is owned by the operations lane, not by this change, so CRW-142 does
-not touch it. The decision on whether `register-mcp` should refuse to write a policy-free table
-for a server the installed plugin gates — or should carry the policy itself — is escalated and
-pending with that lane. Until it is taken, this window is a known defect, not a solved one, and it
-should not be read as covered by anything above. The sweep predicate for whoever takes it: every
-key of a user server table outside `command`, `args` and `tools` blocks removal until the
-declaration provably carries it, and whether the plugin manifest parses `tool_timeout_sec` at all
-is unmeasured.
+The ownership check now refuses that write: when an installed package already declares the server
+name being registered and no user-owned record claims it, the run is refused with that reason and
+nothing is written. It refuses rather than copying the package's approval fields into a user
+table, because copying would duplicate a declaration the package owns and leave two writers for
+one policy. A cache that cannot be read is refused too, rather than treated as declaring nothing.
+A host with no plugin installed is unaffected, which is the ordinary manual install this command
+exists for.
+
+**What is still open, stated rather than implied.** The guard is about shadowing: a user table
+under the name the package declares. Registering the same bridge under a *different* name with
+`--name` is a different failure — two bridge servers side by side rather than one hidden behind
+the other — and `_other_bridge_tables` only compares against tables already in the configuration,
+never against what a package declares. That case is measured and pinned by a test, and handed back
+to the operations lane rather than absorbed here. The sweep predicate for whoever takes it: a user
+registration starting a bridge a package also declares is a second bridge whatever table name it
+is given.
 
 **A later cache replacement is not checked at that moment.** Once the table is gone the declaration
 is the only thing gating those tools. A `codex plugin update` installing a package without the gate
