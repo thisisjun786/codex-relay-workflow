@@ -4,7 +4,7 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 
 ## Cycle context
 
-- Target cycle and its agreed goal; the verified subset and any unread or unfinished scope.
+- Target cycle, actual start/end dates (or open end), original design and agreed goal; the verified subset and any unread or unfinished scope.
 - Per repository: baseline, delivered revision, relevant PRs, current dirty/active paths and evidence date.
 - Preserved features and external contracts; next agreed change or replacement boundary.
 - Delivery evidence reused, its applicability and missing installation/runtime proof where relevant.
@@ -21,6 +21,7 @@ Use these fields to make a candidate reviewable. Keep evidence proportional to t
 | Same-cause reach | How sibling sites were sought, what was found and what remains unexamined |
 | Verification | Baseline reproduction/checks, known failures, required negative controls, preserved behavior and observable maintenance benefit |
 | Independence and reversal | Separate PR boundary, dependencies, how the repair can be reverted, and any coupling preventing independent reversal |
+| Execution owner | Existing project parent and issue/task, or the direct implementation owner explicitly chosen by the user; a proposed owner is not a dispatch |
 | Recommendation | Do now, defer to a named trigger, or measure an uncertainty first; cite an existing issue when one already owns it |
 
 ## Baseline versus result

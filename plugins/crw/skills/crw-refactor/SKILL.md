@@ -19,7 +19,7 @@ Infer the target cycle from the current assignment, linked Linear records and de
 
 ## Verify and pin the cycle
 
-Record the cycle's agreed goal, scope, accepted changes and exclusions, the repositories and delivered PRs, and a pinned baseline and delivered revision for each repository. Read repository policy and inspect branch, worktrees and dirty paths before judging current code. Use the actual PR changes and landing history; do not assume every commit in an integration range belongs to this cycle.
+Record the cycle's agreed goal, original design, scope, accepted changes and exclusions, actual start/end dates (or an open end), the repositories and delivered PRs, and a pinned baseline and delivered revision for each repository. Read repository policy and inspect branch, worktrees and dirty paths before judging current code. Use the actual PR changes and landing history; do not assume every commit in an integration range belongs to this cycle.
 
 Reuse the owning check's acceptance evidence while its criteria, revision and environment still apply. Recheck missing or invalidated claims in read-only mode. Keep source landing, installation and observed runtime behavior separate. A missing installed measurement is a delivery-evidence gap, not proof that a module needs rewriting. Findings that violate existing criteria belong to their correction owner, with their impact and disposition; preserve accepted residuals and their rationale rather than reopening them merely because refactoring found them again.
 
@@ -57,7 +57,7 @@ Return the verified scope and remaining gaps, the ranked candidates, why the fir
 
 When the user selects a candidate, restore its evidence and compare it with the current code, active assignments and roadmap. Refresh only what changed. An invalidated candidate returns the concrete discrepancy before dependent edits; stable authorization does not need reconfirmation.
 
-Hand the selected repair to its existing project parent and issue task through Run, or implement in this task when the user explicitly chooses direct implementation. Carry the candidate's scope, evidence, contracts, baseline failures, same-cause search boundary and finish conditions together. A new task requires authorization under the host's task-creation rules. Follow the owning repository and CXC workflow without creating a second coordinator or changing another task's goal.
+An initiative supervisor coordinates the diagnostic handoff and user report; the project owner supplies technical judgment. Hand the selected repair to its existing project parent and issue task through Run, or implement in this task when the user explicitly chooses direct implementation. Carry the candidate's scope, evidence, contracts, baseline failures, same-cause search boundary and finish conditions together. A new task requires authorization under the host's task-creation rules. Follow the owning repository and CXC workflow without creating a second coordinator or changing another task's goal.
 
 Implement the smallest agreed repair and inspect its sibling instances within that scope. Newly discovered unrelated improvements remain follow-up candidates. Preserve dirty and unfinished work; do not reset, stash, rebase or overwrite another task's changes to make the repair fit. A changed external contract requires a separate decision, not a refactoring label.
 
