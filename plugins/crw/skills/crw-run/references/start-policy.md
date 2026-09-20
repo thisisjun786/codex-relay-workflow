@@ -138,7 +138,9 @@ creates anything before the adjudication: that count is zero in every row.
 | 9 | Children of this parent are already live | none | D, which subtracts them | standing cap minus the live children | the existing owners preserved, never replaced |
 
 An edit does not alter a turn that has already loaded these instructions. It does not stop there,
-though: where an installation links this checkout, a later read loads the edited text, and the
-re-read events above are exactly such reads, so a run spanning sessions can continue under
-instructions it did not start with. The local edit, the pull request, the integration and what is
-actually installed and running stay separate facts and are reported separately.
+though: where an installation links this checkout, a later read of these instructions loads the
+edited text, so a run spanning sessions can continue under instructions it did not start with.
+A re-read event above re-reads the conditions a recorded decision stands on, which is not the same
+act as loading this file again; neither one implies the other. The local edit, the pull request,
+the integration and what is actually installed and running stay separate facts and are reported
+separately.

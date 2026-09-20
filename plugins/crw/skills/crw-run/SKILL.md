@@ -438,9 +438,9 @@ the re-adjudication triggers and the cases this is judged by; the standing cap a
 are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
 Editing these instructions does not alter a turn that already loaded them, but where an installation
-links this checkout a later read loads the edited text, including a read made while a run is still
-continuing. Report the local change, the pull request, the integration, and what is actually
-installed and running as separate facts.
+links this checkout a later read of them loads the edited text, so a run spanning sessions can
+continue under instructions it did not start with. Report the local change, the pull request, the
+integration, and what is actually installed and running as separate facts.
 
 ## Observe and verify
 
