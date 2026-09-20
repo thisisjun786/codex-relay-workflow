@@ -376,7 +376,12 @@ class ExecutionPolicy:
         """
         stated_model = _stated(model, "model")
         stated_effort = _stated(reasoning_effort, "reasoning_effort")
-        expectation = None
+        # Read before the branching, so a receipt for an exception still names the declared pair
+        # it overrode. Assigning it only in the role branch reported an exception-authorized
+        # creation as though its role had no policy at all, which is a different fact and the one
+        # a reader would use to judge the override. None stays None where the role really is
+        # undeclared.
+        expectation = self._roles.get(role) if role is not None else None
         overridden_by = None
         provenance = UNVERIFIED
         if exception is not None:
@@ -443,7 +448,6 @@ class ExecutionPolicy:
             overridden_by = exception
             provenance = EXCEPTION_AUTHORIZED
         elif role is not None:
-            expectation = self._roles.get(role)
             if role not in roles.ROLES or expectation is None:
                 raise ExecutionRefused(
                     ROLE_UNKNOWN,
@@ -504,7 +508,7 @@ class ExecutionPolicy:
                 **(
                     {
                         "roleExpectation": (
-                            {**expectation.receipt(), "overriddenBy": None}
+                            {**expectation.receipt(), "overriddenBy": overridden_by}
                             if expectation is not None
                             else {"role": role, "expectation": None, "model": None,
                                   "reasoningEffort": None, "overriddenBy": overridden_by}

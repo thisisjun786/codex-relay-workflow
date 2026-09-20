@@ -32,6 +32,9 @@ POLICY = {
 def write_policy(directory, mapping=None) -> str:
     path = directory / "execution-policy.json"
     path.write_text(json.dumps(mapping if mapping is not None else POLICY), encoding="utf-8")
+    # The policy is a per-process snapshot, exactly as the bridge's is, so a suite that stages
+    # more than one has to say which one it means.
+    rolepolicy.reset()
     return str(path)
 
 
@@ -107,6 +110,7 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def test_a_record_left_behind_by_a_user_transition_is_refused_before_any_send(self):
         """The EQP-10 shape. The record is not corrupt; it is out of date, and nothing looked.
@@ -151,6 +155,7 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         import os
 
         os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        rolepolicy.reset()
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
         self.assertIsNone(self.attempt(event_id))
         self.assertEqual(self.adapter.sends, [])
@@ -189,6 +194,7 @@ class TheRoleATaskWasCreatedAsAndTheOneItIsBoundTo(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def _bind(self, role, scope_key, task):
         from codex_session_relay.models import Endpoint
@@ -277,6 +283,7 @@ class WhatTheseChecksRefuseToGuessThrough(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def _bind(self, role, scope_key, task):
         from codex_session_relay.models import Endpoint
@@ -415,6 +422,7 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def test_an_unloaded_supervisor_is_not_resumed_with_a_pair_policy_never_derived(self):
         """Its pair is the user's own selection and the transmitted pair is whatever was
@@ -499,6 +507,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def _bind_parent(self):
         from codex_session_relay.models import Endpoint
@@ -650,6 +659,70 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertEqual(stored["citedException"], "one-task")
 
 
+    def test_a_user_transition_can_leave_a_citation_a_supervisor_no_longer_needs(self):
+        """A supervisor has no declared pair, so 'the pair now stands on its own' can never
+        release its citation. Without an explicit way out the recorder restored the old id and
+        then refused its own write, and no documented command could break the loop."""
+        from pathlib import Path
+
+        from codex_session_relay.models import Endpoint
+
+        self.registry.linkage.bind_scope(
+            role="supervisor", scope_key="INIT-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        here = str(Path(self.tmp).resolve())
+        import os
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            **POLICY,
+            "exceptions": {
+                "temporary": {
+                    "model": "gpt-6-astra", "reasoningEffort": "high",
+                    "cwd": [here], "role": "supervisor",
+                }
+            },
+        })
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings(here, model="gpt-6-astra", reasoningEffort="high"),
+            source="creation_result", role="supervisor", exception="temporary",
+        )
+        # The user moves it to an effort the exception never covered.
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings(here, model="gpt-6-astra", reasoningEffort="max"),
+            source="user_transition",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertNotIn("citedException", stored)
+        self.assertEqual(stored["citedRole"], "supervisor")
+
+    def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
+        """Clearing is the user-attributed transition's privilege, not every write's."""
+        from pathlib import Path
+
+        self._bind_parent()
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(),
+            source="creation_result", role="parent", exception="one-task",
+        )
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(), source="creation_result",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertEqual(stored["citedException"], "one-task")
+
+
+
     def test_an_exception_written_for_a_role_the_policy_does_not_declare_is_still_honoured(self):
         """The bridge evaluates the exception before it looks the role up, so this creation
         succeeds there. Refusing it here would be one document read two ways."""
@@ -709,6 +782,7 @@ class TakingOwnershipAwayIsNeverBlockedByThePolicy(DeliveryTestCase):
             os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         else:
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+        rolepolicy.reset()
 
     def test_a_relationship_whose_child_record_disagrees_can_still_be_archived(self):
         from codex_session_relay.models import Endpoint

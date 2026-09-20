@@ -78,13 +78,36 @@ class Declared:
         )
 
 
-def declared(environ=None) -> "Declared | Unresolved":
-    """Read the same file the bridge reads, through the same parser.
+_SNAPSHOT: list = []
 
-    Imported lazily, as every other bridge import in this package is: a relay process that never
-    reaches a role question should not fail to start because the bridge is absent.
+
+def reset() -> None:
+    """Drop this process's snapshot. For tests that stage more than one policy."""
+    _SNAPSHOT.clear()
+
+
+def declared(environ=None) -> "Declared | Unresolved":
+    """Read the same file the bridge reads, through the same parser, ONCE per process.
+
+    The snapshot is the point. The bridge builds its policy in main() and keeps it, so an edit to
+    the file changes nothing there until a restart. Re-reading on every call here would have made
+    the relay enforce a version the bridge had never seen: the same edit would take effect on one
+    process immediately and on the other not at all, which is the deployment-shaped second policy
+    source this module exists to keep visible. Both now change only at a restart, and the digest
+    recorded on every decision identifies which version decided it.
+
+    The bridge is imported lazily, as every other bridge import here is: a relay process that
+    never reaches a role question should not fail to start because that package is absent.
     """
-    environ = os.environ if environ is None else environ
+    if environ is None and _SNAPSHOT:
+        return _SNAPSHOT[0]
+    resolved = _resolve(os.environ if environ is None else environ)
+    if environ is None:
+        _SNAPSHOT.append(resolved)
+    return resolved
+
+
+def _resolve(environ) -> "Declared | Unresolved":
     configured = (environ.get(ENVIRONMENT_VARIABLE) or "").strip()
     if not configured:
         return Unresolved(

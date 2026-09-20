@@ -1080,6 +1080,12 @@ def project_key(record: dict) -> str:
     return f"host:{parent.get('hostId')}"
 
 
+# The source a user's own change is recorded under. Named here because the recorder treats it
+# differently: it is the one write that may drop a citation the new pair no longer needs, which
+# is what makes the documented transition reachable for a supervisor.
+USER_TRANSITION = "user_transition"
+
+
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                     role: str | None = None, exception: str | None = None) -> dict:
     """Record the execution settings a task was actually created with.
@@ -1130,16 +1136,21 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
             if carried is not None:
                 settings["citedRole"] = carried
         if exception is None and existing is not None:
-            carried = rolepolicy.cited_exception(json.loads(existing["settings"]))
-            # Carried only while it is still doing work. An exception exists to admit a pair the
-            # role's policy does not declare, so once a record states the declared pair there is
-            # nothing left for it to authorize, and keeping the id would pin the task to a route
-            # it has left. That made the documented recovery -- re-record onto the role's pair --
-            # impossible to reach, and left the refusal advising something that could not work.
+            previous = json.loads(existing["settings"])
+            carried = rolepolicy.cited_exception(previous)
+            # Carried only while it is still doing work, and only while this write is not the
+            # user saying otherwise. An exception exists to admit a pair the role's policy does
+            # not declare, so once a record states the declared pair there is nothing left for
+            # it to authorize. A supervisor has no declared pair at all, so that test can never
+            # release one, and a user-attributed transition to a new supervisor pair could not
+            # clear a citation that no longer covers it -- the recorder would restore the old id
+            # and then refuse its own write, with no command able to break the loop.
             declared = rolepolicy.declared_pair_for(
                 rolepolicy.bound_role_in(db, task_id), rolepolicy.declared()
             )
-            if carried is not None and rolepolicy.recorded_pair(settings) != declared:
+            unchanged = rolepolicy.recorded_pair(settings) == rolepolicy.recorded_pair(previous)
+            still_needed = rolepolicy.recorded_pair(settings) != declared
+            if carried is not None and still_needed and (unchanged or source != USER_TRANSITION):
                 settings["citedException"] = carried
         bound = rolepolicy.bound_role_in(db, task_id)
         if isinstance(bound, rolepolicy.Contested):

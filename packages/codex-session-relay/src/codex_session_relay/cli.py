@@ -291,6 +291,13 @@ class PayloadExit(Exception):
 
 
 def cmd_register(services, args) -> dict:
+    # Validated BEFORE anything is written. registry.register commits the relationship and, with
+    # --project, the child's binding; a settings refusal raised after that left a live wrong-role
+    # assignment behind and reported only the refusal. This command is the one caller holding
+    # both halves in its own arguments, so it can answer the question while there is still
+    # nothing to unwind. The checks inside record_settings and binding_plan remain for callers
+    # that arrive separately; neither of those can undo a write the other already committed.
+    _refuse_role_disagreement(services, args)
     record = services.registry.register(
         parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
                         cxc_session=args.parent_cxc_session),
@@ -329,6 +336,32 @@ def _settings_json(raw: str) -> dict:
         with open(raw[1:], encoding="utf-8") as handle:
             return json.load(handle)
     return json.loads(raw)
+
+
+def _refuse_role_disagreement(services, args) -> None:
+    """Refuse a registration whose stated roles and settings already contradict each other.
+
+    Answers exactly what record_settings would answer afterwards, from the same predicate, so
+    the two cannot disagree. It reads nothing it has not been given: the roles come from the
+    arguments and the settings from the files they name.
+    """
+    from . import rolepolicy
+    from .errors import RefusalReason, RegistrationError
+
+    policy = rolepolicy.declared()
+    for raw, role in ((args.parent_settings, args.parent_role),
+                      (args.child_settings, args.child_role)):
+        if not raw or role is None:
+            continue
+        settings = dict(_settings_json(raw))
+        settings["citedRole"] = role
+        exception = (args.parent_exception if raw is args.parent_settings
+                     else args.child_exception)
+        if exception is not None:
+            settings["citedException"] = exception
+        finding = rolepolicy.check_binding(role, role, settings, policy if policy else None)
+        if finding is not None:
+            raise RegistrationError(RefusalReason(finding["code"]), finding["detail"])
 
 
 def cmd_settings_record(services, args) -> dict:
