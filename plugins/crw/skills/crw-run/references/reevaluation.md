@@ -27,15 +27,15 @@ not triggers of their own.
 | A child finished and is reviewable | `assignment-show --relationship` ([verify the current revision](relay.md#verify-the-current-revision)) |
 | A child stopped for a person | `dispositions-show` ([which children stopped](relay.md#which-children-stopped-and-whether-anyone-was-told)) |
 | A child asked for a decision | the same read; the work report on that event is what separates the three statuses |
-| An integration landed | `merge-turn-show`, beside the assignment's merged mark |
+| An integration landed | `merge-turn-show` ([the four readers](relay.md#the-four-readers-a-candidate-pass-also-uses)), beside the assignment's merged mark |
 | This parent resumed or recovered | the coordination record, then the reads above |
 
-Inputs read within a pass: `capacity-show`, `region-show`, `linkage-outstanding`.
-
-`merge-turn-show`, `region-show`, `capacity-show` and `linkage-outstanding` are named here and
-documented by no skill file yet. Read each one's own output and do not infer a usage contract this
-repository has not written; documenting them is a follow-up. Nothing in a pass calls a mutating
-command to observe something.
+Inputs read within a pass: `capacity-show` for the limits in force, `region-show` for a peer's
+overlapping region, and `linkage-outstanding` for what is attached and still unfinished. Those
+three and `merge-turn-show` are documented under
+[the four readers a candidate pass also uses](relay.md#the-four-readers-a-candidate-pass-also-uses);
+read what each answers there rather than inferring it from its output. Nothing in a pass calls a
+mutating command to observe something.
 
 ## What the pass may not conclude
 

@@ -354,6 +354,44 @@ exits 0 with an empty list, which is a different answer.
 
 For the per-delivery phase of a delivery that exists, and for pending intents across the whole
 store, `status` remains the reader; this command does not restate its vocabulary.
+
+## The four readers a candidate pass also uses
+
+    codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-show --repository <repo> --base-ref <ref>
+    codex-session-relay --state "$RELAY_STATE" capacity-show [--project <key>] [--parent-task <id>] [--initiative <key>] [--scope <key> --scope-kind initiative|project|store]
+    codex-session-relay --state "$RELAY_STATE" region-show --repository <repo> [--revision <rev>] [--project <key>] [--path <path>]
+    codex-session-relay --state "$RELAY_STATE" linkage-outstanding --project <key> [--task <id>]
+
+[Re-evaluating the candidate set](reevaluation.md) names these as the reads behind an integration
+landing, a capacity change, a peer's region and a new attachment. What each answers is here; what
+a pass does with it is there.
+
+`merge-turn-show` takes either selector. `--turn` names one turn, and an id the store does not
+hold answers `ok` false with reason `unregistered_scope` rather than an empty record, so a
+mistyped turn is not read as a released window. `--repository` with `--base-ref` answers about
+that target's window instead of one turn.
+
+`capacity-show` reports the held slots, their total, the count per parent, and any whose recorded
+parent no longer owns the project. `--project`, `--parent-task` and `--initiative` narrow that
+list. `headroom` is added only when `--scope` is given, and it carries a dimension only where a
+limit was declared: a scope with no declared limit is unbounded by the store rather than known to
+have room, and those are different answers.
+
+`region-show` needs `--repository`; `--revision`, `--project` and `--path` narrow it. A region
+nobody proposed has no row at all, so an absent overlap is unknown rather than none.
+
+`linkage-outstanding` lists the live assignments in a project that are not finished, scoped to
+the **project** rather than to whichever task currently parents each row. `--task` narrows it to
+one parent's rows and is deliberately left off for a handover: filtering by the parent made a
+replacement appear to have no outstanding work at all, which let a second replacement take the
+project without acknowledging anything.
+
+`merge-turn-show`, `capacity-show` and `region-show` carry `unenforcedIndexes` where the store
+could not install a guard index. An ambiguous answer and a missing index are the same fact seen
+from two sides, so a reader deciding whether to act on a contested owner is being told that the
+database is not stopping a second one either.
+
 ## When the assignment is not in the store yet
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach
