@@ -18,9 +18,10 @@ exception, because the empty group is what the rule asks for there.
 Where the body names one repository and the current PR sits in another, nothing in this table
 decides which is right. Record both readings and the decision that would settle them. The same
 holds when a body sentence is the only evidence: a note about where work might land is not the
-execution evidence the first row asks for, so that item is not a gap.
+execution evidence the first row asks for, so that item is unverified rather than a gap.
 
 Separate the two quiet outcomes there. Where the record itself shows the target is still undecided,
 that is the unresolved-target exception the rule already allows. Where the target may well be
-settled but the evidence that would confirm it could not be read, that is unverified. Neither is a
-defect, and neither licenses picking a value.
+settled but the corroborating evidence this table requires could not be read, or does not exist
+yet, that is unverified: a definite body line with no current PR and no assignment is the ordinary
+case of it. Neither outcome is a defect, and neither licenses picking a value.

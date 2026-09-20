@@ -29,7 +29,7 @@ Give every judged item one disposition:
 | Gap | The rule applies and the record falls short of it. Whether that gap is written or only proposed is decided separately, under [Supplement within authority](#supplement-within-authority) |
 | Exception | The rule's own text exempts this record: non-development work, an unresolved target, or a preserved historical multi-repository case |
 | Conflict | Sources that should agree do not, so no supplement follows from the evidence |
-| Unverified | A partial listing, a read failure, an unknown-result write, or missing access left the question open |
+| Unverified | A partial listing, a read failure, an unknown-result write, missing access, or corroborating evidence the rule requires that does not exist yet, left the question open |
 
 An exception is not a defect and is reported as the exception it is. A conflict is recorded with the disagreeing sources and the decision that would settle it; do not resolve it by taking whichever reading needs the smallest edit. Unverified is the honest outcome of a failed or partial read, and it never becomes "no violation found".
 
