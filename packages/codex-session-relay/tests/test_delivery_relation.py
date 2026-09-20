@@ -199,6 +199,47 @@ class TheLinkageDecidesWhoReceives(LinkageTestCase):
         self.assertEqual(raised.exception.reason, RefusalReason.LINK_CONFLICT)
         self.assertIn("instruction_conflict", str(raised.exception))
 
+
+    def test_a_retained_audit_conflict_does_not_block_a_healthy_delivery(self):
+        """RED against my own previous fix: linkage_conflicts rows never clear.
+
+        up() folds every retained conflict row for the scope into the same contention list, and
+        nothing deletes them - they exist to remember a refused write. Refusing on them would let
+        one historical rejected mutation block this scope's deliveries forever.
+        """
+        service = self.service({
+            "state": "registered", "readable": True, "gaps": [],
+            # The shape conflicts() returns: keyed by reason, with no "contention" key.
+            "contention": [{"at": "2026-01-01T00:00:00Z", "scopeKind": PROJECT_SCOPE,
+                            "scopeKey": "PRJ-1", "reason": "duplicate_scope_owner",
+                            "incumbent": "parent-task", "challenger": "someone-else",
+                            "detail": None}],
+            "levels": [
+                {"scopeKind": PROJECT_SCOPE, "scopeKey": "PRJ-1",
+                 "owner": {"taskId": "parent-task", "revision": 3}, "depth": 1},
+            ],
+        })
+        who, how = service.resolve_recipient(_relationship(), COMPLETION)
+        self.assertEqual(who, "parent-task")
+        self.assertTrue(how["verified"])
+
+    def test_a_live_finding_beside_an_audit_row_still_refuses(self):
+        service = self.service({
+            "state": "registered", "readable": True, "gaps": [],
+            "contention": [
+                {"scopeKey": "PRJ-1", "reason": "duplicate_scope_owner", "incumbent": "a",
+                 "challenger": "b", "at": "2026-01-01T00:00:00Z", "detail": None},
+                {"contention": "owner_drift", "scopeKind": PROJECT_SCOPE, "scopeKey": "PRJ-1"},
+            ],
+            "levels": [
+                {"scopeKind": PROJECT_SCOPE, "scopeKey": "PRJ-1",
+                 "owner": {"taskId": "parent-task", "revision": 3}, "depth": 1},
+            ],
+        })
+        with self.assertRaises(DeliveryRefused) as raised:
+            service.resolve_recipient(_relationship(), COMPLETION)
+        self.assertEqual(raised.exception.reason, RefusalReason.RELATION_OWNER_DRIFT)
+
     def test_an_undefined_direction_resolves_no_recipient(self):
         service = self.service({"state": "registered", "readable": True, "levels": [],
                                 "gaps": [], "contention": []})

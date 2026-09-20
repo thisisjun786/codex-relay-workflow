@@ -137,7 +137,15 @@ class DeliveryService:
         # project binding can still name the outgoing parent, which is exactly the frozen value
         # this method is trying not to trust - so an owner check alone would agree with the row
         # and deliver to the parent that is stepping down.
-        contention = reading.get("contention") or []
+        # Only the walk's own LIVE findings, never the retained audit rows. up() folds every
+        # linkage_conflicts row for the scope into the same list, and nothing ever deletes those:
+        # they exist to remember a refused write. Refusing on them would let one historical
+        # rejected mutation block this scope's deliveries permanently. The two are distinguishable
+        # in the record rather than by guesswork - a walk finding carries a "contention" key
+        # (owner_drift, competing_owners, competing_parents, scope_cycle, instruction_conflict,
+        # ambiguous_scope) and an audit row carries "reason" and no "contention".
+        contention = [item for item in (reading.get("contention") or [])
+                      if item.get("contention")]
         if contention:
             drifting = any(item.get("contention") == "owner_drift" for item in contention)
             raise DeliveryRefused(
