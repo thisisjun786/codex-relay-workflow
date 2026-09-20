@@ -3,7 +3,11 @@
 Use when a check covers a project, an initiative, or an issue that carries agreed
 dates. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
 which [crw-plan](../../crw-plan/SKILL.md) owns and which CRW-143 adds to that
-reference, together with the delivery evidence this skill already pins. It decides
+reference, together with the delivery evidence this skill already pins. Until that
+section lands, the fields have no shipped source: read whatever schedule the request
+itself supplies, report the schedule as unchecked where it does not, and do not
+reconstruct the contract here. The list below names the fields this procedure reads
+and is not their definition. It decides
 whether each result is ahead of, on, or behind its agreed date, and which later
 result a slip actually blocks. It does not write a schedule, define a contract
 field, keep a second copy of any date, or replace the criterion comparison it runs
@@ -107,9 +111,11 @@ nothing about when it will land.
 ## Name the risk
 
 Before the deadline, only these observations make a result at risk, and each carries
-one wait class. A required predecessor that is itself late or at risk on its current
-axis, or whose current target date is not earlier than this result's deadline so the
-ordering cannot hold: internal coordination wait. The required delivery level
+one wait class. A required predecessor that is unachieved and is itself late or at
+risk on the axis being judged, or that is unachieved and whose target date on that
+axis is not earlier than this result's deadline so the ordering cannot hold:
+internal coordination wait. An achieved predecessor is never a risk, whatever its
+date said. The required delivery level
 unreached while a lower one has been reached: internal coordination wait, or
 external failure where an attempt was made and failed outside the team's control. An
 approval or decision the criteria require and the user has not given: user decision
@@ -117,8 +123,10 @@ wait. An active pause or blocker, classified by its recorded source — the user
 paused it, user decision wait; the team paused it, internal coordination wait; an
 outage stopped it, external failure.
 
-A predecessor merely unfinished while still inside its own deadline is not one of
-these, or every dependent chain would sit permanently at risk. A predecessor that is
+Where more than one observation holds, the result is still at risk once any does,
+and every observation that holds is reported with its own cause and wait class
+rather than one being chosen over the others. A predecessor merely unfinished while
+still inside its own deadline is not one of these, or every dependent chain would sit permanently at risk. A predecessor that is
 undecidable is not one either; it leaves the successor's impact unverified. Any
 other observation is a note in the report and changes no verdict.
 
@@ -126,15 +134,17 @@ other observation is a note in the report and changes no verdict.
 
 Aggregate over every result with a decidable verdict that is due at or before the
 observation, or achieved, or carrying a risk observation. The overall verdict is the
-most severe in that set: late, then at risk, then on plan, then ahead. Ahead needs
-every member achieved and at least one ahead.
+most severe in that set: late, then at risk, then on plan, then ahead. The severity
+order decides alone, so the scope is ahead only when every member is ahead: one
+early result beside an on-time one leaves the scope on plan, because the scope as a
+whole was not delivered early.
 
-Where no result in the requested scope has a decidable verdict, the overall result
-is undecidable and the scope is partially checked; it never defaults to on plan.
-Where the set is empty and an undecidable result is already due, the overall result
-is likewise undecidable and partially checked, because a deadline that passed
-unchecked cannot be reported as nothing due yet. Only an empty set with no due
-undecidable result is on plan, nothing due yet.
+Where the set is empty, decide in this order. Where no result in the requested scope
+has a decidable verdict at all, the overall result is undecidable and the scope is
+partially checked; it never defaults to on plan. Otherwise, where any undecidable
+result is already due, the overall result is likewise undecidable and partially
+checked, because a deadline that passed unchecked cannot be reported as nothing due
+yet. Otherwise the scope is on plan, nothing due yet.
 
 Undecidable never enters the severity order. Report it beside the overall verdict as
 unchecked scope, naming how many results and why, so an undecidable result cannot
@@ -229,7 +239,11 @@ answer it rules out. Derive the expectation from the observation before reading 
 rules back; that derivation is the check, and matching wording is not. These cases
 establish that the procedure agrees with itself. They are not evidence of runtime
 behavior, and they do not establish that a separate status report reaches the same
-verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated.
+verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated. Each case
+lists every input that bears on its verdict, so an observation it does not list did
+not hold, and where it names only a current target the baseline carries the same
+date with no change source, leaving both axes in agreement and only the current one
+worth discussing.
 
 1. **Early completion.** M1, current target 2026-09-20, required level installed,
    installation receipt 2026-09-18T14:00, observed 2026-09-21T09:00. Ahead, actual
@@ -308,19 +322,22 @@ verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated.
     +1h15m, reported as a completed result rather than as elapsed time, not on plan
     from the day-granularity rule applied to a timed target.
 
-13. **Parallel issues where only one blocks.** I-15, I-16, and I-17 run in parallel
-    and only I-15 is a required predecessor of M3. I-15 is late; I-16 and I-17 are on
-    plan against their own later dates. The project's completion condition requires M3
-    and M4, and M4 has no required predecessor among the three. Observed 2026-09-21.
-    M3 blocked by I-15, with I-16 and I-17 named as not blocking; the project affected
-    at M3 while M4 and the parallel issues continue; the project not reported blocked.
-    Not whole-project blockage, and not I-17 named because it is the newest.
+13. **Parallel issues where only one blocks.** I-15, I-16, and I-17 run in parallel,
+    all requiring a merge. I-15's current target is 2026-09-15 and it has no merge;
+    I-16's is 2026-09-28 and I-17's is 2026-09-30, both unachieved with nothing else
+    observed. Only I-15 is a required predecessor of M3, whose current target is
+    2026-10-05. The project's completion condition requires M3 and M4, and M4 has no
+    required predecessor among the three. Observed 2026-09-21. I-15 late by 6 days;
+    I-16 and I-17 on plan, nothing due yet; M3 blocked by the unachieved I-15, with
+    I-16 and I-17 named as not blocking; the project affected at M3 while M4 and the
+    parallel issues continue, and not reported blocked. Not whole-project blockage,
+    and not I-17 named because it is the newest.
 
 14. **A kind that carries no commitment.** The contract records I-18's kind as
     carrying no commitment date because it records when work actually began, and
     I-19's as carrying none because authority is still pending; I-19 is a required
-    predecessor of a due result S whose criteria need that decision. Observed
-    2026-09-21. I-18 and I-19 both outside the judged set, kept as evidence and listed
+    predecessor of S, whose current target is 2026-09-25, which is unachieved and
+    whose criteria need that pending decision. Observed 2026-09-21. I-18 and I-19 both outside the judged set, kept as evidence and listed
     under unchecked scope; S at risk, cause an approval the criteria require and the
     user has not given, wait class user decision wait. Not a start record read as a
     deadline, and not a target invented for a kind that carries none.
@@ -332,8 +349,9 @@ verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated.
     internal coordination wait. A later reader at 2026-09-29 holds the same revision,
     criteria, and schedule fields and wants a current verdict. The merge is reused with
     its original observed-at and not gathered again; the installation-not-present claim
-    is not carried forward, so it is observed again at this query or I-20 is reported
-    partially checked with the 2026-09-21 observed-at; the verdict and its cause are
+    is not carried forward, so it is observed again at this query or I-20 is undecidable
+    on that reading, reason the installation state not observed at this query, and the
+    scope is reported partially checked with the 2026-09-21 observed-at; the verdict and its cause are
     recomputed from the recorded inputs rather than re-audited. At 2026-10-01, past the
     target and with no new evidence, the verdict is not carried forward and I-20 is
     undecidable pending a re-read rather than late. Not a stale verdict carried past
