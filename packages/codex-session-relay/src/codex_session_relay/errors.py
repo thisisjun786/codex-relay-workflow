@@ -93,6 +93,26 @@ class RefusalReason(str, Enum):
     # send the block again and nothing to roll back to.
     RESTORATION_UNDELIVERABLE = "restoration_undeliverable"
 
+    # Three-level execution linkage: an initiative supervisor over a project parent over an
+    # issue child, plus peer links between parents. Each refusal the contract asks to be told
+    # apart gets its own reason, because collapsing two of them is indistinguishable from not
+    # detecting one of them.
+    UNREGISTERED_SCOPE = "unregistered_scope"
+    SCOPE_ROLE_MISMATCH = "scope_role_mismatch"
+    SCOPE_CYCLE = "scope_cycle"
+    FOREIGN_SCOPE = "foreign_scope"
+    DUPLICATE_SCOPE_OWNER = "duplicate_scope_owner"
+    HANDOVER_UNCONFIRMED = "handover_unconfirmed"
+    LINK_CONFLICT = "link_conflict"
+    LINK_NOT_ACTIVE = "link_not_active"
+    # One task is bound to ONE Linear level by stable id. A second live binding of the same
+    # role for the same task is its own refusal, told apart from a second OWNER of one scope.
+    ROLE_ALREADY_BOUND = "role_already_bound"
+    # A handover that would leave work behind it cannot move. Distinct from an unconfirmed
+    # one: the caller restated the outstanding set correctly and the operation is still
+    # refused, because the endpoint it would have to move is part of an assignment's identity.
+    HANDOVER_WOULD_STRAND = "handover_would_strand"
+
 
 class RelayError(Exception):
     """Base for every refusal this package raises."""
@@ -128,3 +148,7 @@ class AckRefused(RelayError):
 
 class StoreFault(RelayError):
     """Raised only by an injected fault hook, to prove a transaction rolls back."""
+
+
+class LinkageError(RelayError):
+    """A scope binding or a link between scopes was refused, and the reason says why."""
