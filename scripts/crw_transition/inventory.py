@@ -247,6 +247,25 @@ def span_blocks(span):
     return [block for block in out if block.strip()]
 
 
+def newline_spelling(path):
+    """Whether this file is written in the newline spelling this command can write back.
+
+    True for a file with no CRLF, False for one that has any, None when the bytes cannot be read.
+
+    It has to come from the bytes, because every other reading here has already lost the answer:
+    read_text translates universal newlines, so a CRLF configuration arrives as LF, the span is
+    rendered in LF, it compares equal to what this repository renders, and the table reads as
+    proven. The removal is then computed on the translated text and written back -- which rewrites
+    every line ending in the file, outside the block as well as inside it, while the step reports
+    that it left every other byte. The byte check cannot see it either: both sides of that
+    comparison are already translated.
+    """
+    try:
+        return b"\r\n" not in Path(path).read_bytes()
+    except OSError:
+        return None
+
+
 def span_is_ours(span, name, registration, policy, foreign):
     """Whether every block of this span is one this command renders, and why it is not.
 
@@ -279,9 +298,13 @@ def span_is_ours(span, name, registration, policy, foreign):
     for block in blocks[1:]:
         matched = [tool for tool, rendered in wanted.items() if rendered == block.strip()]
         if not matched:
-            return False, ("the table carries " + repr(block.splitlines()[0].strip())
-                           + ", which is not the command, the arguments, or an approval policy this"
-                           " repository renders")
+            header = block.splitlines()[0].strip()
+            child = "[mcp_servers." + codexconfig.key(name) + "." + POLICY_FIELD + "."
+            return False, ("the table carries " + repr(header) + ", which is not the command, the"
+                           " arguments, or an approval policy this repository renders"
+                           + (". A policy this command can prove is exactly two lines, the header"
+                              " and " + APPROVAL_KEY + ", with nothing else in the block"
+                              if header.startswith(child) else ""))
         seen.append(matched[0])
     missing = sorted(set(wanted) - set(seen))
     if missing:
@@ -894,6 +917,20 @@ def read_mcp(codex_home, *, name=SERVER_NAME, text_value=None):
                 ours, why_not = (span_is_ours(span, name, registration, answer["policy"],
                                               answer["foreignFields"])
                                  if span is not None else (False, None))
+                # Asked of the bytes, not of the translated text, and asked here rather than
+                # inside span_is_ours because it is a property of the file rather than of the
+                # span. A caller handing in text_value still gets it: the path is what is read.
+                spelling = newline_spelling(path)
+                if ours and spelling is not True:
+                    ours = False
+                    why_not = ("this configuration is written with CRLF line endings, which this"
+                               " command cannot write back: it reads the file with universal"
+                               " newlines, so removing the table would rewrite every line ending"
+                               " in it, outside this table as well as inside"
+                               if spelling is False else
+                               "the configuration's bytes could not be read, so whether removing"
+                               " the table would rewrite the rest of the file was not"
+                               " established")
                 # Both, and in this order. span_is_ours judges the bytes; removal_is_structural asks
                 # a parser whether taking them out actually unregisters this server and leaves every
                 # other one alone. A policy table sitting outside the span passes the first and

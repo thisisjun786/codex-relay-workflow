@@ -4224,3 +4224,88 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(host.config(), before)
         self.assertIn("[mcp_servers.codex-thread-bridge]", host.config())
         self.assertIn("approval_mode", host.config())
+
+    # ---------------------------------------------------------------- adversarial byte forms
+    #
+    # D4 widened what the standdown will delete: a proven span can now carry approval tables that
+    # an operator wrote by hand. Every case below is a way for table_span, which reads lines, to
+    # disagree with tomllib about where a table starts and ends. removal_is_structural exists to
+    # catch exactly that, and until these run it is asserted rather than demonstrated.
+
+    def refuses_unchanged(self, host, why=None):
+        """Run the transition and require it to change nothing. Returns the refusal detail."""
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"], indent=2)[:1200])
+        self.assertEqual(host.config(), before, "the configuration was modified")
+        detail = " ".join(item.get("detail") or "" for item in answer["results"])
+        if why:
+            self.assertIn(why, detail)
+        return detail
+
+    @needs_reader
+    def test_a_comment_inside_a_policy_block_leaves_the_table_unproven(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           '# an operator note\napproval_mode = "approve"\n')
+        detail = self.refuses_unchanged(host)
+        # The reason says which byte form IS provable, so a reader is not left guessing.
+        self.assertIn("exactly two lines", detail)
+
+    @needs_reader
+    def test_crlf_line_endings_leave_the_table_unproven(self):
+        host = self.granted(self.ready())
+        path = host.home / "config.toml"
+        path.write_bytes(path.read_text(encoding="utf-8").replace("\n", "\r\n")
+                         .encode("utf-8"))
+        self.refuses_unchanged(host)
+
+    @needs_reader
+    def test_a_dotted_policy_key_leaves_the_table_unproven(self):
+        """tools.create_thread.approval_mode is the same policy in a form we cannot render back."""
+        host = self.ready()
+        text = host.config().replace(
+            '[mcp_servers.codex-thread-bridge]',
+            '[mcp_servers.codex-thread-bridge]\ntools.create_thread.approval_mode = "approve"')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        self.refuses_unchanged(host)
+
+    @needs_reader
+    def test_an_inline_policy_table_leaves_the_table_unproven(self):
+        host = self.ready()
+        text = host.config().replace(
+            '[mcp_servers.codex-thread-bridge]',
+            '[mcp_servers.codex-thread-bridge]\n'
+            'tools = { create_thread = { approval_mode = "approve" } }')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        self.refuses_unchanged(host)
+
+    @needs_reader
+    def test_a_fake_header_inside_a_multiline_string_does_not_become_a_table(self):
+        """table_span reads lines, and a line inside a multiline string can look exactly like one."""
+        host = self.granted(self.ready())
+        host.append_config('\n[some.other.table]\nnote = """\n'
+                           '[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           'approval_mode = "approve"\n"""\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
+        # Whatever it decides, the bystander's string must survive intact and the decision must
+        # not have been made by reading that string as structure.
+        self.assertIn('note = """', host.config())
+        if code == 0:
+            self.assertIn("[some.other.table]", host.config())
+            self.assertIn("approval_mode", host.config(),
+                          "the text inside the multiline string was removed as if it were a table")
+        else:
+            self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_an_array_of_tables_named_mcp_servers_is_refused_rather_than_misread(self):
+        host = self.ready()
+        (host.home / "config.toml").write_text(
+            '[[mcp_servers]]\nname = "codex-thread-bridge"\n'
+            + host.config(), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertEqual(host.config(), before)
