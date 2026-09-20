@@ -174,6 +174,51 @@ class Linkage:
             (scope_kind, scope_key),
         )]
 
+    def _live_owners_in(self, db, scope_kind, scope_key, role):
+        """Every live owner of a scope, on the CALLER's connection. The writer's owners().
+
+        A store whose live-owner index could not be installed can hold two, and a writer that
+        takes whatever fetchone() returned accepts one of them - the same guess the readers
+        refuse to make, made where it becomes a durable edge rather than an answer. Every
+        write path that asks who owns a scope asks here, and refuses when the answer is more
+        than one.
+        """
+        return db.execute(
+            "SELECT task_id FROM scope_bindings"
+            "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+            "    AND status IN ('active','paused') AND superseded_by IS NULL"
+            "  ORDER BY task_id",
+            (scope_kind, scope_key, role),
+        ).fetchall()
+
+    @staticmethod
+    def _contested_owner(scope_kind, scope_key, rows, challenger):
+        """The refusal a writer owes when a scope it must write under has several owners."""
+        return _Refusal(
+            RefusalReason.DUPLICATE_SCOPE_OWNER,
+            scope_kind + " " + repr(scope_key) + " has more than one live owner ("
+            + ", ".join(repr(row["task_id"]) for row in rows)
+            + "), so there is no owner to write under. The reading paths report this and the"
+            " writing paths refuse it; repair the store rather than letting one of them win",
+            scope_kind=scope_kind, scope_key=scope_key,
+            incumbent=rows[0]["task_id"], challenger=challenger)
+
+    @staticmethod
+    def _refusing(reason, detail, *, scope_kind, scope_key, incumbent="", challenger=""):
+        """An error that still carries the refusal behind it.
+
+        A raise from inside somebody else's transaction rolls that transaction back, and a
+        bare LinkageError leaves nothing to record afterwards. Carrying the _Refusal on the
+        error lets the caller write the contest once the rollback is over, which is what every
+        linkage write path promises and what a lifecycle refusal reached through resume was
+        quietly not doing.
+        """
+        refusal = _Refusal(reason, detail, scope_kind=scope_kind, scope_key=scope_key,
+                           incumbent=incumbent, challenger=challenger)
+        error = refusal.error()
+        error.raced_refusal = refusal
+        return error
+
     def _sole_owner(self, scope_kind, scope_key, contention):
         """The one live owner, or None with the contest appended to contention.
 
@@ -526,12 +571,27 @@ class Linkage:
         # At most ONE execution edge per project, whichever initiative or parent it names. A
         # rule that refused only a DIFFERENT parent let a second initiative naming the same
         # parent derive another link id and take a second execution edge.
-        owning = db.execute(
+        # Every live execution edge, not the first one. scope_links_one_live_edge is a guard
+        # index like the owner one, so a store that could not install it can hold two - and a
+        # writer reading only the first would supervise a project whose supervision is already
+        # contested.
+        owning_rows = db.execute(
             "SELECT link_id, upper_key, lower_task_id FROM scope_links"
             "  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"
-            "    AND status IN ('active','paused') AND superseded_by IS NULL",
+            "    AND status IN ('active','paused') AND superseded_by IS NULL"
+            "  ORDER BY link_id",
             (PROJECT, project_key),
-        ).fetchone()
+        ).fetchall()
+        if len(owning_rows) > 1:
+            return _Refusal(
+                RefusalReason.DUPLICATE_SCOPE_OWNER,
+                "project " + repr(project_key) + " already has more than one live execution "
+                "supervision (" + ", ".join(row["link_id"] for row in owning_rows)
+                + "), so there is no single supervision to register beside. The reading paths "
+                "report this as competing_parents; repair the store rather than adding to it",
+                scope_kind=PROJECT, scope_key=project_key,
+                incumbent=owning_rows[0]["upper_key"], challenger=initiative_key)
+        owning = owning_rows[0] if owning_rows else None
         if link_kind == EXECUTION and owning is not None:
             return _Refusal(
                 RefusalReason.DUPLICATE_SCOPE_OWNER,
@@ -615,13 +675,13 @@ class Linkage:
                 frontier.append((row["lower_kind"], row["lower_key"]))
         return ""
 
-    def _insert_link(self, db, lid, kind, upper, lower, *, at, revision=1):
+    def _insert_link(self, db, lid, kind, upper, lower, *, at, revision=1, status=ACTIVE):
         db.execute(
             "INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key,"
             " upper_task_id, lower_kind, lower_key, lower_task_id, status, revision,"
             " superseded_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?)",
             (lid, kind, upper[0], upper[1], upper[2], lower[0], lower[1], lower[2],
-             ACTIVE, revision, at, at),
+             status, revision, at, at),
         )
         self.store.journal(
             "scope_linked", lid,
@@ -724,7 +784,7 @@ class Linkage:
         parent_task = relationship_row["parent_task_id"]
         child_task = relationship_row["child_task_id"]
         _exact(project_key, "a project key")
-        if relationship_row["status"] != ACTIVE or relationship_row["superseded_by"]:
+        if relationship_row["status"] not in LIVE or relationship_row["superseded_by"]:
             return None, _Refusal(
                 RefusalReason.RELATIONSHIP_NOT_ACTIVE,
                 "relationship " + repr(rid) + " is " + repr(relationship_row["status"])
@@ -738,12 +798,11 @@ class Linkage:
                 "is a self-link rather than a level",
                 scope_kind=ISSUE, scope_key=issue_key,
                 incumbent=parent_task, challenger=child_task)
-        holder = db.execute(
-            "SELECT task_id FROM scope_bindings"
-            "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
-            "    AND status IN ('active','paused') AND superseded_by IS NULL",
-            (PROJECT, project_key, PARENT),
-        ).fetchone()
+        owning_rows = self._live_owners_in(db, PROJECT, project_key, PARENT)
+        if len(owning_rows) > 1:
+            return None, self._contested_owner(
+                PROJECT, project_key, owning_rows, parent_task)
+        holder = owning_rows[0] if owning_rows else None
         if holder is None:
             return None, _Refusal(
                 RefusalReason.UNREGISTERED_SCOPE,
@@ -841,7 +900,13 @@ class Linkage:
         issue_key = relationship_row["issue_key"]
         parent_task = relationship_row["parent_task_id"]
         child_task = relationship_row["child_task_id"]
-        self.apply_binding_plan(db, binding, at=at)
+        # The lower level arrives in the state the assignment is in. A paused assignment is
+        # live ownership everywhere else here, and attaching one as ACTIVE would have made the
+        # migration into the hierarchy the one place that disagreed - a paused child holding
+        # an active binding, which is the split state this path exists to prevent.
+        lower_status = relationship_row["status"] if relationship_row["status"] in LIVE \
+            else ACTIVE
+        self.apply_binding_plan(db, binding, status=lower_status, at=at)
         if scope_row_missing:
             db.execute(
                 "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at)"
@@ -852,7 +917,7 @@ class Linkage:
         edge = db.execute("SELECT * FROM scope_links WHERE link_id = ?", (lid,)).fetchone()
         if edge is None:
             self._insert_link(db, lid, EXECUTION, (PROJECT, project_key, parent_task),
-                              (ISSUE, issue_key, child_task), at=at)
+                              (ISSUE, issue_key, child_task), at=at, status=lower_status)
         elif edge["status"] not in LIVE or edge["lower_task_id"] != child_task:
             # Reactivate AND repoint. The edge's identity is scope-only, so after a replacement
             # archived the old one the row still exists: writing only absent facts would leave
@@ -861,7 +926,7 @@ class Linkage:
                 "UPDATE scope_links SET status = ?, lower_task_id = ?, upper_task_id = ?,"
                 " revision = revision + 1, superseded_by = NULL, updated_at = ?"
                 "  WHERE link_id = ?",
-                (ACTIVE, child_task, parent_task, at, lid),
+                (lower_status, child_task, parent_task, at, lid),
             )
             self.store.journal(
                 "scope_link_repointed", lid, {"lowerTaskId": child_task}, at=at)
@@ -980,7 +1045,7 @@ class Linkage:
                 (PROJECT, scoped["project_key"], PARENT),
             ).fetchone()
             if holder is None or holder["task_id"] != row["parent_task_id"]:
-                raise LinkageError(
+                raise self._refusing(
                     RefusalReason.FOREIGN_SCOPE,
                     "project " + repr(scoped["project_key"]) + " is now parented by "
                     + (repr(holder["task_id"]) if holder else "nobody")
@@ -988,6 +1053,9 @@ class Linkage:
                     + repr(relationship_id) + " would reattach its issue under an owner the "
                     "project no longer has; re-register the assignment under the current "
                     "parent instead",
+                    scope_kind=PROJECT, scope_key=scoped["project_key"],
+                    incumbent=(holder["task_id"] if holder else ""),
+                    challenger=row["parent_task_id"],
                 )
             # Reactivating must not produce a second owner either. Cancelling RELEASES an
             # issue, so another child can be bound to it directly in the meantime; resume
@@ -1000,11 +1068,13 @@ class Linkage:
                 (ISSUE, row["issue_key"], CHILD, row["child_task_id"]),
             ).fetchone()
             if rival is not None:
-                raise LinkageError(
+                raise self._refusing(
                     RefusalReason.DUPLICATE_SCOPE_OWNER,
                     "issue " + repr(row["issue_key"]) + " is now held by "
                     + repr(rival["task_id"]) + ", so restoring "
                     + repr(row["child_task_id"]) + " would leave it with two owners",
+                    scope_kind=ISSUE, scope_key=row["issue_key"],
+                    incumbent=rival["task_id"], challenger=row["child_task_id"],
                 )
             # And the child must still be ELIGIBLE to hold it. The unique index is scoped by
             # issue, and resume only checks for a competing relationship on the same issue, so
@@ -1018,13 +1088,15 @@ class Linkage:
                 (row["child_task_id"], CHILD, row["issue_key"]),
             ).fetchone()
             if blocked is not None:
-                raise LinkageError(
+                raise self._refusing(
                     RefusalReason.ROLE_ALREADY_BOUND if blocked["role"] == CHILD
                     else RefusalReason.SCOPE_ROLE_MISMATCH,
                     "task " + repr(row["child_task_id"]) + " has since become the "
                     + blocked["role"] + " of " + blocked["scope_kind"] + " "
                     + repr(blocked["scope_key"]) + ", so it cannot be restored as the child "
                     "of issue " + repr(row["issue_key"]) + " as well",
+                    scope_kind=ISSUE, scope_key=row["issue_key"],
+                    incumbent=blocked["scope_key"], challenger=row["child_task_id"],
                 )
         db.execute(
             "UPDATE scope_bindings SET status = ?, updated_at = ?"
@@ -1254,12 +1326,12 @@ class Linkage:
                 "SELECT * FROM scope_links WHERE link_id = ?", (lid,)
             ).fetchone()
             for scope_key, endpoint in sides:
-                holder = db.execute(
-                    "SELECT task_id FROM scope_bindings"
-                    "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
-                    "    AND status IN ('active','paused') AND superseded_by IS NULL",
-                    (PROJECT, scope_key, PARENT),
-                ).fetchone()
+                held = self._live_owners_in(db, PROJECT, scope_key, PARENT)
+                if len(held) > 1:
+                    refusal = self._contested_owner(
+                        PROJECT, scope_key, held, endpoint.task_id)
+                    break
+                holder = held[0] if held else None
                 if holder is None or holder["task_id"] != endpoint.task_id:
                     refusal = _Refusal(
                         RefusalReason.SCOPE_ROLE_MISMATCH,

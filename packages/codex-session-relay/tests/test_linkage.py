@@ -343,13 +343,37 @@ class Attachment(LinkageTestCase):
                                       linkage.ISSUE, ISSUE)))
 
     def test_attaching_an_inactive_relationship_is_refused(self):
+        """Inactive means DEAD. This first used a paused assignment, which was wrong on the
+        module's own terms: paused is live ownership everywhere else here, and refusing it
+        made migrating an existing paused assignment into the hierarchy impossible without
+        first resuming it to active - a status change nobody asked for, to perform a read-only
+        migration. Archived and cancelled are what this rule is about."""
+        self.supervise()
+        for status in ("archived", "cancelled"):
+            relationship = self.registry.register(
+                parent=self.parent(), child=Endpoint("01child-" + status, HOST, cwd=self.root),
+                issue_key="REL-" + status, artifact_roots=[self.root],
+                allowed_recipients=[PARENT], dispatch_request_id="dispatch-" + status,
+                dispatch_turn_id="turn-" + status)
+            self.registry.set_status(relationship["relationshipId"], status, actor="test")
+            self.assertRefused(
+                RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+                self.linkage.attach_issue, relationship["relationshipId"], PROJECT,
+            )
+
+    def test_a_paused_assignment_can_still_be_migrated_into_the_hierarchy(self):
+        """And it arrives paused. Attaching it as active would have made this the one place
+        that disagreed about what paused means, and left a paused child holding a live
+        binding - the split state the lifecycle path exists to prevent."""
         self.supervise()
         relationship = self.register()
-        self.registry.set_status(relationship["relationshipId"], "paused", actor="test")
-        self.assertRefused(
-            RefusalReason.RELATIONSHIP_NOT_ACTIVE,
-            self.linkage.attach_issue, relationship["relationshipId"], PROJECT,
-        )
+        rid = relationship["relationshipId"]
+        self.registry.set_status(rid, "paused", actor="test")
+        self.linkage.attach_issue(rid, PROJECT)
+        owner = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertEqual(owner["taskId"], CHILD)
+        self.assertEqual(owner["status"], "paused")
+        self.assertEqual(self.linkage.attachment(rid)["link"]["status"], "paused")
 
     def test_an_issue_already_scoped_elsewhere_is_refused(self):
         rid = self.attached()
@@ -2189,6 +2213,67 @@ class TheFourteenthRoundFoundTheseToo(LinkageTestCase):
         self.assertIsNone(answer["projectParentTaskId"])
         self.assertIsNone(answer["parentOwnsProject"])
         self.assertEqual(answer["projectParentCandidates"], sorted([PARENT, OTHER_PARENT]))
+
+
+class TheFifteenthRoundFoundTheseToo(LinkageTestCase):
+    def contest_the_project(self):
+        """Give PROJECT a second live parent, the way a store with no guard index can."""
+        self.store.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                " superseded_by, handover_note, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,NULL,NULL,'active',2,NULL,NULL,NULL,?,?)",
+                (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT),
+                 linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT, HOST,
+                 "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+
+    def test_a_contested_project_refuses_an_attachment_rather_than_picking_an_owner(self):
+        """The readers report two live owners and the writers were still taking whichever row
+        came back first. That guess is worse on the write side: an attachment turns it into a
+        durable parent-to-issue edge for a project that has no sole parent."""
+        self.supervise()
+        relationship = self.register()
+        self.contest_the_project()
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER,
+            self.linkage.attach_issue, relationship["relationshipId"], PROJECT)
+        self.assertIsNone(self.linkage.attachment(relationship["relationshipId"]))
+        # And it is retained, like every other linkage refusal.
+        self.assertTrue(self.linkage.conflicts(linkage.PROJECT, PROJECT))
+
+    def test_a_contested_project_refuses_a_peer_link_too(self):
+        """Same single-row assumption, same answer: a peer link joins two project PARENTS, and
+        a project with two of them has none to join."""
+        self.supervise()
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
+        self.contest_the_project()
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.linkage.register_peer,
+            left_project=PROJECT, left_parent=self.parent(),
+            right_project=OTHER_PROJECT, right_parent=self.parent(OTHER_PARENT))
+
+    def test_a_refused_resume_still_leaves_its_contest(self):
+        """The refusal is decided inside resume's write transaction, so the rollback that
+        makes a refused resume leave both relationships untouched was also taking the conflict
+        row with it. Every other linkage write path keeps the contest it lost."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "archived", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint("01child-two", HOST))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertTrue(
+            self.linkage.conflicts(linkage.ISSUE, ISSUE),
+            "the refused resume left no record that it was contested")
+        # And it still rolled back whole.
+        self.assertEqual(self.registry.get(rid)["status"], "archived")
 
 if __name__ == "__main__":
     unittest.main()

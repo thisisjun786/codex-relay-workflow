@@ -793,6 +793,32 @@ class Registry:
         expect_allowed_recipients,
         actor: str,
     ) -> dict:
+        """Resume, and keep the contest if the lower level refuses.
+
+        The refusal is decided inside the write transaction, so the rollback that makes a
+        refused resume leave both relationships untouched would also take the conflict row
+        with it. The refusal travels out on the error and is written here, once the rollback
+        is over - the same shape register() uses, and the promise every other linkage write
+        path keeps.
+        """
+        try:
+            return self._resume_in_transaction(
+                rid, expect_generation=expect_generation,
+                expect_artifact_roots=expect_artifact_roots,
+                expect_allowed_recipients=expect_allowed_recipients, actor=actor)
+        except RelayError as failure:
+            self._record_raced(failure, self.clock.iso())
+            raise
+
+    def _resume_in_transaction(
+        self,
+        rid: str,
+        *,
+        expect_generation: int,
+        expect_artifact_roots,
+        expect_allowed_recipients,
+        actor: str,
+    ) -> dict:
         """Resuming requires restating the generation and scope being re-authorized.
 
         This is what stops a pause, an archive or a parent replacement from being undone by
