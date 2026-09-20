@@ -202,6 +202,11 @@ TEXT_EVIDENCE = {
         " already seated every call by the time it could be asked, and a call it could not"
         " seat looks the same as one it never made. Reading the file is the only way to find"
         " an arrival outside the grammar.",
+    "test_every_match_capture_outside_the_pairing_is_declared":
+        "the same of the match cases: the object has already run every case by the time it"
+        " could be asked, and a case whose capture was never paired to a value looks exactly"
+        " like one that binds nothing at all. Reading the file is the only way to find a case"
+        " arriving in a form the pairing does not settle.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -1084,7 +1089,115 @@ ARGUMENT_FORM_NOT_SEATED = {
     "a mapping this text cannot read":
         ("helper(**supplied)",
          "which names it carries is the same question, asked of the keywords. A mapping written"
-         " out names its own slots and IS seated; one handed over whole does not."),
+         " out over keys written out names its own slots and IS seated; one handed over whole"
+         " does not."),
+    "a mapping whose keys this text cannot read":
+        ("helper(**{name: ONE})",
+         "the mapping is written out and its SLOTS are not. Which parameter **{name: ONE}"
+         " fills is a fact about what name holds when the call runs, not about this text, so"
+         " there is no seating here to derive. This one is written down because the two sides"
+         " had already answered it differently: the binder seats a constant string key and"
+         " nothing else, while this reader accepted any written mapping as inside the grammar"
+         " -- so the call passed as seated, the value it carried was dropped, and the consumer"
+         " behind it went unaccounted for with nothing saying so."),
+}
+
+# Where a match case binds a name this reader cannot say the value of. A capture at the top of
+# a case takes the whole subject, and a capture inside a sequence pattern read against a
+# written sequence takes the element facing it -- the same written-on-both-sides pairing an
+# assignment gets. The forms below bind a name whose value is not settled by the text, and
+# each is named rather than guessed at or passed over.
+#
+# Shaped like HANDED_ON_THROUGH_A_TRANSFORMATION rather than like the seating list, because
+# the loss here has the same shape: the place WRITING the spelling is still found, and what is
+# lost is the consumer behind it. So every entry is RUN and holds both ends -- the named place
+# present, the consumer absent -- and a form that stops being a boundary makes this fail and
+# asks for its entry to be deleted. A blind spot with nothing that can fail is the same
+# "derived, therefore complete" claim wearing a different sentence.
+MATCH_CAPTURE_NOT_PAIRED = {
+    "a capture read against a subject this text cannot read":
+        (REFUSAL,
+         ("def helper():",
+          "    match holder(reading.UNREADABLE):",
+          "        case (answer,):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "a sequence pattern takes elements from the subject, so which element faces the"
+         " capture is a question about what the subject IS. Written out, the text answers it;"
+         " built by a call, only the run does. Reading a position off a subject this text"
+         " cannot see would be the set-unpacking mistake in another spelling."),
+    "a capture inside a mapping pattern":
+        (REFUSAL,
+         ("def helper():",
+          "    match {\"key\": reading.UNREADABLE}:",
+          "        case {\"key\": answer}:",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "a mapping pattern matches on keys, and whether this subject carries the key -- and"
+         " which written value sits under it -- is a lookup rather than a position. The"
+         " written-out case is real and could be paired one day; it is not paired today, and"
+         " the entry says so instead of the docstring implying otherwise."),
+    "a capture inside a class pattern":
+        (REFUSAL,
+         ("def helper():",
+          "    match (reading.UNREADABLE,):",
+          "        case Holder(answer):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "a class pattern binds from the subject's ATTRIBUTES after an isinstance test, so"
+         " what the capture takes is a fact about the class and the object rather than about"
+         " the text facing it. Following it means following attributes off an arbitrary"
+         " object, which is the point at which this reader would stop being one."),
+    "a capture inside a pattern with alternatives":
+        (REFUSAL,
+         ("def helper():",
+          "    match (reading.UNREADABLE,):",
+          "        case (answer,) | (_, answer):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "alternatives bind the same name from different positions and only the run says which"
+         " branch matched. Picking the first would answer from the order the source happens to"
+         " list, which is the thing this module refuses to do."),
+    "a capture in a sequence pattern with a starred element":
+        (REFUSAL,
+         ("def helper():",
+          "    match (reading.UNREADABLE, \"fine\"):",
+          "        case (answer, *rest):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "a star makes which element faces which capture depend on how many the subject"
+         " carries. An assignment unpacking is paired around a star because both sides are"
+         " written; here the same is true and is simply not done yet, so it is named rather"
+         " than left to look like support."),
+    "a capture beside an element that tests a value":
+        (REFUSAL,
+         ("def helper():",
+          "    match (reading.UNREADABLE, flag):",
+          "        case (answer, True):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper",
+         "the capture only reaches its body if the WHOLE pattern matches, and whether flag is"
+         " True is settled by the run rather than by the shape facing it. Pairing the capture"
+         " anyway would claim a consumer for a body that may never run -- a claim exceeding"
+         " the reach, which costs as much as missing one and is harder to see."),
 }
 
 # Where the thing is handed on through a TRANSFORMATION rather than as itself. This reader
@@ -4608,6 +4721,51 @@ RESOLVES_LIKE_PYTHON = {
          "SUPPORT, green at the parent: a capture binds whatever the subject is, so a subject"
          " this text cannot read binds nothing of the kind. Pairing captures must not have"
          " turned every match into a source read."),
+    "a capture nested in a sequence pattern read against a written subject":
+        (REFUSAL,
+         ("def helper():",
+          "    match (reading.UNREADABLE,):",
+          "        case (answer,):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "case (answer,) against a written one-tuple binds answer to the element facing it,"
+         " exactly as answer, = (reading.UNREADABLE,) does -- both sides are written and the"
+         " pairing is the same pairing. Only the TOP of a case was read, so the element"
+         " capture bound nothing, the helper handed the refusal on and the consumer behind it"
+         " was dropped. My own narrowing from the round before: I paired the subject, said in"
+         " the docstring that nested captures were not paired, and left nothing that could"
+         " fail when one arrived."),
+    "a capture nested in a sequence pattern read against a subject this text cannot read":
+        (REFUSAL,
+         ("def helper(given):",
+          "    match (given,):",
+          "        case (answer,):",
+          "            return answer",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", False,
+         "SUPPORT, green at the parent: the element facing the capture is written here, and"
+         " what it HOLDS is not. Pairing nested captures must not have turned a written tuple"
+         " of unknowns into a refusal the caller receives."),
+    "a mapping written out over a key written out":
+        (REFUSAL,
+         ("def identity(answer):",
+          "    return answer",
+          "",
+          "def helper():",
+          "    return identity(**{\"answer\": reading.UNREADABLE})",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "SUPPORT, green at the parent: narrowing the mapping grammar to keys written out has"
+         " to leave the mapping written out over a key written out exactly where it was. This"
+         " is the pair the narrowing must not break, and it is the half the binder beside it"
+         " already agreed with."),
     "a classmethod wearing an aliased decorator":
         (REFUSAL,
          ("cm = classmethod",
@@ -5457,6 +5615,103 @@ def _binds_locally(node):
     return found
 
 
+def _pattern_names(pattern):
+    """Every name a match pattern binds, however deep in the pattern it sits."""
+    found = set()
+    for inner in ast.walk(pattern):
+        if isinstance(inner, (ast.MatchAs, ast.MatchStar)) and inner.name:
+            found.add(inner.name)
+        elif isinstance(inner, ast.MatchMapping) and inner.rest:
+            found.add(inner.rest)
+    return found
+
+
+def _always_matches(pattern):
+    """Whether reaching this case is reaching its body, whatever the subject turns out to be."""
+    return isinstance(pattern, ast.MatchAs) and (
+        pattern.pattern is None or _always_matches(pattern.pattern))
+
+
+def _pattern_pairs(pattern, subject):
+    """The captures a case certainly binds, with the values they certainly take.
+
+    Answers two things: the pairs and no reason where the text settles the question, or no
+    pairs and the FORM that stopped it where it does not. The second half is the point. A
+    reader that simply returned nothing for the shapes it cannot follow would narrow itself
+    quietly, and a case binding a name it never accounted for would pass as though there were
+    nothing there -- which is the defect this module exists against. Here the shape comes back
+    named, and the caller emits it.
+
+    What is settled, and why: a capture at the top of a case takes the whole subject. A
+    capture inside a sequence pattern read against a written tuple or list of the same length
+    takes the element facing it, as many levels down as both sides stay written -- the same
+    pairing an assignment unpacking gets, for the same reason, that both sides are in the
+    text. A case binding no name is settled trivially. And a written pattern whose length
+    differs from a written subject is settled as well: it cannot match, so it binds nothing,
+    which is an answer rather than an absence.
+    """
+    if not _pattern_names(pattern):
+        # Nothing is bound, so there is no value here that could reach a consumer and nothing
+        # to be blind to. Leaving these out of the emitted list is what keeps it a set of real
+        # forms rather than a bucket that absorbs every pattern anyone ever writes.
+        return [], None
+    if isinstance(pattern, ast.MatchAs):
+        taken = ([(ast.copy_location(ast.Name(id=pattern.name, ctx=ast.Store()), pattern),
+                   subject)] if pattern.name else [])
+        if pattern.pattern is None:
+            return taken, None
+        # case (answer,) as whole: binds the subject AND whatever the inner pattern settles,
+        # and it only reaches the body if that inner pattern matches. So the inner question
+        # governs both, rather than the outer name being taken on its own.
+        inside, why = _pattern_pairs(pattern.pattern, subject)
+        return (None, why) if inside is None else (taken + inside, None)
+    if isinstance(pattern, ast.MatchSequence):
+        if not isinstance(subject, (ast.Tuple, ast.List)):
+            return None, "a capture read against a subject this text cannot read"
+        if any(isinstance(element, ast.MatchStar) for element in pattern.patterns):
+            return None, "a capture in a sequence pattern with a starred element"
+        if len(pattern.patterns) != len(subject.elts):
+            return [], None
+        taken = []
+        for element, given in zip(pattern.patterns, subject.elts):
+            if not _pattern_names(element):
+                # An element binding nothing still decides whether the case is reached at all,
+                # so a capture beside one that tests a value is not settled by the shape.
+                if not _always_matches(element):
+                    return None, "a capture beside an element that tests a value"
+                continue
+            inside, why = _pattern_pairs(element, given)
+            if inside is None:
+                return None, why
+            taken += inside
+        return taken, None
+    if isinstance(pattern, ast.MatchMapping):
+        return None, "a capture inside a mapping pattern"
+    if isinstance(pattern, ast.MatchClass):
+        return None, "a capture inside a class pattern"
+    if isinstance(pattern, ast.MatchOr):
+        return None, "a capture inside a pattern with alternatives"
+    return None, "a capture in a pattern form this text does not read"
+
+
+def _captures_not_paired(tree):
+    """Every match capture whose value is outside the pairing above, by the form that stops it.
+
+    The emitted half of that helper, shaped exactly like _seating_not_established: the reader
+    does not answer here, and it does not stay silent either. An occurrence arriving in a form
+    nobody wrote down fails acceptance instead of passing as though the case bound nothing.
+    """
+    outside = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Match):
+            continue
+        for case in node.cases:
+            taken, why = _pattern_pairs(case.pattern, node.subject)
+            if taken is None:
+                outside.setdefault(why, set()).add(case.pattern.lineno)
+    return {form: sorted(lines) for form, lines in outside.items()}
+
+
 def _bindings(node):
     """Each name a statement binds paired with what it is given, unpacking included.
 
@@ -5481,10 +5736,10 @@ def _bindings(node):
         # written forms are paired.
         holders, answer = [], None
     elif isinstance(node, ast.Match):
-        # match HERE: case path: binds path to the SUBJECT. A capture written at the top of a
-        # case binds the whole subject, which is a deterministic binding of exactly the kind
-        # this helper answers for; a capture nested inside a sequence or mapping pattern binds
-        # an element instead, so only the top-level one is paired here.
+        # match HERE: case path: binds path to the SUBJECT, and a capture inside a sequence
+        # pattern read against a written subject binds the element facing it. Which of the two
+        # -- and which forms are settled by neither -- is _pattern_pairs' question, and the
+        # forms it cannot settle are emitted by _captures_not_paired rather than dropped.
         holders, answer = [], None
     else:
         return []
@@ -5517,10 +5772,8 @@ def _bindings(node):
         return [entry for element in written if element is not None
                 for entry in pair(node.target, element)]
     if isinstance(node, ast.Match):
-        return [(ast.copy_location(ast.Name(id=case.pattern.name, ctx=ast.Store()),
-                                   case.pattern), node.subject)
-                for case in node.cases
-                if isinstance(case.pattern, ast.MatchAs) and case.pattern.name]
+        return [entry for case in node.cases
+                for entry in (_pattern_pairs(case.pattern, node.subject)[0] or [])]
     return [entry for holder in holders for entry in pair(holder, answer)]
 
 
@@ -5809,11 +6062,13 @@ def _seating_not_established(tree):
     """Every call argument whose seating is outside the grammar this reader supports.
 
     Seating an argument means saying which parameter it fills. The forms that answer that are
-    a written argument, a keyword, a written tuple or list unpacking, and a written mapping.
-    A SET unpacking is not one of them: a set has no order, so which element fills which slot
-    is not a fact the text holds, and reading it off the order the source happens to list
-    would be an answer taken from something that is not there. An unpacking or a mapping this
-    text cannot read is outside for the plainer reason.
+    a written argument, a keyword, a written tuple or list unpacking, and a written mapping
+    whose keys are written out as well. A SET unpacking is not one of them: a set has no
+    order, so which element fills which slot is not a fact the text holds, and reading it off
+    the order the source happens to list would be an answer taken from something that is not
+    there. An unpacking or a mapping this text cannot read is outside for the plainer reason,
+    and so is a mapping written out over a key this text cannot read: which slot it fills is
+    a fact about what the key expression holds at the call rather than about this text.
 
     Reported rather than guessed at AND rather than dropped. Nothing is seated past one of
     these, so the claim matches what was verified; and the occurrence is emitted here so an
@@ -5832,8 +6087,19 @@ def _seating_not_established(tree):
                                else "an unpacking this text cannot read",
                                set()).add(given.lineno)
         for word in node.keywords:
-            if word.arg is None and not isinstance(word.value, ast.Dict):
+            if word.arg is not None:
+                continue
+            if not isinstance(word.value, ast.Dict):
                 outside.setdefault("a mapping this text cannot read", set()).add(node.lineno)
+            elif any(not isinstance(key, ast.Constant) or not isinstance(key.value, str)
+                     for key in word.value.keys):
+                # The mapping is written out; its SLOTS are not. The binder beside this seats
+                # a constant string key and nothing else, so calling the whole mapping seated
+                # here said "inside the grammar" about a value that was then dropped, and the
+                # consumer behind it went unaccounted for. The two agreed on the answer and
+                # disagreed about whether it had been reached.
+                outside.setdefault("a mapping whose keys this text cannot read",
+                                   set()).add(node.lineno)
     return {form: sorted(lines) for form, lines in outside.items()}
 
 
@@ -9319,6 +9585,84 @@ class SevenReadingsTests(unittest.TestCase):
             "def consumer():",
             "    return helper()"))),
             "a set unpacking is declared unseatable and the seating answered anyway")
+        # SUPPORT, green at the parent: the same of the mapping whose SLOTS are not written.
+        # The parent dropped this consumer too -- what it lacked was anything saying so, which
+        # is what the declared entry above adds and what is measured red there.
+        self.assertNotIn("consumer", places_reached(REFUSAL, "\n".join((
+            "key = \"answer\"",
+            "",
+            "def identity(answer):",
+            "    return answer",
+            "",
+            "def helper():",
+            "    return identity(**{key: reading.UNREADABLE})",
+            "",
+            "def consumer():",
+            "    return helper()"))),
+            "a mapping over a key this text cannot read is declared unseatable and the seating"
+            " answered anyway")
+
+    def test_every_match_capture_outside_the_pairing_is_declared(self):
+        """Support: the boundary of match-capture pairing, held closed at both ends.
+
+        A case binds its captures whatever pattern they sit in, and the scope side has always
+        known that. What the PAIRING answers is which value each name takes, and for the forms
+        below the text does not settle it. Before this they simply came back empty, which from
+        outside is indistinguishable from a case that binds nothing at all -- so the consumer
+        behind one was dropped while the docstring said only that top-level captures were
+        paired. That sentence was true and it was not a control, which is the shape of claim
+        this module exists to refuse.
+
+        Labelled SUPPORT and not counted toward a criterion: the form this round's finding
+        named is RESOLVED rather than declared, and its evidence is the paired cases in
+        RESOLVES_LIKE_PYTHON. What is added here is that the forms still outside say so, which
+        is green at the parent only in the sense that the derivation it checks is not there.
+
+        Both ends, because either alone would rot. The place WRITING the spelling has to stay
+        found: if it stopped being found, the loss would be somewhere else entirely and this
+        would pass over a broken reader. The consumer behind it has to stay absent: if it
+        starts being found the boundary has closed and the entry has to be deleted. Beside
+        those, each declared form is reported on its own sample, the settled shapes are
+        reported as nothing so the boundary cannot creep over what IS answered, and a case
+        arriving in this module in a form nobody declared fails here.
+        """
+        self.assertTrue(MATCH_CAPTURE_NOT_PAIRED,
+                        "the declared pairing boundary is empty, so this check would pass by"
+                        " asserting nothing")
+        for form, (which, lines, named, why) in sorted(MATCH_CAPTURE_NOT_PAIRED.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                source = "\n".join(lines)
+                self.assertIn(form, _captures_not_paired(ast.parse(source)),
+                              form + ": its own sample is not reported, so this entry describes"
+                              " a form the pairing no longer meets")
+                places = places_reached(which, source)
+                self.assertIn(named, places,
+                              form + ": the place that writes the spelling is not found at all,"
+                              " so what is measured here is not the pairing boundary")
+                self.assertNotIn("consumer", places,
+                                 form + ": the consumer behind the capture IS found, so this"
+                                 " form is paired now and the entry has to go")
+        for settled in ("match ONE:\n    case answer:\n        pass",
+                        "match (ONE,):\n    case (answer,):\n        pass",
+                        "match ((ONE,), TWO):\n    case ((answer,), other):\n        pass",
+                        "match ONE:\n    case 1:\n        pass\n    case _:\n        pass",
+                        "match (ONE, TWO):\n    case (answer, _):\n        pass",
+                        "match (ONE, TWO):\n    case (answer,):\n        pass"):
+            with self.subTest(settled.replace("\n", " ")):
+                self.assertEqual(_captures_not_paired(ast.parse(settled)), {},
+                                 "a pattern the text settles was emitted as outside the"
+                                 " pairing, so the boundary has crept over what is answered: "
+                                 + json.dumps(settled))
+        self.assertTrue(_captures_not_paired(ast.parse(
+            "match given:\n    case (answer,):\n        pass")),
+            "the scan reports nothing on a case written to sit outside the pairing, so the"
+            " sweep below would pass by sweeping nothing rather than by finding nothing")
+        arrived = sorted(set(_captures_not_paired(ast.parse(
+            HERE.read_text(encoding="utf-8")))) - set(MATCH_CAPTURE_NOT_PAIRED))
+        self.assertEqual(arrived, [],
+                         "a match case in this module binds a name this reader cannot pair a"
+                         " value to, and nobody wrote down what it is: " + json.dumps(arrived))
 
     def test_a_refusal_nested_in_a_collection_is_still_collected(self):
         """The reach over written containers, asked of the objects rather than read off them.
@@ -10629,6 +10973,10 @@ HANDED = {
     "_default_applies": NOTHING,
     "_declared_owner": NOTHING,
     "_seating_not_established": NOTHING,
+    "_pattern_names": NOTHING,
+    "_always_matches": NOTHING,
+    "_pattern_pairs": NOTHING,
+    "_captures_not_paired": NOTHING,
     "_owner_names_a_class": NOTHING,
     "_bound_names": NOTHING,
     "_lambda_named": NOTHING,
@@ -10640,6 +10988,7 @@ HANDED = {
     "test_every_statement_reader_here_pairs_an_unpacking_off": NOTHING,
     "test_each_transformation_boundary_is_still_where_it_says": NOTHING,
     "test_every_argument_form_outside_the_seating_grammar_is_declared": NOTHING,
+    "test_every_match_capture_outside_the_pairing_is_declared": NOTHING,
     "test_a_refusal_nested_in_a_collection_is_still_collected": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
