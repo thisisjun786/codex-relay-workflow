@@ -13,10 +13,27 @@ restates them, and nothing here adds a preparation turn before the work starts.
 
 | Verdict | Established by | Not established by |
 |---|---|---|
-| Instruction existence | The dispatched prompt's own text, read back from the child's first user message | A packet draft, a template, or the coordinator's intent |
-| Settings request | The creation call's real arguments | A sentence in the prompt naming a model or a workflow |
-| Actual application | The creation receipt's returned model, effort, working directory and permission profile | A catalog entry, or the request quoted back |
+| Instruction existence | The text of THIS dispatch, read back from the child's own accepted turn and the assignment message matching it | A packet draft, a template, the coordinator's intent, the bootstrap and context messages a session opens with, or an earlier launch's prompt on a task being reused |
+| Settings request | The real arguments of the call that carried this dispatch | A sentence in the prompt naming a model or a workflow |
+| Settings observed on the task | The receipt's returned model, effort, working directory and permission profile, at the scope the receipt itself claims | A catalog entry, the request quoted back, or a conclusion about what the turn then ran on |
 | Loop execution | The child's own session binding, active goal, and current goalplan/FSM state | Opus as the served model, an active native goal, or the skill named in the prompt |
+
+Which dispatch is being judged decides which evidence answers. For a creation it is the
+assignment message and the creation arguments and receipt. For a reused task it is the
+correction or resume message and that mutation's own arguments and receipt: the original
+launch still shows whatever it carried, so reading it would pass a correction that dropped
+the workflow.
+
+Find the assignment message by the dispatch's own marker or receipt rather than by
+position. A session does not open with its assignment: the bootstrap and context messages
+a host injects arrive first and several of them carry the user role, so "the first user
+message" names one of those and would read every normally dispatched child as carrying no
+instruction at all.
+
+Third-column evidence is read at the scope its own transport claims, which for a settings
+receipt is an observation at creation or at resume rather than a guarantee about the turn
+that follows. What a turn actually ran under is shown by that turn's own record on the
+task, and where a claim needs that, the receipt does not supply it.
 
 Each verdict can hold while the next one fails, which is why a single pass/fail for
 "the child got its assignment" hides the defect rather than finding it. A packet that
@@ -27,7 +44,9 @@ a failed dispatch, and only the fourth column is wrong.
 ## What a missing Loop actually is
 
 Separate these seven outcomes before calling anything a defect. They need different
-repairs, and three of them are not defects at all.
+repairs, and two of them are not defects: L5 is the working case and L6 is an unknown
+rather than a finding. The authorized exceptions are not classes at all and are held by
+the contrast cases below.
 
 | Class | What happened | Distinguishing evidence |
 |---|---|---|
@@ -56,15 +75,21 @@ correction and [Restoration block](task-packet.md#restoration-block) for a resum
 
 ## Evidence rules that prevent a false verdict
 
-A single instantaneous reading is L6, not L0 or L1. A child still inside its first turn
+A single reading of activation state is L6, not L1. A child still inside its first turn
 reads exactly like a child that never armed anything, and the two only separate later.
-This was measured rather than assumed. In the 2026-09-21 batch of four implementation
-children, an early reading taken about two minutes after dispatch found three of them
-with no bound goalplan; their goalplans were in fact created at 17:50:03.696Z,
-17:50:06.093Z and 17:50:09.556Z against session starts at 17:47:2x-17:47:3xZ, roughly two
-and a half minutes in, and all four were subsequently running with persisted phases. Had
-the early reading been the verdict it would have recorded three false L1s. Pair an early
-reading with a later one, or read the child's own report, before assigning a class.
+This was measured rather than assumed. In one batch of four implementation children, a
+reading taken about two minutes after dispatch found three of them with no bound goalplan;
+all three had in fact armed by roughly two and a half minutes in, and all four went on to
+run with persisted phases. Had that reading been the verdict it would have recorded three
+false L1s. Pair an early reading with a later one, or read the child's own report, before
+assigning a class. The per-child timings behind this are operational evidence and stay in
+the private task record.
+
+Evidence that cannot change afterwards does not need that patience. A readback of the
+dispatched prompt showing neither an invocation nor a named alternative establishes L0 on
+its own, since no later state puts an invocation into a prompt already sent, and a
+recorded refusal establishes L2 the same way. The caution above is about negative state
+readings, not about definitive prompt evidence or a refusal that was actually observed.
 
 Arming telemetry is not the execution verdict in either direction. In the same sample one
 child recorded the arming pointer as seen while holding no goalplan yet, and an earlier
@@ -127,9 +152,9 @@ the absence of a keyword.
 **N1 — the assignment never carried it. Create. L0.** A child is created with the issue
 scope and the settings, and the prompt names no installed-skill invocation and no agreed
 alternative workflow. Evidence: the child's own first user message. Instruction existence
-fails while settings request and actual application both pass, which is why a receipt
-check alone reports this dispatch as clean. Failing case: recording the dispatch as sound
-because the model and effort came back correct.
+fails while the settings request and the settings observed on the task both pass, which is
+why a receipt check alone reports this dispatch as clean. Failing case: recording the
+dispatch as sound because the model and effort came back correct.
 
 **N2 — carried and never acted on. Create. L1.** The invocation is in the dispatched
 prompt and the child never loads or invokes the skill: no session binding, no
@@ -158,13 +183,14 @@ started with, or a compacted child never restores it. Evidence: earlier goalplan
 evidence, then later turns with none. Failing case: treating the transport's checkable
 settings as the whole restatement.
 
-**N6 — recovery that duplicates. Resume. L4 mis-repaired.** An assignment whose activation
-actually succeeded is recovered by opening a second goal and a second goalplan for the same
-issue. Evidence: two goalplans for one assignment, neither identifiable as current.
-Failing case: a resume that does not first read whether the goal and goalplan already
+N5 owns L4. Its recovery has a characteristic way of going wrong, recorded here as a
+subcase rather than a class of its own: an assignment whose activation actually succeeded
+is "recovered" by opening a second goal and a second goalplan for the same issue, leaving
+two where neither is identifiable as current. The evidence is those two goalplans, and the
+failing case is a resume that does not first read whether the goal and goalplan already
 exist.
 
-**N7 — a verdict reached too early. Any point. L6.** A class is assigned from one reading
+**N6 — a verdict reached too early. Any point. L6.** A class is assigned from one reading
 that cannot distinguish the classes, most often a child still inside its first turn.
 Evidence: the reading's own timestamp against the dispatch time, and the absence of a
 paired later reading. Failing case: recording L0 or L1 and correcting a child that was
@@ -175,9 +201,9 @@ arming normally. The honest verdict here is L6 and the repair is to read again.
 **C1 — a normal Loop child. L5.** Effective workflow is CXC Loop, the first full
 assignment carries the invocation with the applicable skills, and the child's first
 execution leaves a bound goalplan and persisted transitions it can name in its report.
-This needs no coordinator turn beyond reading what the child returns. The four children
-of the 2026-09-21 batch are this case, each arming within about two and a half minutes of
-its own first turn.
+This needs no coordinator turn beyond reading what the child returns. The four children of
+the measured batch are this case, each arming within about two and a half minutes of its
+own first turn.
 
 **C2 — an authorized non-Loop or read-only child. Not a class; an exception.** An explicit
 read-only, no-goal or non-Loop audit assignment omits the invocation and names the agreed

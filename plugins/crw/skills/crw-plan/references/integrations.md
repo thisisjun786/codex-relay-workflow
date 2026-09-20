@@ -131,8 +131,8 @@ Load the existing owner for the requested operation:
 | Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
-| Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
+| Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
+| Create/restore the project parent's native goal, which the role policy makes the default | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
@@ -593,14 +593,15 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns the project parent's native goal and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
 is a scheduling unit; only an explicit narrower request limits delivery to that batch.
 [crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
 and automatic host continuation to the same Run execution and scope. Run alone does
-not create a parent goal or promise future wake-ups. Run inside Loop returns to the
+not establish the parent goal or promise future wake-ups; the goal is the role default and
+`crw-loop` establishes it. Run inside Loop returns to the
 existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
 implementation phases are not completion conditions. Children keep their own CXC
@@ -647,7 +648,17 @@ The coordinator applies the effective settings through the creation tool's real 
 
 The first full assignment is checked against [First full assignment required fields](../../crw-run/references/task-packet.md#first-full-assignment-required-fields) before it is sent: the effective workflow with the skills to apply, the issue scope, the verification boundary, the handoff and completion boundary, and the model and effort. They travel in that first request and add no preparation turn before the work. Where a workflow with its own goal and state is effective, the child's first execution also leaves and reports its activation evidence, rather than that evidence appearing only in the final return.
 
-Judge a dispatch on four separate facts rather than one: the instruction the child actually received, the settings the creation call requested, the settings the receipt returned, and whether the child's own goal and goalplan state show the effective workflow running. Each can hold while the next fails. The served model being the defaulted one, an active native goal, or the skill named in the prompt is not evidence of the last, and a point-in-time reading of a child still inside its first turn is not evidence against it. [Dispatch verification](../../crw-run/references/dispatch-verification.md) holds the judgment cases, the classes a missing loop falls into, and the authorized exceptions that are not defects.
+Judge a dispatch on four separate facts rather than one: the instruction the child actually received for this dispatch, the settings the dispatching call requested, the settings the receipt returned at the scope it claims them, and whether the child's own goal and goalplan state show the effective workflow running. Each can hold while the next fails. The served model being the defaulted one, an active native goal, or the skill named in the prompt is not evidence of the last, and a single reading of a child still inside its first turn is not evidence against it. [Dispatch verification](../../crw-run/references/dispatch-verification.md) holds the judgment cases, the classes a missing loop falls into, and the authorized exceptions that are not defects.
+
+### Default parent start policy
+
+A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars the goal without authorizing goal-free Run and leaves unresolved activation `blocked`, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
+
+That number is the value chosen in one 2026-09-18 run and carried forward as the standing default. It is not a measurement of what this or any host supports, and [OPS-8.4](../../crw-run/references/operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs what may be claimed about scale, so a run that needs a different number states its own and records why. The default binds this parent's own children and is not a host-global limit: several parents share one operating scope under [OPS-3.1](../../crw-run/references/operations.md#ops-31-the-operating-scope-is-the-sharing-unit), each counts only its own children while what the others are running informs the observation that can lower the number, and nothing interlocks them.
+
+The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent creates or reuses its own goal for the approved project scope, without a CXC goalplan or FSM, its continuation being a bounded Stop nudge rather than a durable loop; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default replaced the earlier arrangement in which a parent ran goal-free unless a Loop was separately requested; an explicit user no-goal limit is separate and still wins. [Start policy](../../crw-run/references/start-policy.md) owns the role table, what the start adjudication records, and the compatibility and evidence rules.
+
+A value this precedence settles is applied without asking. A value it does not settle is a new decision, asked before anything is created rather than after. [Start policy](../../crw-run/references/start-policy.md) owns the recorded fields, the scope each decision carries, when a recorded decision is re-read instead of re-decided, and what bounds the number actually dispatched.
 
 ### Publish for review when the work is reviewable
 

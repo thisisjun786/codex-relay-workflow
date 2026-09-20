@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors under the project parent's own native goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -18,8 +18,9 @@ checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
 Run owns project execution, including newly ready successors within the agreed scope.
-[crw-loop](../crw-loop/SKILL.md) adds a separately requested parent goal and host-driven
-continuation to that same execution; it does not enlarge Run's project scope.
+[crw-loop](../crw-loop/SKILL.md) owns the parent goal's lifecycle and the host-driven
+continuation on that same execution, and the role policy makes that goal the default rather than
+a separate request; it does not enlarge Run's project scope.
 Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
 and review work. A child whose effective workflow is CXC Loop loads the installed
 `codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
@@ -45,11 +46,12 @@ their results, and admit newly ready in-scope issues as capacity opens. The firs
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
 future backlog additions, another project's work or replacing another parent.
 
-An explicit request for a parent goal or unattended host continuation routes to
-`crw-loop`. Ordinary requests to finish the project or continue its next issue remain
-Run execution; they do not themselves create a goal. Inside an authorized Loop, Run
-returns progress and pending obligations to the same Loop owner without creating
-another goal. Existing scope and authorization survive skill routing.
+The parent goal's lifecycle and unattended host continuation belong to `crw-loop`, and the role
+policy makes that goal the project parent's default rather than an opt-in, so an ordinary project
+execution request establishes it through that lifecycle instead of running goal-free. Inside an
+authorized Loop, Run returns progress and pending obligations to the same Loop owner without
+creating another goal. An explicit no-goal or read-only limit still wins, and existing scope and
+authorization survive skill routing.
 
 An initiative link by itself is not a target. Where a request merely cites one, resolve the
 project actually being executed under the shared target rules: the link is context and it rebinds
@@ -77,7 +79,8 @@ still govern each action, including task creation and goal activation.
   prerequisites, then launch only that batch.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
-  Parent goal creation and host-driven continuation belong to an authorized Loop.
+  The parent goal's lifecycle and host-driven continuation belong to `crw-loop`, and the role
+  policy makes that goal the default.
 - **Supervise an initiative:** bind the initiative, fix its approved project set and completion
   boundary, and carry it through those projects' existing parents. Issue planning and issue
   execution stay with each parent.
@@ -129,11 +132,11 @@ already uses, and the evidence that it landed is that child's changed revision r
 acknowledgement. Return the outcome to the peer from here: a child never answers another project's
 parent, and no peer reads this project's child for its answer.
 
-For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
-host goal and automatic continuation across turns. Returning from Run hands
-control back to that same owner. Explicit pause/no-goal limits still win, and existing
+[crw-loop](../crw-loop/SKILL.md) owns the parent host goal and its continuation across turns,
+and the role policy makes that goal the default rather than something a request must ask for.
+Returning from Run hands control back to that same owner. Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
-avoid a guard. The default absence of a Run parent goal does not alter child CXC defaults.
+avoid a guard. A parent holding its own goal does not alter child CXC defaults.
 
 ## Independent implementation tasks
 
@@ -192,7 +195,7 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, under the parent's own native goal per the role policy; host restrictions and an explicit no-goal limit still apply |
 | Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
@@ -447,6 +450,34 @@ resulting evidence, not the child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
 
+### Start policy and child cap
+
+Before this run creates its first child or registers an assignment for one, whichever comes first,
+settle the start policy and record it in full: every field [Start policy](references/start-policy.md)
+names, each carrying its source, its scope and the conditions it stands on. A value the precedence
+settles is applied without asking; a value that genuinely needs a new decision is asked before any
+child is created, and only the action waiting on that answer is held while independent authorized
+work continues. Registration is named beside creation because it does not always follow one: a
+reused child already has its task id, so an assignment can become managed with no creation call in
+sight. Counting is the separate question, and there a creation still means a child. On a resume,
+after a compaction or for a later batch, re-read the identities those values stand on, restore what
+has not changed, and adjudicate again only the field whose conditions did. Start policy owns the
+fields, the scope each decision carries, the re-adjudication triggers and the cases this is judged
+by; the standing cap and its precedence are in
+[Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
+
+The first thing settled is the role, because it decides what this task opens: an initiative
+management task runs without a native goal or an automatic loop, a project parent creates or
+reuses its own goal for the approved project scope, and an issue child creates or reuses its own
+goal and keeps its CXC Loop. Record the role beside the goal state with its objective and approved
+scope, the hook compatibility, the observation path, and whether the approval policy in force can
+carry the callback this run depends on.
+
+Editing these instructions does not alter a turn that already loaded them, but where an installation
+links this checkout a later read of them loads the edited text, so a run spanning sessions can
+continue under instructions it did not start with. Report the local change, the pull request, the
+integration, and what is actually installed and running as separate facts.
+
 ### Verify what this dispatch established
 
 The first full assignment carries the fields in
@@ -454,9 +485,11 @@ The first full assignment carries the fields in
 and they travel in that same first request rather than in a preparation turn.
 
 Then judge the dispatch on four separate facts: the instruction the child actually
-received, the settings the creation call requested, the settings the receipt returned,
-and whether the child's own goal and goalplan state show the effective workflow running.
-A dispatch can pass the first three and fail the fourth.
+received for this dispatch, the settings the dispatching call requested, the settings the
+receipt returned at the scope it claims them, and whether the child's own goal and
+goalplan state show the effective workflow running. A dispatch can pass the first three
+and fail the fourth, and on a reused task the evidence for the first two is the
+correction or resume itself rather than the original launch.
 [Dispatch verification](references/dispatch-verification.md) holds the four verdicts and
 their admissible evidence, the classes a missing loop falls into and how each is
 recovered on the same task, the recorded regression cases, and the authorized read-only,
@@ -495,6 +528,8 @@ Describe evidence separately:
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
+| Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| Parent runs its own goal loop | That task's own active goal and goalplan, read back under its own identity. Parents and children each own one; a parent operating without a goal is an explicitly authorized fallback rather than the default, and is recorded as the choice it is |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
@@ -547,6 +582,13 @@ review handling on it, and reports once the current head is clean; the coordinat
 decides and performs the merge, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
+
+Read the child's handoff rather than rebuilding it. It already paginated the review and
+enumerated the check runs, so collecting them again repeats work this contract just assigned
+elsewhere, and re-triaging its findings opens a second review round it already owns. What the
+coordinator adds is currency: re-read the head and base immediately before merging and compare
+the counts against the record. That is a mechanical check, not a review. Where they disagree,
+return the candidate to the same child fail-closed rather than fixing it here.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor

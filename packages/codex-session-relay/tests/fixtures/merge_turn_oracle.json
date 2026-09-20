@@ -1,0 +1,268 @@
+{
+  "review": [
+    [
+      "all clear",
+      null
+    ],
+    [
+      "hasNextPage unstated",
+      [
+        "merge_review_incomplete",
+        "the review record does not state hasNextPage",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "pagesRead unstated",
+      [
+        "merge_review_incomplete",
+        "the review record does not state pagesRead",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "totalCount unstated",
+      [
+        "merge_review_incomplete",
+        "the review record does not state totalCount",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "threadsSeen unstated",
+      [
+        "merge_review_incomplete",
+        "the review record does not state threadsSeen",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "unresolved unstated",
+      [
+        "merge_review_incomplete",
+        "the review record does not state unresolved",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "nothing stated at all",
+      [
+        "merge_review_incomplete",
+        "the review record does not state hasNextPage; the review record does not state pagesRead; the review record does not state totalCount; the review record does not state threadsSeen; the review record does not state unresolved",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "still paginating",
+      [
+        "merge_review_incomplete",
+        "hasNextPage is still true, so the review was not enumerated",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "no page read",
+      [
+        "merge_review_incomplete",
+        "no review page was read",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "blank identifier",
+      [
+        "merge_review_incomplete",
+        "threadsSeen contains a blank identifier; totalCount is 2 and 2 threads were seen",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "duplicated identifier",
+      [
+        "merge_review_incomplete",
+        "threadsSeen repeats an identifier, so its length is not a count of threads actually seen; totalCount is 2 and 2 threads were seen",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "count disagrees",
+      [
+        "merge_review_incomplete",
+        "totalCount is 14 and 2 threads were seen",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "threads unresolved",
+      [
+        "merge_review_incomplete",
+        "14 threads are unresolved",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "several at once",
+      [
+        "merge_review_incomplete",
+        "hasNextPage is still true, so the review was not enumerated; no review page was read; 3 threads are unresolved",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ]
+  ],
+  "checks": [
+    [
+      "all clear",
+      null
+    ],
+    [
+      "nothing restated",
+      [
+        "merge_currency_stale",
+        "no check runs were restated, so nothing says this head is green",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "nothing restated and nothing required",
+      [
+        "merge_currency_stale",
+        "no check runs were restated, so nothing says this head is green",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "entry without a runId",
+      [
+        "merge_currency_stale",
+        "a restated check carries no runId or no name, so there is nothing to say which check it is or to compare against a required set",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "entry without a name",
+      [
+        "merge_currency_stale",
+        "a restated check carries no runId or no name, so there is nothing to say which check it is or to compare against a required set",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "entry about another head",
+      [
+        "merge_currency_stale",
+        "check run 'run-dev-gate' reports head '0000000000000000000000000000000000000000', not 'c68be165ae8ee4a645f3266eae3e9c543a851382'",
+        "run-dev-gate",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "required check failed",
+      [
+        "merge_currency_stale",
+        "required check 'dev-gate' (run 'run-dev-gate') concluded 'failure' on its newest attempt",
+        "run-dev-gate",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "newest attempt failed after an older pass",
+      [
+        "merge_currency_stale",
+        "required check 'dev-gate' (run 'run-1') concluded 'failure' on its newest attempt",
+        "run-1",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "older attempt failed and newest passed",
+      null
+    ],
+    [
+      "required name absent from the set",
+      [
+        "merge_currency_stale",
+        "these checks were declared required and are not present and successful in the restated set: ['dev-gate']",
+        "dev-gate",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "optional check failing beside a green required one",
+      null
+    ],
+    [
+      "nothing required and nothing succeeded",
+      [
+        "merge_currency_stale",
+        "no check declared required and nothing in the restated set succeeded on 'c68be165ae8ee4a645f3266eae3e9c543a851382', so nothing says this head is green",
+        "",
+        "task-parent",
+        "merge_target",
+        "owner/repo@dev"
+      ]
+    ],
+    [
+      "nothing required and something succeeded",
+      null
+    ]
+  ]
+}
