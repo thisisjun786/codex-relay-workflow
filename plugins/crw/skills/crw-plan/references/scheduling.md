@@ -185,7 +185,9 @@ scope the request already carries, with an entry whose reason opens `pulled in` 
 confirmed result, its before and after dates, and the schedule baseline it still measures against.
 A successor carrying a `confirmed` target keeps that date, because it is one this plan does not
 move, and its earlier readiness is reported instead so the authority that set the date can decide.
-Nothing waits for its own date once the work it depended on has landed.
+An earlier day the accepted scope's own change produced, such as a criterion canceled from it, is
+written the same way and opens with `scope changed`, because the cause rather than the direction
+names the entry. Nothing waits for its own date once the work it depended on has landed.
 
 Where a result is unfinished, nothing moves. A checkpoint having run, work still being in
 progress, and a target approaching or passing are not reasons, and a target that rolls forward on
@@ -302,3 +304,4 @@ rule here states a period.
 | 22 | Issue J's target was set with delivery evidence `no sample`; added scope makes the plan read two comparable records, which put J's earliest day past its current target. | 1 move with 1 entry opening `scope changed` that names the two records it read; the delivery evidence becomes that reading and is no longer `no sample`; the schedule baseline unchanged, and a later reader can reproduce the new date from the entry. | A move that reads the records again. |
 | 23 | Prerequisite A is confirmed on the morning of D0 under an authorized checkpoint; successors B and C both carry D5, B's `confirmed` and C's `provisional`; with A confirmed the records and a free slot put each successor's earliest day at D0. | C moves to D0 with 1 entry opening `pulled in` naming A; B: 0 moves and 0 entries, its D5 kept and its earlier readiness reported to the authority that set it; 0 schedule baselines rewritten on either. | A confirmed successor is not pulled in. |
 | 24 | An authority brings issue K's agreed deadline forward from D9 to D4 with no predecessor result behind it. | 1 move with 1 entry opening `authority` naming that decision; 0 `pulled in` entries and 0 confirmed results named; the schedule baseline unchanged. | `authority` moves in either direction. |
+| 25 | An authorized replan cancels an accepted criterion from issue L, whose target is `provisional` D9, and the records left over yield D4. | 1 move with 1 entry opening `scope changed` that names the canceled ID and the before and after dates; 0 `pulled in` entries and 0 confirmed results named; 0 schedule baselines rewritten. | The cause names the entry, not the direction. |

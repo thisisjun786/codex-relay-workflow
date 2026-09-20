@@ -265,16 +265,19 @@ subject waiting on a result that is itself in review carries `prerequisite` whil
 carries `review`; where two words still fit, the cause that must resolve first wins and a tie
 breaks in the order listed here.
 
-The change reason words are fixed in the same way. A move to an earlier date the plan makes after a
-confirmed result is `pulled in`, while a date the deciding authority itself sets is `authority`
-whichever direction it moves, because an authority can bring a deadline forward with no predecessor
-result behind it. Among
-later moves the first that applies wins, in the order `scope changed`, `blocked`, `critical path`,
-`authority`, so scope an authority approved reads as `scope changed` and a blocker reads as
-`blocked` on the subject it blocks and as `critical path` on the successors its recorded move
-shifted. Three facts are not change reasons at all: that a checkpoint ran, that the work is still
-unfinished, and that the target is approaching or has passed. A target that moves on one of those
-records a delay it is hiding.
+The change reason words are fixed in the same way, and each names the cause rather than the
+direction, because the same cause can move a date either way. `scope changed` is a move the
+accepted scope's own change produced, including scope canceled from it, which can bring a date
+forward. `blocked` names a real blocker on the subject itself, and `critical path` a predecessor's
+own recorded move that shifted it. `pulled in` is the earlier move the plan makes after a confirmed
+result. `authority` is a date the deciding authority itself set, in either direction, because an
+authority can bring a deadline forward with no predecessor result behind it. Where more than one
+fits, the first that applies wins, in the order `scope changed`, `blocked`, `critical path`,
+`pulled in`, `authority`, so scope an authority approved reads as `scope changed` and a blocker
+reads as `blocked` on the subject it blocks and as `critical path` on the successors its recorded
+move shifted. Three facts are not change reasons at all: that a checkpoint ran, that the work is
+still unfinished, and that the target is approaching or has passed. A target that moves on one of
+those records a delay it is hiding.
 
 Records disagree, so their precedence is fixed. The item's own date fields are the planned start and
 the current target.
@@ -332,8 +335,9 @@ adds no milestone and no second record; a Done or Canceled subject's dates are u
 target date that moved still shows the schedule baseline it moved from together with the change
 source that moved it. Every in-scope subject also carries a wait cause; a target that moved later
 carries one of the extension words with the scope, blocker or predecessor entry it names; a target
-the plan moved earlier carries `pulled in` with the confirmed result it followed, while one the
-authority itself moved carries `authority` in either direction; and a schedule whose
+that moved at all carries the word for what moved it, whichever direction it went, naming the scope
+change, the blocker, the predecessor's entry, the confirmed result behind a `pulled in`, or the
+authority's own decision; and a schedule whose
 targets were all rewritten from one current date fails whatever the request that produced it was
 called.
 
