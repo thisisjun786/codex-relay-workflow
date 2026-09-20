@@ -148,14 +148,20 @@ the child recorded to whoever waits for it. The parent verifies the result again
 criteria. The hook never decides that the child is finished; it decides whether the child said
 anything at all, which is a fact about a record rather than about an intention.
 
-State. Two stores, selected by two different settings: the relay's own store, and the adapter's
-ledger where duplicate suppression and recovery live. Moving the first with a command-line option
-does not move the second, so a run can report one location while recovery reads another; the
-measurement of exactly that split, the defaults and the one-store-per-operating-scope rule belong
-to [the relay reference](../../crw-run/references/relay.md) and the operations contract it points
-at. The coordination summary belongs in the Linear document; raw run records are private receipts
-kept outside this repository. What a given run actually resolved is a receipt value, and this
-explanation does not have one.
+State, with a writer and a restorer for each piece. The marker root holds what each party
+declared, and its writers are split by party: the coordinator writes the assignment's own facts,
+a child writes only under its own session, the child's hook process writes only its own hook
+directory, and the relay daemon writes none of it. The relay's own store holds the assignment
+record. The adapter's ledger, where duplicate suppression and recovery live, is selected by a
+different setting than that store, so moving one with a command-line option can leave a run
+reporting one location while recovery reads another. Restoration has a named owner:
+[the operations contract](../../crw-run/references/operations.md) owns assignment retention and
+recovery, not the hook and not the daemon, and
+[the hook contract](../../crw-run/references/hook-contract.md) and
+[the relay reference](../../crw-run/references/relay.md) own the permissions, the defaults and the
+one-store-per-operating-scope rule quoted here by reference rather than by value. The coordination
+summary belongs in the Linear document; raw run records are private receipts kept outside this
+repository. What a given run actually resolved is a receipt value, and this explanation has none.
 
 What refuses. Skill text refuses nothing. The sandbox profile the child was created with is the
 boundary that holds. The hook can hold a turn only where it is registered, trusted, invoked and
@@ -172,14 +178,17 @@ live. CXC is an existing owner and is left alone: the contract modifies no CXC s
 comparison deliberately keeps a foreign CXC Stop entry in the same hook file, reads it back after
 the install to prove it was not displaced, and never executes it.
 
-How an improvement is judged. The question "does the hook actually help" is answered by the off
-and on comparison in `docs/hook-comparison.md`, which builds both arms from one command where a
-single flag is the only difference. Its own rule is the one worth copying: the pass is never the
-difference between the arms, because that difference is settled by the flag before any turn ends.
-The costs counted are a hold on a turn that was fine, a delivery that happens twice, and the delay
-a hold adds within its bounds. The expected effect is that fewer finished turns go unreported; the
-measured effect is not stated here, because the result is a private receipt nobody in this
-explanation read.
+How an improvement is judged. The off and on comparison in `docs/hook-comparison.md` builds both
+arms from one command where a single flag is the only difference, and its own rule is the one
+worth copying: the pass is never the difference between the arms, because that difference is
+settled by the flag before any turn ends. What it can answer is bounded and it says so. It reaches
+the missed-detection measures; the handoff round trip, a duplicated delivery and the installed
+runtime are recorded as not performed, because no daemon runs in it and nothing is installed.
+The rule that would decide adoption was fixed before implementation, in the contract's own
+criteria, and it is not met: the measures that would support a decision are among the ones not
+performed, so no adoption or hold decision is written anywhere. The expected effect is that fewer
+finished turns go unreported. There is no measured effect to report, and the honest entry is that
+the question stays open rather than that the answer is yes.
 
 ## Worked example: a queued thumbnail job
 
@@ -194,16 +203,22 @@ answers immediately. The queue holds a job and moves nothing by itself. A separa
 claims the job, writes the thumbnail, updates the row, and sends the notification; the web process
 never sends it. The person seeing the thumbnail is the verification.
 
-State. Four pieces with different owners and lifetimes: the upload row in the database, the job in
-the queue, the thumbnail in object storage, and the notification record. The row and the stored
-object survive a restart; the worker's in-memory handle does not, and the queue redelivers a job
-nobody acknowledged. Recovery is that redelivery plus a worker that can safely repeat itself, and
-no process rebuilds a thumbnail whose row no longer says pending.
+State. Four pieces with different owners and lifetimes: the upload row, written by the web process
+and restored from the database's own backups by whoever operates it; the job, written and
+redelivered by the queue and lost with it if that queue is not durable; the thumbnail, written by
+the worker into object storage and restored by re-running the job rather than from a backup; and
+the notification record, written by the worker and rebuilt by nobody, because a notification that
+was never sent cannot be recovered after the fact. The row and the stored object survive a restart
+and the worker's in-memory handle does not. No process rebuilds a thumbnail whose row no longer
+says pending, which is the one recovery path deliberately left closed.
 
-What refuses. The unique constraint on the thumbnail's upload key, and the queue's at-least-once
-redelivery. Not the sentence in the README asking workers to be idempotent, not the naming
-convention, and not the retry helper nobody is obliged to call. At-least-once means the duplicate
-is the design, so the consumer is where a second delivery has to be made harmless.
+What refuses. One thing refuses: the unique constraint on the thumbnail's upload key, which makes
+a second insert fail rather than produce a second thumbnail. At-least-once redelivery is recovery,
+not enforcement; it creates the duplicate rather than refusing it, so the enforcement point is the
+consumer's insert-if-absent against that key, and a worker that notifies before that insert
+notifies twice however carefully it was written. Refusing nothing at all: the sentence in the
+README asking workers to be idempotent, the naming convention, and the retry helper nobody is
+obliged to call.
 
 How far it is built. The web process and the row run in production; the worker exists in source and
 runs only in staging; the notification is a drawing. Three claims, three labels, and a reader who
@@ -212,8 +227,11 @@ is never left guessing which environment a sentence describes.
 How an improvement is judged. Adding a retry answers a counted miss: uploads still pending after
 ten minutes. The comparison replays one recorded day's workload against the same code with the
 retry as the only switch. The costs counted are duplicate notifications, added delay before a row
-reaches ready, and jobs retried after they had already succeeded. The threshold is fixed before the
-run, and the expected effect and the measured result are written in different paragraphs.
+reaches ready, and jobs retried after they had already succeeded. The rule is fixed before the run
+and written down: keep the retry only if that pending count falls and duplicate notifications stay
+at zero, revert it if either fails, and treat an unchanged pending count as a wrong diagnosis
+rather than a reason to retry harder. The expectation and whatever the run returns go in different
+paragraphs.
 
 ## Self-check
 

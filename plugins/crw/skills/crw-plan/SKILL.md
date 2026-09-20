@@ -29,7 +29,7 @@ Identify the goal, product classification, and finishable outcome separately usi
 
 ## Explain the design
 
-When the request is to understand or review a system rather than to plan one, what a component is for, whether an existing owner can be left where it is, how the parts fit, or whether a proposed change actually helps, follow [Design explanation](references/design-explanation.md). It fixes what the answer must carry: the visible result first, then which process runs and which store keeps, what actually refuses, how far each claim is built, and how an improvement would be judged. A question asked repeatedly is usually a sign that the last answer was a list of components, not evidence of a defect in the system.
+When the request is to understand or review a system rather than to plan one, what a component is for, whether an existing owner can be left where it is, how the parts fit, or whether a proposed change actually helps, follow [Design explanation](references/design-explanation.md). It fixes what the answer must carry: the visible result first, then which process runs and which store keeps, what actually refuses, how far each claim is built with the evidence that earned the label, and how an improvement would be judged before anyone measures it. The same standard applies to design reasoning written into a plan for a later reader.
 
 Two rules hold without opening it. A registered hook, a line in a prompt and a merged source edit establish no enforcement, no installation and no live behaviour; each of those is a separate fact needing its own evidence. And an explanation-only request executes nothing, while a Linear reflection the request or its existing scope already covers is applied, read back, and not sent for the same approval again.
 
