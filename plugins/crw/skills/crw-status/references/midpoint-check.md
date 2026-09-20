@@ -61,6 +61,15 @@ A parent between turns with an active goal and working continuation is fine; the
 no goal, a paused one, or a goal that cannot activate is not, and it will stay quiet either way.
 Read both and report both.
 
+Neither reading decides a contact on its own, and this is where the two rows would otherwise
+disagree. The goal says whether the parent returns; the outstanding item says whether there is
+anything for it to do when it does. Contact only where both point the same way: something is
+outstanding AND nothing will carry it to the parent. Compare the times rather than the labels. Where
+continuation has been observed working SINCE the outstanding item landed, that item is already on
+its way and the checkpoint sends nothing. Where continuation was last observed BEFORE it landed,
+that observation does not cover this item: read once more, and resume only if it still has not been
+taken up. An active goal is not evidence that a specific result was delivered.
+
 Three readings get confused with each other and are kept apart. A goal that exists is not a goal
 that activated. A goal that activated is not continuation observed actually happening. And a parent
 blocked by a goal compatibility problem is neither idle nor complete: reporting it as either hides
@@ -68,6 +77,10 @@ the one fact that explains why nothing is moving. Say which of the three you obs
 
 A status call creates no goal. Where a parent needs one, that is the existing execution policy's
 decision and its owner's action, routed to them with what you observed rather than performed here.
+The owner is the task recorded as that parent's coordinator in its coordination record, reached
+through [crw-run](../../crw-run/SKILL.md) as the execution owner; where the record names none, it is
+Jun's decision and goes in the report as one. Do not hold the routing for `start-policy.md` to land:
+that file fixes which role carries which lifecycle, not who is told about a broken one.
 The goal-free parent some tasks ran under early on was a temporary state, not the default to copy
 forward.
 
@@ -139,7 +152,7 @@ growing inside Status where Run already owns one.
 | Observed on a responsible parent | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared | resume it through the existing supported path, carrying the restoration block |
+| `idle` holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with nothing observed carrying it | resume it through the existing supported path, carrying the restoration block. Where continuation has been observed working since that item landed, it is already on its way: send nothing |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
 | paused, cancelled or archived, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take ([OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)) |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
@@ -245,9 +258,11 @@ for.
 Observed: the execution approval is still in force, a child returned its delivery, and its parent
 has been idle since before that result landed, with the result unprocessed in the coordination
 record.
-Action: on the checkpoint branch, resume that parent through the existing supported path with the
-restoration block, then read its state again and report both what was sent and what was observed
-after. On the reading branch, report the unprocessed result and send nothing.
+Action: on the checkpoint branch, first ask whether anything is already carrying it. If the
+parent's continuation has been observed working since that result landed, send nothing and say so.
+Otherwise resume that parent through the existing supported path with the restoration block, then
+read its state again and report both what was sent and what was observed after. On the reading
+branch, report the unprocessed result and send nothing.
 Preserved: the parent, its binding and its child, and the difference between a send and a result.
 
 ### M8 The parent is already active
@@ -315,8 +330,8 @@ Preserved: the difference between quiet and stopped.
 ### M14 A parent needs a goal it does not have
 
 Observed: the checkpoint establishes that a parent cannot continue because of its goal state.
-Action: report it and route it to the owner the execution policy names. Do not create, activate or
-repair a goal from a status call, and do not treat the temporary goal-free arrangement some parents
-started under as the default to restore. A checkpoint moves approved work; it does not change how a
-task is run.
+Action: report it and route it to that parent's recorded coordinator through Run, or to Jun where
+the record names no coordinator. Do not create, activate or repair a goal from a status call, and
+do not treat the temporary goal-free arrangement some parents started under as the default to
+restore. A checkpoint moves approved work; it does not change how a task is run.
 Preserved: the execution policy's ownership, and an accurate reason for the stall.
