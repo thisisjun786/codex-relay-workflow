@@ -231,8 +231,11 @@ being called here does not turn an approved continuation into an independent
 read-only audit. Route a schedule or evidence mismatch by the level that owns it. A mismatch contained
 in one project returns to that project's parent, which settles within the approval it
 already holds whether the approved successor proceeds. Where the mismatch orders work
-across projects, it returns through the invoking supervisor, which coordinates the
-affected parents, because a project parent owns sequencing inside its own project and
+across projects, return it through the supervisor that owns both. Where no single
+supervisor owns both, follow
+[direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents),
+including its escalation to the user or to the respective supervisors. Either route
+holds the same line: a project parent owns sequencing inside its own project and
 never decides whether another project proceeds. A bounded helper returns the finding
 to its caller rather than contacting an owner itself, as
 [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
@@ -414,8 +417,9 @@ worth discussing.
     was called. Where the request does carry an explicit report-only, read-only,
     pause, or no-contact limit, that limit wins and the finding is returned without
     contact. Where instead M5 sits in project A and the approved successor waiting on
-    it is in project B, the finding returns through the invoking supervisor, which
-    coordinates both parents. Not project A's parent deciding whether project B
+    it is in project B, the finding returns through the supervisor owning both
+    projects, or, where no single supervisor owns them, through direct coordination
+    between the two parents with any unresolved ordering escalated to the user. Not project A's parent deciding whether project B
     proceeds, which is an ordering it does not own. Where this check runs as a
     bounded helper for a coordinator rather than holding the assignment itself, the
     finding goes back to that coordinator and the helper contacts no owner directly.
