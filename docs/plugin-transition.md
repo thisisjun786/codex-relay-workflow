@@ -367,11 +367,26 @@ round trip through it, succeeded.
 
 ### Three limits, stated rather than implied
 
-**`register-mcp` can re-open the gate.** `runtime_install.py register-mcp` writes `command` and
-`args` only. Run again on a host that has already transitioned, it creates a table with no policy,
-and by the measurement above that table wins. The gate is down until the table is removed again,
-which a later `transition --apply` does, because a table with no policy is a subset of what the
-declaration grants. `inspect` reports `policyInEffect` so the state is at least readable.
+**`register-mcp` can re-open the gate. Known limitation, owner pending, not fixed here.**
+`runtime_install.py register-mcp` writes `command` and `args` only. Run again on a host that has
+already transitioned, it creates a table with no policy, and by the measurement above that table
+wins over the declaration.
+
+**The window is real and this is its shape.** It opens the moment `register-mcp` writes that table
+and stays open until something removes it again — normally the next `transition --apply`, which
+does remove it, because a table with no policy is a subset of what the declaration grants. For as
+long as it is open, `create_thread` and `send_message_to_thread` are ungated on that host, and
+nothing announces it. `inspect` reports `policyInEffect`, so the state is readable if somebody
+looks; nothing makes them look.
+
+`scripts/runtime_install.py` is owned by the operations lane, not by this change, so CRW-142 does
+not touch it. The decision on whether `register-mcp` should refuse to write a policy-free table
+for a server the installed plugin gates — or should carry the policy itself — is escalated and
+pending with that lane. Until it is taken, this window is a known defect, not a solved one, and it
+should not be read as covered by anything above. The sweep predicate for whoever takes it: every
+key of a user server table outside `command`, `args` and `tools` blocks removal until the
+declaration provably carries it, and whether the plugin manifest parses `tool_timeout_sec` at all
+is unmeasured.
 
 **A later cache replacement is not checked at that moment.** Once the table is gone the declaration
 is the only thing gating those tools. A `codex plugin update` installing a package without the gate
