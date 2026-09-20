@@ -37,7 +37,7 @@ from .test_regression_map import (
 SOURCE = pathlib.Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
 # Every module this issue adds. A new one joins this tuple in the phase that creates it, so
 # the contract reaches it the moment it exists rather than the first time CI complains.
-OWNED = ("capacity.py", "coordination.py", "mergeturn.py")
+OWNED = ("capacity.py", "coordination.py", "editregion.py", "mergeturn.py")
 
 WAITING_NAMES = {"sleep", "monotonic", "perf_counter", "poll"}
 WRITE_HEADS = ("INSERT", "REPLACE", "UPDATE", "DELETE", "WITH")

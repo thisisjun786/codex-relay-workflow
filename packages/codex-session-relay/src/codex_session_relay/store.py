@@ -828,6 +828,89 @@ CREATE TABLE IF NOT EXISTS execution_usage (
     observed_at TEXT NOT NULL,
     PRIMARY KEY (scope_kind, scope_key, dimension)
 );
+-- A place in a specific tree, not a file name. region_kind separates a whole file from a symbol
+-- or a data region inside it, which is what stops one shared file from blocking every parent
+-- with business in another part of it. base_revision is part of the region because an agreement
+-- about a place is an agreement about that place in that tree.
+CREATE TABLE IF NOT EXISTS edit_regions (
+    region_id       TEXT PRIMARY KEY,
+    repository      TEXT NOT NULL,
+    base_revision   TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    region_class    TEXT NOT NULL,
+    regenerate_from TEXT,
+    recorded_at     TEXT NOT NULL
+);
+
+-- Two peer projects' agreement about one region. It confers nothing: no merge permission, no
+-- widened artifact scope, no authority to instruct. It records what both sides said they would
+-- accept and who is expected to act next. The project keys are stored in the sorted order the
+-- identity hashes, so either side proposing converges on one record.
+CREATE TABLE IF NOT EXISTS edit_agreements (
+    agreement_id      TEXT PRIMARY KEY,
+    region_id         TEXT NOT NULL,
+    repository        TEXT NOT NULL,
+    base_revision     TEXT NOT NULL,
+    left_project      TEXT NOT NULL,
+    right_project     TEXT NOT NULL,
+    peer_link_id      TEXT NOT NULL,
+    proposer_task_id  TEXT NOT NULL,
+    issue_key         TEXT,
+    constraint_text   TEXT NOT NULL,
+    left_condition    TEXT,
+    right_condition   TEXT,
+    left_accepted_at  TEXT,
+    right_accepted_at TEXT,
+    next_owner        TEXT,
+    state             TEXT NOT NULL,
+    tenure            INTEGER NOT NULL,
+    supersedes        TEXT,
+    superseded_by     TEXT,
+    close_reason      TEXT,
+    proposed_at       TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    closed_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS edit_agreements_region ON edit_agreements (region_id, state);
+CREATE INDEX IF NOT EXISTS edit_agreements_tree ON edit_agreements
+    (repository, base_revision, state);
+
+-- What the two sides agreed should happen NEXT, kept apart from the agreement so that lifting
+-- the constraint does not drop the work it implied. A null assignee is the unassigned state and
+-- is never aggregated under any parent.
+CREATE TABLE IF NOT EXISTS edit_followups (
+    followup_id      TEXT PRIMARY KEY,
+    agreement_id     TEXT NOT NULL,
+    trigger_text     TEXT NOT NULL,
+    acceptance_text  TEXT NOT NULL,
+    issue_ref        TEXT,
+    assignee_task_id TEXT,
+    assignee_project TEXT,
+    accepted_at      TEXT,
+    state            TEXT NOT NULL,
+    close_reason     TEXT,
+    recorded_by      TEXT NOT NULL,
+    recorded_at      TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+-- Which revision a repository's agreements are now stated against, append-only. One successor
+-- per revision, so a chain A->B->C leaves every earlier revision with an outgoing mark and only
+-- the newest without one. That is what lets a settlement ask whether its OWN revision was
+-- superseded, instead of asking which mark is newest - a question with no answer when two marks
+-- share an injected clock's instant.
+CREATE TABLE IF NOT EXISTS edit_revision_marks (
+    mark_id       TEXT PRIMARY KEY,
+    repository    TEXT NOT NULL,
+    from_revision TEXT NOT NULL,
+    to_revision   TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE (repository, from_revision)
+);
+
 
 
 """
@@ -860,6 +943,10 @@ GUARD_INDEXES = (
      "CREATE UNIQUE INDEX IF NOT EXISTS execution_slots_one_live_subject ON execution_slots"
      " (subject_kind, subject_key)"
      " WHERE state = 'held'"),
+    ("edit_agreements_one_live_per_region",
+     "CREATE UNIQUE INDEX IF NOT EXISTS edit_agreements_one_live_per_region"
+     " ON edit_agreements (region_id, left_project, right_project)"
+     " WHERE state IN ('proposed','agreed','reopened') AND superseded_by IS NULL"),
 )
 
 
