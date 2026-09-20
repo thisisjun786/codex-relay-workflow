@@ -255,6 +255,7 @@ they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
 | I-181 | A returning tenure decides its whole attachment BEFORE it mutates anything, so the transaction that refuses commits its own contest and applies nothing | `registry._returning_tenure` calls `attach_refusal` first and `attach_apply` after, rather than recording a conflict in a second transaction once the first has rolled back | implemented |
 | I-182 | An attachment validates the endpoint it is about to bind | `attach_refusal` runs `_exact` on the relationship's child task and host, the check every other linkage entry point makes on its caller's arguments, so a blank host cannot become a live binding with no routable endpoint | implemented |
 | I-183 | A returning tenure recovers the project it retained when its predecessor has none, and refuses a dispatch request id that already opened an earlier tenure | `registry._inherited_project` asks the predecessor then the returning identity's own scope row, decided under the lock; the generations replay check turns a unique-index violation into a domain refusal | implemented |
+| I-184 | Restoring an assignment checks WHERE its child is, not only whether somebody else holds the issue | `apply_relationship_status_in` compares the live child binding's host with the relationship's recorded one, so a child that reclaimed its issue from another host refuses the resume instead of reactivating an assignment nothing can route to | implemented |
 
 ## Recorded limits, so a row above is not read as more than it is
 

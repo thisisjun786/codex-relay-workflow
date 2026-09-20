@@ -1009,7 +1009,7 @@ class Linkage:
         if scoped is None:
             return "unscoped"
         row = db.execute(
-            "SELECT issue_key, child_task_id, parent_task_id FROM relationships"
+            "SELECT issue_key, child_task_id, child_host_id, parent_task_id FROM relationships"
             "  WHERE relationship_id = ?",
             (relationship_id,),
         ).fetchone()
@@ -1099,6 +1099,29 @@ class Linkage:
                     + repr(row["child_task_id"]) + " would leave it with two owners",
                     scope_kind=ISSUE, scope_key=row["issue_key"],
                     incumbent=rival["task_id"], challenger=row["child_task_id"],
+                )
+            # The same child is excluded from that rival check, which is right - it is not
+            # its own rival - but excluding it also skipped asking WHERE it is. A child that
+            # reclaimed this issue from another host leaves the relationship's recorded
+            # endpoint pointing somewhere it no longer runs, and reactivating it would restore
+            # an assignment whose routing metadata is stale. Same rule as a live binding
+            # refusing a host change: the scope is held right now.
+            mine = db.execute(
+                "SELECT host_id FROM scope_bindings"
+                "  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL",
+                (ISSUE, row["issue_key"], CHILD, row["child_task_id"]),
+            ).fetchone()
+            if mine is not None and mine["host_id"] != row["child_host_id"]:
+                raise self._refusing(
+                    RefusalReason.LINK_CONFLICT,
+                    "child " + repr(row["child_task_id"]) + " holds issue "
+                    + repr(row["issue_key"]) + " on host " + repr(mine["host_id"])
+                    + ", but " + repr(relationship_id) + " records "
+                    + repr(row["child_host_id"]) + "; restoring it would reactivate an "
+                    "assignment whose routing endpoint is not where the child is",
+                    scope_kind=ISSUE, scope_key=row["issue_key"],
+                    incumbent=mine["host_id"], challenger=row["child_host_id"],
                 )
             # And the child must still be ELIGIBLE to hold it. The unique index is scoped by
             # issue, and resume only checks for a competing relationship on the same issue, so

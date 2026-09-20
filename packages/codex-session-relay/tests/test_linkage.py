@@ -2391,5 +2391,26 @@ class TheSixteenthRoundFoundTheseToo(LinkageTestCase):
             RefusalReason.DUPLICATE_SCOPE_OWNER, self.linkage.bind_scope,
             role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent())
 
+    def test_a_child_that_reclaimed_its_issue_elsewhere_blocks_the_resume(self):
+        """The rival check excludes the same child, which is right - it is not its own rival -
+        but excluding it also skipped asking WHERE it is. A child that took this issue back on
+        another host leaves the relationship's recorded endpoint pointing somewhere it no
+        longer runs, and resuming would restore an assignment nothing can route to."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "archived", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, "host-two"))
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertEqual(self.registry.get(rid)["status"], "archived")
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["hostId"], "host-two")
+        # Retained like every other linkage refusal.
+        self.assertTrue(self.linkage.conflicts(linkage.ISSUE, ISSUE))
+
 if __name__ == "__main__":
     unittest.main()
