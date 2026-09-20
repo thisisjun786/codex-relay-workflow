@@ -1131,7 +1131,15 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                 settings["citedRole"] = carried
         if exception is None and existing is not None:
             carried = rolepolicy.cited_exception(json.loads(existing["settings"]))
-            if carried is not None:
+            # Carried only while it is still doing work. An exception exists to admit a pair the
+            # role's policy does not declare, so once a record states the declared pair there is
+            # nothing left for it to authorize, and keeping the id would pin the task to a route
+            # it has left. That made the documented recovery -- re-record onto the role's pair --
+            # impossible to reach, and left the refusal advising something that could not work.
+            declared = rolepolicy.declared_pair_for(
+                rolepolicy.bound_role_in(db, task_id), rolepolicy.declared()
+            )
+            if carried is not None and rolepolicy.recorded_pair(settings) != declared:
                 settings["citedException"] = carried
         bound = rolepolicy.bound_role_in(db, task_id)
         if isinstance(bound, rolepolicy.Contested):

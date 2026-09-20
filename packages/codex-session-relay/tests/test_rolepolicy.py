@@ -557,10 +557,29 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertEqual(
             refusal.reason, RefusalReason.UNVERIFIED_PAIR_FOR_UNLOADED_THREAD
         )
-        # The same record with no exception behind it is policy-derived and passes.
-        del settings["citedException"]
+        # And the way out is reachable through the supported recorder rather than by editing a
+        # dictionary: re-recording onto the role's declared pair drops the exception, because an
+        # exception authorizes one pair and this is no longer that pair.
+        self._bind_parent()
+        record_settings(
+            self.store, self.clock, PARENT, dict(settings),
+            source="creation_result", role="parent", exception="same-pair",
+        )
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings(
+                str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            ),
+            source="user_transition",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertNotIn("citedException", stored)
         self.assertIsNone(
-            rolepolicy.check_unloaded_transmission(settings, "parent", policy, "notLoaded")
+            rolepolicy.check_unloaded_transmission(stored, "parent", policy, "notLoaded")
         )
 
     def test_a_re_record_that_names_no_exception_keeps_the_one_already_recorded(self):
@@ -578,6 +597,41 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             )["settings"]
         )
         self.assertEqual(stored["citedException"], "one-task")
+
+
+    def test_an_exception_written_for_a_role_the_policy_does_not_declare_is_still_honoured(self):
+        """The bridge evaluates the exception before it looks the role up, so this creation
+        succeeds there. Refusing it here would be one document read two ways."""
+        import os
+        from pathlib import Path
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            "roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"}},
+            "exceptions": {
+                "for-a-child": {
+                    "model": "gpt-6-astra",
+                    "reasoningEffort": "high",
+                    "cwd": [str(Path(self.tmp).resolve())],
+                    "role": "child",
+                }
+            },
+        })
+        settings = task_settings(
+            str(Path(self.tmp).resolve()), model="gpt-6-astra", reasoningEffort="high",
+            citedException="for-a-child",
+        )
+        policy = rolepolicy.declared()
+        self.assertIsNone(rolepolicy.check_record(settings, "child", policy))
+        self.assertIsNone(
+            rolepolicy.check_binding("child", "child", settings, policy)
+        )
+        # An undeclared role with no exception behind it still refuses.
+        plain = task_settings(str(Path(self.tmp).resolve()))
+        self.assertEqual(
+            rolepolicy.check_record(plain, "child", policy)["code"],
+            RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
+        )
+
 
 
 class TakingOwnershipAwayIsNeverBlockedByThePolicy(DeliveryTestCase):

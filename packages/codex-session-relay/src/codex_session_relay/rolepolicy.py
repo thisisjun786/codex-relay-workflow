@@ -197,6 +197,22 @@ def authorized_by_exception(settings, role, policy):
     )
 
 
+def declared_pair_for(role, policy):
+    """The (model, effort) this policy declares for a role, or None where it declares none."""
+    if not policy or role is None or isinstance(role, Contested):
+        return None
+    expectation = policy.expectation(role)
+    if expectation is None or expectation.expectation != "pair":
+        return None
+    return (expectation.model, expectation.reasoning_effort)
+
+
+def recorded_pair(settings):
+    """The (model, effort) a record states, for a caller comparing it against the above."""
+    return _pair(settings)
+
+
+
 def check_record(settings, role, policy) -> dict | None:
     """Has this task's recorded authorization fallen behind the policy for its own role?
 
@@ -211,6 +227,11 @@ def check_record(settings, role, policy) -> dict | None:
     """
     expectation = policy.expectation(role)
     if expectation is None:
+        if authorized_by_exception(settings, role, policy):
+            # The bridge evaluates an exception BEFORE it looks the role up, so an exception
+            # written for a role the roles section does not declare authorizes a creation there
+            # and would be refused here. One document, two readers, two answers.
+            return None
         return {
             "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
             "role": role,
@@ -261,6 +282,8 @@ def check_binding(cited, bound, settings, policy) -> dict | None:
         return None
     expectation = policy.expectation(bound)
     if expectation is None:
+        if authorized_by_exception(settings, bound, policy):
+            return None
         return {
             "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
             "citedRole": cited,
