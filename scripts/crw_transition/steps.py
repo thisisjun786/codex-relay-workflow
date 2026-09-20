@@ -403,6 +403,43 @@ def policy_complaints(host, mcp, plugin=None):
     return found
 
 
+def declaration_check(host, package_root):
+    """Whether adding or updating THIS package would keep the approval policy the host grants.
+
+    The gate criterion 3 asks for in front of codex plugin add and codex plugin update. No script
+    in this repository runs either command -- the operator does -- so this is what the operator
+    runs first, and it is an early warning rather than enforcement.
+
+    It judges the CANDIDATE: the package about to be installed, not the cache already in place.
+    Validating the declaration that is already there says nothing about the bytes replacing it. The
+    payload digest travels with the verdict so that running this again against the installed cache
+    afterwards, and comparing the two digests, is what binds this answer to what actually landed.
+    """
+    root = Path(package_root)
+    granted = (host["mcp"].get("policy") or {}).get("tools") or {}
+    answer = {"package": str(root), "payloadDigest": None, "declared": None,
+              "granted": dict(granted), "packageErrors": [], "refusals": []}
+    try:
+        checker = _plugin_checker(host["repoRoot"])
+        errors, result = checker.check_installed(root.resolve())
+        answer["packageErrors"] = sorted(set(errors))
+        answer["payloadDigest"] = (result or {}).get("digest")
+    except Exception as error:  # noqa: BLE001 - a package that cannot be validated is a reading
+        answer["packageErrors"] = ["the package at " + str(root) + " could not be validated ("
+                                   + type(error).__name__ + ": " + str(error) + ")"]
+    declared, why = declared_policy(root, inventory.SERVER_NAME)
+    answer["declared"] = declared
+    if declared is None:
+        answer["refusals"].append("the candidate package's declaration could not be read, so"
+                                  " whether it preserves this host's approval policy was compared"
+                                  " with nothing: " + str(why))
+    else:
+        # The same predicate the transition applies, asked about the candidate instead of the cache.
+        answer["refusals"] = policy_complaints(host, host["mcp"],
+                                               plugin={"cacheVersion": str(root)})
+    return answer
+
+
 def registered_settings(host):
     """The document the registered hook actually reads, and where it came from.
 

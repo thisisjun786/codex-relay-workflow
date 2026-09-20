@@ -921,3 +921,95 @@ class DeclaredComponentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDeclaredApprovalPolicyIsChecked(unittest.TestCase):
+    """CRW-142. The only signal a bad approval declaration ever produces.
+
+    Measured on an isolated home: an invalid approval_mode in a PLUGIN declaration makes
+    codex plugin add exit 0 and codex mcp list exit 0 with ZERO entries. The server disappears and
+    no disabled_reason is recorded, because there is no entry left to carry one. The same mistake
+    in a user configuration is a loud error naming the valid set. So the host will not tell anyone
+    that the bridge is gone, and this check is what does.
+    """
+
+    def payload(self, **files):
+        return {name: ("100644", data.encode()) for name, data in files.items()}
+
+    def declaration(self, tools, server="codex-thread-bridge"):
+        entry = {"command": "python3", "cwd": ".", "args": ["./w/run.py"]}
+        if tools is not None:
+            entry["tools"] = tools
+        return json.dumps({"mcpServers": {server: entry}}).encode()
+
+    def errors(self, tools, server="codex-thread-bridge"):
+        return plugin.mcp_document_errors("m.json", self.declaration(tools, server),
+                                          self.payload(**{"w/run.py": "x"}), "release")
+
+    def test_the_measured_set_is_what_is_accepted(self):
+        for mode in plugin.APPROVAL_MODES:
+            required = dict(plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"])
+            gates = {tool: {"approval_mode": value} for tool, value in required.items()}
+            gates["other_tool"] = {"approval_mode": mode}
+            self.assertEqual(self.errors(gates), [], mode)
+
+    def test_a_mode_outside_the_measured_set_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "always"}
+        found = self.errors(gates)
+        self.assertTrue(any("not one of" in problem for problem in found), found)
+
+    def test_a_key_this_check_does_not_know_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "approve", "enabled": True}
+        found = self.errors(gates)
+        self.assertTrue(any("disappears without a word" in problem for problem in found), found)
+
+    def test_a_tools_value_that_is_not_an_object_is_refused(self):
+        self.assertTrue(self.errors(["create_thread"]))
+        self.assertTrue(self.errors({}))
+        self.assertTrue(self.errors({"create_thread": "approve"}))
+
+    def test_dropping_a_required_gate_is_refused(self):
+        found = self.errors({"create_thread": {"approval_mode": "approve"}})
+        self.assertTrue(any("send_message_to_thread" in problem for problem in found), found)
+
+    def test_weakening_a_required_gate_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "auto"}
+        found = self.errors(gates)
+        self.assertTrue(any("must gate create_thread" in problem for problem in found), found)
+
+    def test_a_server_with_no_required_gate_may_declare_none(self):
+        self.assertEqual(self.errors(None, server="some-other-server"), [])
+
+    def test_the_shipped_declaration_carries_the_gate(self):
+        document = json.loads(
+            (ROOT / "plugins" / "crw" / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+        gates = document["mcpServers"]["codex-thread-bridge"]["tools"]
+        self.assertEqual({tool: gate["approval_mode"] for tool, gate in gates.items()},
+                         plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"])
+
+    def test_this_repository_never_invokes_the_plugin_mutation_itself(self):
+        """Which is why check-declaration is a gate an operator runs, not an interception."""
+        # Read as syntax, not as text. Grepping for the words matched the sentences these
+        # commands print about what they deliberately do NOT do -- "the plugin cache and its
+        # config.toml entry, which codex plugin remove owns" -- and a check that cannot tell a
+        # sentence from an invocation proves nothing about either.
+        import ast
+        offenders = []
+        for path in sorted((ROOT / "scripts").rglob("*.py")):
+            if "tests" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.List, ast.Tuple)):
+                    continue
+                words = [item.value for item in node.elts
+                         if isinstance(item, ast.Constant) and isinstance(item.value, str)]
+                if "codex" in words and "plugin" in words:
+                    offenders.append(str(path) + ": " + repr(words))
+        self.assertEqual(offenders, [])

@@ -203,3 +203,22 @@ A passing check is evidence about this source. It is not evidence that a plugin
 installed, that a skill loaded on any host, or that a running workflow changed.
 Those need their own observation of `codex plugin list`, `codex debug prompt-input`
 and the behavior itself.
+
+### Declared approval policy
+
+`wiring/mcp.json` may gate individual tools of a declared server:
+
+    "tools": { "create_thread": { "approval_mode": "approve" } }
+
+`scripts/ci/plugin.py` checks it, and it is the only signal a mistake here ever produces. Measured:
+an invalid `approval_mode` in a plugin declaration makes `codex plugin add` exit 0 and
+`codex mcp list` exit 0 with **zero** entries. The server disappears and no `disabled_reason` is
+recorded, because there is no entry left to carry one. The same mistake in a user configuration is
+a loud error naming the valid set.
+
+So the check fails closed: the accepted values are `auto`, `prompt`, `writes` and `approve`,
+measured from the host's own rejection text; `approval_mode` is the only key allowed inside a tool
+gate; an empty `tools` object is refused because nothing measured says what a host does with one;
+and `codex-thread-bridge` must keep gating `create_thread` and `send_message_to_thread` with
+`approve`, because that gate is what the user configuration hands over when the transition removes
+its table. See [approval policy](plugin-transition.md#approval-policy).

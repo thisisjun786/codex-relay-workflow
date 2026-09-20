@@ -3980,3 +3980,189 @@ class InterruptionAfterEveryStepConverges(TransitionCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+POLICY_TABLES = ('\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                 'approval_mode = "approve"\n'
+                 '\n[mcp_servers.codex-thread-bridge.tools.send_message_to_thread]\n'
+                 'approval_mode = "approve"\n')
+
+
+class TheApprovalPolicySurvivesTheTransition(TransitionCase):
+    """CRW-142. The table is the only thing gating create_thread until it is removed.
+
+    Measured on an isolated home: while the user table exists it wins over the plugin declaration,
+    so installing the plugin does not drop the gate -- removing the table does. Before this, the
+    transition had no idea approval policy existed. It refused a table carrying one, but only
+    because the bytes did not match what it renders, and the reason it printed named the command
+    and arguments even when those were exactly right. An operator who believed that reason and
+    deleted the policy tables got a passing preflight and a host with no gate.
+    """
+
+    def granted(self, host, tables=POLICY_TABLES):
+        """Put the policy tables where a host really carries them: inside the registration.
+
+        Appended at the end of the file instead, they sit behind the plugin and trust tables and
+        are no longer part of this server's span -- which the command correctly refuses, and which
+        is its own case below rather than the setup for every other one.
+        """
+        text = host.config()
+        header = "[mcp_servers.codex-thread-bridge]"
+        start = text.index(header) + len(header)
+        following = text.find("\n[", start)
+        cut = following if following != -1 else len(text)
+        (host.home / "config.toml").write_text(
+            text[:cut].rstrip("\n") + "\n" + tables.strip("\n") + "\n" + text[cut:],
+            encoding="utf-8")
+        return host
+
+    @needs_reader
+    def test_the_policy_is_read_whatever_spelling_it_is_written_in(self):
+        host = self.granted(self.ready())
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["host"]["mcp"]["policy"]["tools"],
+                         {"create_thread": "approve", "send_message_to_thread": "approve"})
+        self.assertEqual(answer["policyInEffect"]["tools"],
+                         {"create_thread": "approve", "send_message_to_thread": "approve"})
+
+    @needs_reader
+    def test_a_quoted_spelling_is_read_and_refused_for_the_reason_it_really_has(self):
+        """The case that made the old reason a false statement rather than a conservative one."""
+        host = self.ready()
+        host.append_config('\n[mcp_servers."codex-thread-bridge".tools.create_thread]\n'
+                           'approval_mode = "approve"\n')
+        before = host.config()
+        code, answer = host.call("inspect")
+        self.assertEqual(answer["host"]["mcp"]["policy"]["tools"], {"create_thread": "approve"})
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot render back", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_a_tool_the_declaration_does_not_carry_refuses_before_anything_moves(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.steer_thread]\n'
+                           'approval_mode = "approve"\n')
+        before = host.config(), host.hooks_document(), host.settings()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("steer_thread", answer["results"][0]["detail"])
+        self.assertIn("no approval_mode for it", answer["results"][0]["detail"])
+        self.assertEqual((host.config(), host.hooks_document(), host.settings()), before)
+
+    @needs_reader
+    def test_a_mode_the_declaration_disagrees_with_refuses_and_names_both(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           'approval_mode = "prompt"\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        detail = answer["results"][0]["detail"]
+        self.assertIn("'prompt'", detail)
+        self.assertIn("'approve'", detail)
+        self.assertIn("does not choose between them", detail)
+        self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_a_policy_this_command_cannot_interpret_refuses(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           'approval_mode = "approve"\nenabled = true\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("enabled", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_a_mode_outside_the_measured_set_refuses(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           'approval_mode = "always"\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        detail = " ".join(item.get("detail") or "" for item in answer["results"])
+        self.assertIn("always", detail)
+        self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_a_declaration_that_cannot_be_read_is_compared_with_nothing_and_refuses(self):
+        host = self.granted(self.ready())
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        (cache / "wiring" / "mcp.json").write_text("{ not json", encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertEqual(host.config(), before)
+
+    @needs_reader
+    def test_a_registration_field_the_declaration_cannot_reproduce_is_named(self):
+        """tool_timeout_sec is the live host's blocker, and it is now said in those words."""
+        host = self.granted(self.ready())
+        text = host.config().replace('[mcp_servers.codex-thread-bridge]',
+                                     '[mcp_servers.codex-thread-bridge]\ntool_timeout_sec = 60')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("tool_timeout_sec", answer["results"][0]["detail"])
+        self.assertIn("does not reproduce", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), text)
+
+    @needs_reader
+    def test_a_preserved_policy_is_removed_with_its_table_and_nothing_else(self):
+        host = self.granted(self.ready())
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        # The bytes, not merely "the server is gone": the removed span now covers several tables
+        # with blank lines between them, and an orphaned policy table is the state in which codex
+        # fails to load at all.
+        after = host.config()
+        self.assertNotIn("[mcp_servers.codex-thread-bridge]", after)
+        self.assertNotIn("approval_mode", after)
+        self.assertNotIn("tools.create_thread", after)
+        self.assertIn('[plugins."crw@crw"]', after)
+        self.assertIn("[hooks.state.", after)
+        standdown = [item for item in answer["results"]
+                     if item["step"] == "mcp table standdown"][0]
+        self.assertEqual(standdown["removedPolicy"],
+                         {"create_thread": "approve", "send_message_to_thread": "approve"})
+        # And what serves the bridge afterwards still declares the same gate. Whether a declared
+        # mode engages at call time is unmeasured and is not claimed here.
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        declared = json.loads((cache / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+        gates = declared["mcpServers"]["codex-thread-bridge"]["tools"]
+        self.assertEqual({tool: gate["approval_mode"] for tool, gate in gates.items()},
+                         {"create_thread": "approve", "send_message_to_thread": "approve"})
+
+    @needs_reader
+    def test_a_host_with_no_policy_at_all_is_unaffected(self):
+        """The ordinary register-mcp table. This is the regression guard for existing installs."""
+        host = self.ready()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(answer["policyBefore"]["tools"], {})
+
+    @needs_reader
+    def test_running_it_again_after_a_preserved_transition_changes_nothing(self):
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+        settled = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(host.config(), settled)
+        self.assertEqual(self.host.outcomes(answer)["mcp table standdown"], "already_done")
+
+    @needs_reader
+    def test_disable_and_remove_gain_no_approval_refusal(self):
+        """They never touch the table, so a policy question must not start blocking them."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+        for command in ("disable", "remove"):
+            code, answer = host.call(command, "--apply")
+            self.assertEqual(code, 0, command + ": "
+                             + json.dumps(answer["results"], indent=2)[:1200])
+            self.assertIn("policyInEffect", answer)
