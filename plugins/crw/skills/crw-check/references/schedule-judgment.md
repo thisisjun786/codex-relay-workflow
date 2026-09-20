@@ -232,10 +232,11 @@ again or reports that result partially checked with the earlier observed-at. A
 verdict itself is reused at the same revision, the same criteria, and the same
 schedule fields, which is this skill's existing reuse rule rather than a new one,
 and a later reader recomputes the deadline and the difference from the recorded
-dates and instants instead of repeating the audit. That is what lets a consumer take
-the verdict without rerunning the criterion comparison. Whether a separate status
-report reaches the same verdict is a property of that operation and is not
-established here.
+dates and instants instead of repeating the audit. These conditions are what a consumer
+needs in order to take the verdict rather than rerun the criterion comparison; whether
+any operation does take it is that operation's own contract, and whether a separate
+status report reaches the same verdict is a property of that operation. This section
+defines the producing side and establishes neither.
 
 ## What the check refuses
 
