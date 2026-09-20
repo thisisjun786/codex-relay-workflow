@@ -895,8 +895,6 @@ these live and already forbids a second store:
 - **The fixed binding** — the initiative where this task supervises one, the project or standalone
   issue it executes, and this task's own id, each by its stable identifier, with the host this task
   runs on where that has been established.
-  A supervisor that recovers its projects without the initiative they were approved under has lost
-  the boundary, not just a label.
 - **The current temporary target**, where one exists: the other project or issue this task was
   asked to look at, recorded beside the fixed binding rather than in place of it.
 - **The approved scope** in force, with the limits that arrived with it and the start policy this
@@ -906,7 +904,9 @@ these live and already forbids a second store:
 - **The one next action.**
 
 Those five are what the restatement reports. What it has to establish before reporting them, the
-settings in force and the work that has to survive the restart, is the rest of this subsection.
+settings in force and the work that has to survive the restart, is the rest of this subsection. A
+supervisor that restates its projects without the initiative they were approved under has lost the
+boundary rather than a label, which is why the first line carries it.
 
 Each line carries the time it was observed, because three claims are easy to write as one: what
 the record said when it was written, what a read this turn returned, and what an earlier decision
@@ -920,27 +920,28 @@ fresh reading does supersede is a stale note of its own kind: a "not started" or
 line loses to this turn's reading of that same register and stays as history. A line this turn did
 not refresh is marked unrefreshed with its observation time rather than reported as current.
 
-Three endings look alike from outside, and the restatement separates them. A record saying
-completed is a claim rather than a verdict, and it is corroborated against the evidence its own
-delivery shape requires under
+A record saying completed is a claim rather than a verdict, and it is corroborated against the
+evidence its own delivery shape requires under
 [Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
 [Initiative supervision](references/initiative-supervision.md): for implementation work that is
 the pull request landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
-for accepted non-PR work it is the agreed observable result, which has no pull request by
-design. That test runs per subject rather than once: each scoped issue is corroborated on its own
-delivery, and the project is finished only when every obligation in its agreed scope is delivered,
-integrated and reconciled, which is the parent's own completion boundary in
-[Supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
-and is not reached by any one pull request. Where that holds the project is finished, and its
-parent resting is the shape of that rather than a failure to recover from. Where the label says
-completed and some subject still lacks the evidence its shape requires, the project is unfinished:
-that gap is what gets reported and the project stays in the active set, because a status nobody
-corroborated is the one thing that can hide undelivered work behind a quiet parent.
-A project still in progress whose returned result was never judged, or whose recorded blocker has
-since cleared, continues inside the approved scope and through the task that already owns it. A
-run somebody stopped stays stopped: the finding is recorded with what would release it, and
-nothing is sent.
+for accepted non-PR work it is the agreed observable result, which has no pull request by design.
+That test runs per subject rather than once, so each scoped issue is corroborated on its own
+delivery and the project is finished only when every obligation in its agreed scope is delivered,
+integrated and reconciled. That is the parent's own completion boundary in
+[Supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+and no single pull request reaches it.
+
+Four states then look alike from outside, and the restatement separates them. A project whose
+evidence holds is finished, and its parent resting is the shape of that rather than a failure to
+recover from. A project labelled completed while some subject still lacks the evidence its shape
+requires is unfinished: that gap is what gets reported and the project stays in the active set,
+because a status nobody corroborated is the one thing that can hide undelivered work behind a
+quiet parent. A project still in progress whose returned result was never judged, or whose
+recorded blocker has since cleared, continues inside the approved scope and through the task that
+already owns it. And a run somebody stopped stays stopped: the finding is recorded with what would
+release it, and nothing is sent.
 
 Two requests are answered from the restatement. A status-only request is answered with the current
 position first — what is done, what is in progress, what is waiting, and the next observation that
