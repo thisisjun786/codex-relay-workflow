@@ -148,20 +148,33 @@ the child recorded to whoever waits for it. The parent verifies the result again
 criteria. The hook never decides that the child is finished; it decides whether the child said
 anything at all, which is a fact about a record rather than about an intention.
 
-State, with a writer and a restorer for each piece. The marker root holds what each party
-declared, and its writers are split by party: the coordinator writes the assignment's own facts,
-a child writes only under its own session, the child's hook process writes only its own hook
-directory, and the relay daemon writes none of it. The relay's own store holds the assignment
-record. The adapter's ledger, where duplicate suppression and recovery live, is selected by a
-different setting than that store, so moving one with a command-line option can leave a run
-reporting one location while recovery reads another. Restoration has a named owner:
-[the operations contract](../../crw-run/references/operations.md) owns assignment retention and
-recovery, not the hook and not the daemon, and
-[the hook contract](../../crw-run/references/hook-contract.md) and
-[the relay reference](../../crw-run/references/relay.md) own the permissions, the defaults and the
-one-store-per-operating-scope rule quoted here by reference rather than by value. The coordination
-summary belongs in the Linear document; raw run records are private receipts kept outside this
-repository. What a given run actually resolved is a receipt value, and this explanation has none.
+State, with a writer and a restorer for each piece. Three stores, and they fail differently.
+
+The marker root holds what each party declared. Its writers are split by party: the coordinator
+writes the assignment's own facts, a child writes only under its own session, the child's hook
+process writes only its own hook directory, and the relay daemon writes none of it and reads none
+of it. It sits outside both the source checkout and the relay's database. Retention belongs to
+whoever owns that root, and [the hook contract](../../crw-run/references/hook-contract.md) says
+plainly that no owner is fixed inside it, so assignments accumulate with no natural bound. That is
+the honest entry: an unowned cost named as unowned, rather than a restorer invented to fill the
+row.
+
+The relay's store holds the assignment itself, and it is the piece that survives everything else.
+A process reaching its deadline, restarting or failing outright leaves the assignment where it
+was, because recovery continues from the existing store and never from an empty one; merging two
+stores that already exist in one scope is a migration with its own decision and its own backup,
+per [the operations contract](../../crw-run/references/operations.md).
+
+The adapter's ledger, where duplicate suppression and delivery recovery live, is selected by a
+different setting than that store. Move one with a command-line option and not the other and a run
+reports one location while recovery reads another; lose the ledger and recovery reads a ledger that
+never saw the earlier attempts, so it can miss a delivery or repeat one. Nothing rebuilds it, which
+is why the two settings are worth one sentence in any explanation of this system.
+
+The coordination summary belongs in the Linear document, and raw run records are private receipts
+kept outside this repository. The defaults and the one-store-per-operating-scope rule belong to
+[the relay reference](../../crw-run/references/relay.md), named here rather than copied. What a
+given run actually resolved is a receipt value, and this explanation has none.
 
 What refuses. Skill text refuses nothing. The sandbox profile the child was created with is the
 boundary that holds. The hook can hold a turn only where it is registered, trusted, invoked and
@@ -182,13 +195,18 @@ How an improvement is judged. The off and on comparison in `docs/hook-comparison
 arms from one command where a single flag is the only difference, and its own rule is the one
 worth copying: the pass is never the difference between the arms, because that difference is
 settled by the flag before any turn ends. What it can answer is bounded and it says so. It reaches
-the missed-detection measures; the handoff round trip, a duplicated delivery and the installed
-runtime are recorded as not performed, because no daemon runs in it and nothing is installed.
-The rule that would decide adoption was fixed before implementation, in the contract's own
-criteria, and it is not met: the measures that would support a decision are among the ones not
-performed, so no adoption or hold decision is written anywhere. The expected effect is that fewer
-finished turns go unreported. There is no measured effect to report, and the honest entry is that
-the question stays open rather than that the answer is yes.
+both missed-detection measures. Handoff success and duplicate execution, meaning no verification
+or correction running twice for one event across a hold, a restart or a recovery, are recorded as
+not performed, and the installed runtime is outside what it reads at all, because no daemon runs
+in it and nothing is installed.
+
+The criteria were fixed before implementation so the comparison could not be tuned once numbers
+arrived, and they are per-measure criteria rather than a combined keep-or-revert threshold. No such
+threshold has been fixed, and no adoption or hold decision is written anywhere, because the
+measures that would support one are among those not performed. Saying that is the point: a missing
+decision rule is reported as missing, not replaced by the writer's own. The expected effect is that
+fewer finished turns go unreported. There is no measured effect to report, so the question stays
+open rather than being answered yes.
 
 ## Worked example: a queued thumbnail job
 
@@ -221,8 +239,7 @@ README asking workers to be idempotent, the naming convention, and the retry hel
 obliged to call.
 
 How far it is built. The web process and the row run in production; the worker exists in source and
-runs only in staging; the notification is a drawing. Three claims, three labels, and a reader who
-is never left guessing which environment a sentence describes.
+runs only in staging; the notification is a drawing.
 
 How an improvement is judged. Adding a retry answers a counted miss: uploads still pending after
 ten minutes. The comparison replays one recorded day's workload against the same code with the
