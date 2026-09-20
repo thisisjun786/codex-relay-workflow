@@ -217,15 +217,27 @@ source of truth that neither one can see on its own.
 A message to a task states the RECIPIENT's authorized pair, not the sender's. A child reporting
 to its parent states the parent's, and its own settings are unaffected by what the parent runs
 on; copying the recipient's pair into the sender is how a correction to one level spreads to
-another. Where the recipient's role has a declared pair, that pair is the one to state, read from
-the declared policy at the time of the send rather than from a record of what it used to be.
+another. The pair to state is the one RECORDED as that task's authorization, which is what a send
+verifies against. For most tasks that is the pair its role's policy declares, and it is read at
+the time of the send rather than from a memory of what the role used to run on. It is not always
+that pair: an exception authorizes one specific model and effort for one role and directory, and
+a task created under a currently valid one legitimately differs from the ordinary declared pair.
+Stating the declared pair for such a task would either fail verification or ask the host to
+change what the task runs on.
 
-The recipient's runtime state decides the mechanism as well as the settings. An idle or unloaded
-recipient is resumed and therefore carries its settings; an ACTIVE recipient is steered into the
-turn it is already running, and a steer carries no model or effort at all, so there is nothing to
-state and nothing that could be applied. Reading the state before choosing is what keeps those
-two apart, and it is also what a report must not skip: a send accepted on a resumed recipient and
-a steer accepted into a live turn are different facts.
+The recipient's runtime state decides the mechanism as well as the settings, and it does not
+decide it alone. An ACTIVE recipient is steered into the turn it is already running, and a steer
+carries no model or effort at all, so there is nothing to state and nothing that could be
+applied. An IDLE recipient is resumed and carries its settings. A recipient the host reports as
+`notLoaded` is resumed only when its pair derives from its role's declared pair: a resume can
+apply what it transmits while the host materializes the thread, so a record-based pair — a
+supervisor's — or an exception-authorized one is refused there rather than sent. For those, wait
+until the host has the task loaded and read its state again before choosing a route; the refusal
+is retry-safe and nothing is lost meanwhile.
+
+Reading the state before choosing is what keeps those apart, and it is also what a report must
+not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a
+correction still held because its recipient was not loaded are three different facts.
 
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
