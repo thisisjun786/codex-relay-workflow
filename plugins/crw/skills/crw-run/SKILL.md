@@ -425,16 +425,19 @@ are reported explicitly, with no silent substitution of a different workflow.
 
 ### Start policy and child cap
 
-Before the first child-creation call of this run, which is also before the registration that
-follows it, settle the start policy and record it in full: every field
-[Start policy](references/start-policy.md) names, each carrying its source, its scope and the
-conditions it stands on. A value the precedence settles is applied without asking; a value that
-genuinely needs a new decision is asked before any child is created, and only the action waiting on
-that answer is held while independent authorized work continues. On a resume, after a compaction or
-for a later batch, re-read the identities those values stand on, restore what has not changed, and
-adjudicate again only the field whose conditions did. [Start policy](references/start-policy.md) owns the fields, the scope each decision carries,
-the re-adjudication triggers and the cases this is judged by; the standing cap and its precedence
-are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
+Before this run creates its first child or registers an assignment for one, whichever comes first,
+settle the start policy and record it in full: every field [Start policy](references/start-policy.md)
+names, each carrying its source, its scope and the conditions it stands on. A value the precedence
+settles is applied without asking; a value that genuinely needs a new decision is asked before any
+child is created, and only the action waiting on that answer is held while independent authorized
+work continues. Registration is named beside creation because it does not always follow one: a
+reused child already has its task id, so an assignment can become managed with no creation call in
+sight. Counting is the separate question, and there a creation still means a child. On a resume,
+after a compaction or for a later batch, re-read the identities those values stand on, restore what
+has not changed, and adjudicate again only the field whose conditions did. Start policy owns the
+fields, the scope each decision carries, the re-adjudication triggers and the cases this is judged
+by; the standing cap and its precedence are in
+[Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
 The first thing settled is the role, because it decides what this task opens: an initiative
 management task runs without a native goal or an automatic loop, a project parent creates or
