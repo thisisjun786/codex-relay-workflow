@@ -97,6 +97,49 @@ declaring that same role, and an exception with no `role` key may be cited only 
 cites none. A directory is not a task identity, and without this an exception written for one task
 could be cited by any task in the same directory under any role.
 
+## One task on a different pair
+
+A role's pair is the default for every task holding that role, so moving one task must not move
+the role. That is what a named exception is for, and it is the only supported way to express it:
+the operator writes an id, its single pair and the directories it covers, a request cites the id,
+and nothing else about the role changes.
+
+The current example is the CRW-127 coordinator, task `01a0b98e-dbce-79b0-9de6-7053757969ee`.
+Jun authorized it, and only it, to receive idle callbacks on `ollama-cloud/glm-5.3` at `xhigh`
+in `/home/jun/code`. Every other project parent stays on the parent pair. Written down, that is:
+
+    {
+      "exceptions": {
+        "crw-127-coordinator": {
+          "model": "ollama-cloud/glm-5.3",
+          "reasoningEffort": "xhigh",
+          "cwd": ["/home/jun/code"],
+          "role": "parent",
+          "reason": "Jun, 2026-09-21: this coordinator only; the parent default does not move"
+        }
+      }
+    }
+
+Three separate things keep that from spreading. The `role` key means only a request citing
+`parent` may cite it, so a child or a supervisor naming the id is refused rather than quietly
+covered. The `cwd` list means a parent working somewhere else is refused even though it holds the
+right role — a directory is not a task identity, but it is the narrowest scope the policy file can
+express, so it is the one that has to be stated. And the `roles` section is untouched: a reader
+asking what a project parent runs on still gets `xai/grok-4.6` at `xhigh`, because an exception is
+an exemption from the answer and never a replacement for it.
+
+The receipt says so too. A creation or send citing this id records `exception` and, under
+`roleExpectation`, the pair the role WOULD have required together with `overriddenBy`. A reader of
+that receipt can see that an expectation existed and exactly which authorization replaced it, so
+"this parent is on a different model" is never something a later reader has to infer.
+
+Two consequences worth stating plainly. An exception is never inherited: children created by an
+excepted parent are still children and still run the child pair, because the exception authorizes
+a pair and carries no other privilege — it relaxes nothing about sandbox, approvals or scope. And
+the citation is a fact about a task, not about a pair: it is carried forward while it is still
+doing work and is dropped only when the operator says so, never because the two pairs happen to
+match.
+
 ## Reading the policy instead of remembering it
 
 Call `get_capabilities`. Its `executionPolicy` reports the mode, the digest and the declared roles
