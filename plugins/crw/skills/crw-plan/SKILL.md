@@ -1,6 +1,6 @@
 ---
 name: crw-plan
-description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, and scoped plan updates; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
+description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation, and carry the standard for explaining a system's design to somebody who does not know it yet. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, scoped plan updates, and requests to understand or review how a system works or should work; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
 ---
 
 # CRW Plan
@@ -26,6 +26,14 @@ Read the user's goal, existing Linear initiative/project/milestones/issues, full
 Distinguish proposed, implemented, reviewed, merged, deployed, and behaviorally verified work. A Done label or local commit cannot establish every later state. If evidence disagrees, preserve the source links and record the disagreement.
 
 Identify the goal, product classification, and finishable outcome separately using the shared [Linear operating model](references/integrations.md#linear-operating-model). Reuse existing initiative/project IDs and team conventions. Do not infer product identity from a checkout folder name or merge distinct products because their repositories are related.
+
+## Explain the design
+
+When the request is to understand or review a system rather than to plan one, what a component is for, whether an existing owner can be left where it is, how the parts fit, or whether a proposed change actually helps, follow [Design explanation](references/design-explanation.md). It fixes what the answer must carry: the visible result first, then which process runs and which store keeps, what actually refuses, how far each claim is built with the evidence that earned the label, and how an improvement would be judged before anyone measures it. The same standard applies to design reasoning written into a plan for a later reader.
+
+Two rules hold without opening it. A registered hook, a line in a prompt and a merged source edit establish no enforcement, no installation and no live behaviour; each of those is a separate fact needing its own evidence. And an explanation-only request executes nothing, while a Linear reflection the request or its existing scope already covers is applied, read back, and not sent for the same approval again.
+
+This standard governs how an explanation is delivered. Checking delivered work against what was agreed stays with [crw-check](../crw-check/SKILL.md), which owns that comparison whether or not an explanation is what produced the question.
 
 ## Shape the plan
 
