@@ -24,7 +24,7 @@ what follows is the goal convention those roles carry.
 | Role | Native goal | Implementation loop | What it never takes |
 | --- | --- | --- | --- |
 | Initiative management task | None, and no automatic loop | None | Development, technical acceptance and merge judgment. It talks with the user, relays requests, reads parent state, resumes within the approved scope, and summarises. |
-| Project parent | Creates or reuses its own, aimed at completing the approved project scope, with automatic continuation | None. It builds no CXC goalplan and no FSM | A fabricated source change to close its goal |
+| Project parent | Creates or reuses its own, aimed at completing the approved project scope. Its continuation is the bounded Stop nudge measured below, not a durable loop | None. It builds no CXC goalplan and no FSM | A fabricated source change to close its goal |
 | Issue child | Creates or reuses its own for the issue scope | Keeps CXC Loop and PABCD | The parent's merge authority, and a second goal where one already exists |
 
 A project parent's goal is the default rather than something a request has to ask for, and the
@@ -41,12 +41,11 @@ and the role model policy by its own issue; where either disagrees with this par
 and this paragraph is stale. Nothing in this file changes a model, a permission, a worktree, a
 project's scope or a child count.
 
-
 ## What is settled, and what is recorded with it
 
 | Field | What it holds |
 | --- | --- |
-| `run_mode` | `loop`, `goal-free-run` or `blocked`, in the vocabulary [Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) defines. For a project parent `loop` is the default; `goal-free-run` applies only where the request separately authorizes goal-free Run, or where an explicit user limit forbids a goal. Unresolved activation without that authorization is `blocked`. |
+| `run_mode` | `loop`, `goal-free-run` or `blocked`, in the vocabulary [Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) defines. For a project parent `loop` is the default. `goal-free-run` applies only where the request separately authorizes goal-free Run. A `no-goal` limit bars the goal; it does not by itself authorize the work to proceed without one, and unresolved activation without that separate authorization is `blocked`. |
 | `child_cap` | The ceiling in force, and every bound that produced the number actually dispatched. |
 | `host_compatibility` | The preflight outcome, the installed identities it was read at, and the issue that owns an unresolved blocker. |
 | `observation_path` | The waiting mode selected under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting), with the evidence that it is available. |
@@ -118,6 +117,10 @@ because one of them passing says nothing about the other two.
    had its idle callback refused with `unsupported_approval_policy`, and automatic reporting and
    resume stopped.
 
+Each result lands in its own recorded field: goal support in `host_compatibility`, the delivery
+path in `observation_path`, and approval-policy compatibility in `approval_policy`. Three results,
+three fields, so a later reader can tell which one failed.
+
 Record the third as its own fact. It is not a reason to lower an approval policy, and lowering one
 is not a repair for it. The bridge declares the policy it believes a thread is on and never sets
 it, so a mismatch is something to observe and report rather than to write over.
@@ -132,26 +135,27 @@ Activation and durable continuation are different claims, and on the measured in
 the first holds. Keep them apart in every report.
 
 The goal activates: a project parent creates or reuses its native goal and reads it back active.
-What follows is not durable automatic continuation. Measured on CXC `0.2.33` and re-read on `0.2.34`,
-`handleStop` in the
-`pabcd-state` component blocks the stop when a goal reads `active` while the phase is `IDLE` and no
+What follows is not durable automatic continuation. Measured on CXC `0.2.33` and re-read on
+`0.2.34`, `handleStop` in the `pabcd-state` component blocks the stop when a goal reads `active` while the phase is `IDLE` and no
 orchestration is in flight, and the continuation it injects carries an unconditional directive to
-enter PABCD, adding a loop-initialisation line when no goalplan slug is bound. A coordination
+enter PABCD, adding a loop-initialisation line when no goalplan slug is bound. A project
 parent declines that directive, because this contract forbids it a goalplan or an FSM and forbids
-closing a goal early, and it spends the continued turn on its coordination duties instead. The
-honest exits the block itself names are completing the goal or recording it blocked.
+closing a goal before its scope is actually delivered, and it spends the continued turn on its
+coordination duties instead. The honest exits the block itself names are completing the goal, which
+is honest only once the agreed scope is verified, or recording it blocked.
 
 That budget is finite, though not in the way a first reading suggests. Three consecutive blocks are
 allowed, and the next one releases instead, so the turn can end. The release also clears the
 per-phase counter, and a cleared counter no longer matches the phase it is compared against, so the
 stop after it reads as progress and can open another burst of three. What never resets is the
 absolute total: every stop advances it, block and release alike, and twenty-four is the ceiling. A
-coordination parent therefore gets bursts of at most three wake-ups separated by releases, bounded
+project parent therefore gets bursts of at most three wake-ups separated by releases, bounded
 overall by that total. That is a finite nudge budget, reported as such, and not durable automatic
 continuation.
 
 Because a compaction can lose this, the goal objective and the recovery record both state in plain
-words that this is a coordination goal which never runs loop initialisation, never enters PABCD,
+words that this is a coordination goal, meaning a project parent goal that carries no
+implementation loop, and that it never runs loop initialisation, never enters PABCD,
 and never closes early. A later session reads that before it reads anything else.
 
 This is a known incompatibility rather than a scheduled repair. CRW runs as an overlay on CXC as
@@ -208,7 +212,6 @@ through the supported transition its lifecycle defines, which
 is deleted, marked complete or replaced to make room. No token budget is invented; one is set only
 where the user supplied it.
 
-
 ## Ask before, never after
 
 Every field is one of two things, and the run states which.
@@ -219,12 +222,13 @@ still-valid decision recorded for this same project, or the standing default is 
 an approval already given.
 
 A field the precedence does not settle needs a new decision, and it is asked before the first
-creation call. Only the action waiting on the answer is held: reading the baseline, preparing
+child-creation call. Only the action waiting on the answer is held: reading the baseline, preparing
 packets, inspecting existing owners and read-only diagnosis continue while it is pending.
 
 A question raised after the action it governs is a defect to record, not an approval obtained.
-The reverse is no remedy either. Nothing here reduces what a run may dispatch, and holding a
-question until the work is already done is not a way of avoiding it.
+The reverse is no remedy either. This timing rule does not itself reduce what a run may dispatch,
+and holding a question until the work is already done is not a way of avoiding it. The cap, an
+explicit limit and the subtractions below are what bound the number.
 
 ## What bounds the number actually dispatched
 
@@ -236,6 +240,7 @@ differently.
 
 This parent's own live children always count against its cap. Other parents' children never do;
 they inform the observation instead.
+
 A creation whose outcome is unresolved counts against the cap exactly as a live child does, until
 it is reconciled. An unresolved outcome means a writer may exist, so treating its slot as free is
 how a parent quietly exceeds its own ceiling while its arithmetic still looks correct.
@@ -262,24 +267,25 @@ Three claims this does not support:
 ## Cases this policy is accepted against
 
 These are the cases the policy is judged by. D is the number from the section above, and no case
-creates anything before the adjudication: that count is zero in every row. Unless a row says
+creates a child before the adjudication: that count is zero in every row. Creation here means child
+creation; `no-create` bars that and leaves the parent goal to `no-goal`, which governs it. Unless a row says
 otherwise the project parent mode is `loop`, holding its own goal.
 
 | # | Case | Question | Creations after | Effective mode and cap | On the next entry |
 | --- | --- | --- | --- | --- | --- |
 | 1 | New project, the default applies | none | D | `loop` with the parent own goal, standing cap | recorded before the first creation |
-| 2 | The same conditions in a later session | none | D, the same as case 1 | identical, decided again by nobody | identities re-read, values unchanged |
-| 3 | The same project resumed or compacted | none | D | the restored values | restored from the record, not re-decided |
+| 2 | A second session adjudicating the same inputs from scratch | none | D, identical to case 1 | `loop`, standing cap, reached independently | the adjudication is deterministic: same inputs, same record, no question |
+| 3 | The same project resumed mid-run or after a compaction | none | D | the restored values, including any `this-run` allowance | restored from the record rather than adjudicated again |
 | 4 | A different project on the same host | none for the cap | D | standing cap; case 5 does not reach here | host facts carry, project decisions do not |
 | 5 | The user states a limit of four | none | D with the cap in force at four | source is the explicit limit, scope `this-run` | restored while the run lasts, never promoted |
-| 6a | `no-create` in force | none | 0 | the mode as adjudicated, nothing created | the limit recorded as the precedence that applied |
+| 6a | `no-create` in force | none | 0 | the mode as adjudicated, no child created | the limit recorded as the precedence that applied |
 | 6b | `no-goal` in force and the request separately covers goal-free Run | none | D | `goal-free-run` under the cap in force | the limit restored; it bars the goal, not the work |
 | 7a | The goal is unsupported and no substitute is approved | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
+| 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
 | 7c | The goal is unsupported and goal-free progress was already authorized | none | D | `goal-free-run`, temporary, reported as that | path, error and impact returned to CRW-29 owner; never reported as an activated goal loop |
 | 7d | The goal activates but its Stop-continuation is the bounded PABCD nudge | none | D | `loop`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix |
-| 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
 | 8 | An installed version or hook rule changed | only if the re-read forces one | D | the changed field re-adjudicated, the rest restored | the changed identity recorded against the superseded value |
-| 9 | Children of this parent are already live | none | D, which subtracts them | standing cap minus the live children | the existing owners preserved, never replaced |
+| 9 | Children of this parent are already live | none | D, which subtracts them | `loop`; the standing cap is unchanged and D subtracts the live children | the existing owners preserved, never replaced |
 
 An edit does not alter a turn that has already loaded these instructions. It does not stop there,
 though: where an installation links this checkout, a later read of these instructions loads the
