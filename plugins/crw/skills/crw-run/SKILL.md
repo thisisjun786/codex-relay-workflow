@@ -282,6 +282,30 @@ in the packet. Reuse an existing task's worktree and issue branch on resume;
 classification changes alone never relocate it. Non-PR work can omit those code
 fields with its explicit result and verification instead.
 
+### Determine the execution mode
+
+Managed start and managed resume decide, before dispatch, whether a relay holds this
+assignment or whether this work is explicitly direct, and record which. Everything below
+that reads "where a relay holds the assignment" is that decision, not a guess to be made
+again per paragraph. The rule and what to record are in
+[Whether a relay holds this assignment](../crw-plan/references/integrations.md#whether-a-relay-holds-this-assignment);
+the command and its output are in
+[codex-session-relay](references/relay.md#determine-whether-this-store-holds-the-assignment).
+
+Run it from the process that will do the work, because what a task can reach is a property
+of that task's profile on that host rather than a fact about the relay. One reading answers
+the issue half and the store half together and says whether they agree; act on it only where
+they do. A reading that names a store this process did not measure is refused rather than
+used, and an unreadable store answers null rather than "nothing is assigned", because those
+two are different answers and only one of them is safe to act on.
+
+Record the outcome with the rest of the assignment: the mode, the resolved state directory
+and socket, the store identity the reading reported, the delivery owner, and the measured
+availability. A resume reads that back rather than deciding again from scratch, which is what
+keeps a recovered coordinator from opening a second writer or quietly changing route
+mid-assignment. Where the answer is direct, that is written down with its reason, and the
+direct path is then the one this skill already describes, unchanged.
+
 ## Prepare and dispatch
 
 Read [Task packet](references/task-packet.md) when preparing prompts. Each packet
