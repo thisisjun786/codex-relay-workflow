@@ -308,8 +308,12 @@ class Capacity:
         exact(parent_task_id, "a task id")
         now = self.clock.iso()
         refusal, identifier, existing = None, None, None
-        initiative = self._initiative_of(project_key)
         with self.store.transaction() as db:
+            # Inside the transaction that checks the ceiling and writes the slot. Resolved
+            # before it, a relink between the two reads left the reservation enforcing the
+            # OLD initiative's ceiling and attributing the slot to it, and the owner check
+            # cannot see a relink that keeps the same parent.
+            initiative = self._initiative_of(project_key)
             owners = [
                 record["taskId"] for record in self.linkage.owners(PROJECT, project_key)
                 if record["role"] == PARENT
@@ -436,7 +440,7 @@ class Capacity:
                         incumbent=row["dimension"], challenger=parent_task_id)
         return None
 
-    def release(self, *, subject_kind, subject_key, released_by, reason):
+    def release(self, *, subject_kind, subject_key, released_by, reason, tenure=None):
         """Give the slot back. Idempotent on the subject, and a changed reason is refused.
 
         Completion, failure, a resume and a duplicated notification all arrive here with the
@@ -448,12 +452,26 @@ class Capacity:
         now = self.clock.iso()
         refusal, already = None, None
         with self.store.transaction() as db:
-            row = db.execute(
+            tenures = db.execute(
                 "SELECT * FROM execution_slots"
                 "  WHERE subject_kind = ? AND subject_key = ?"
-                "  ORDER BY tenure DESC LIMIT 1",
+                "  ORDER BY tenure DESC",
                 (subject_kind, subject_key),
-            ).fetchone()
+            ).fetchall()
+            if tenure is not None:
+                row = next((r for r in tenures if r["tenure"] == int(tenure)), None)
+            elif len(tenures) > 1:
+                # A subject retains every tenure, so the newest is not the one a delayed
+                # notification is about. Taking it released the resumed execution and handed
+                # its capacity back while it was still running.
+                raise CoordinationError(
+                    RefusalReason.DISPOSITION_CONFLICT,
+                    subject_kind + " " + repr(subject_key) + " has tenures "
+                    + repr([r["tenure"] for r in tenures]) + "; name the one this release"
+                    " settles, because the newest is not necessarily the one a delayed"
+                    " notification is about")
+            else:
+                row = tenures[0] if tenures else None
             if row is None:
                 raise CoordinationError(
                     RefusalReason.SLOT_UNKNOWN,
@@ -546,6 +564,18 @@ class Capacity:
     def observe(self, *, scope_kind, scope_key, dimension, observed, observed_by, method):
         """Record a measurement. The only way a non-runs dimension gets a current value."""
         exact(method, "a measurement method")
+        if scope_kind not in SCOPES:
+            raise CoordinationError(
+                RefusalReason.LINK_NOT_ACTIVE,
+                "a usage scope is one of " + ", ".join(SCOPES) + ", not " + repr(scope_kind))
+        exact(dimension, "a dimension")
+        if dimension == RUNS:
+            # runs is counted from held slots. An observation of it would sit beside a figure
+            # this store derives and disagree with it, which is worse than having neither.
+            raise CoordinationError(
+                RefusalReason.LINK_NOT_ACTIVE,
+                "runs is derived from held slots and is never observed; recording one would"
+                " put a second, disagreeing figure beside the counted one")
         self._check_scope(scope_kind, scope_key)
         self._check_declarer(scope_kind, scope_key, observed_by)
         observed = self._finite(observed, "an observation")

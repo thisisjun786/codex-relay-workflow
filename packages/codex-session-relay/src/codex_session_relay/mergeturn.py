@@ -722,14 +722,21 @@ class MergeTurn:
             run = str(entry.get("runId", ""))
             if int(entry.get("attempt", 1) or 1) != highest[run]:
                 continue
+            # Every entry has to be ABOUT this head, because one that is not is evidence
+            # about another commit and has no business in this set.
             if entry.get("headSha") != head_sha:
                 return stale(
                     "check run " + repr(run) + " reports head "
                     + repr(entry.get("headSha")) + ", not " + repr(head_sha), run)
-            if entry.get("conclusion") != "success":
+            # A conclusion is only binding for a check the caller declared required. An
+            # optional lint failing alongside a green dev-gate is not a reason to refuse a
+            # merge, and refusing it made the declared set mean nothing.
+            if str(entry.get("name", "")) in required \
+                    and entry.get("conclusion") != "success":
                 return stale(
-                    "check run " + repr(run) + " concluded "
-                    + repr(entry.get("conclusion")) + " on its newest attempt", run)
+                    "required check " + repr(entry.get("name")) + " (run " + repr(run)
+                    + ") concluded " + repr(entry.get("conclusion"))
+                    + " on its newest attempt", run)
         present = {
             str(entry.get("name", "")) for entry in checks
             if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
@@ -740,6 +747,12 @@ class MergeTurn:
             return stale(
                 "these checks were declared required and are not present and successful in"
                 " the restated set: " + repr(missing), missing[0])
+        if not required and not present:
+            # With nothing declared required, the set still has to contain something green on
+            # this head; otherwise an all-red restatement would pass for want of a rule.
+            return stale(
+                "no check declared required and nothing in the restated set succeeded on "
+                + repr(head_sha) + ", so nothing says this head is green")
         return None
 
     @staticmethod
@@ -940,15 +953,19 @@ class MergeTurn:
                     landed = True
                 elif pr_state in ("open", "closed"):
                     landed = False
-                elif moved:
+                else:
+                    # Three states establish an outcome and nothing else does. Treating an
+                    # unrecognised one as not-landed let a typo close the turn and promote a
+                    # waiter while the merge may well have completed - and the base being
+                    # unchanged says nothing either, since an unmerged candidate leaves it
+                    # unchanged too.
                     raise CoordinationError(
                         RefusalReason.MERGE_EVIDENCE_REQUIRED,
-                        "the base moved from " + repr(row["checked_base_sha"]) + " to "
-                        + repr(observed_base_sha) + " and " + repr(pr_state) + " does not say"
-                        " whether THIS candidate is what moved it. Any unrelated commit moves"
-                        " a base; read the pull request's state and resolve again")
-                else:
-                    landed = False
+                        repr(pr_state) + " does not say whether this candidate merged. Read"
+                        " the pull request and resolve again with merged, open or closed"
+                        + ("; the base moved from " + repr(row["checked_base_sha"]) + " to "
+                           + repr(observed_base_sha) + ", which any unrelated commit also"
+                           " does" if moved else ""))
                 self._close_in(
                     db, row, LANDED if landed else RETURNED,
                     "resolved from an observation: pr_state=" + str(pr_state) + "; " + evidence,

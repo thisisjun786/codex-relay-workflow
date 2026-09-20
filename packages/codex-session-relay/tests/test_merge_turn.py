@@ -349,6 +349,23 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         self.assertEqual(answer["state"], "merging")
         self.assertEqual(answer["requiredDeclared"], ["dev-gate"])
 
+    def test_an_optional_check_failing_does_not_block_a_green_required_set(self):
+        """The declared set decides. Refusing on an optional failure made it mean nothing."""
+        held = self.held()
+        checks = run_checks("head-a", name="dev-gate", run="run-1")
+        checks += run_checks("head-a", conclusion="failure", name="lint", run="run-2")
+        answer = self.begin(held, checks=checks, required=["dev-gate"])
+        self.assertEqual(answer["state"], "merging")
+
+    def test_with_nothing_declared_required_something_still_has_to_be_green(self):
+        held = self.held()
+        with self.assertRaises(CoordinationError) as caught:
+            self.begin(
+                held, required=[],
+                checks=run_checks("head-a", conclusion="failure", name="lint", run="run-2"))
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CURRENCY_STALE)
+
+
     def test_a_check_reporting_another_head_is_refused(self):
         held = self.held()
         with self.assertRaises(CoordinationError) as caught:
@@ -528,6 +545,24 @@ class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
                 pr_state="unknown", evidence="could not read the pull request")
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
+
+    def test_an_unrecognised_pull_request_state_establishes_nothing(self):
+        """A typo used to close the turn and promote a waiter.
+
+        The base being unchanged said nothing either: an unmerged candidate leaves it
+        unchanged too, so no reading of that pair established an outcome.
+        """
+        held = self.unknown_turn()
+        for observed in ("base-0", "base-9"):
+            with self.assertRaises(CoordinationError) as caught:
+                self.turns.resolve_unknown(
+                    held["turnId"], actor=self.supervisor.task_id,
+                    observed_base_sha=observed, pr_state="mergd",
+                    evidence="I think it merged")
+            self.assertEqual(
+                caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
+
 
     def test_a_merged_pull_request_is_landed_whatever_the_base_reads(self):
         held = self.unknown_turn()

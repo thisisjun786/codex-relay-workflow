@@ -141,6 +141,50 @@ class ASlotNeitherLeaksNorReturnsTwice(CapacityTestCase):
             released_by=self.supervisor.task_id, reason="parent stopped answering")
         self.assertEqual(released["state"], "released")
 
+    def test_a_delayed_release_cannot_free_a_later_tenures_slot(self):
+        """The newest tenure is not the one a delayed notification is about.
+
+        REL-1 runs as tenure 1, is released, and resumes as tenure 2. A late completion for
+        tenure 1 arriving afterwards used to release the RESUMED execution and hand its
+        capacity back while it was still running.
+        """
+        self.take("REL-1")
+        self.give_back("REL-1")
+        self.take("REL-1")
+        with self.assertRaises(CoordinationError) as caught:
+            self.give_back("REL-1")
+        self.assertEqual(caught.exception.reason, RefusalReason.DISPOSITION_CONFLICT)
+        self.assertEqual(self.capacity.report()["total"], 1)
+
+    def test_naming_the_tenure_settles_exactly_that_one(self):
+        self.take("REL-1")
+        self.give_back("REL-1")
+        self.take("REL-1")
+        replay = self.capacity.release(
+            subject_kind=ASSIGNMENT, subject_key="REL-1",
+            released_by=self.alpha.task_id, reason="completed", tenure=1)
+        self.assertTrue(replay["alreadyReleased"])
+        self.assertEqual(self.capacity.report()["total"], 1, "tenure 2 is still running")
+        self.capacity.release(
+            subject_kind=ASSIGNMENT, subject_key="REL-1",
+            released_by=self.alpha.task_id, reason="completed", tenure=2)
+        self.assertEqual(self.capacity.report()["total"], 0)
+
+    def test_runs_is_counted_and_never_observed(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.observe(
+                scope_kind="project", scope_key=PROJECT_A, dimension="runs",
+                observed=99, observed_by=self.alpha.task_id, method="claimed")
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+
+    def test_a_usage_scope_is_one_this_store_knows(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.observe(
+                scope_kind="galaxy", scope_key=PROJECT_A, dimension="file_descriptors",
+                observed=1, observed_by=self.alpha.task_id, method="probe")
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+
+
     def test_a_task_that_does_not_own_the_project_cannot_reserve_for_it(self):
         with self.assertRaises(CoordinationError) as caught:
             self.take("REL-1", endpoint=self.beta, project=PROJECT_A)

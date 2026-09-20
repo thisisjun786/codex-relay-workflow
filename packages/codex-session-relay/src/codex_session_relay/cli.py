@@ -610,7 +610,7 @@ def cmd_slot_reserve(services, args) -> dict:
 def cmd_slot_release(services, args) -> dict:
     return services.capacity.release(
         subject_kind=args.kind, subject_key=args.subject, released_by=args.actor,
-        reason=args.reason)
+        reason=args.reason, tenure=args.tenure)
 
 
 def cmd_limit_declare(services, args) -> dict:
@@ -2674,7 +2674,10 @@ def build_parser() -> argparse.ArgumentParser:
     turn_resolve.add_argument("--turn", required=True)
     turn_resolve.add_argument("--actor", required=True)
     turn_resolve.add_argument("--observed-base-sha", required=True)
-    turn_resolve.add_argument("--pr-state", required=True)
+    turn_resolve.add_argument("--pr-state", required=True,
+                              choices=["merged", "open", "closed"],
+                              help="only these three establish an outcome; anything else is"
+                                   " refused at the service too")
     turn_resolve.add_argument("--evidence", required=True,
                               help="what you observed. Elapsed time is not an observation"
                                    " and never becomes one")
@@ -2718,6 +2721,11 @@ def build_parser() -> argparse.ArgumentParser:
     slot_release.add_argument("--reason", required=True,
                               help="the first reason wins. A later notification restates it"
                                    " rather than replacing it")
+    slot_release.add_argument("--tenure", type=int,
+                              help="which tenure this release settles. Required once a"
+                                   " subject has been reserved more than once, because the"
+                                   " newest is not necessarily the one a delayed"
+                                   " notification is about")
     slot_release.set_defaults(handler=cmd_slot_release)
 
     limit_declare = subparsers.add_parser("limit-declare")
