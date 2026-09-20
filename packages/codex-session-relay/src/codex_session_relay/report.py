@@ -31,6 +31,7 @@ NEWLINE = chr(10)
 VERSION = "relay-report/1"
 LEGACY = "relay-message/legacy"
 REVISION_OUTCOME = "revision_request"
+READY_OUTCOME = "ready_for_review"
 
 # UTF-8 BYTES, not characters. A transport limit is a byte limit, and a report written in
 # Korean costs roughly three bytes per character, so measuring characters would let exactly
@@ -186,7 +187,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     unresolved = _check_unresolved(unresolved)
     restore = _check_restore(restore)
     submission_no = _submission(submission_no)
-    handoff = _check_handoff(handoff, pr_number, head_sha, outcome)
+    handoff = _check_handoff(handoff, pr_number, head_sha, base_sha, outcome)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -1237,6 +1238,7 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
         # keep counts from the top of the block, and these blocks open with a blank line, so
         # a floor of two is what keeps the heading attached to whatever survives under it.
         _Section("pull request", _pr_lines(report), rank=1, essential=True, keep=2),
+        _Section("merge readiness", _handoff_lines(report), rank=1, essential=True, keep=2),
         _Section("verification", _evidence_lines(report), rank=4),
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
@@ -1626,6 +1628,31 @@ def _ack_lines(event_id):
 
 # ------------------------------------------------------------------- merge readiness
 
+def _handoff_lines(report) -> list:
+    """What the parent restates, said in the message rather than left in the store.
+
+    A record written and never rendered is the silent loss the omission notice exists to
+    prevent: the recipient reads a completion, sees nothing about the review, and has no reason
+    to suspect there is a row it never fetched. These lines are that pointer, and they carry
+    the two numbers worth comparing on sight.
+    """
+    handoff = report.get("handoff")
+    if not handoff:
+        return []
+    coverage = handoff.get("reviewCoverage") or {}
+    required = handoff.get("requiredDeclared") or []
+    checks = handoff.get("checks") or []
+    return [
+        "",
+        "merge readiness (restate these; do not collect them again):",
+        f"  head {report.get('headSha')} on base {report.get('baseSha')}"
+        f" verified {handoff.get('baseVerifiedAt')}",
+        f"  required: {', '.join(required) if required else 'none declared by the branch'}"
+        f" - {len(checks)} run(s) restated",
+        f"  review: {coverage.get('totalCount')} thread(s) seen over"
+        f" {coverage.get('pagesRead')} page(s), {coverage.get('unresolved')} unresolved",
+    ]
+
 #: Which refusal a problem code becomes. The next action genuinely differs for each, which is
 #: why the predicate returns codes rather than prose: an undeclared required set is something
 #: the child must go and read, a stale check is something it must wait for or re-run, and an
@@ -1642,7 +1669,7 @@ _HANDOFF_REASONS = {
 DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
 
 
-def _check_handoff(handoff, pr_number, head_sha, outcome):
+def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
     """The child's merge-readiness evidence, refused at the point it can still be fixed.
 
     This is the gate CRW-128 exists for. A child reported EQP-29 complete with fourteen
@@ -1664,12 +1691,17 @@ def _check_handoff(handoff, pr_number, head_sha, outcome):
             "from the child on the completion it is about",
         )
     if handoff is None:
-        if pr_number is None:
+        if pr_number is None or outcome != READY_OUTCOME:
             return None
         # The gate has to be compulsory or it is not a gate. An opt-in one is satisfied by
         # saying nothing, which is exactly what the child in EQP-29 did: it reported the work
         # complete and never mentioned that fourteen review threads were open. Silence about
         # the review is the failure, so silence is what this refuses.
+        #
+        # Only a report CLAIMING readiness, though. A blocked, interrupted or failed turn names
+        # its pull request too, and demanding a complete handoff from one would make the honest
+        # outcome the only one a child could not report - which is the opposite of OPS-9.2,
+        # where a missing review is blocked and blocked is reported as blocked.
         raise ReceiptRefused(
             RefusalReason.MERGE_EVIDENCE_REQUIRED,
             "this report names a pull request and states nothing about its checks or its "
@@ -1710,6 +1742,23 @@ def _check_handoff(handoff, pr_number, head_sha, outcome):
             RefusalReason.MERGE_EVIDENCE_REQUIRED,
             "the pull request is still a draft, so the review it reports was never actually "
             "requested; mark it ready for review before handing it over",
+        )
+    verified_at = handoff.get("baseVerifiedAt")
+    if not (isinstance(verified_at, str) and verified_at.strip()):
+        # The parent's one job here is to restate a base and compare it. A handoff that says
+        # which head it is about and not which base, or not when the base was read, hands over
+        # half of the comparison and leaves the other half to be guessed.
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "the handoff states the head it is about but not when its base was verified; the "
+            "parent restates the base immediately before merging, and a base nobody dated "
+            "cannot be compared against the one it reads",
+        )
+    if not base_sha:
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "a report carrying a merge-readiness handoff names the base commit it was verified "
+            "against; without one there is nothing for the pre-merge re-read to disagree with",
         )
     dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
     return {

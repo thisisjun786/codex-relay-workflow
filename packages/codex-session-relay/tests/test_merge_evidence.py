@@ -13,6 +13,8 @@ import pytest
 
 from codex_session_relay import mergeevidence
 from codex_session_relay.mergeturn import MergeTurn
+from codex_session_relay import report
+from codex_session_relay.errors import ReceiptRefused, RefusalReason
 
 import json
 import pathlib
@@ -251,6 +253,76 @@ def test_the_string_threads_seen_would_otherwise_have_passed():
     sneaky = _clean_review(threadsSeen="ab", totalCount=2)
     assert mergeevidence.review_problems(sneaky) == []
     assert mergeevidence.shape_problems(sneaky, []) != []
+
+
+BASE = "c56576d5be412b5bc352dd93b9eb37ab279a12f6"
+
+
+def _ready_handoff(**overrides):
+    base = {
+        "isDraft": False,
+        "baseVerifiedAt": "2026-09-21T02:00:00Z",
+        "requiredDeclared": ["dev-gate"],
+        "checks": [_run("dev-gate")],
+        "reviewCoverage": _clean_review(totalCount=1, threadsSeen=["t1"]),
+        "threadDispositions": [{"threadId": "t1", "disposition": "fixed",
+                                "evidence": "fixed and rechecked", "addressedBy": "abc1234"}],
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize("outcome", ["blocked_needs_input", "interrupted", "failed"])
+def test_an_unfinished_turn_may_still_name_its_pull_request(outcome):
+    """Blocked is reported as blocked, which means it has to be reportable.
+
+    Requiring a complete handoff from every report naming a pull request made the honest
+    outcome the only one a child could not send: a turn that stopped because the review was
+    not finished names its pull request too, and demanding finished-review evidence from it
+    would leave lying as the only way to report.
+    """
+    assert report._check_handoff(None, 12, HEAD, BASE, outcome) is None
+
+
+def test_a_readiness_claim_naming_a_pull_request_may_not_stay_silent():
+    with pytest.raises(ReceiptRefused) as caught:
+        report._check_handoff(None, 12, HEAD, BASE, "ready_for_review")
+    assert caught.value.reason is RefusalReason.MERGE_EVIDENCE_REQUIRED
+
+
+def test_a_report_with_no_pull_request_needs_no_handoff():
+    assert report._check_handoff(None, None, HEAD, BASE, "ready_for_review") is None
+
+
+def test_the_parent_is_given_a_base_it_can_compare():
+    """The parent's job is to restate a base and compare it, so half a comparison is refused."""
+    with pytest.raises(ReceiptRefused) as undated:
+        report._check_handoff(_ready_handoff(baseVerifiedAt=None), 12, HEAD, BASE,
+                              "ready_for_review")
+    assert undated.value.reason is RefusalReason.MERGE_EVIDENCE_REQUIRED
+    with pytest.raises(ReceiptRefused) as unnamed:
+        report._check_handoff(_ready_handoff(), 12, HEAD, None, "ready_for_review")
+    assert unnamed.value.reason is RefusalReason.MERGE_EVIDENCE_REQUIRED
+
+
+def test_a_complete_handoff_is_accepted_and_normalised():
+    accepted = report._check_handoff(_ready_handoff(), 12, HEAD, BASE, "ready_for_review")
+    assert accepted["isDraft"] is False
+    assert accepted["requiredDeclared"] == ["dev-gate"]
+    assert [one["threadId"] for one in accepted["threadDispositions"]] == ["t1"]
+
+
+def test_the_parent_sees_the_readiness_in_the_message_not_only_in_the_store():
+    """A record written and never rendered is one the recipient has no reason to fetch."""
+    lines = report._handoff_lines({
+        "headSha": HEAD, "baseSha": BASE,
+        "handoff": report._check_handoff(_ready_handoff(), 12, HEAD, BASE, "ready_for_review"),
+    })
+    rendered = chr(10).join(lines)
+    assert "merge readiness" in rendered
+    assert "0 unresolved" in rendered
+    assert "dev-gate" in rendered
+    assert report._handoff_lines({"headSha": HEAD, "baseSha": BASE}) == []
 
 
 def _observable(refusal):
