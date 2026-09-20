@@ -373,21 +373,38 @@ class EditRegions:
                 # arguments made a proposer pre-accept the PEER's side, so it could then
                 # accept the remaining one itself and hold both.
                 owned = self._owned_side(low, high, proposer_task_id)
-                mine = "left_condition" if owned == low else "right_condition"
-                accepted = "left_accepted_at" if owned == low else "right_accepted_at"
-                db.execute(
-                    "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
-                    " base_revision, left_project, right_project, peer_link_id,"
-                    " proposer_task_id, issue_key, constraint_text, " + mine + ", "
-                    + accepted + ", next_owner, state, tenure, supersedes, proposed_at,"
-                    " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (agreement, identifier, region["repository"], region["base_revision"],
-                     low, high, peer_link_id, proposer_task_id, issue_key, constraint_text,
-                     condition, now, next_owner, PROPOSED, tenure, supersedes, now, now),
-                )
-                self.store.journal(
-                    "edit_region_proposed", agreement,
-                    {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
+                if owned is None:
+                    # Ownership can be lost between the pre-flight check and this insert. A
+                    # None here used to fall through to the high side, so a proposer that had
+                    # just stopped owning the low project pre-accepted the PEER's - which is
+                    # the bug this line was added to fix, one race later.
+                    refusal = Refusal(
+                        RefusalReason.SCOPE_ROLE_MISMATCH,
+                        "task " + repr(proposer_task_id) + " no longer owns either "
+                        + repr(low) + " or " + repr(high) + "; the project changed hands"
+                        " while this proposal was being decided",
+                        domain=DOMAIN_EDIT_REGION, subject=repository,
+                        challenger=proposer_task_id)
+                    self.conflicts.record_in(db, refusal, at=now)
+                    agreement = None
+                else:
+                    mine = "left_condition" if owned == low else "right_condition"
+                    accepted = ("left_accepted_at" if owned == low
+                                else "right_accepted_at")
+                    db.execute(
+                        "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
+                        " base_revision, left_project, right_project, peer_link_id,"
+                        " proposer_task_id, issue_key, constraint_text, " + mine + ", "
+                        + accepted + ", next_owner, state, tenure, supersedes, proposed_at,"
+                        " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (agreement, identifier, region["repository"],
+                         region["base_revision"], low, high, peer_link_id, proposer_task_id,
+                         issue_key, constraint_text, condition, now, next_owner, PROPOSED,
+                         tenure, supersedes, now, now),
+                    )
+                    self.store.journal(
+                        "edit_region_proposed", agreement,
+                        {"regionId": identifier, "path": clean, "pair": [low, high]}, at=now)
             elif refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
         if refusal is not None:

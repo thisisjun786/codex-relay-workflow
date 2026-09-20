@@ -434,6 +434,30 @@ class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
         self.assertEqual(
             self.regions.agreement(reversed_order["agreementId"])["state"], "agreed")
 
+    def test_losing_ownership_mid_proposal_refuses_rather_than_taking_the_peers_side(self):
+        """The last fix's own race.
+
+        With owned resolved to None the side fell through to the high project, so a proposer
+        that had just stopped owning the low one pre-accepted the PEER's side - the very bug
+        that line was added to prevent, one step later.
+        """
+        original = self.regions._owned_side
+        calls = {"n": 0}
+
+        def vanishing(low, high, actor):
+            calls["n"] += 1
+            return original(low, high, actor) if calls["n"] == 1 else None
+
+        self.regions._owned_side = vanishing
+        try:
+            with self.assertRaises(CoordinationError) as caught:
+                self.propose("src/a.py")
+        finally:
+            self.regions._owned_side = original
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.store.all("SELECT * FROM edit_agreements", ()), [])
+
+
     def test_a_closed_agreement_is_proposed_again_rather_than_carried_forward(self):
         record = self.propose("src/a.py")
         self.regions.settle(
