@@ -79,14 +79,23 @@ the one hold that travels upward.
 
 ## Proving ownership
 
-One question, one read: does this issue already have a responsible child?
+One question: does this issue already have a responsible child? Which read answers it depends on
+the execution mode already determined for this assignment
+([Determine the execution mode](../SKILL.md#determine-the-execution-mode)), and that decision is
+not made again here.
 
-`doctor --issue`
+**Where a relay holds the assignment**, `doctor --issue`
 ([determine whether this store holds the assignment](relay.md#determine-whether-this-store-holds-the-assignment))
 answers it and constructs nothing, so it is safe to ask before anything exists. `holds` true ends
 the evaluation as `skip:already_owned`, and the existing child is reused rather than replaced.
 `holds` false is dispatchable on this axis. `holds` null is unproved rather than free, and so is
 a state directory this process cannot use: both are `defer:ownership_unverified` with the reason.
+
+**Where the assignment is explicitly direct**, there is no store to ask and no relay answer to
+wait for. Ownership comes from the coordination record and the existing task, as everywhere else
+in this skill. `defer:ownership_unverified` does not apply: a direct run holding every candidate
+because a relay it never used cannot answer would dispatch nothing at all, which is the opposite
+of what this pass is for.
 
 The pass asks nothing further here, because what it needs at this point is issue-child ownership
 and that read has just answered it. Which project parent owns a scope is a different axis with

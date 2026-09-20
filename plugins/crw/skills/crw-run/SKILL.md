@@ -258,11 +258,16 @@ again ([Start policy](references/start-policy.md#re-read-on-every-entry-re-decid
 An explicitly limited batch or issue remains limited in both Run and Loop. Check
 verified prerequisites, overlapping edit surfaces, existing
 writers, shared runtime resources, and available execution capacity. An issue that already has a
-responsible child is not a candidate, and that is read rather than assumed: `doctor --issue`
-answers it from one non-constructing read before anything is created, `holds` true ends the
-evaluation for that issue, and `holds` null is an unproven answer rather than a free slot
+responsible child is not a candidate, and that is read rather than assumed. Where a relay holds
+the assignment, `doctor --issue` answers it from one non-constructing read before anything is
+created: `holds` true ends the evaluation for that issue, and `holds` null is an unproven answer
+rather than a free slot
 ([Determine whether this store holds the assignment](references/relay.md#determine-whether-this-store-holds-the-assignment)).
-A child that stopped for a person is invisible to the reviewable reads, so enumerate the stopped
+An explicitly direct assignment has no store to ask, so its owner comes from the coordination
+record and the existing task the same way the rest of this skill establishes one; a direct run
+reads no relay answer and is never held for the absence of one.
+Where a relay holds the assignment, a child that stopped for a person is invisible to the
+reviewable reads, so enumerate the stopped
 children with `dispositions-show` ([Which children stopped](references/relay.md#which-children-stopped-and-whether-anyone-was-told))
 instead of reading their silence as progress; it reports what a child actually emitted, which is
 why [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting) still requires an
