@@ -313,6 +313,14 @@ continuation observed are three separate readings, and not for the goal default,
 start-policy.md fixes and which that file predates. This entry adds only the register each word
 came from, which is the thing a restarted supervisor no longer remembers.
 
+One boundary survives the restart with everything else. The per-subject corroboration in
+[Restate the run before continuing it](../SKILL.md#restate-the-run-before-continuing-it) is a
+parent's work on its own project, so at this level it is read rather than repeated: the
+restatement names each project's parent and whether that parent reports the project complete, and
+tests that reported outcome against the initiative's finish condition. A supervisor that reopens
+every issue and pull request behind a parent's report has taken over the level below, which S28
+already forbids.
+
 ## Cases
 
 These are the situations this entry has to get right. Three of them are already worked one level
