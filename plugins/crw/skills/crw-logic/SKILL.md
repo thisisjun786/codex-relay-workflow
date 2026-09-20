@@ -30,6 +30,8 @@ Preserve helper invocation and output rules from Integrations. If the user expli
 
 For code, use installed `cxc-dev` and the relevant verification owner. CXC owns authorized implementation, loops, and subagent routing; this audit does not start a loop or create a competing workflow. Return bounded findings to `crw-check` or `crw-run` when called by them.
 
+Where this audit runs as a sub-task or bounded helper, its record changes are returned and not written: the record ID, the revision read, the reason, the smallest sufficient change and its evidence go to the caller, which decides and writes, under [record writes and returned proposals](../crw-plan/references/integrations.md#record-writes-and-returned-proposals).
+
 ## Establish what must hold
 
 Read the target and relevant dependencies. Pin assumptions, units, time windows, population/scope, state/version, and decision authority. Distinguish approved requirements from proposals and implementation choices. Derive invariants from those contracts or independently justified facts, not from the function being tested.
