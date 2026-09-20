@@ -177,10 +177,11 @@ def make_server(bridge: Bridge):
     ) -> dict[str, Any]:
         """Resume the explicitly selected idle session and send one message under known settings.
 
-        Requires user authorization. Refuses an active thread and an interactive approval policy.
+        Requires user authorization. Refuses an active thread.
         expected_settings is required and must carry model and reasoning_effort, because a turn on
         an existing thread costs what a new one costs; it may also carry cwd, sandbox,
-        expected_sandbox_policy and runtime_workspace_roots. The pair is authorized against this
+        expected_sandbox_policy, runtime_workspace_roots and approval_policy. The pair is
+        authorized against this
         host's execution policy before the thread is even read, and policy_exception cites an
         operator-declared exception by id; because such an exception is bound to directories,
         expected_settings must also carry cwd whenever policy_exception is supplied, or the
@@ -195,6 +196,32 @@ def make_server(bridge: Bridge):
         it cannot read back would be unverifiable. "settings" describes the resume observation,
         not the dispatched turn: no host-side exclusivity is held. Does not steer, interrupt, set
         Goals, or retry delivery. Use a stable request_id; inspect get_operation on uncertainty.
+
+        approval_policy is DECLARED, never transmitted. It states the policy you believe the
+        thread is on -- "never", "on-request" or "untrusted" -- and the resume observation is
+        judged against it. The resume carries no approvalPolicy at all, so this tool cannot set
+        or change the policy of a thread it did not create; measured on codex-cli 0.154.0 in both
+        directions, omitting it reports the thread's own policy and does not inherit the
+        CODEX_HOME config default. Omitting the key declares "never", which is what every caller
+        written before this key existed meant, so an interactive thread is still refused unless
+        you name its policy. A policy that is not the declared one refuses before any turn starts,
+        which is how a supervisor whose state moved under you is caught rather than written to.
+
+        Declaring an interactive policy buys delivery, not approval servicing. This bridge
+        services no approval: it answers every approval request with a refusal, never grants one,
+        and has NO route to the thread's own approver, because the protocol offers no way for a
+        second client to hand an approval request to the client that owns the thread. That is a
+        statement about this bridge and it stops there: whether the host independently surfaces
+        the same request to the owning client is not established, so read nothing either way from
+        it. What is certain is that nothing this bridge does turns such a request into an
+        approval. Receiving a report and running code are separate capabilities and only the
+        first is claimed; "approvals" on the receipt and get_capabilities both say so.
+
+        "delivery" says what happened to the message itself, derived from what actually went out:
+        not_delivered (no turn/start left this process -- the same logical message may be sent once
+        more under a NEW request id), turn_started (the host took it into a turn, which is not
+        completion), rejected (the host refused the turn), or outcome_unknown (a turn/start went
+        out and no answer came back -- reconcile by reading the thread, never by resending).
         Supplied settings are part of the request identity, so reusing an id with different
         settings is refused, and a receipt retained before expected_settings became required is
         reconciled with get_operation rather than replayed here.

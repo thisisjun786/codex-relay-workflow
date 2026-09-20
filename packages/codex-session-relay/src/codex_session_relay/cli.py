@@ -59,7 +59,8 @@ OFFLINE_COMMANDS = (
     # these works without an App Server. Leaving them out made doctor under-report what an
     # operator can actually run offline.
     "linkage-attach", "linkage-bind", "linkage-counterpart", "linkage-directive",
-    "linkage-down", "linkage-handover", "linkage-outstanding", "linkage-peer",
+    "linkage-completion", "linkage-down", "linkage-handover", "linkage-outstanding",
+    "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
     # Coordination between parents. Like the linkage surface these read and write the store
@@ -220,7 +221,10 @@ class Services:
     def assignments(self):
         if self._assignments is None:
             self._assignments = AssignmentView(
-                self.store, self.registry, self.clock, criteria=self.criteria
+                self.store, self.registry, self.clock, criteria=self.criteria,
+                # Without this every production project_state() answered "unreadable" without
+                # looking at a single assignment, so the reading existed only in its own tests.
+                linkage=self.linkage,
             )
         return self._assignments
 
@@ -424,6 +428,21 @@ def cmd_linkage_outstanding(services, args) -> dict:
     """What a replacement owner has to acknowledge before it can take over."""
     return {"projectKey": args.project, "taskId": args.task,
             "outstanding": services.linkage.outstanding(args.project, args.task)}
+
+
+def cmd_linkage_completion(services, args) -> dict:
+    """What a project's children report about being finished. A reading, never a verdict.
+
+    Read-only, and it prints the four answers distinctly rather than reducing them to a yes:
+    unreadable when the store did not answer, unregistered when nothing is attached, ambiguous
+    when the project has more than one live owner, incomplete with the unfinished rows named,
+    and complete_candidate when every live assignment reports a finished state.
+
+    complete_candidate is deliberately the strongest word available here. Integration and
+    verification are the parent's judgment and are not visible to this reader, so it never
+    prints "complete".
+    """
+    return _with_enforcement(services, services.assignments.project_state(args.project))
 
 
 def cmd_linkage_directive(services, args) -> dict:
@@ -2151,6 +2170,10 @@ def build_parser() -> argparse.ArgumentParser:
                              help="narrow to one parent's rows. A handover acknowledges the"
                                   " PROJECT's unfinished work, so leave this off for that")
     outstanding.set_defaults(handler=cmd_linkage_outstanding)
+
+    completion = subparsers.add_parser("linkage-completion")
+    completion.add_argument("--project", required=True)
+    completion.set_defaults(handler=cmd_linkage_completion)
 
     handover = subparsers.add_parser("linkage-handover")
     handover.add_argument("--role", required=True, choices=["supervisor", "parent"],

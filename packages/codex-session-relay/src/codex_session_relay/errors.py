@@ -108,6 +108,19 @@ class RefusalReason(str, Enum):
     # One task is bound to ONE Linear level by stable id. A second live binding of the same
     # role for the same task is its own refusal, told apart from a second OWNER of one scope.
     ROLE_ALREADY_BOUND = "role_already_bound"
+    # Resolving a delivery's recipient THROUGH the linkage, rather than off the relationship row
+    # that froze its parent at registration. Three answers the linkage reader keeps apart have to
+    # stay apart here too, because each one asks the caller for something different.
+    #
+    # RELATION_UNREADABLE: the store did not answer. It is never reported as "nothing found" and
+    # never as a resolved recipient, so there is no falling back to the frozen row: a store that
+    # could not be read has said nothing about who owns the scope.
+    # RELATION_OWNER_DRIFT: the linkage names a different owner than the relationship does. That
+    # is the late report whose upper relationship changed. Delivering to the frozen parent would
+    # credit a task that stepped down; delivering to the new owner would contradict
+    # assert_assignment_delivery. Neither is chosen silently.
+    RELATION_UNREADABLE = "relation_unreadable"
+    RELATION_OWNER_DRIFT = "relation_owner_drift"
     # A handover that would leave work behind it cannot move. Distinct from an unconfirmed
     # one: the caller restated the outstanding set correctly and the operation is still
     # refused, because the endpoint it would have to move is part of an assignment's identity.

@@ -225,12 +225,25 @@ Create with the full work prompt so the assignment is dispatched once. Use
 same assignment: it is a separate intentional mutation with its own request_id, it
 refuses active tasks, and it requires `expected_settings` carrying at least the
 authorized model and reasoning_effort, and optionally cwd, sandbox,
-expected_sandbox_policy and runtime_workspace_roots. A turn on an existing task costs
+expected_sandbox_policy, runtime_workspace_roots and approval_policy. A turn on an existing task costs
 what a new one costs, so a send with no stated pair is refused before the task is even
 read. The resume carries those settings and is read as an observation, and a difference
 or a setting the host does not report withholds the message instead of dispatching it.
 An unrecognised key is refused rather than ignored. Verify the returned settings on each
 mutation and reconcile a mismatch on the same task.
+
+`approval_policy` is the exception: it is declared, never transmitted. It states the policy
+you believe the task is on, and the resume observation is judged against it. Omitting it
+declares `never`, so an idle supervisor whose policy is `on-request` is refused with
+`unsupported_approval_policy` until you name that policy — which is the supported way to
+return a result to one. The resume carries no `approvalPolicy`, so this never changes a
+task's policy, and a policy that is not the declared one refuses before any turn starts,
+which is how a task whose state moved under you is caught rather than written to.
+Declaring an interactive policy buys delivery, not approval servicing: the bridge grants no
+approval, refuses every approval request, and has no route to that task's own approver, so
+nothing it does turns such a request into an approval. Whether the host surfaces the same
+request to the client that owns the task is not established, so do not read this either way.
+Receiving a report and running code are separate, and only the first is claimed.
 
 The `settings` receipt describes what the host reported at creation or at the
 resume, not a guarantee about the dispatched turn: no host-side exclusivity is

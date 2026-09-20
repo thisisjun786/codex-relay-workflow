@@ -29,6 +29,21 @@ class FakeServer:
         # Fields the host simply does not report back, to exercise "we cannot tell".
         self.unreported = set()
         self.approval_policy = "never"
+        # Who this host says reviews approvals on a thread. ThreadResumeResponse requires it.
+        self.approvals_reviewer = "user"
+        # Measured on codex-cli 0.154.0: resume is a detector, so by default this fake reports
+        # the thread's policy whatever the parameter says. Setting this makes it a SETTER
+        # instead, which is the only way a test can tell "preserved because the bridge omitted
+        # the parameter" apart from "preserved because this host ignores it". The fix depends on
+        # the first, and a fake that can only do the second would quietly assume the conclusion.
+        self.honour_resume_policy = False
+        # Set to a server-to-client method name to make turn/start raise one request the client
+        # has to answer, which is how an interactive thread reaches the bridge mid-turn.
+        self.approval_request_on_turn = None
+        # Every answer the client sent back to such a request, so a test can assert that the
+        # bridge refused rather than decided.
+        self.client_answers = []
+        self._server_request_id = 0
         self.complete_turns = True
         self.goal = None
         self.handshake_extensions = []
@@ -127,6 +142,10 @@ class FakeServer:
         async for raw in ws:
             message = json.loads(raw)
             if "method" not in message:
+                # The client's answer to a server-to-client request. Kept rather than dropped:
+                # what the bridge replies to an approval request is exactly what has to be
+                # proved, and a fake that discarded it could never show it.
+                self.client_answers.append(message)
                 continue
             method, params = message["method"], message.get("params", {})
             self.calls.append((method, params))
@@ -170,6 +189,22 @@ class FakeServer:
                 result = {}
             elif method == "turn/start":
                 thread = self.threads[params["threadId"]]
+                if self.approval_request_on_turn:
+                    # A request the client must answer, issued while turn/start is still in
+                    # flight. The real host asks this way when a thread's policy is interactive.
+                    self._server_request_id += 1
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "id": f"server-{self._server_request_id}",
+                                "method": self.approval_request_on_turn,
+                                "params": {
+                                    "threadId": params["threadId"],
+                                    "command": ["rm", "-rf", "/"],
+                                },
+                            }
+                        )
+                    )
                 turn = {
                     "id": f"turn-{len(thread['turns']) + 1}",
                     "status": "completed" if self.complete_turns else "inProgress",
@@ -185,8 +220,17 @@ class FakeServer:
             elif method == "thread/resume":
                 thread = self.threads[params["threadId"]]
                 # The real host reports the thread's own state; it does not adopt an override.
+                # honour_resume_policy models the opposite host, the one this fix would be wrong
+                # against if it existed: it takes the parameter when given one and falls back to
+                # its configured default when not.
                 retained = dict(thread.get("settings") or {})
+                if self.honour_resume_policy:
+                    # Acts on the parameter when one arrives and leaves the thread alone when
+                    # none does, which is what makes an omitted parameter the only safe request.
+                    if "approvalPolicy" in params:
+                        self.approval_policy = params["approvalPolicy"]
                 retained["approvalPolicy"] = self.approval_policy
+                retained["approvalsReviewer"] = self.approvals_reviewer
                 result = {"thread": {**thread, "turns": []}, **retained}
                 result.update(self.override_resume)
                 for field in self.unreported:
