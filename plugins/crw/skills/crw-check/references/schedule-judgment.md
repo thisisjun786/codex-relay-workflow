@@ -76,7 +76,7 @@ Judge each result once per axis, first match wins.
 
 | Row | Condition | Verdict |
 |---|---|---|
-| 1 | This axis has no date for this subject, or no Timezone, or the Current target disagrees with the latest Change source's after value, or the evidence needed to decide is stale | Undecidable, with the reason |
+| 1 | This axis has no date for this subject, or no Timezone, or the evidence needed to decide is stale, or this is the current axis and the Current target disagrees with the latest Change source's after value | Undecidable, with the reason |
 | 2 | Achieved on an earlier calendar day than the target | Ahead |
 | 3 | Achieved on the target day | On plan |
 | 4 | Achieved after the deadline | Late, reporting actual minus target |
@@ -111,8 +111,9 @@ nothing about when it will land.
 Before the deadline, only these observations make a result at risk, and each carries
 one wait class. A required predecessor that is unachieved and is itself late or at
 risk on the axis being judged, or that is unachieved and whose target date on that
-axis is not earlier than this result's deadline so the ordering cannot hold:
-internal coordination wait. An achieved predecessor is never a risk, whatever its
+axis falls after this subject's deadline, so the ordering cannot hold: internal
+coordination wait. Equal dates are not that defect, because two subjects sharing a
+target day can both land by the end of it. An achieved predecessor is never a risk, whatever its
 date said. The required delivery level
 unreached while a lower one has been reached: internal coordination wait, or
 external failure where an attempt was made and failed outside the team's control. An
@@ -169,8 +170,11 @@ paused time is not subtracted from elapsed time.
 
 ## Trace the impact
 
-Walk forward along required-predecessor edges only. For each unachieved result, name
-the successors it reaches through at least one path made entirely of required edges,
+Walk forward along required-predecessor edges only, starting only from a subject whose
+verdict is late, at risk or undecidable. A subject that is on plan blocks nothing yet,
+so work waiting on it is not reported as blocked merely because it has not finished.
+For each starting subject, name the successors it reaches through at least one path
+made entirely of required edges,
 and the nearest unachieved successor milestone or project. Another path that is not
 required does not cancel that dependency, and a successor reachable only through a
 path that is not required is not blocked. Where a successor has several required
@@ -299,7 +303,11 @@ current one worth discussing.
    2026-09-15, unachieved; S, current target 2026-09-28, with P as a required
    predecessor; observed 2026-09-21. P late by 6 days; S at risk, cause a required
    predecessor late, wait class internal coordination wait, impact S blocked by P.
-   Not S on plan because its own date is still ahead.
+   Not S on plan because its own date is still ahead. Where instead P's Current target
+    is 2026-09-28, the same day as S's, and P is unachieved with nothing else observed,
+    S is on plan: two subjects sharing a target day can both land by the end of it, so
+    equal dates are not an ordering that cannot hold. Not at risk from a comparison
+    that treats equal as late.
 
 5. **No dates.** I-9 has neither a baseline nor a current target date and is the
    only result in scope, observed 2026-09-21. I-9 undecidable on both axes, reason
@@ -339,7 +347,11 @@ current one worth discussing.
    its decision link, required level merged, unachieved, observed 2026-09-21. Baseline
    axis late by 11 days; current axis on plan, nothing due yet; both reported together
    with the change source and the move instant. Not the current axis alone, which
-   erases the recorded delay.
+   erases the recorded delay. Where M2's Current target reads 2026-09-25 while the
+    latest Change source records an after value of 2026-09-22, the current axis is
+    undecidable until the two are reconciled, and the baseline axis still reports late
+    by 11 days, because the Schedule baseline is independent of that disagreement. Not
+    both axes lost to one conflict, and not either side silently preferred.
 
 10. **A subject added after the plan began.** The project's plan was recorded
     2026-09-01 and I-6 entered its scope on 2026-09-10, when the record that added it
@@ -392,7 +404,10 @@ current one worth discussing.
     relation between I-15 and M3 cannot be read as required or not, that edge's impact
     is unverified with the missing input named, and where I-16's own state cannot be
     read, its contribution to M3 is unverified rather than assumed blocking or
-    assumed clear. Not an impact asserted over inputs nobody could read.
+    assumed clear. Not an impact asserted over inputs nobody could read. Where I-15 is instead on plan against
+    a 2026-09-28 target and simply unfinished, no walk starts from it and M3 is not
+    reported blocked, because a subject that is on plan blocks nothing yet. Not every
+    unfinished predecessor turned into a blocked successor.
 
 14. **A Target nature that carries no date.** I-18 carries only an Actual start and
     a Target nature of `undetermined`; I-19's Target nature is `awaiting authority`.
