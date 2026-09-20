@@ -114,7 +114,14 @@ limit is reached, or no authorized progress is possible. An empty ready queue wh
 children run calls for bounded observation; a blocked issue does not stop independent
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
 not a claim that the first batch completed the request. Run alone promises no automatic
-future wake-up. A status-only request wakes nothing.
+future wake-up, and a standalone status-only request wakes nothing. A checkpoint inside
+an authorized ongoing initiative is not that request: it is handed to the responsible
+parent and handled there as a resume of the authorized run, which re-evaluates outstanding
+child results, pending decision requests, cleared blockers and empty execution slots, then
+continues the successors that approval already covers. Reuse the same parent, children and
+assignments; this adds no scheduler and dispatches nothing that already has an owner. That
+handoff is a manual push rather than automatic continuation, and an explicit status-only,
+report-only, read-only or pause limit on it still wins.
 
 A request from a peer parent is answered here, by this task, under
 [Direct coordination between parents](../crw-plan/references/integrations.md#direct-coordination-between-parents):
