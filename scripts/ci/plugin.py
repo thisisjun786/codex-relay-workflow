@@ -46,6 +46,19 @@ INTERFACE_KEYS = set(INTERFACE_FIELDS) | {"websiteURL", "privacyPolicyURL", "ter
                                           "brandColor", "composerIcon", "logo", "logoDark",
                                           "screenshots"}
 AUTHOR_KEYS = {"name", "email", "url"}
+# Measured, not chosen. The host names this set in its own rejection text, quoted from an isolated
+# home: "unknown variant `...`, expected one of `auto`, `prompt`, `writes`, `approve`".
+APPROVAL_MODES = ("auto", "prompt", "writes", "approve")
+# The only key a declared tool gate may hold here. Fail closed, because the host's answer to a
+# plugin declaration it dislikes was measured and it is silence: plugin add exits 0, mcp list exits
+# 0, and the server is simply absent with no disabled_reason. Nothing downstream would report it.
+APPROVAL_KEYS = {"approval_mode"}
+# The gates this package must keep declaring. A per-tool approval the host grants today survives
+# the transition only because the declaration reproduces it, so dropping one here is the whole
+# defect CRW-142 exists to close, arriving as an ordinary edit that nothing else would catch.
+REQUIRED_TOOL_APPROVALS = {
+    "codex-thread-bridge": {"create_thread": "approve", "send_message_to_thread": "approve"},
+}
 # A personal home path names a real account; documentation placeholders such as
 # <worktree-root> carry characters these patterns deliberately exclude.
 HOME_PATHS = (re.compile(r"(?<![A-Za-z0-9._-])/home/[A-Za-z0-9._-]+/"),
@@ -315,6 +328,57 @@ def mcp_document_errors(name, data, payload, label):
                               " hosts it has not seen")
             elif word.startswith("./") and word[2:] not in payload:
                 errors.append(where + repr(word) + " names a file the package does not ship")
+        errors += tool_approval_errors(server, declared, where)
+    return errors
+
+
+def tool_approval_errors(server, declared, where):
+    """The per-tool approval policy a declaration carries, checked before it can ship.
+
+    This is the one check standing between a typo and a host with no task bridge. Measured: a bad
+    approval_mode in a PLUGIN declaration makes plugin add exit 0 and mcp list exit 0 with zero
+    entries -- the server vanishes and no disabled_reason is recorded, because there is no entry
+    left to carry one. The same mistake in a user config is a loud error naming the valid set. So
+    the host will not tell anyone; this has to.
+    """
+    errors = []
+    required = REQUIRED_TOOL_APPROVALS.get(server) or {}
+    if "tools" not in declared:
+        if required:
+            errors.append(where + "declares no tools, and this server must gate "
+                          + ", ".join(tool + " with " + repr(mode)
+                                       for tool, mode in sorted(required.items()))
+                          + ". The user configuration this package replaces carries that gate, and"
+                          " the declaration is what serves the server once the table is removed")
+        return errors
+    tools = declared["tools"]
+    if not isinstance(tools, dict) or not tools:
+        return [where + "tools must be a nonempty object; what a host does with an empty one is"
+                       " not measured"]
+    for tool, gate in sorted(tools.items()):
+        named = where + "tools." + str(tool) + ": "
+        if not nonempty(tool):
+            errors.append(where + "a tool name must be a nonempty string")
+            continue
+        if not isinstance(gate, dict):
+            errors.append(named + "a tool gate must be an object")
+            continue
+        unknown = sorted(set(gate) - APPROVAL_KEYS)
+        if unknown:
+            errors.append(named + "carries " + ", ".join(repr(key) for key in unknown)
+                          + "; only " + ", ".join(sorted(APPROVAL_KEYS)) + " is checked here, and"
+                          " a declaration this host dislikes disappears without a word")
+            continue
+        mode = gate.get("approval_mode")
+        if not isinstance(mode, str) or mode not in APPROVAL_MODES:
+            errors.append(named + "approval_mode " + repr(mode) + " is not one of "
+                          + ", ".join(APPROVAL_MODES))
+    for tool, mode in sorted(required.items()):
+        gate = tools.get(tool) if isinstance(tools, dict) else None
+        carried = gate.get("approval_mode") if isinstance(gate, dict) else None
+        if carried != mode:
+            errors.append(where + "must gate " + tool + " with " + repr(mode) + ", and it"
+                          " declares " + repr(carried))
     return errors
 
 
