@@ -246,6 +246,43 @@ Return:
 Stop after this assigned result; do not auto-start another issue.
 ```
 
+### First full assignment required fields
+
+The fields below are defined above; this is the check that the first full assignment
+actually carries them, because it is the request that starts the work and a later message
+cannot retroactively be the one the child started from. Each line names where the field
+is already specified rather than restating it, giving the [Non-PR packet](#non-pr-packet)
+field in brackets where that reduced shape names it differently.
+
+- Effective workflow and the skills to apply — the Loop and non-Loop branches under
+  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where CXC Loop is effective the
+  packet carries the literal installed-skill invocation and names the applicable surface
+  skills; naming the skills descriptively is not the invocation. Where an explicit
+  non-Loop or no-goal alternative is effective, that workflow is named in its place.
+- Issue scope — `Issue/PR mapping:` and `Outcome and scope:` [`Scope:` with its
+  `Input baseline:`], including the exclusions.
+- Verification boundary — `Verification:`, covering what this child verifies itself and
+  what it does not.
+- Handoff and completion boundary — the delivery contract under `Authorized execution:`
+  and the `Return:` block [`Scope:` write authority and `Return:`]: what finishing means
+  here, what the coordinator owns after it.
+- Model and effort — `Effective model/effort:` [`Workflow/settings:`], applied through
+  the creation tool's real arguments and read back from the receipt.
+
+One obligation is new rather than a restatement. Where a workflow with its own goal and
+state is effective, the child's first execution leaves its own activation evidence and
+reports it, instead of the goal and goalplan identifiers surfacing only in the final
+`Return:`. A loop that never armed is otherwise discovered when the work is over, or not
+at all, and by then the same reading cannot distinguish a child that never armed from one
+that armed and lost it.
+
+None of this adds a turn. These travel in the same first request as the work and the child
+starts the assigned work from it; a separate turn that collects a readiness report before
+the body is the removed handshake rather than a check, and a capability the creation path
+cannot apply is settled before the task exists instead.
+[Dispatch verification](dispatch-verification.md) holds what each field establishes, what
+it does not, and the classes a missing loop falls into.
+
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.
