@@ -5907,6 +5907,11 @@ class UpdateRecoveryTests(unittest.TestCase):
                               return_value={"readable": True, "objects": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
                               side_effect=fake_classification),
+            # The settle path waits for the promotion lock before it can report "could not be
+            # established", and several cases here deliberately make it wait. Five seconds of
+            # real time each is wall clock this suite has no reason to spend: what those cases
+            # assert is the ANSWER on the busy path, never how long it took to give up.
+            mock.patch.object(runtime_install, "SETTLE_SNAPSHOT_TIMEOUT_SECONDS", 0.2),
         ]
         if breaking == "replace the owned pointer":
             # The link LANDS and then the call fails, which is the case the code claims to
