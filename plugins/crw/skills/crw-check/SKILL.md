@@ -64,3 +64,9 @@ Lead the report with the verification result and action actually taken: correcti
 Where a relay holds the assignment, it QUEUES that summary with the event, revision, and verdict it describes; the write itself is the coordinator's own connector operation, since the relay holds no credential. Confirm it by reading the document back and checking this job's own structured record rather than searching the text for words. A failed write is retried on its own and never re-runs the check or re-sends the correction.
 
 Before finishing, verify every verdict has a source, accepted changes were considered, deferrals remain distinct from completion, and unverified delivery levels are explicit.
+
+### Report delivery reach in the check result
+
+Where the audited work is something a reader installs or runs, carry the chain from [Delivery reach and current usability](../crw-plan/references/integrations.md#delivery-reach-and-current-usability) into the result: the stages the delivery has evidence for in chain order, any first stage that is missing or unobserved, and the two closing lines. A per-criterion disposition and that chain answer different questions, since verified says the obligation was met at the reviewed revision and the chain says how far that revision travelled, so a verdict never promotes a stage. A criterion can be verified on a revision nobody has installed.
+
+A check reads installation and runtime state; it does not install, start or restart anything to supply evidence it is missing. Record the missing state as unverified with the observation that would settle it. Where this invocation owns the established execution workflow and no read-only, report-only or no-contact limit applies, send the request for that observation to the responsible task through the correction path above; a bounded audit helper returns it to the coordinator.
