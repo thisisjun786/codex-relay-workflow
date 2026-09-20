@@ -869,11 +869,21 @@ class DeliveryService:
         role = rolepolicy.bound_role(self.store, task_id)
         if role is None:
             return settings
+        if isinstance(role, rolepolicy.Contested):
+            raise rolepolicy.refuse_contested(role, task_id)
         policy = rolepolicy.declared()
         if not policy:
             raise rolepolicy.refuse_unresolved(policy, role, task_id)
         finding = rolepolicy.check_record(settings, role, policy)
         if finding is not None:
+            if finding.get("undeclared"):
+                raise DeliveryRefused(
+                    RefusalReason.ROLE_POLICY_UNCONFIGURED,
+                    f"{task_id!r} is bound as {role!r} and this host's execution policy declares "
+                    f"no such role (policy {finding['digest']}), so its authorization cannot be "
+                    "checked. Nothing was sent and no turn was started. "
+                    + finding["recovery"],
+                )
             raise DeliveryRefused(
                 RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE,
                 f"{task_id!r} is bound as {role!r} and its recorded authorization is "

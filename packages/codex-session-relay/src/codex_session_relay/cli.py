@@ -1574,43 +1574,35 @@ def _sibling_stores(services) -> dict:
 
 
 def _role_policy_report(services) -> dict:
-    """What this process resolves as a role policy, and whether the bridge agrees.
+    """What THIS process resolves as a role policy, and what it cannot see from here.
 
-    "unresolved" is a finding, not a blank. It means role-bound deliveries are withheld here
-    until the variable is set, which is deliberate: a role check that silently does nothing
-    when its policy is missing is the failure it exists to prevent, wearing a green suite.
+    "unresolved" is a finding, not a blank. It means role-bound deliveries are withheld in this
+    process until the variable is set, which is deliberate: a role check that silently does
+    nothing when its policy is missing is the failure it exists to prevent, wearing a green
+    suite. The digest is reported so receipts from the daemon, the CLI and the hook can be laid
+    beside each other, since each reads its own environment and two of them reading two
+    different files is a second policy source nothing inside this package can detect alone.
+
+    The bridge's digest is deliberately NOT fetched. It is reported by get_capabilities, which
+    is an MCP tool of the bridge server rather than an App Server method, and this adapter's
+    transport speaks only the latter. An earlier draft called it here and would have reported
+    every ordinary run as unreachable, which reads as a broken bridge rather than as a question
+    this surface cannot ask. Compare it by reading get_capabilities through the MCP client that
+    owns that connection.
     """
     from . import rolepolicy
 
     policy = rolepolicy.declared()
-    report = {
+    return {
         "state": "declared" if policy else "unresolved",
         "digest": policy.digest if policy else None,
         "detail": None if policy else policy.detail,
+        "variable": rolepolicy.ENVIRONMENT_VARIABLE,
         "bridgeDigest": None,
-        "agreement": "unchecked",
+        "agreement": "not_observable_from_here",
+        "compareWith": "codex-thread-bridge get_capabilities -> executionPolicy.digest, read "
+                       "through the MCP client that owns that connection",
     }
-    if not services.adapter_requested:
-        # No socket, so there is no second reader to compare against from here. Saying nothing
-        # is the honest answer; claiming agreement would be inventing the comparison.
-        return report
-    try:
-        capabilities = services.adapter._call("get_capabilities", {})
-    except Exception as error:  # noqa: BLE001 - reported, never raised out of a diagnostic
-        report["agreement"] = "unreachable"
-        report["bridgeDetail"] = f"{type(error).__name__}: {error}"
-        return report
-    bridge = ((capabilities or {}).get("executionPolicy") or {}).get("digest")
-    report["bridgeDigest"] = bridge
-    if report["digest"] is None or bridge is None:
-        # One side has no policy. That is exactly the split worth naming: the guard is active
-        # on one process and absent on the other, and each looks healthy read on its own.
-        report["agreement"] = "one_sided"
-    elif bridge == report["digest"]:
-        report["agreement"] = "same_file"
-    else:
-        report["agreement"] = "different_files"
-    return report
 
 
 def cmd_doctor(services, args) -> dict:

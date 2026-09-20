@@ -354,8 +354,9 @@ class Linkage:
             return None, refusal
         return (bid, "insert", role, scope_kind, scope_key, endpoint), None
 
-    def _role_policy_refusal(self, db, role, task_id, scope_kind, scope_key):
-        """Refuse a binding that contradicts what the task was created as, or its pair.
+    @staticmethod
+    def _role_policy_finding(db, role, task_id):
+        """What the recorded authorization says about binding this task to this role.
 
         Reported apart from a stale record on purpose. A stale record is re-recorded; this is a
         contradiction between how a task was created and how it is being bound, and re-recording
@@ -370,16 +371,20 @@ class Linkage:
             return None
         settings = json.loads(row["settings"])
         policy = rolepolicy.declared()
-        finding = rolepolicy.check_binding(
+        return rolepolicy.check_binding(
             rolepolicy.cited_role(settings), role, settings, policy if policy else None
         )
+
+    def _role_policy_refusal(self, db, role, task_id, scope_kind, scope_key):
+        """The same finding, shaped as the refusal binding_plan returns."""
+        finding = self._role_policy_finding(db, role, task_id)
         if finding is None:
             return None
         return _Refusal(
-            RefusalReason.ROLE_BINDING_MISMATCH,
+            RefusalReason(finding["code"]),
             finding["detail"],
             scope_kind=scope_kind, scope_key=scope_key,
-            incumbent=finding.get("citedRole"), challenger=task_id,
+            incumbent=finding.get("citedRole") or "", challenger=task_id,
         )
 
 
@@ -1183,6 +1188,17 @@ class Linkage:
                     scope_kind=ISSUE, scope_key=row["issue_key"],
                     incumbent=blocked["scope_key"], challenger=row["child_task_id"],
                 )
+        # A reactivation is a binding decision too, and this path writes one with a direct
+        # UPDATE rather than through binding_plan. Without the same check, archiving a child
+        # binding, recording the task as something else and then resuming the relationship
+        # restored it as a child whose creation cited another role -- measured, not supposed.
+        conflict = self._role_policy_finding(db, CHILD, row["child_task_id"])
+        if conflict is not None:
+            raise self._refusing(
+                RefusalReason(conflict["code"]), conflict["detail"],
+                scope_kind=ISSUE, scope_key=row["issue_key"],
+                incumbent=conflict.get("citedRole") or "", challenger=row["child_task_id"],
+            )
         db.execute(
             "UPDATE scope_bindings SET status = ?, updated_at = ?"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?",

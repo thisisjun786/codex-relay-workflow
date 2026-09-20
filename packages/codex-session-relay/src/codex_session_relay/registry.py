@@ -1103,19 +1103,41 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
         settings["citedRole"] = role
     candidate = TaskSettings(settings)
     candidate.require_usable()
-    # ------------------------------------------------------------------ role policy
     from . import rolepolicy
 
-    bound = rolepolicy.bound_role(store, task_id)
-    if bound is not None:
-        policy = rolepolicy.declared()
-        finding = rolepolicy.check_binding(
-            rolepolicy.cited_role(settings), bound, settings, policy if policy else None
-        )
-        if finding is not None:
-            raise RegistrationError(RefusalReason.ROLE_BINDING_MISMATCH, finding["detail"])
-    payload = json.dumps(settings, sort_keys=True)
     with store.transaction() as db:
+        # ------------------------------------------------------------------ role policy
+        # Read and compared INSIDE the write transaction. Deciding first and writing after left
+        # a window in which a concurrent binding could commit between the two, which is exactly
+        # the contradiction this check exists to prevent and would have been recorded as clean.
+        existing = db.execute(
+            "SELECT settings FROM authorized_settings WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if role is None and existing is not None:
+            # The cited role is a fact about how this task was CREATED, so a later write that
+            # does not restate it must not erase it. A re-record after a user transition is the
+            # ordinary case and carries no role, and dropping it there turned a task with a
+            # known creation into one with none -- which then bound cleanly to any role at all.
+            carried = rolepolicy.cited_role(json.loads(existing["settings"]))
+            if carried is not None:
+                settings["citedRole"] = carried
+        bound = rolepolicy.bound_role_in(db, task_id)
+        if isinstance(bound, rolepolicy.Contested):
+            raise RegistrationError(
+                RefusalReason.ROLE_BINDING_MISMATCH,
+                f"{task_id!r} holds live bindings at {bound.roles}; one task holds one role, so "
+                "there is no single role to record settings against",
+            )
+        if bound is not None:
+            policy = rolepolicy.declared()
+            finding = rolepolicy.check_binding(
+                rolepolicy.cited_role(settings), bound, settings, policy if policy else None
+            )
+            if finding is not None:
+                raise RegistrationError(
+                    RefusalReason(finding["code"]), finding["detail"]
+                )
+        payload = json.dumps(settings, sort_keys=True)
         db.execute(
             "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
             " VALUES (?,?,?,?)"

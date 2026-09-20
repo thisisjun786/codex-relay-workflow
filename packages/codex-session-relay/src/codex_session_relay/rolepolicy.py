@@ -95,19 +95,59 @@ def declared(environ=None) -> "Declared | Unresolved":
     return Declared(policy, policy.summary().get("digest"))
 
 
-def bound_role(store, task_id: str):
-    """The role this task actually holds, or None. Read-only; it binds nothing.
+class Contested:
+    """This task holds live bindings at more than one role. It refuses; it never picks.
 
-    None means the task is bound to no scope, which is the ordinary state of work that has
-    nothing to do with these three levels. Such a task is outside this policy entirely.
+    One task, one role is a rule the binding path enforces, so more than one live row is a store
+    that contradicts itself. Choosing between them by recency would compare a record against an
+    arbitrary role and report a clean answer, which is the one outcome worth refusing: the
+    linkage readers already refuse to guess through a multi-owner store for the same reason.
     """
-    row = store.one(
-        "SELECT role FROM scope_bindings WHERE task_id = ?"
+
+    def __init__(self, roles):
+        self.roles = sorted(roles)
+
+
+def bound_role(store, task_id: str):
+    """The role this task actually holds, or None, or Contested. Read-only; it binds nothing.
+
+    None means the task is bound to no scope, the ordinary state of work that has nothing to do
+    with these three levels, and such a task is outside this policy entirely. superseded_by is
+    part of the predicate because a superseded row is a former owner, and reading one as live
+    would enforce a role the task no longer holds.
+    """
+    rows = store.all(
+        "SELECT DISTINCT role FROM scope_bindings WHERE task_id = ?"
         "   AND status IN (" + ",".join("?" * len(LIVE)) + ")"
-        " ORDER BY updated_at DESC LIMIT 1",
+        "   AND superseded_by IS NULL",
         (task_id, *LIVE),
     )
-    return row["role"] if row is not None else None
+    roles = {row["role"] for row in rows}
+    if not roles:
+        return None
+    if len(roles) > 1:
+        return Contested(roles)
+    return next(iter(roles))
+
+
+def bound_role_in(db, task_id: str):
+    """bound_role against an already-open connection, so a caller can decide inside its write.
+
+    Same predicate, deliberately. Two spellings of one rule is how the read a caller validates
+    against drifts away from the read everybody else performs.
+    """
+    rows = db.execute(
+        "SELECT DISTINCT role FROM scope_bindings WHERE task_id = ?"
+        "   AND status IN (" + ",".join("?" * len(LIVE)) + ")"
+        "   AND superseded_by IS NULL",
+        (task_id, *LIVE),
+    ).fetchall()
+    roles = {row["role"] for row in rows}
+    if not roles:
+        return None
+    if len(roles) > 1:
+        return Contested(roles)
+    return next(iter(roles))
 
 
 def _pair(settings) -> tuple:
@@ -127,9 +167,22 @@ def check_record(settings, role, policy) -> dict | None:
     A supervisor never can: policy declares no pair for it, precisely because its model is the
     user's selection, so its recorded authorization IS the authority and there is nothing to
     compare it against.
+
+    A role this policy does not declare AT ALL is a different answer and refuses, the same way
+    the bridge refuses a cited role it has no entry for. Treating it as nothing to check would
+    let a parent-only policy silently exempt every child on the host, which is a partial policy
+    failing open.
     """
     expectation = policy.expectation(role)
-    if expectation is None or expectation.expectation != "pair":
+    if expectation is None:
+        return {
+            "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
+            "role": role,
+            "digest": policy.digest,
+            "undeclared": True,
+            "recovery": f"declare role {role!r} in this host's execution policy",
+        }
+    if expectation.expectation != "pair":
         return None
     model, effort = _pair(settings)
     if (model, effort) == (expectation.model, expectation.reasoning_effort):
@@ -167,7 +220,18 @@ def check_binding(cited, bound, settings, policy) -> dict | None:
     if not policy:
         return None
     expectation = policy.expectation(bound)
-    if expectation is None or expectation.expectation != "pair":
+    if expectation is None:
+        return {
+            "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
+            "citedRole": cited,
+            "boundRole": bound,
+            "digest": policy.digest,
+            "detail": (
+                f"this host's execution policy declares no role {bound!r}, so a task cannot be "
+                "bound to it and checked; declare it before binding"
+            ),
+        }
+    if expectation.expectation != "pair":
         return None
     model, effort = _pair(settings)
     if (model, effort) == (expectation.model, expectation.reasoning_effort):
@@ -194,4 +258,15 @@ def refuse_unresolved(unresolved, role, task_id):
         f"its authorization against: {unresolved.detail}. Nothing was sent and no turn was "
         "started. Set the policy for this process and the held deliveries resume on the next "
         "pass.",
+    )
+
+
+def refuse_contested(contested, task_id):
+    """A store that says this task holds two roles at once cannot be checked against either."""
+    return DeliveryRefused(
+        RefusalReason.ROLE_BINDING_MISMATCH,
+        f"{task_id!r} holds live bindings at {contested.roles}, and one task holds one role. "
+        "Nothing was sent and no turn was started, because checking its authorization against "
+        "either of them would report a clean answer derived from an arbitrary choice. Resolve "
+        "the bindings first.",
     )
