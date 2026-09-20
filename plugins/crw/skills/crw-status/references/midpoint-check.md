@@ -55,8 +55,13 @@ never as a review that passed.
 A list of green rows is not a report. What makes a midpoint check worth asking for is the places
 where two levels disagree, and three of them recur:
 
-- The parent is idle while one of its children is still working. Nobody is waiting on the child's
-  result, so whatever it returns will sit unread until something restarts the parent.
+- The parent is idle while one of its children is still working AND nothing will bring it back.
+  Idle alone is not the blocker: under event-driven handoff a parent answers, returns to idle, and
+  is woken when the child's turn ends by a verified registered assignment, a running delivery
+  service and a resume path, which [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)
+  owns. Read that path before calling it anything. The blocker is an idle parent with no such path,
+  whose child's result will sit unread until someone restarts it by hand, and a paused or cancelled
+  parent, which nothing resumes automatically no matter what arrives for it.
 - A child ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
   by an unanswered question, and the question has an owner who has not seen it.
 - The newest report and the newest pull request describe different states. The report is stale, or
@@ -105,8 +110,9 @@ order. Nothing is described as handled unless this check performed it, which it 
 
 Observed: the approved set holds three projects; one parent is `active` with a turn, one is
 `idle`, one is `notLoaded`, and their children are spread across all three states.
-Action: report each project's own state, and name the idle parent with a working child as a
-blocker. `notLoaded` is neither running nor finished, so read that task again once before
+Action: report each project's own state. For the idle parent with a working child, read its wake
+path first and call it a blocker only where that path is missing or the task is paused.
+`notLoaded` is neither running nor finished, so read that task again once before
 reporting it, as the bridge contract requires; a task that was merely not loaded a second ago may
 read `active`. Where it stays `notLoaded`, keep that exact value rather than translating it into
 idle or stopped, and report its last turn as unverified. Do not message or wake any of them.

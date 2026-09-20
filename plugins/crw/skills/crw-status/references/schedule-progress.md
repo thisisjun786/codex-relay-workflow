@@ -21,13 +21,20 @@ variant here would break the agreement check depends on.
 Without it, two of the five verdicts are unavailable and saying so is the verdict. 계획대로 and
 앞섬 both assert that a date was met as originally agreed, and neither can be established while
 nothing distinguishes an original baseline from a date that was moved to wherever the work had
-reached. The other three survive, because none of them claims that: 지연 needs only an approved
-date that has visibly passed and the result it names missing, which a later postponement does not
-undo; 지연 위험 warns about a date still ahead and promises nothing; and 판단 불가 covers
-everything else, reported as 판단 불가, 공유 일정 기준 계약 미도입 so the reason reads as the
-missing contract rather than missing work. Whatever dates the project and its milestones carry are
-reported as the unstructured dates they are, as context beside the verdict and never as the
-baseline that produced it.
+reached. The other three survive, because none of them claims that: 지연 needs only a currently
+visible approved date that has passed with the result it names visibly absent; 지연 위험 warns
+about a date still ahead and promises nothing; and 판단 불가 covers everything else, reported as
+판단 불가, 공유 일정 기준 계약 미도입 so the reason reads as the missing contract rather than
+missing work. Whatever dates the project and its milestones carry are reported as the unstructured
+dates they are, as context beside the verdict and never as the baseline that produced it.
+
+Postponement history is one of the things the missing contract would have preserved, so it is not
+available at this stage either. A date that was missed and then moved forward now reads as a date
+still ahead, and 지연 cannot be carried on a date nobody can see: two projects with the same
+visible record would otherwise get different verdicts depending on who remembered what. Use the
+earlier date only where another trustworthy source explicitly holds it together with its target
+and its achievement state, and name that source in the report. The replan rules below apply once
+the contract supplies that history.
 
 ## Read these, and not the issue count
 
