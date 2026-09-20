@@ -2651,7 +2651,8 @@ def cmd_install(args):
                 # move the pointer. Rebuilding is the wrong repair: it is built, it is already
                 # selected, and a process may be running out of it.
                 return _finish_promotion(record_path, data, environment, pointer_path, standing,
-                                         issue=args.issue, reported={
+                                         issue=args.issue, socket_path=args.socket,
+                                         state=args.state, reported={
                     "resumed": True,
                     # This run finished a REPLACEMENT somebody else committed, so it reports
                     # the promotion marker. The adoption below does not: it replaced nothing.
@@ -2670,7 +2671,8 @@ def cmd_install(args):
                 # The host record positively selects it, so it is this host's own runtime: the
                 # bookkeeping it never had is written and nothing is rebuilt or removed.
                 return _finish_promotion(record_path, data, environment, pointer_path, standing,
-                                         issue=args.issue, reported={
+                                         issue=args.issue, socket_path=args.socket,
+                                         state=args.state, reported={
                     "adopted": True,
                     # Not promoted. This run replaced no runtime -- the record already
                     # selected this installation -- and saying otherwise on a non-zero exit
@@ -3505,7 +3507,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
 
 
 def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue,
-                      reported):
+                      reported, socket_path=None, state=None):
     """Write the half a killed run did not: the pointer, for a selection already committed.
 
     The two truths are written one after the other inside one lock, so the only thing that can
@@ -3588,6 +3590,67 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                               " not this run's to replace",
                       pointer={"path": str(pointer_path), "target": before.get("target")}))
             return EXIT_REFUSED
+        # OPS-4.4 AGAIN, AND NOT THE READING THE INTERRUPTED RUN TOOK.
+        #
+        # The state this path takes over is DURABLE: a selection on disk and a claim beside it,
+        # sitting there for however long it took somebody to notice. The gate's three cells all
+        # read state outside this process, and all three move while that state sits still. A
+        # supervisor can be started; attempts open and close continuously; the store's schema
+        # is whatever the selected runtime has since migrated it to. So none of them may be
+        # carried across the interruption -- which CRW-92 settled for the daemon in the
+        # strongest form, that a prior ALLOWED cannot cross a process boundary at all.
+        #
+        # There was in fact nothing to carry, and that is the sharper statement of the defect.
+        # The interrupted run died before recording any verdict, so the durable state holds no
+        # gate reading of any kind: this path was not reusing a stale ALLOWED, it was moving a
+        # host's runtime having never asked. The candidate's own declared schema is the one
+        # input that cannot have changed -- it is derived from bytes that are already built --
+        # but it is only ever read as half of a comparison against a store that can, so even
+        # that buys no reuse.
+        #
+        # ASKED WHERE SOMETHING IS REPLACED, which is not every caller. A resume finds a link
+        # naming the predecessor and moves a host from it to this environment: that is a swap
+        # and the gate decides it. An installation older than claims usually has no link at
+        # all, and writing the first one changes which PATH reaches a runtime the record
+        # already selects rather than which runtime is reached -- nothing is replaced, which is
+        # why its own result says the gate is asked where something is. The test is therefore
+        # the link itself rather than which caller this is: a link that already names this
+        # environment, or no link, replaces nothing.
+        #
+        # Before anything is written. The ownership entry below is this call's first write, and
+        # a refusal after it would leave the record claiming a placement for a link that was
+        # never placed.
+        replacing = before["state"] == pointer.LINK and pointer.names(
+            pointer_path, environment) is not True
+        if replacing:
+            gate = _swap_gate(data, current.value, environment=environment,
+                              python=environment / "bin" / "python",
+                              socket_path=socket_path, state=state)
+            if gate["verdict"] != swapgate.ALLOWED:
+                # Named, and named by the cell that decided it. "The gate said no" sends an
+                # operator to read a command's source; the verdict, what blocked and what could
+                # not be read send them to the daemon, the attempts or the store.
+                emit(dict(standing,
+                          refused="the interrupted promotion was not finished: moving the"
+                                  " owned pointer to this environment replaces the runtime a"
+                                  " host reaches, and the swap gate answered "
+                                  + str(gate["verdict"]) + " for "
+                                  + (", ".join(gate["blockedBy"] or gate["unreadable"] or [])
+                                     or "a condition it did not name")
+                                  + ". The reading the interrupted run took cannot stand in"
+                                  " for this one: it died before recording any verdict, and"
+                                  " every cell here reads state that moves while an"
+                                  " interrupted promotion sits on disk",
+                          swapGate=gate,
+                          pointer={"path": str(pointer_path),
+                                   "target": before.get("target")},
+                          retriable=True,
+                          recoveryRequires="nothing was written and nothing was removed. This"
+                                           " environment stays selected and the owned pointer"
+                                           " still names what it named, so the destination can"
+                                           " be retried as it stands: clear what the gate"
+                                           " named and run install again."))
+                return EXIT_REFUSED
         # A pointer this command owns is RECORDED when it is placed, and this path placed one
         # without recording it. An installation older than claims has no such record, so the
         # link written here was a link nobody recorded -- and the next update refuses to

@@ -6751,8 +6751,14 @@ class SettledRecordTests(unittest.TestCase):
                             + json.dumps(payload)[:400])
         self.assertIs(payload.get("promoted"), True)
         self.assertIs(payload.get("inService"), True, "and it is kept")
-        self.assertTrue(((payload.get("claim") or {}).get("selection") or {}).get("detail"),
-                        "with the shape failure named rather than raised")
+        # Where the shape failure is caught is not this case's business, and it moved: the
+        # reading boundary in protected_environment now answers RESOLVE_FAILURES itself, so
+        # nothing reaches the settle handler. What must hold either way is that a shape this
+        # command accepts cannot turn a landed promotion into a refusal, and that the
+        # selection comes back unestablished rather than guessed.
+        self.assertIsNone(((payload.get("claim") or {}).get("selection") or {}).get("selects"),
+                          "the selection is unestablished rather than invented: "
+                          + json.dumps((payload.get("claim") or {}).get("selection"))[:300])
         self.assertEqual(after["pointerTarget"], str(host.candidate))
 
     def test_a_settled_claim_keeps_the_destination_after_supersession(self):
@@ -7421,6 +7427,115 @@ class InterruptedPromotionTests(unittest.TestCase):
                         " pointer moved first can be deleted by recovery reading the other"
                         " truth")
 
+
+
+class ResumeGateTests(unittest.TestCase):
+    """What a resume takes over is durable; what the gate reads is not.
+
+    A kill between the selection and the pointer leaves a state that sits on disk for however
+    long it takes somebody to notice, and all three gate cells read things that move in the
+    meantime: a supervisor can be started, attempts open and close, the store's schema is
+    whatever the selected runtime has since migrated it to. The interrupted run died before
+    recording any verdict, so there is not even a stale reading to reuse -- this path was
+    moving a host's runtime having never asked.
+    """
+
+    def _interrupted(self, host):
+        """Exactly what a kill in that window leaves: selected, unreachable, unsettled."""
+        host.candidate.mkdir(parents=True)
+        (host.candidate / "site").mkdir()
+        staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+        hostrecord.update(host.record_path, host.data["definitionVersion"],
+                          select={c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]})
+
+    def test_a_resume_does_not_move_the_pointer_when_the_gate_blocks(self):
+        for gate in ("running daemon", "handover in flight", "store would be downgraded"):
+            with self.subTest(gate):
+                with tempfile.TemporaryDirectory() as temporary:
+                    host = _Host(temporary)
+                    self._interrupted(host)
+                    before = host.snapshot()
+                    code, payload = UpdateRecoveryTests()._run(host, gate=gate)
+                    after = host.snapshot()
+                    kept = host.candidate.is_dir()
+
+                self.assertEqual(
+                    after["pointerTarget"], before["pointerTarget"],
+                    gate + ": finishing this promotion replaces the runtime a host reaches,"
+                    " so a blocked gate must leave the pointer where it is: "
+                    + json.dumps(payload)[:500])
+                self.assertEqual(payload.get("stagingDecision"), staging.RESUME)
+                self.assertEqual(code, 1, gate + ": and it refuses")
+                self.assertEqual((payload.get("swapGate") or {}).get("verdict"),
+                                 swapgate.BLOCKED)
+                self.assertEqual(after["selected"], before["selected"],
+                                 gate + ": the selection it found is left as it was")
+                self.assertTrue(kept, gate + ": and the candidate is not released")
+
+    def test_a_gate_it_could_not_read_refuses_by_name_and_stays_retriable(self):
+        """A cell that could not answer keeps the installation, and says which cell.
+
+        "The gate said no" sends an operator to read this command's source. The verdict and
+        the cell send them to the daemon, the attempts or the store.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._interrupted(host)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, gate="unreadable daemon")
+            after = host.snapshot()
+            kept = host.candidate.is_dir()
+            # Retriable is not a claim about a flag: the same destination is run again, with
+            # the cell readable, and has to finish.
+            again, second = UpdateRecoveryTests()._run(host)
+            final = host.snapshot()
+            rebuilt = sorted(p.name for p in host.candidate.iterdir())
+
+        self.assertEqual(after["pointerTarget"], before["pointerTarget"],
+                         "a cell that could not be read keeps the installation: "
+                         + json.dumps(payload)[:500])
+        self.assertEqual(code, 1)
+        gate = payload.get("swapGate") or {}
+        self.assertEqual(gate.get("verdict"), swapgate.UNESTABLISHED)
+        refused = payload.get("refused") or ""
+        self.assertIn(swapgate.UNESTABLISHED, refused,
+                      "the refusal names the verdict rather than gesturing at one: " + refused)
+        self.assertTrue(any(cell in refused for cell in (gate.get("unreadable") or [])),
+                        "and names the cell that could not answer: " + refused)
+        self.assertTrue(kept, "the candidate is kept")
+        self.assertEqual(again, 0, json.dumps(second)[:500])
+        self.assertEqual(final["pointerTarget"], str(host.candidate),
+                         "and the destination really was retriable")
+        self.assertIn("site", rebuilt, "without rebuilding anything")
+
+    def test_an_adoption_that_replaces_nothing_is_not_gated(self):
+        """The gate is asked where something is replaced, and adoption replaces nothing.
+
+        An installation older than claims has no link at all, so writing the first one changes
+        which PATH reaches a runtime the record already selects rather than which runtime is
+        reached. Gating it would refuse the whole installed base this path exists to move
+        forward, for a swap that is not happening.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            for component in host.data["components"]:
+                (host.candidate / "site" / component["module"]).mkdir(parents=True,
+                                                                      exist_ok=True)
+            hostrecord.update(
+                host.record_path, host.data["definitionVersion"],
+                select={c["component"]: str(host.candidate / "site" / c["module"])
+                        for c in host.data["components"]})
+            Path(host.pointer_path).unlink()
+            code, payload = UpdateRecoveryTests()._run(host, gate="running daemon")
+            after = host.snapshot()
+
+        self.assertEqual(payload.get("stagingDecision"), staging.RECORDED,
+                         json.dumps(payload)[:400])
+        self.assertEqual(code, 0, "a daemon does not block bookkeeping nothing replaces: "
+                         + json.dumps(payload)[:400])
+        self.assertTrue(payload.get("adopted"))
+        self.assertEqual(after["pointerTarget"], str(host.candidate))
 
 
 class ReclaimRaceTests(unittest.TestCase):
@@ -9238,7 +9353,16 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                               select={c["component"]: str(host.candidate / "site" / c["module"])
                                       for c in host.data["components"]})
             emitted = []
-            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            # The swap gate is stubbed, and only because this case is about the OWNERSHIP
+            # binding rule. Finishing an interrupted promotion moves a host from the
+            # predecessor to the candidate, so it now asks OPS-4.4 first -- and asked for real
+            # against a relay that was never built, every cell answers UNESTABLISHED and the
+            # refusal would come from the gate rather than from the guard under test. The
+            # gate's own behaviour on this path is ResumeGateTests.
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append), \
+                 mock.patch.object(runtime_install, "_swap_gate",
+                                   return_value={"verdict": swapgate.ALLOWED, "blockedBy": [],
+                                                 "unreadable": [], "cells": {}}):
                 code = runtime_install._finish_promotion(
                     host.record_path, host.data, host.candidate, host.pointer_path,
                     {"command": "install", "applied": False}, issue="CRW-95", reported={})
