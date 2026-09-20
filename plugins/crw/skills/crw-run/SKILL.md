@@ -117,7 +117,14 @@ limit is reached, or no authorized progress is possible. An empty ready queue wh
 children run calls for bounded observation; a blocked issue does not stop independent
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
 not a claim that the first batch completed the request. Run alone promises no automatic
-future wake-up. A status-only request wakes nothing.
+future wake-up, and a standalone status-only request wakes nothing. A checkpoint inside
+an authorized ongoing initiative is not that request: it is handed to the responsible
+parent and handled there as a resume of the authorized run, which re-evaluates outstanding
+child results, pending decision requests, cleared blockers and empty execution slots, then
+continues the successors that approval already covers. Reuse the same parent, children and
+assignments; this adds no scheduler and dispatches nothing that already has an owner. That
+handoff is a manual push rather than automatic continuation, and an explicit status-only,
+report-only, read-only or pause limit on it still wins.
 
 A request from a peer parent is answered here, by this task, under
 [Direct coordination between parents](../crw-plan/references/integrations.md#direct-coordination-between-parents):
@@ -240,11 +247,31 @@ For repository-changing work, compare local and remote commit ancestry. Preserve
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
-At initial dispatch and after a completion, blocker, or integration, scan the
-agreed project scope for useful parallel work, including newly unblocked successors.
+At initial dispatch, after a child's completion, blocker or decision request, after an
+integration lands, and on every resume or recovery, scan the agreed project scope for useful
+parallel work, including newly unblocked successors. Before the turn ends that scan has run, or
+the reason it could not be read is recorded; a final answer describing what would be dispatched
+is not the scan. Which read observes each of those events, and what the pass records per
+candidate, are in [Re-evaluating the candidate set](references/reevaluation.md). A resume
+restores the recorded start adjudication and re-reads what it stands on rather than deciding it
+again ([Start policy](references/start-policy.md#re-read-on-every-entry-re-decide-only-on-a-change)).
 An explicitly limited batch or issue remains limited in both Run and Loop. Check
 verified prerequisites, overlapping edit surfaces, existing
-writers, shared runtime resources, and available execution capacity. Dispatch
+writers, shared runtime resources, and available execution capacity. An issue that already has a
+responsible child is not a candidate, and that is read rather than assumed. Where a relay holds
+the assignment, `doctor --issue` answers it from one non-constructing read before anything is
+created: `holds` true ends the evaluation for that issue, and `holds` null is an unproven answer
+rather than a free slot
+([Determine whether this store holds the assignment](references/relay.md#determine-whether-this-store-holds-the-assignment)).
+An explicitly direct assignment has no store to ask, so its owner comes from the coordination
+record and the existing task the same way the rest of this skill establishes one; a direct run
+reads no relay answer and is never held for the absence of one.
+Where a relay holds the assignment, a child that stopped for a person is invisible to the
+reviewable reads, so enumerate the stopped
+children with `dispositions-show` ([Which children stopped](references/relay.md#which-children-stopped-and-whether-anyone-was-told))
+instead of reading their silence as progress; it reports what a child actually emitted, which is
+why [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting) still requires an
+emit path or a bounded observation path for the disposition itself. Dispatch
 the largest useful set of independent ready issues within explicit concurrency,
 budget, and host limits. A shared repository alone is not a reason to serialize;
 separate owned checkouts can carry independent changes.
@@ -253,9 +280,14 @@ Do not wait for an entire batch to finish before filling available capacity with
 eligible independent work inside that boundary. Independent issue statuses alone do not establish
 independence: serialize shared schema, persistence, contract, or central UI changes
 when separation would cost more than it saves. Keep integration into a shared
-target serial and recheck each candidate against the updated base. Record a
-concrete dependency, conflict, ownership, or capacity reason for deferring an
-otherwise ready issue. Do not invent extra issues or duplicate writers just to
+target serial and recheck each candidate against the updated base. Record why an otherwise ready
+issue was deferred in the closed set
+[Decisions and what clears them](references/reevaluation.md#decisions-and-what-clears-them)
+defines, so a later pass re-reads the condition that held it rather than the prose that described
+it. The set keeps apart what recovers differently: no capacity from capacity nobody measured, an
+owner that could not be proved from two the store reports, and a disposition that could not be
+read from one the store holds as contested. It carries no escalation value, because a review
+round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
 increase concurrency; reconcile an oversized issue through `crw-plan` when a
 useful split fits the authorized scope.
 Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
@@ -745,6 +777,13 @@ approve or relay routine in-scope corrections. Include the issue and criterion,
 reviewed revision, expected and observed behavior, reproducer/evidence, required
 outcome, and focused verification. For missing proof, request that verification
 without prescribing an unsupported code change.
+
+How many rounds this has taken is not a reason to send it upward. Where the criteria and the
+correction scope are already settled, the next round goes to the same task with what changed,
+and the parent judges whether the evidence still supports continuing rather than returning that
+judgement to the user. New scope, new authority, and a real contradiction in the criteria are
+decisions somebody else owns; a round count is not one of them, and neither is the cost of
+having looked again.
 
 Carry the [restoration block](references/task-packet.md#restoration-block) with every
 correction. A running task has been working for a while, may have been compacted, and
