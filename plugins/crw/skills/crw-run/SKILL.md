@@ -564,6 +564,23 @@ Carry the result into the packet's workspace-ownership fields
 ([Launch packet](references/task-packet.md#launch-packet)), so the child is told
 what is not its own instead of deriving ownership from the path it was handed.
 
+### Verify what this dispatch established
+
+The first full assignment carries the fields in
+[First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields),
+and they travel in that same first request rather than in a preparation turn.
+
+Then judge the dispatch on four separate facts: the instruction the child actually
+received for this dispatch, the settings the dispatching call requested, the settings the
+receipt returned at the scope it claims them, and whether the child's own goal and
+goalplan state show the effective workflow running. A dispatch can pass the first three
+and fail the fourth, and on a reused task the evidence for the first two is the
+correction or resume itself rather than the original launch.
+[Dispatch verification](references/dispatch-verification.md) holds the four verdicts and
+their admissible evidence, the classes a missing loop falls into and how each is
+recovered on the same task, the recorded regression cases, and the authorized read-only,
+no-goal and non-Loop assignments that are not defects.
+
 ## Observe and verify
 
 Use a compact native `wait_threads` snapshot with each task's actual host and
