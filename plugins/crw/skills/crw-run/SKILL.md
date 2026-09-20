@@ -558,6 +558,30 @@ actual merge, intended repository/branch and landing revision. For legacy multi-
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
 
+### Reuse the child's evidence at the same head
+
+A capable child runs its own checks and carries the review on its own pull
+request, so at the same head and the same criteria the coordinator reads that
+result instead of producing it again. Polling a check run the child is already
+carrying, reading again every finding on a hosted review it has resolved, and
+re-running a suite that passed on that head are the coordinator doing a level
+below itself. Read the head it reports, the conclusions on that head and its
+per-finding trail, and accept them as the evidence table above defines them.
+
+Acceptance keeps its own work, which was never the child's. Confirm the reported
+head is the head the pull request has now, the base is current and the merge is
+clean, every accepted criterion maps to evidence at that head, and any finding
+still open is named; [Merge readiness](references/merge-readiness.md) holds the
+current form of those checks. A head that moved invalidates the reused result,
+so re-read the current one rather than accept a report about an older revision.
+Where the child's evidence is missing, ambiguous or contradicted, or where
+independent review is required and has not happened, get that evidence directly:
+a shorter report is not a reason to pass a criterion nobody verified.
+
+Reuse changes what the coordinator spends, not what the work cost. Report the
+coordinator's own usage and the assignment's total separately, and claim a saving
+only from a measurement that actually compares them.
+
 ## Return corrections to the existing task
 
 Apply the completion-follow-up rule in [Integrations](../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
