@@ -9,7 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/install.py"
-NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
+NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run",
+         "crw-tidy")
 MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
 SKILLS = (MANIFEST.parent.parent / json.loads(MANIFEST.read_text(encoding="utf-8"))["skills"]).resolve()
 SOURCES = [SKILLS / name for name in NAMES]
