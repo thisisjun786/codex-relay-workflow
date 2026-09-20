@@ -204,6 +204,10 @@ than drift. Regenerating every target from the current date is refused whatever 
 calls it: a replan moves the subjects whose evidence actually changed and leaves every other
 target and baseline where it stands.
 
+Moving a target does not rewrite what was read. The delivery evidence stays as the reading it
+was, and the entry that moved the date is what produced the date the subject carries now, so a
+later reader never sees records credited with a date they did not set.
+
 A checkpoint carrying no schedule-change authority writes none of this. It returns one replan
 request to its parent naming the subjects, the confirmed or missing results, and the moves it
 would make, under [Authority](#authority) below.
