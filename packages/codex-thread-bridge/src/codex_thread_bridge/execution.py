@@ -215,22 +215,27 @@ class ExecutionPolicy:
         """The declared expectation for a role, or None. Read-only; it authorizes nothing."""
         return self._roles.get(role) if role is not None else None
 
-    def exception_pair(self, name):
-        """The pair and role an operator's exception authorizes, or None.
+    def exception_covers(self, name, *, role, model, reasoning_effort, cwd) -> bool:
+        """Whether this exception authorizes exactly this role, pair and directory.
 
-        The directories it covers and the operator's note stay undisclosed, as they always have:
-        a reader needs to know WHICH pair was approved under that id to recognise a record that
-        was authorized by it, and nothing more. Read-only, and citing an id here authorizes
-        nothing -- authorize() remains the only thing that decides.
+        A PREDICATE rather than an accessor, deliberately. A reader outside this class needs to
+        recognise a record that was authorized under an id, and returning the entry to it would
+        both disclose the operator's directories and leave the comparison to be written a second
+        time -- which is how a second reader ends up approving something authorize() refuses.
+        Every field authorize() checks is checked here, against the same values.
+
+        Read-only. Citing an id here authorizes nothing; authorize() remains the only decision.
         """
         entry = self._exceptions.get(name) if name is not None else None
         if entry is None:
-            return None
-        return {
-            "model": entry["model"],
-            "reasoningEffort": entry["reasoningEffort"],
-            "role": entry.get("role"),
-        }
+            return False
+        return (
+            entry.get("role") == role
+            and entry["model"] == model
+            and entry["reasoningEffort"] == reasoning_effort
+            and cwd is not None
+            and cwd in entry["cwd"]
+        )
 
     def summary(self) -> dict:
         """What a caller may learn about the policy before creating anything.

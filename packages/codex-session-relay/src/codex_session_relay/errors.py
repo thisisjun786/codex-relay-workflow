@@ -71,6 +71,9 @@ class RefusalReason(str, Enum):
     ROLE_POLICY_UNCONFIGURED = "role_policy_unconfigured"
     ROLE_BINDING_MISMATCH = "role_binding_mismatch"
     SETTINGS_RECORD_STALE_FOR_ROLE = "settings_record_stale_for_role"
+    # The same string the bridge's own tool path reports for this case, so one situation does
+    # not read as two different causes depending on which surface refused it.
+    UNVERIFIED_PAIR_FOR_UNLOADED_THREAD = "unverified_pair_for_unloaded_thread"
 
     # Verification currency and canonical criteria. A verdict is a claim about a specific
     # revision judged against a specific set of obligations, so both have to still hold at the

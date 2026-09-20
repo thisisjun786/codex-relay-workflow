@@ -483,7 +483,26 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         )
 
     def _excepted(self):
-        return task_settings("/parent", model="gpt-6-astra", reasoningEffort="high")
+        # The cwd the exception actually covers. An earlier version of this fixture recorded
+        # /parent while the exception named the temporary directory, which the bridge refuses
+        # and the relay was accepting -- the test asserted the hole rather than the rule.
+        from pathlib import Path
+
+        return task_settings(
+            str(Path(self.tmp).resolve()), model="gpt-6-astra", reasoningEffort="high",
+        )
+
+    def test_an_exception_does_not_cover_a_checkout_it_was_not_written_for(self):
+        """The bridge checks the directory too, so a reader that skips it approves what it
+        refuses -- two readers reaching different answers about one document."""
+        self._bind_parent()
+        elsewhere = task_settings("/somewhere-else", model="gpt-6-astra", reasoningEffort="high")
+        with self.assertRaises(RegistrationError) as raised:
+            record_settings(
+                self.store, self.clock, PARENT, elsewhere,
+                source="creation_result", role="parent", exception="one-task",
+            )
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
 
     def test_a_record_the_operators_own_exception_authorized_is_recorded_and_bound(self):
         self._bind_parent()
@@ -502,6 +521,47 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
                 source="creation_result", role="parent", exception="not-written-by-anyone",
             )
         self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
+
+    def test_an_exception_that_matches_the_role_pair_is_still_an_exception(self):
+        """Provenance, not resemblance.
+
+        An exception authorizing the same values the role pair declares still authorized them AS
+        an exception, and the comparison it skipped is the one the unloaded rule depends on.
+        Reducing that to pair equality let this record through here while the bridge's own tool
+        path refused it.
+        """
+        from pathlib import Path
+
+        import os
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            **POLICY,
+            "exceptions": {
+                "same-pair": {
+                    "model": "devin/swe-2",
+                    "reasoningEffort": "max",
+                    "cwd": [str(Path(self.tmp).resolve())],
+                    "role": "parent",
+                }
+            },
+        })
+        settings = task_settings(
+            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            citedException="same-pair",
+        )
+        policy = rolepolicy.declared()
+        refusal = rolepolicy.check_unloaded_transmission(
+            settings, "parent", policy, "notLoaded"
+        )
+        self.assertIsNotNone(refusal)
+        self.assertEqual(
+            refusal.reason, RefusalReason.UNVERIFIED_PAIR_FOR_UNLOADED_THREAD
+        )
+        # The same record with no exception behind it is policy-derived and passes.
+        del settings["citedException"]
+        self.assertIsNone(
+            rolepolicy.check_unloaded_transmission(settings, "parent", policy, "notLoaded")
+        )
 
     def test_a_re_record_that_names_no_exception_keeps_the_one_already_recorded(self):
         self._bind_parent()

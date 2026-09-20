@@ -72,8 +72,10 @@ class Declared:
     def expectation(self, role):
         return self._policy.role_expectation(role)
 
-    def exception_pair(self, name):
-        return self._policy.exception_pair(name)
+    def exception_covers(self, name, *, role, model, reasoning_effort, cwd):
+        return self._policy.exception_covers(
+            name, role=role, model=model, reasoning_effort=reasoning_effort, cwd=cwd
+        )
 
 
 def declared(environ=None) -> "Declared | Unresolved":
@@ -180,16 +182,19 @@ def authorized_by_exception(settings, role, policy):
     task legitimately created that way carries a pair its role's policy does not declare. Without
     this, registering one would be refused for being exactly what the operator approved.
 
-    Verified rather than trusted: the exception is looked up in the same policy file and has to
-    name this role and this pair. A record citing an id nobody wrote, or one written for another
-    role, or one whose pair does not match, gets no exemption.
+    Verified rather than trusted, and verified by the SAME predicate the bridge authorizes with,
+    down to the directory. Comparing only the id, the role and the pair here approved records the
+    bridge itself refuses -- an exception written for one checkout covering a task in another --
+    which is a second reader reaching a different answer about one document.
     """
     if not policy:
         return False
-    entry = policy.exception_pair(cited_exception(settings))
-    if entry is None or entry.get("role") != role:
-        return False
-    return _pair(settings) == (entry["model"], entry["reasoningEffort"])
+    data = getattr(settings, "data", settings) or {}
+    model, effort = _pair(settings)
+    return policy.exception_covers(
+        cited_exception(settings), role=role, model=model, reasoning_effort=effort,
+        cwd=data.get("cwd"),
+    )
 
 
 def check_record(settings, role, policy) -> dict | None:
@@ -327,15 +332,20 @@ def check_unloaded_transmission(settings, role, policy, runtime_status):
     if runtime_status != "notLoaded" or not policy:
         return None
     expectation = policy.expectation(role)
+    # Provenance, not resemblance. An exception that happens to authorize the same values as the
+    # role pair still authorized them AS an exception, and the bridge refuses that case because
+    # the comparison it skipped is the one this rule depends on. Reducing it to pair equality
+    # let exactly that record through here while the tool path refused it.
     derived = (
-        expectation is not None
+        cited_exception(settings) is None
+        and expectation is not None
         and expectation.expectation == "pair"
         and _pair(settings) == (expectation.model, expectation.reasoning_effort)
     )
     if derived:
         return None
     return DeliveryRefused(
-        RefusalReason.ROLE_POLICY_UNCONFIGURED,
+        RefusalReason.UNVERIFIED_PAIR_FOR_UNLOADED_THREAD,
         f"{task_id_of(settings)} is bound as {role!r}, the host reports it as notLoaded, and "
         f"the pair this send would transmit was not derived from a declared role pair (policy "
         f"{policy.digest}). Nothing was sent and no turn was started: a resume may apply what it "
