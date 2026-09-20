@@ -159,10 +159,20 @@ Global options come BEFORE the subcommand:
 | Command | Purpose |
 |---|---|
 | `register` | register a parent/child relationship with its authorized scope |
+| `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
 | `admit-turn` | record an owner-confirmed continuation turn out of band |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
+| `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
+| `linkage-bind` | claim one scope for one task at one level |
+| `linkage-attach` | bind an existing assignment's issue to its project |
+| `linkage-peer` | join two project parents, symmetrically and outside the hierarchy |
+| `linkage-outstanding` | exactly the unfinished work a replacement owner must acknowledge |
+| `linkage-handover` | replace a scope's owner, only by restating the owner and that work |
+| `linkage-directive` / `linkage-settle` | record an instruction by digest and origin; settle one without erasing the other |
+| `linkage-up` / `linkage-down` | walk the hierarchy either way, with its gaps and contention |
+| `linkage-counterpart` | who a message is really addressing, and every problem with the reference |
 | `emit` | emit a completion receipt over real artifacts |
 | `deliver` | attempt eligible deliveries once |
 | `reconcile` / `recover` | reconcile one attempt; recover everything after a restart |
@@ -353,6 +363,8 @@ These are recorded because behaviour depends on them.
 ## Documents
 
 - `docs/protocol-v1.md` — the wire and record protocol, derived from the frozen contract.
+- `docs/linkage.md` — the three-level execution linkage and peer links. Relay-owned records,
+  outside the frozen contract, with the transaction protocol they are written under.
 - `docs/invariants.md` — every invariant and the code that enforces it.
 - `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
   stuck delivery. Each section says whether the behaviour is implemented or planned.

@@ -536,6 +536,113 @@ CREATE TABLE IF NOT EXISTS poll_observations (
     PRIMARY KEY (relationship_id, execution_generation, turn_id)
 );
 
+-- Three-level execution linkage. relationships binds one parent to one child per ISSUE, so
+-- nothing in it says that parent owns a PROJECT, and the initiative level has no row at all.
+-- These tables add the two missing levels to the SAME store rather than to a second one: the
+-- schema is applied with CREATE TABLE IF NOT EXISTS on every open, which reaches an existing
+-- database with a new table and never with a new column.
+--
+-- Nothing here is an assignment. A supervision carries no receipt, no acknowledgement, no
+-- verdict, no generation and no artifact scope, and a peer link carries less than that.
+
+-- Which Linear scope an execution task owns, and at which level. The task id is part of the
+-- key deliberately: a binding is one task's claim on one scope, so replacing the owner
+-- produces a NEW binding rather than rewriting who the old one was.
+CREATE TABLE IF NOT EXISTS scope_bindings (
+    binding_id    TEXT PRIMARY KEY,
+    role          TEXT NOT NULL,
+    scope_kind    TEXT NOT NULL,
+    scope_key     TEXT NOT NULL,
+    task_id       TEXT NOT NULL,
+    host_id       TEXT NOT NULL,
+    cwd           TEXT,
+    cxc_session   TEXT,
+    status        TEXT NOT NULL,
+    revision      INTEGER NOT NULL,
+    supersedes    TEXT,
+    superseded_by TEXT,
+    handover_note TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+-- An edge between two scopes. execution carries ownership, reference never does, and peer is
+-- not hierarchy at all: every walk filters link_kind = 'execution', so a reference or a peer
+-- row can never lengthen a chain or introduce a second owner.
+--
+-- The KEY is the two scopes and the kind, and never a task id. Keying on the owner would mean
+-- a handover changed the identity of an unchanged relationship, and a later re-registration
+-- would derive a different id and create a duplicate. The task columns are the owners as they
+-- stood when the edge was written, kept for drift detection and deliberately outside identity.
+CREATE TABLE IF NOT EXISTS scope_links (
+    link_id       TEXT PRIMARY KEY,
+    link_kind     TEXT NOT NULL,
+    upper_kind    TEXT NOT NULL,
+    upper_key     TEXT NOT NULL,
+    upper_task_id TEXT NOT NULL,
+    lower_kind    TEXT NOT NULL,
+    lower_key     TEXT NOT NULL,
+    lower_task_id TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    revision      INTEGER NOT NULL,
+    superseded_by TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+-- Which project an issue assignment belongs to. A separate table for the reason above: an
+-- assignment registered before this work has no row here and is reported as unscoped, which is
+-- the truth, rather than as missing or as belonging to whichever project happens to ask.
+CREATE TABLE IF NOT EXISTS relationship_scope (
+    relationship_id TEXT PRIMARY KEY,
+    project_key     TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL
+);
+
+-- An instruction that reached a scope, by digest and origin. Detecting two initiatives that
+-- name different parents does not cover a conflict of INSTRUCTIONS: two supervisors can agree
+-- about who the parent is and still instruct it differently. Dispositions accumulate and never
+-- rewrite the directive they settle, so the instruction that lost stays readable. This records
+-- that an instruction exists and what it is a digest of; it is not a channel.
+CREATE TABLE IF NOT EXISTS scope_directives (
+    directive_id   TEXT PRIMARY KEY,
+    scope_kind     TEXT NOT NULL,
+    scope_key      TEXT NOT NULL,
+    from_task_id   TEXT NOT NULL,
+    from_scope_key TEXT NOT NULL,
+    link_id        TEXT NOT NULL,
+    link_kind      TEXT NOT NULL,
+    digest         TEXT NOT NULL,
+    reference      TEXT,
+    revision       INTEGER NOT NULL,
+    disposition    TEXT,
+    decided_by     TEXT,
+    decided_at     TEXT,
+    recorded_at    TEXT NOT NULL
+);
+
+-- A contested or contradictory linkage attempt, retained. A refusal that only raises leaves the
+-- contest invisible to every later reader, which is the failure intent.bind already solved by
+-- publishing its conflict rather than swallowing it. Written INSIDE the same transaction that
+-- decided the refusal, which is safe because validation precedes every mutation: at that moment
+-- the transaction has written nothing else, so it commits the contest alone and the refusal is
+-- raised after it closes. There is no second transaction and no crash gap.
+--
+-- incumbent and challenger are NOT NULL because SQLite treats NULLs as distinct in a UNIQUE
+-- index, so a nullable column would let a replayed refusal insert a second row instead of
+-- converging on one.
+CREATE TABLE IF NOT EXISTS linkage_conflicts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_key  TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    incumbent  TEXT NOT NULL DEFAULT '',
+    challenger TEXT NOT NULL DEFAULT '',
+    detail     TEXT,
+    UNIQUE (scope_kind, scope_key, reason, incumbent, challenger)
+);
+
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
 -- Per-parent selection reads one parent's oldest eligible rows at a time, which is a
 -- different access pattern from deliveries_state. Declaring it is not proof it is used:
@@ -548,8 +655,43 @@ CREATE INDEX IF NOT EXISTS events_stage ON events (stage, turn_id);
 CREATE INDEX IF NOT EXISTS lineage_generation ON revision_lineage
     (relationship_id, execution_generation);
 CREATE INDEX IF NOT EXISTS relationships_issue ON relationships (issue_key, status);
+CREATE INDEX IF NOT EXISTS scope_bindings_scope ON scope_bindings
+    (scope_kind, scope_key, status);
+CREATE INDEX IF NOT EXISTS scope_bindings_task ON scope_bindings (task_id, status);
+CREATE INDEX IF NOT EXISTS scope_links_lower ON scope_links
+    (lower_kind, lower_key, link_kind, status);
+CREATE INDEX IF NOT EXISTS scope_links_upper ON scope_links
+    (upper_kind, upper_key, link_kind, status);
+CREATE INDEX IF NOT EXISTS scope_directives_scope ON scope_directives
+    (scope_kind, scope_key, disposition);
+-- One live owner per scope and role, and one live edge per kind and scope pair, enforced by
+-- the database rather than only by the code that writes it. A partial unique index because
+-- superseded and archived rows are retained deliberately and must not compete.
+--
+-- An index CAN be added to an existing store, unlike a CHECK constraint, which only ever
+-- reaches a database created after it. So the invariants that matter most are indexes and the
+-- vocabulary checks stay in Python, rather than being written where half the stores would
+-- never get them.
 CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
 """
+
+
+# Applied one at a time, AFTER the schema script, because these are the two invariants an
+# existing store may already violate - which is the exact case the ambiguity-aware linkage
+# readers were written for. Inside the script, a store holding duplicate live rows failed to
+# OPEN, so the diagnostics that exist to describe it could never run and an operator got an
+# IntegrityError where an answer was owed. A store that cannot take one keeps the rule in
+# Python and says which index is missing.
+GUARD_INDEXES = (
+    ("scope_bindings_one_live_owner",
+     "CREATE UNIQUE INDEX IF NOT EXISTS scope_bindings_one_live_owner ON scope_bindings"
+     " (scope_kind, scope_key, role)"
+     " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+    ("scope_links_one_live_edge",
+     "CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links"
+     " (link_kind, upper_kind, upper_key, lower_kind, lower_key)"
+     " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+)
 
 
 STATE_ENV = "CODEX_SESSION_RELAY_STATE"
@@ -794,6 +936,15 @@ class Store:
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(DDL)
+        # Never fatal. See GUARD_INDEXES: a store that already breaks one of these is the
+        # store the contention reporting was written for, and refusing to open it would hide
+        # the very state an operator has to see.
+        self.unenforced_indexes = []
+        for name, statement in GUARD_INDEXES:
+            try:
+                self.db.execute(statement)
+            except sqlite3.IntegrityError as fault:
+                self.unenforced_indexes.append({"index": name, "detail": str(fault)})
         self.db.execute(
             "INSERT OR IGNORE INTO schema_meta VALUES ('version', ?)", (str(SCHEMA_VERSION),)
         )

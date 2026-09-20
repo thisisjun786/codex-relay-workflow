@@ -55,6 +55,12 @@ OFFLINE_COMMANDS = (
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
     "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
+    # The linkage surface reads and writes the store and never calls the host, so every one of
+    # these works without an App Server. Leaving them out made doctor under-report what an
+    # operator can actually run offline.
+    "linkage-attach", "linkage-bind", "linkage-counterpart", "linkage-directive",
+    "linkage-down", "linkage-handover", "linkage-outstanding", "linkage-peer",
+    "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
 ) + MARKER_COMMANDS_BY_NAME
 
@@ -93,6 +99,7 @@ class Services:
         self._reconciler = None
         self._sync = None
         self._assignments = None
+        self._linkage = None
 
     @property
     def state_directory(self):
@@ -117,6 +124,14 @@ class Services:
         if self._registry is None:
             self._registry = Registry(self.store, self.clock)
         return self._registry
+
+    @property
+    def linkage(self):
+        if self._linkage is None:
+            from .linkage import Linkage
+
+            self._linkage = Linkage(self.store, self.clock)
+        return self._linkage
 
     @property
     def intake(self):
@@ -248,6 +263,7 @@ def cmd_register(services, args) -> dict:
         dispatch_request_id=args.dispatch_request_id,
         dispatch_turn_id=args.dispatch_turn_id,
         supersedes=args.supersedes,
+        project_key=args.project,
     )
     payload = relationship_record(record)
     # Execution settings come from the creation result the caller already holds. Recording them
@@ -319,9 +335,109 @@ def cmd_admit_turn(services, args) -> dict:
 
 
 def cmd_relationship_status(services, args) -> dict:
+    """Deactivate a relationship, which also releases its issue scope when it has one."""
     return relationship_record(
         services.registry.set_status(args.relationship, args.status, actor=args.actor)
     )
+
+
+# ------------------------------------------------------- three-level linkage
+
+
+def cmd_linkage_bind(services, args) -> dict:
+    return services.linkage.bind_scope(
+        role=args.role, scope_key=args.scope,
+        endpoint=Endpoint(args.task, args.host, cwd=args.cwd, cxc_session=args.cxc_session),
+    )
+
+
+def cmd_linkage_supervise(services, args) -> dict:
+    return services.linkage.register_supervision(
+        initiative_key=args.initiative, project_key=args.project,
+        supervisor=Endpoint(args.supervisor_task, args.supervisor_host,
+                            cwd=args.supervisor_cwd, cxc_session=args.supervisor_cxc_session),
+        parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
+                        cxc_session=args.parent_cxc_session),
+        link_kind=args.kind,
+    )
+
+
+def cmd_linkage_peer(services, args) -> dict:
+    return services.linkage.register_peer(
+        left_project=args.left_project,
+        left_parent=Endpoint(args.left_task, args.left_host),
+        right_project=args.right_project,
+        right_parent=Endpoint(args.right_task, args.right_host),
+    )
+
+
+def cmd_linkage_attach(services, args) -> dict:
+    return services.linkage.attach_issue(args.relationship, args.project)
+
+
+def cmd_linkage_handover(services, args) -> dict:
+    return services.linkage.handover(
+        role=args.role, scope_key=args.scope, expect_task_id=args.expect_task,
+        endpoint=Endpoint(args.task, args.host, cwd=args.cwd,
+                          cxc_session=args.cxc_session),
+        acknowledged=args.acknowledge or [], evidence=args.evidence, actor=args.actor,
+    )
+
+
+def cmd_linkage_outstanding(services, args) -> dict:
+    """What a replacement owner has to acknowledge before it can take over."""
+    return {"projectKey": args.project, "taskId": args.task,
+            "outstanding": services.linkage.outstanding(args.project, args.task)}
+
+
+def cmd_linkage_directive(services, args) -> dict:
+    return services.linkage.record_directive(
+        scope_kind=args.scope_kind, scope_key=args.scope, from_task_id=args.from_task,
+        from_scope_key=args.from_scope, link_id_value=args.link, digest=args.digest,
+        reference=args.reference,
+    )
+
+
+def cmd_linkage_settle(services, args) -> dict:
+    return services.linkage.settle_directive(
+        args.directive, args.disposition, decided_by=args.actor, reason=args.reason)
+
+
+def _with_enforcement(services, answer) -> dict:
+    """Say when the store could not install a guard index, where an operator is looking.
+
+    An ambiguous answer and a missing index are the same fact seen from two sides, and the
+    fact was recorded on the Store where nothing showed it. A reader deciding whether to act
+    on a contested owner needs to know the database is not stopping a second one either.
+    """
+    unenforced = getattr(services.store, "unenforced_indexes", [])
+    if unenforced:
+        answer = dict(answer, unenforcedIndexes=unenforced)
+    return answer
+
+
+def cmd_linkage_down(services, args) -> dict:
+    return _with_enforcement(services, services.linkage.down(args.scope_kind, args.scope))
+
+
+def cmd_linkage_up(services, args) -> dict:
+    if args.scope and not args.task:
+        # --scope only narrows the task path, so naming it beside --issue or --relationship
+        # reads as a second filter that was never applied.
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "--scope chooses between the scopes one TASK owns, so it goes with"
+                      " --task. With --issue or --relationship the starting scope is already"
+                      " decided and --scope would be silently ignored.",
+        }, EXIT_REFUSED)
+    return _with_enforcement(services, services.linkage.up(
+        task_id=args.task, issue_key=args.issue, relationship_id=args.relationship,
+        scope_key=args.scope))
+
+def cmd_linkage_counterpart(services, args) -> dict:
+    return services.linkage.counterpart(
+        args.from_task, args.to_task, quoted_revision=args.quoted_revision,
+        quoted_scope=args.quoted_scope, from_scope=args.from_scope)
 
 
 def cmd_relationship_resume(services, args) -> dict:
@@ -792,6 +908,13 @@ def cmd_status(services, args) -> dict:
     payload["observation"] = services.delivery.observation_health(
         relationship_id=args.relationship,
     )
+    # Degraded enforcement is an operator fact. An index the store could not install means
+    # the database is no longer refusing a second owner, which is what makes the linkage
+    # readers answer ambiguous; recording it on the Store and showing it nowhere left the
+    # documented promise to name it unkept.
+    unenforced = getattr(services.store, "unenforced_indexes", [])
+    if unenforced:
+        payload["unenforcedIndexes"] = unenforced
     return payload
 
 
@@ -1729,6 +1852,10 @@ def build_parser() -> argparse.ArgumentParser:
     register.add_argument("--dispatch-request-id", required=True)
     register.add_argument("--dispatch-turn-id")
     register.add_argument("--supersedes")
+    register.add_argument("--project",
+                          help="the Linear project this issue belongs to. Supplied, the same"
+                               " transaction records the issue's project, binds the child and"
+                               " links the project to the issue")
     register.add_argument("--parent-settings",
                           help="authorized execution settings as JSON, or @path to a JSON file")
     register.add_argument("--child-settings",
@@ -1774,6 +1901,124 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=["paused", "cancelled", "archived"])
     status.add_argument("--actor", required=True)
     status.set_defaults(handler=cmd_relationship_status)
+
+    bind = subparsers.add_parser("linkage-bind")
+    bind.add_argument("--role", required=True, choices=["supervisor", "parent", "child"])
+    bind.add_argument("--scope", required=True)
+    bind.add_argument("--task", required=True)
+    bind.add_argument("--host", required=True)
+    bind.add_argument("--cwd")
+    bind.add_argument("--cxc-session")
+    bind.set_defaults(handler=cmd_linkage_bind)
+
+    supervise = subparsers.add_parser("linkage-supervise")
+    supervise.add_argument("--initiative", required=True)
+    supervise.add_argument("--project", required=True)
+    supervise.add_argument("--supervisor-task", required=True)
+    supervise.add_argument("--supervisor-host", required=True)
+    supervise.add_argument("--supervisor-cwd")
+    supervise.add_argument("--supervisor-cxc-session")
+    supervise.add_argument("--parent-task", required=True)
+    supervise.add_argument("--parent-host", required=True)
+    supervise.add_argument("--parent-cwd")
+    supervise.add_argument("--parent-cxc-session")
+    supervise.add_argument("--kind", default="execution", choices=["execution", "reference"])
+    supervise.set_defaults(handler=cmd_linkage_supervise)
+
+    peer = subparsers.add_parser("linkage-peer")
+    peer.add_argument("--left-project", required=True)
+    peer.add_argument("--left-task", required=True)
+    peer.add_argument("--left-host", required=True)
+    peer.add_argument("--right-project", required=True)
+    peer.add_argument("--right-task", required=True)
+    peer.add_argument("--right-host", required=True)
+    peer.set_defaults(handler=cmd_linkage_peer)
+
+    attach = subparsers.add_parser("linkage-attach")
+    attach.add_argument("--relationship", required=True)
+    attach.add_argument("--project", required=True)
+    attach.set_defaults(handler=cmd_linkage_attach)
+
+    outstanding = subparsers.add_parser("linkage-outstanding")
+    outstanding.add_argument("--project", required=True)
+    outstanding.add_argument("--task",
+                             help="narrow to one parent's rows. A handover acknowledges the"
+                                  " PROJECT's unfinished work, so leave this off for that")
+    outstanding.set_defaults(handler=cmd_linkage_outstanding)
+
+    handover = subparsers.add_parser("linkage-handover")
+    handover.add_argument("--role", required=True, choices=["supervisor", "parent"],
+                          help="a child is replaced by registering its successor with"
+                               " --supersedes, which moves the assignment and its issue scope"
+                               " together")
+    handover.add_argument("--scope", required=True)
+    handover.add_argument("--expect-task", required=True)
+    handover.add_argument("--task", required=True)
+    handover.add_argument("--host", required=True)
+    handover.add_argument("--cwd")
+    handover.add_argument("--cxc-session",
+                          help="the replacement owner's CXC session, recorded on the new"
+                               " binding exactly as linkage-bind and linkage-supervise record"
+                               " it. A handover writes the endpoint it is given, so omitting"
+                               " this stores no session for the incoming owner")
+    handover.add_argument("--acknowledge", action="append",
+                          help="a relationship id the replacement owner is taking on. Repeat"
+                               " once per unfinished assignment; linkage-outstanding lists"
+                               " exactly the set this must equal")
+    handover.add_argument("--evidence", required=True)
+    handover.add_argument("--actor", required=True)
+    handover.set_defaults(handler=cmd_linkage_handover)
+
+    directive = subparsers.add_parser("linkage-directive")
+    directive.add_argument("--scope-kind", required=True,
+                           choices=["initiative", "project", "issue"])
+    directive.add_argument("--scope", required=True)
+    directive.add_argument("--from-task", required=True)
+    directive.add_argument("--from-scope", required=True)
+    directive.add_argument("--link", required=True)
+    directive.add_argument("--digest", required=True)
+    directive.add_argument("--reference")
+    directive.set_defaults(handler=cmd_linkage_directive)
+
+    settle = subparsers.add_parser("linkage-settle")
+    settle.add_argument("--directive", required=True)
+    settle.add_argument("--disposition", required=True, choices=["chosen", "superseded"])
+    settle.add_argument("--actor", required=True)
+    settle.add_argument("--reason")
+    settle.set_defaults(handler=cmd_linkage_settle)
+
+    down = subparsers.add_parser("linkage-down")
+    down.add_argument("--scope-kind", required=True,
+                      choices=["initiative", "project", "issue"])
+    down.add_argument("--scope", required=True)
+    down.set_defaults(handler=cmd_linkage_down)
+
+    up = subparsers.add_parser("linkage-up")
+    # Exactly one starting point. Left independently optional, argparse accepted none - which
+    # answered nothing - and several at once, which _starting_scope resolved by its own
+    # precedence: relationship over issue over task. A caller naming a relationship AND an
+    # issue got the relationship's hierarchy back and no sign the issue was never consulted.
+    start = up.add_mutually_exclusive_group(required=True)
+    start.add_argument("--task")
+    start.add_argument("--issue")
+    start.add_argument("--relationship")
+    up.add_argument("--scope",
+                    help="which scope to walk from when --task owns more than one. Without"
+                         " it a task holding several scopes is answered as ambiguous rather"
+                         " than resolved down one arbitrary branch. Goes with --task only:"
+                         " --issue and --relationship already decide the starting scope")
+    up.set_defaults(handler=cmd_linkage_up)
+
+    counterpart = subparsers.add_parser("linkage-counterpart")
+    counterpart.add_argument("--from-task", required=True)
+    counterpart.add_argument("--to-task", required=True)
+    counterpart.add_argument("--from-scope",
+                             help="the sender's Linear scope. A task may own several, and"
+                                  " OPS-7.4 binds both scopes to a message")
+    counterpart.add_argument("--quoted-scope",
+                             help="the scope the message believes it is addressing")
+    counterpart.add_argument("--quoted-revision", type=int)
+    counterpart.set_defaults(handler=cmd_linkage_counterpart)
 
     resume = subparsers.add_parser("relationship-resume")
     resume.add_argument("--relationship", required=True)
