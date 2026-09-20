@@ -36,6 +36,13 @@ class CapacityTestCase(RelayTestCase):
         self.beta = Endpoint("task-beta", "host-b", cwd="/beta")
         self.linkage.bind_scope(role=PARENT, scope_key=PROJECT_A, endpoint=self.alpha)
         self.linkage.bind_scope(role=PARENT, scope_key=PROJECT_B, endpoint=self.beta)
+        # A ceiling is somebody's statement, so the declarer has to own the scope it speaks
+        # for. The store scope has no owner of its own, so a registered supervisor sets it.
+        self.supervisor = Endpoint("task-supervisor", "host-s", cwd="/sup")
+        for project, parent in ((PROJECT_A, self.alpha), (PROJECT_B, self.beta)):
+            self.linkage.register_supervision(
+                initiative_key="INIT-1", project_key=project,
+                supervisor=self.supervisor, parent=parent)
 
     def take(self, subject, *, endpoint=None, project=PROJECT_A):
         endpoint = endpoint or self.alpha
@@ -51,9 +58,10 @@ class CapacityTestCase(RelayTestCase):
 
     def ceiling(self, dimension, amount, *, scope=PROJECT_A, kind="project", unit="runs",
                 enforce=True):
+        owner = self.supervisor.task_id if kind != "project" else self.alpha.task_id
         return self.capacity.declare_limit(
             scope_kind=kind, scope_key=scope, dimension=dimension, unit=unit,
-            ceiling=amount, declared_by="supervisor-1", source="operator", enforce=enforce)
+            ceiling=amount, declared_by=owner, source="operator", enforce=enforce)
 
     def dimensions(self, *, scope=PROJECT_A, kind="project"):
         return {entry["dimension"]: entry
@@ -158,13 +166,13 @@ class CountsAndDeclaredCeilingsAreDifferentKindsOfFact(CapacityTestCase):
         self.ceiling("file_descriptors", 100, unit="fds")
         self.capacity.observe(
             scope_kind="project", scope_key=PROJECT_A, dimension="file_descriptors",
-            observed=99, observed_by="probe-1", method="counted /proc/<pid>/fd")
+            observed=99, observed_by=self.alpha.task_id, method="counted /proc/<pid>/fd")
         entry = self.dimensions()["file_descriptors"]
         self.assertEqual((entry["used"], entry["proof"], entry["state"]),
                          (99.0, "observed", "within"))
         self.capacity.observe(
             scope_kind="project", scope_key=PROJECT_A, dimension="file_descriptors",
-            observed=120, observed_by="probe-1", method="counted /proc/<pid>/fd")
+            observed=120, observed_by=self.alpha.task_id, method="counted /proc/<pid>/fd")
         with self.assertRaises(CoordinationError) as caught:
             self.take("REL-1")
         self.assertEqual(caught.exception.reason, RefusalReason.CAPACITY_EXHAUSTED)
@@ -205,6 +213,44 @@ class CountsAndDeclaredCeilingsAreDifferentKindsOfFact(CapacityTestCase):
             (self.capacity.report(), self.capacity.headroom("project", PROJECT_A)), before)
 
 
+class StatingABoundIsNotAnybodysCall(CapacityTestCase):
+    """A caller who could raise a ceiling or publish a usage figure could admit execution the
+    owner had bounded, so the declarer has to own the scope it speaks for."""
+
+    def test_a_stranger_cannot_state_a_project_ceiling(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.declare_limit(
+                scope_kind="project", scope_key=PROJECT_A, dimension="runs", unit="runs",
+                ceiling=99, declared_by="task-stranger", source="operator")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_stranger_cannot_publish_a_usage_figure(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.observe(
+                scope_kind="project", scope_key=PROJECT_A, dimension="file_descriptors",
+                observed=1, observed_by="task-stranger", method="claimed")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_store_ceiling_under_any_other_key_is_refused_rather_than_ignored(self):
+        """The shape that succeeded and was then never consulted.
+
+        Enforcement reads (store, store). A declaration under 'global' was stored, reported
+        back as accepted, and never applied to a single reservation.
+        """
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.declare_limit(
+                scope_kind="store", scope_key="global", dimension="runs", unit="runs",
+                ceiling=1, declared_by=self.supervisor.task_id, source="operator")
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+
+    def test_the_canonical_store_ceiling_does_apply(self):
+        self.ceiling("runs", 1, scope="store", kind="store")
+        self.take("REL-1")
+        with self.assertRaises(CoordinationError) as caught:
+            self.take("REL-2", endpoint=self.beta, project=PROJECT_B)
+        self.assertEqual(caught.exception.reason, RefusalReason.CAPACITY_EXHAUSTED)
+
+
 class TwoParentsRacingOneCeiling(CapacityTestCase):
     """Different subjects, so the race is the ceiling rather than the replay branch.
 
@@ -233,7 +279,7 @@ class TwoParentsRacingOneCeiling(CapacityTestCase):
     def test_a_ceiling_of_one_admits_exactly_one_of_two_racing_subjects(self):
         self.capacity.declare_limit(
             scope_kind="store", scope_key="store", dimension="runs", unit="runs",
-            ceiling=1, declared_by="supervisor-1", source="operator")
+            ceiling=1, declared_by=self.supervisor.task_id, source="operator")
         results, errors = {}, {}
         barrier = threading.Barrier(2)
         threads = [

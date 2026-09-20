@@ -212,6 +212,59 @@ class Capacity:
         return None
 
     # ---------------------------------------------------------------- writing
+    @staticmethod
+    def _check_scope(scope_kind, scope_key):
+        """The store scope has exactly one key, because enforcement reads exactly one.
+
+        _ceiling_refusal queries (STORE, STORE). A declaration under any other store key was
+        accepted, stored and then never consulted, so an operator who set a global ceiling saw
+        it succeed and saw it ignored.
+        """
+        if scope_kind == STORE and scope_key != STORE:
+            raise CoordinationError(
+                RefusalReason.LINK_NOT_ACTIVE,
+                "the store scope has one key, " + repr(STORE) + ", not " + repr(scope_key)
+                + "; enforcement reads that key and a ceiling under any other would be"
+                " recorded and never applied")
+
+    def _check_declarer(self, scope_kind, scope_key, actor):
+        """A ceiling and a measurement are somebody's statements, not anybody's.
+
+        A caller that could raise a ceiling, disable enforcement or publish a usage figure
+        could admit execution the owner had bounded. So the declarer has to be the registered
+        owner of the scope it is speaking for.
+
+        The store scope is the recorded exception: it has no owner of its own, so any task
+        holding a live supervisor binding may set it, and that is stated rather than
+        disguised as a stronger check.
+        """
+        if scope_kind == STORE:
+            held = self.store.one(
+                "SELECT task_id FROM scope_bindings"
+                "  WHERE task_id = ? AND role = 'supervisor'"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL",
+                (actor,),
+            )
+            if held is None:
+                raise CoordinationError(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "task " + repr(actor) + " holds no live supervisor binding, and the store"
+                    " scope has no owner of its own to speak for it")
+            return
+        role = PARENT if scope_kind == PROJECT else "supervisor"
+        owners = [
+            record["taskId"] for record in self.linkage.owners(scope_kind, scope_key)
+            if record["role"] == role
+        ]
+        if owners != [actor]:
+            raise CoordinationError(
+                RefusalReason.SCOPE_ROLE_MISMATCH,
+                "task " + repr(actor) + " is not the registered " + role + " of "
+                + scope_kind + " " + repr(scope_key)
+                + (", which is held by " + repr(owners[0]) if len(owners) == 1
+                   else ", which has " + str(len(owners)) + " live owners")
+                + ", so it cannot state a bound for it")
+
 
     def reserve(self, *, subject_kind, subject_key, parent_task_id, project_key,
                 reserved_by, detail=None):
@@ -402,6 +455,8 @@ class Capacity:
             raise CoordinationError(
                 RefusalReason.LINK_NOT_ACTIVE,
                 "a limit scope is one of " + ", ".join(SCOPES) + ", not " + repr(scope_kind))
+        self._check_scope(scope_kind, scope_key)
+        self._check_declarer(scope_kind, scope_key, declared_by)
         identifier = limit_id(scope_kind, scope_key, dimension)
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -435,6 +490,8 @@ class Capacity:
     def observe(self, *, scope_kind, scope_key, dimension, observed, observed_by, method):
         """Record a measurement. The only way a non-runs dimension gets a current value."""
         exact(method, "a measurement method")
+        self._check_scope(scope_kind, scope_key)
+        self._check_declarer(scope_kind, scope_key, observed_by)
         now = self.clock.iso()
         with self.store.transaction() as db:
             db.execute(
@@ -448,4 +505,3 @@ class Capacity:
         return {"scopeKind": scope_kind, "scopeKey": scope_key, "dimension": dimension,
                 "observed": float(observed), "observedBy": observed_by, "method": method,
                 "observedAt": now}
-

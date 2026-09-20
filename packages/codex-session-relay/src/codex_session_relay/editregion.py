@@ -526,6 +526,63 @@ class EditRegions:
             (closed, reason, now, now, identifier))
         self.store.journal("edit_region_closed", identifier, {"state": closed}, at=now)
 
+    def _chain_from(self, db, repository, revision):
+        """Every revision reachable by following successor marks, bounded by the marks read.
+
+        A walk over rows one query returned, not a wait: the chain cannot be longer than the
+        number of marks the repository has, and a repeat stops it.
+        """
+        marks = {
+            row["from_revision"]: row["to_revision"] for row in db.execute(
+                "SELECT from_revision, to_revision FROM edit_revision_marks"
+                "  WHERE repository = ?", (repository,),
+            ).fetchall()
+        }
+        reached, cursor = [], revision
+        for _step in range(len(marks) + 1):
+            cursor = marks.get(cursor)
+            if cursor is None or cursor in reached:
+                break
+            reached.append(cursor)
+        return reached
+
+    def _check_restater(self, repository, actor):
+        """Restating a revision reopens every agreement on it, so it is not anybody's call.
+
+        An unrelated caller could mark a repository's revision superseded and reopen or block
+        every agreement standing on it. The actor has to be a registered parent on one side of
+        an agreement in that repository.
+        """
+        rows = self.store.all(
+            "SELECT DISTINCT left_project AS project FROM edit_agreements WHERE repository = ?"
+            "  UNION SELECT DISTINCT right_project FROM edit_agreements WHERE repository = ?",
+            (repository, repository),
+        )
+        for row in rows:
+            owners = [
+                record["taskId"] for record in self.linkage.owners(PROJECT, row["project"])
+                if record["role"] == PARENT
+            ]
+            if owners == [actor]:
+                return
+        if not rows:
+            # A repository with no agreements has nothing to reopen and nobody to protect, so
+            # the check is only that the caller is a registered parent at all. Refusing here
+            # would make the first restatement impossible.
+            registered = self.store.one(
+                "SELECT task_id FROM scope_bindings"
+                "  WHERE task_id = ? AND role = 'parent'"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL",
+                (actor,),
+            )
+            if registered is not None:
+                return
+        raise CoordinationError(
+            RefusalReason.SCOPE_ROLE_MISMATCH,
+            "task " + repr(actor) + " is the registered parent of no project holding an"
+            " agreement in " + repr(repository) + ", so it cannot restate that repository's"
+            " revision and reopen everybody's agreements")
+
     def restate_revision(self, *, repository, from_revision, to_revision, actor):
         """Record that a repository's agreements now stand on a newer tree.
 
@@ -539,6 +596,7 @@ class EditRegions:
         if from_revision == to_revision:
             raise CoordinationError(
                 RefusalReason.LINK_NOT_ACTIVE, "a revision is not its own successor")
+        self._check_restater(repository, actor)
         now = self.clock.iso()
         refusal, moved = None, []
         with self.store.transaction() as db:
@@ -558,6 +616,20 @@ class EditRegions:
                     incumbent=existing["to_revision"], challenger=to_revision)
                 self.conflicts.record_in(db, refusal, at=now)
             elif existing is None:
+                reached = self._chain_from(db, repository, to_revision)
+                if from_revision in reached:
+                    # One successor per revision does not make the chain acyclic. A to B
+                    # followed by B to A left BOTH revisions carrying an outgoing mark, so
+                    # every revision read as superseded and no tree was current at all.
+                    refusal = Refusal(
+                        RefusalReason.AGREEMENT_REVISION_STALE,
+                        repr(to_revision) + " already reaches " + repr(from_revision)
+                        + " through " + repr(reached) + ", so this mark would close a cycle"
+                        " and leave no current revision for anything to stand on",
+                        domain=DOMAIN_EDIT_REGION, subject=repository,
+                        incumbent=to_revision, challenger=from_revision)
+                    self.conflicts.record_in(db, refusal, at=now)
+            if refusal is None and existing is None:
                 db.execute(
                     "INSERT INTO edit_revision_marks (mark_id, repository, from_revision,"
                     " to_revision, actor, recorded_at) VALUES (?,?,?,?,?,?)",
@@ -589,10 +661,19 @@ class EditRegions:
                 "toRevision": to_revision, "reopened": moved}
 
     def reaffirm(self, identifier, *, actor, base_revision):
-        """Carry an agreement onto the current revision as its successor.
+        """Carry an agreement onto the revision its own chain actually reaches.
 
         A successor rather than an edit, because the region's id contains its revision: moving
         the row would leave an identifier its own columns no longer derive.
+
+        Two things the first version got wrong. It accepted any destination, so a typo became
+        a live agreement on a tree nothing had recorded as the successor, and both sides could
+        settle it because an unrecorded revision has no stale mark. And it created the
+        successor before retiring the predecessor, so a failure between the two left both live
+        with different region revisions, which the one-live-agreement index cannot catch.
+
+        The predecessor is retired FIRST now. A failure after that leaves nothing live rather
+        than two things live, which is recoverable by proposing again; the reverse is not.
         """
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -606,12 +687,29 @@ class EditRegions:
                 raise CoordinationError(
                     RefusalReason.UNREGISTERED_SCOPE, "no agreement " + repr(identifier))
             _side, refusal = self._acting_side(db, row, actor, row["repository"])
+            if refusal is None:
+                chain = self._chain_from(db, row["repository"], row["base_revision"])
+                terminal = chain[-1] if chain else row["base_revision"]
+                if base_revision != terminal:
+                    refusal = Refusal(
+                        RefusalReason.AGREEMENT_REVISION_STALE,
+                        "this agreement stands on " + repr(row["base_revision"])
+                        + ", whose recorded chain reaches " + repr(terminal) + ", not "
+                        + repr(base_revision)
+                        + ". Restate the revision first, or name the one the chain reaches",
+                        domain=DOMAIN_EDIT_REGION, subject=row["repository"],
+                        incumbent=terminal, challenger=base_revision)
             if refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
                 error = refusal.error()
+                carried = None
             else:
                 error = None
-            carried = dict(row) if error is None else None
+                carried = dict(row)
+                db.execute(
+                    "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
+                    " updated_at = ? WHERE agreement_id = ?",
+                    (RELEASED, "reaffirmed onto " + base_revision, now, now, identifier))
         if error is not None:
             raise error
         successor = self.propose(
@@ -625,11 +723,11 @@ class EditRegions:
             next_owner=carried["next_owner"], supersedes=identifier)
         with self.store.transaction() as db:
             db.execute(
-                "UPDATE edit_agreements SET superseded_by = ?, state = ?, close_reason = ?,"
-                " closed_at = ?, updated_at = ? WHERE agreement_id = ?",
-                (successor["agreementId"], RELEASED, "reaffirmed on " + base_revision,
-                 now, now, identifier))
+                "UPDATE edit_agreements SET superseded_by = ?, updated_at = ?"
+                " WHERE agreement_id = ?",
+                (successor["agreementId"], now, identifier))
         return successor
+
     # -------------------------------------------------------------- follow-ups
 
     def followup(self, agreement, *, trigger_text, acceptance_text, recorded_by,
@@ -643,6 +741,15 @@ class EditRegions:
         """
         exact(trigger_text, "a follow-up trigger")
         exact(acceptance_text, "a follow-up acceptance criterion")
+        if assignee_task_id and assignee_task_id != recorded_by:
+            # Recording a follow-up is not accepting one on another task's behalf. Trusting
+            # the field attributed accepted work to a task that never agreed to it, which is
+            # exactly what the unassigned rule exists to prevent.
+            raise CoordinationError(
+                RefusalReason.SCOPE_ROLE_MISMATCH,
+                "a follow-up records its own author as the assignee or nobody; "
+                + repr(recorded_by) + " cannot accept it for " + repr(assignee_task_id)
+                + ", who accepts it themselves")
         identifier = followup_id(agreement, trigger_text)
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -676,10 +783,28 @@ class EditRegions:
                 (row["agreement_id"],)).fetchone()
             _side, refusal = self._acting_side(
                 db, agreement, actor, agreement["repository"])
+            if refusal is None and row["state"] in (DONE, DROPPED):
+                # done and dropped are terminal. Accepting over one returned closed work to
+                # the active list while close_reason still explained why it had ended.
+                refusal = Refusal(
+                    RefusalReason.AGREEMENT_NOT_OPEN,
+                    "follow-up " + repr(identifier) + " is " + row["state"]
+                    + ", which is terminal; a new follow-up records new work",
+                    domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
+                    incumbent=row["state"], challenger=actor)
+            if refusal is None and row["assignee_task_id"] \
+                    and row["assignee_task_id"] != actor:
+                refusal = Refusal(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "follow-up " + repr(identifier) + " was already accepted by "
+                    + repr(row["assignee_task_id"]) + "; taking it from them is not an"
+                    " acceptance",
+                    domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
+                    incumbent=row["assignee_task_id"], challenger=actor)
             if refusal is None:
                 db.execute(
                     "UPDATE edit_followups SET assignee_task_id = ?, assignee_project = ?,"
-                    " accepted_at = ?, state = ?, updated_at = ? WHERE followup_id = ?",
+                    " accepted_at = ?, state = ? , updated_at = ? WHERE followup_id = ?",
                     (actor, assignee_project, now, ACCEPTED, now, identifier),
                 )
                 self.store.journal(
@@ -719,6 +844,17 @@ class EditRegions:
                     " nobody can report it done. Accept it first, or drop it",
                     domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
                     challenger=actor)
+            if refusal is None and disposition == DONE \
+                    and row["assignee_task_id"] != actor:
+                # Owning the other side of the agreement is not authority over the work.
+                # Reporting somebody else's accepted work finished is the same misattribution
+                # the unassigned case refuses, one step later.
+                refusal = Refusal(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "follow-up " + repr(identifier) + " was accepted by "
+                    + repr(row["assignee_task_id"]) + ", so only they can report it done",
+                    domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
+                    incumbent=row["assignee_task_id"], challenger=actor)
             if refusal is None:
                 db.execute(
                     "UPDATE edit_followups SET state = ?, close_reason = ?, updated_at = ?"
@@ -741,4 +877,3 @@ class EditRegions:
             raise CoordinationError(
                 RefusalReason.UNREGISTERED_SCOPE, "no follow-up " + repr(identifier))
         return row
-

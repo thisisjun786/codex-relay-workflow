@@ -193,7 +193,7 @@ class AnAgreementIsAboutAPlaceInASpecificTree(EditRegionTestCase):
         settled = self.agreed("src/a.py")
         open_one = self.propose("src/b.py")
         answer = self.regions.restate_revision(
-            repository=REPO, from_revision=REV, to_revision="rev-2", actor="supervisor-1")
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
         self.assertEqual(
             sorted(answer["reopened"]),
             sorted([settled["agreementId"], open_one["agreementId"]]))
@@ -205,9 +205,9 @@ class AnAgreementIsAboutAPlaceInASpecificTree(EditRegionTestCase):
     def test_a_settlement_on_a_superseded_revision_is_refused_anywhere_in_a_chain(self):
         record = self.propose("src/a.py")
         self.regions.restate_revision(
-            repository=REPO, from_revision=REV, to_revision="rev-2", actor="supervisor-1")
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
         self.regions.restate_revision(
-            repository=REPO, from_revision="rev-2", to_revision="rev-3", actor="supervisor-1")
+            repository=REPO, from_revision="rev-2", to_revision="rev-3", actor=self.alpha.task_id)
         with self.assertRaises(CoordinationError) as caught:
             self.regions.settle(
                 record["agreementId"], actor=self.beta.task_id, disposition="accepted")
@@ -217,20 +217,20 @@ class AnAgreementIsAboutAPlaceInASpecificTree(EditRegionTestCase):
 
     def test_one_revision_has_one_successor(self):
         self.regions.restate_revision(
-            repository=REPO, from_revision=REV, to_revision="rev-2", actor="supervisor-1")
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
         replay = self.regions.restate_revision(
-            repository=REPO, from_revision=REV, to_revision="rev-2", actor="supervisor-1")
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
         self.assertEqual(replay["toRevision"], "rev-2")
         with self.assertRaises(CoordinationError) as caught:
             self.regions.restate_revision(
                 repository=REPO, from_revision=REV, to_revision="rev-9",
-                actor="supervisor-2")
+                actor=self.beta.task_id)
         self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
 
     def test_the_owner_carries_an_agreement_onto_the_current_revision(self):
         record = self.agreed("src/a.py")
         self.regions.restate_revision(
-            repository=REPO, from_revision=REV, to_revision="rev-2", actor="supervisor-1")
+            repository=REPO, from_revision=REV, to_revision="rev-2", actor=self.alpha.task_id)
         successor = self.regions.reaffirm(
             record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
         self.assertEqual(successor["baseRevision"], "rev-2")
@@ -343,6 +343,90 @@ class AnAgreementIsNotPermission(EditRegionTestCase):
         record = self.propose("src/a.py")
         self.assertEqual(record["authorizes"], [])
         self.assertFalse(record["grantsMergePermission"])
+
+
+class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
+    def agreed(self, path="src/a.py"):
+        record = self.propose(path)
+        self.regions.settle(
+            record["agreementId"], actor=self.beta.task_id, disposition="accepted")
+        return record
+
+    def test_a_stranger_cannot_restate_a_repositorys_revision(self):
+        """Restating reopens every agreement on that revision, so it is not anybody's call."""
+        self.agreed("src/a.py")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision=REV, to_revision="rev-2",
+                actor=self.zeta.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_revision_cycle_is_refused_so_some_tree_stays_current(self):
+        """A to B then B to A left BOTH marked, so nothing was current at all."""
+        self.agreed("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2",
+            actor=self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.restate_revision(
+                repository=REPO, from_revision="rev-2", to_revision=REV,
+                actor=self.alpha.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+        self.assertTrue(self.regions.current_revision(REPO, "rev-2"))
+
+    def test_reaffirming_onto_a_revision_the_chain_never_reached_is_refused(self):
+        record = self.agreed("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2",
+            actor=self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-typo")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_REVISION_STALE)
+
+    def test_reaffirming_leaves_exactly_one_live_agreement(self):
+        record = self.agreed("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2",
+            actor=self.alpha.task_id)
+        successor = self.regions.reaffirm(
+            record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        live = self.store.all(
+            "SELECT agreement_id FROM edit_agreements"
+            "  WHERE state IN ('proposed','agreed','reopened') AND superseded_by IS NULL", ())
+        self.assertEqual([row["agreement_id"] for row in live], [successor["agreementId"]])
+
+    def test_a_caller_cannot_accept_a_follow_up_for_another_task(self):
+        record = self.propose("src/a.py")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.followup(
+                record["agreementId"], trigger_text="t", acceptance_text="a",
+                recorded_by=self.alpha.task_id, assignee_task_id=self.beta.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_peer_cannot_report_another_assignees_work_done(self):
+        record = self.propose("src/a.py")
+        item = self.regions.followup(
+            record["agreementId"], trigger_text="t", acceptance_text="a",
+            recorded_by=self.alpha.task_id)
+        self.regions.accept_followup(
+            item["followupId"], actor=self.beta.task_id, assignee_project="PRJ-B")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle_followup(
+                item["followupId"], actor=self.alpha.task_id, disposition="done")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_closed_follow_up_cannot_be_reopened_by_accepting_it(self):
+        record = self.propose("src/a.py")
+        item = self.regions.followup(
+            record["agreementId"], trigger_text="t", acceptance_text="a",
+            recorded_by=self.alpha.task_id)
+        self.regions.settle_followup(
+            item["followupId"], actor=self.alpha.task_id, disposition="dropped")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.accept_followup(
+                item["followupId"], actor=self.beta.task_id, assignee_project="PRJ-B")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
 
 
 class TwoPairsProposingOverlappingRegionsAtOnce(EditRegionTestCase):

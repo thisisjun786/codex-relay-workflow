@@ -162,10 +162,11 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
 
     def test_a_declared_bound_reports_how_its_number_was_reached(self):
         self.bind("PRJ-A", "task-alpha")
-        self.run_cli(
+        code, _declared = self.run_cli(
             "limit-declare", "--scope-kind", "project", "--scope", "PRJ-A",
             "--dimension", "file_descriptors", "--unit", "fds", "--ceiling", "100",
-            "--declared-by", "supervisor-1", "--source", "operator", "--no-enforce")
+            "--declared-by", "task-alpha", "--source", "operator", "--no-enforce")
+        self.assertEqual(code, cli.EXIT_OK, "only the scope's owner may state its bound")
         code, shown = self.run_cli(
             "capacity-show", "--scope-kind", "project", "--scope", "PRJ-A")
         self.assertEqual(code, cli.EXIT_OK)
@@ -174,7 +175,7 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
         code, _observed = self.run_cli(
             "usage-observe", "--scope-kind", "project", "--scope", "PRJ-A",
             "--dimension", "file_descriptors", "--observed", "42",
-            "--observed-by", "probe-1", "--method", "counted the descriptors")
+            "--observed-by", "task-alpha", "--method", "counted the descriptors")
         self.assertEqual(code, cli.EXIT_OK)
         _code, again = self.run_cli(
             "capacity-show", "--scope-kind", "project", "--scope", "PRJ-A")
@@ -231,4 +232,3 @@ class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

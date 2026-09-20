@@ -512,6 +512,28 @@ def _json_argument(raw, what):
         }, EXIT_REFUSED) from fault
 
 
+def _json_shape(raw, what, wanted):
+    """Decoded AND the shape the caller downstream will index into.
+
+    Valid JSON of the wrong shape reached code that indexes it and surfaced as a host fault,
+    which is what an operator reads when the relay is broken rather than when their argument
+    is. The shape is checked where the argument is named.
+    """
+    value = _json_argument(raw, what)
+    if wanted is list:
+        if not isinstance(value, list) or not all(isinstance(e, dict) for e in value):
+            raise PayloadExit({
+                "ok": False, "reason": "bad_invocation",
+                "detail": what + " must be a JSON list of objects",
+            }, EXIT_REFUSED)
+    elif not isinstance(value, dict):
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": what + " must be a JSON object",
+        }, EXIT_REFUSED)
+    return value
+
+
 def cmd_merge_turn_request(services, args) -> dict:
     return services.merge_turn.request(
         repository=args.repository, base_ref=args.base_ref, project_key=args.project,
@@ -539,8 +561,8 @@ def cmd_merge_turn_request_return(services, args) -> dict:
 def cmd_merge_turn_check(services, args) -> dict:
     return services.merge_turn.begin_merge(
         args.turn, actor=args.actor, head_sha=args.head_sha, base_sha=args.base_sha,
-        checks=_json_argument(args.checks, "--checks"),
-        review=_json_argument(args.review, "--review"),
+        checks=_json_shape(args.checks, "--checks", list),
+        review=_json_shape(args.review, "--review", dict),
         required=args.required or [])
 
 

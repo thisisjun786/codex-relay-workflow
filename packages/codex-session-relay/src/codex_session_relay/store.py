@@ -723,6 +723,7 @@ CREATE TABLE IF NOT EXISTS merge_turns (
     declared_ready    INTEGER NOT NULL DEFAULT 0,
     state             TEXT NOT NULL,
     tenure            INTEGER NOT NULL,
+    checked_base_sha  TEXT,
     landed_sha        TEXT,
     observed_base_sha TEXT,
     close_reason      TEXT,

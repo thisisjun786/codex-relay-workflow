@@ -45,6 +45,14 @@ class MergeTurnTestCase(RelayTestCase):
         self.beta = Endpoint("task-beta", "host-b", cwd="/beta")
         self.linkage.bind_scope(role=PARENT, scope_key=PROJECT_A, endpoint=self.alpha)
         self.linkage.bind_scope(role=PARENT, scope_key=PROJECT_B, endpoint=self.beta)
+        # A registered supervisor, because taking a turn away or resolving an unknown outcome
+        # is its authority and nobody else's. An unrelated caller with the same evidence is
+        # refused, which the cases below check from both sides.
+        self.supervisor = Endpoint("task-supervisor", "host-s", cwd="/sup")
+        for project, parent in ((PROJECT_A, self.alpha), (PROJECT_B, self.beta)):
+            self.linkage.register_supervision(
+                initiative_key="INIT-1", project_key=project,
+                supervisor=self.supervisor, parent=parent)
 
     def claim(self, endpoint, project, head, *, repository=REPO, base=BASE, ready=True):
         return self.turns.request(
@@ -193,7 +201,7 @@ class AnUnreadyCandidateGetsOutOfTheWay(MergeTurnTestCase):
     def test_a_late_return_after_a_cancellation_does_not_reopen_the_turn(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
         self.turns.release(
-            held["turnId"], actor="supervisor-1", disposition="cancelled",
+            held["turnId"], actor=self.supervisor.task_id, disposition="cancelled",
             reason="parent stopped answering", evidence="no turn for two hours, host checked")
         with self.assertRaises(CoordinationError) as caught:
             self.turns.release(
@@ -206,7 +214,7 @@ class AnUnreadyCandidateGetsOutOfTheWay(MergeTurnTestCase):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
         with self.assertRaises(CoordinationError) as caught:
             self.turns.release(
-                held["turnId"], actor="supervisor-1", disposition="cancelled",
+                held["turnId"], actor=self.supervisor.task_id, disposition="cancelled",
                 reason="it stopped", evidence="")
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
 
@@ -223,7 +231,7 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
         held = self.merging()
         with self.assertRaises(CoordinationError) as caught:
             self.turns.release(
-                held["turnId"], actor="supervisor-1", disposition="cancelled",
+                held["turnId"], actor=self.supervisor.task_id, disposition="cancelled",
                 reason="the parent died", evidence="its host is gone")
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_UNRESOLVED)
         self.assertIn("report_unknown", caught.exception.detail)
@@ -246,7 +254,7 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
         self.turns.report_unknown(
             held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
         answer = self.turns.resolve_unknown(
-            held["turnId"], actor="supervisor-1", observed_base_sha="base-9",
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
             pr_state="merged", evidence="the pull request reads merged and the base moved")
         self.assertEqual(answer["outcome"], "landed")
         self.assertEqual(answer["promoted"]["turnId"], waiter["turnId"])
@@ -257,7 +265,7 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
             held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
         with self.assertRaises(CoordinationError) as caught:
             self.turns.resolve_unknown(
-                held["turnId"], actor="supervisor-1", observed_base_sha="base-9",
+                held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
                 pr_state="open", evidence="")
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
 
@@ -379,6 +387,121 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         with self.assertRaises(CoordinationError) as caught:
             self.begin(held, actor=self.beta.task_id)
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
+
+
+class ActingOnATurnYouDoNotHoldNeedsAuthority(MergeTurnTestCase):
+    """Evidence is not authority. Every claim path already verified the caller; these did not.
+
+    A stranger who could cancel a held turn, wedge a merging one, or resolve an unknown one
+    could promote a different claim behind an unmerged predecessor, which is the whole failure
+    the module exists to prevent, reached through the recovery door instead of the front one.
+    """
+
+    def merging(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        return held
+
+    def test_a_stranger_cannot_take_a_held_turn_away(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.release(
+                held["turnId"], actor="task-stranger", disposition="cancelled",
+                reason="I want it", evidence="none of my business")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+
+    def test_a_stranger_cannot_wedge_a_merging_turn(self):
+        held = self.merging()
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.report_unknown(
+                held["turnId"], actor="task-stranger", reason="I say it is unknown")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "merging")
+
+    def test_a_stranger_cannot_resolve_an_unknown_outcome(self):
+        held = self.merging()
+        self.turns.report_unknown(
+            held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.resolve_unknown(
+                held["turnId"], actor="task-stranger", observed_base_sha="base-9",
+                pr_state="merged", evidence="I looked")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
+
+    def test_the_holder_may_resolve_its_own_unknown_outcome(self):
+        held = self.merging()
+        self.turns.report_unknown(
+            held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.alpha.task_id, observed_base_sha="base-0",
+            pr_state="open", evidence="the pull request is still open on the same base")
+        self.assertEqual(answer["outcome"], "returned")
+
+
+class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
+    def unknown_turn(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.turns.report_unknown(
+            held["turnId"], actor=self.alpha.task_id, reason="lost the connection")
+        return held
+
+    def test_an_open_pull_request_on_the_checked_base_is_returned_not_landed(self):
+        """The case the null comparison got backwards.
+
+        observed_base_sha is null until this very call, so comparing against it made every
+        observation look like a movement and landed an open pull request, releasing its target
+        behind an unmerged predecessor. The comparison is against the base the currency check
+        confirmed.
+        """
+        held = self.unknown_turn()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-0",
+            pr_state="open", evidence="still open, base unchanged")
+        self.assertEqual(answer["outcome"], "returned")
+        self.assertIsNone(self.turns.turn(held["turnId"])["landedSha"])
+
+    def test_a_moved_base_is_landed_even_when_the_pull_request_reads_open(self):
+        held = self.unknown_turn()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
+            pr_state="open", evidence="the base moved past the candidate")
+        self.assertEqual(answer["outcome"], "landed")
+
+    def test_a_merged_pull_request_is_landed_whatever_the_base_reads(self):
+        held = self.unknown_turn()
+        answer = self.turns.resolve_unknown(
+            held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-0",
+            pr_state="merged", evidence="the pull request reads merged")
+        self.assertEqual(answer["outcome"], "landed")
+
+
+class ReviewEvidenceIsCountedByDistinctThread(MergeTurnTestCase):
+    def test_a_repeated_thread_identifier_does_not_stand_for_an_unread_one(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"),
+                review={"hasNextPage": False, "pagesRead": 2, "totalCount": 2,
+                        "threadsSeen": ["thread-1", "thread-1"], "unresolved": 0})
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_REVIEW_INCOMPLETE)
+        self.assertIn("repeats an identifier", caught.exception.detail)
+
+    def test_two_distinct_threads_satisfy_a_total_of_two(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        answer = self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"),
+            review={"hasNextPage": False, "pagesRead": 2, "totalCount": 2,
+                    "threadsSeen": ["thread-1", "thread-2"], "unresolved": 0})
+        self.assertEqual(answer["state"], "merging")
 
 
 class TwoParentsRacingForOneTarget(MergeTurnTestCase):

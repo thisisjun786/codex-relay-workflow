@@ -473,6 +473,51 @@ class MergeTurn:
             domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
             incumbent=row["holder_task_id"], challenger=actor)
 
+    def _supervisor_of(self, project_key):
+        """The initiative supervisor above a project, or None when the walk cannot say.
+
+        A handover, a contested scope or an unreadable store all answer None, and None means
+        no supervisor authority is granted rather than authority assumed.
+        """
+        owners = [
+            record["taskId"] for record in self.linkage.owners(PROJECT, project_key)
+            if record["role"] == PARENT
+        ]
+        if len(owners) != 1:
+            return None
+        walk = self.linkage.up(task_id=owners[0], scope_key=project_key)
+        if not walk.get("readable") or walk.get("state") == "ambiguous":
+            return None
+        for level in walk.get("levels", []):
+            if level.get("scopeKind") == "initiative":
+                owner = level.get("owner") or {}
+                return owner.get("taskId")
+        return None
+
+    def _authority_refusal(self, row, actor, what):
+        """Only the holder, or the supervisor above its project, may act on a held turn.
+
+        Every claim path already verifies that the caller is the project's registered parent.
+        The resolution paths did not, so an unrelated caller could evict a holder, wedge a
+        merging target, or release an unknown one and promote somebody else behind an
+        unmerged predecessor. Authority is the same question on both sides of the lifecycle.
+        """
+        if actor == row["holder_task_id"]:
+            return None
+        supervisor = self._supervisor_of(row["project_key"])
+        if supervisor is not None and actor == supervisor:
+            return None
+        return Refusal(
+            RefusalReason.SCOPE_ROLE_MISMATCH,
+            "task " + repr(actor) + " is neither the holder of turn "
+            + repr(row["turn_id"]) + " nor the supervisor above project "
+            + repr(row["project_key"])
+            + (", which is " + repr(supervisor) if supervisor
+               else ", and that project has no readable supervisor")
+            + ", so it cannot " + what,
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=row["holder_task_id"], challenger=actor)
+
     def _close_in(self, db, row, state, reason, actor, *, at, landed_sha=None,
                   observed_base_sha=None):
         db.execute(
@@ -603,8 +648,8 @@ class MergeTurn:
             if refusal is None:
                 db.execute(
                     "UPDATE merge_turns SET state = ?, merging_at = ?, updated_at = ?"
-                    " WHERE turn_id = ?",
-                    (MERGING, now, now, turn),
+                    ", checked_base_sha = ? WHERE turn_id = ?",
+                    (MERGING, now, now, base_sha, turn),
                 )
                 self._write_ledger(
                     db, turn, kind=TRANSITION, from_state=HOLDING, to_state=MERGING,
@@ -675,7 +720,16 @@ class MergeTurn:
             problems.append("no review page was read")
         seen = review.get("threadsSeen") or []
         total = int(review.get("totalCount", 0) or 0)
-        if len(seen) != total:
+        identifiers = [str(one) for one in seen if str(one or "").strip()]
+        distinct = set(identifiers)
+        if len(identifiers) != len(seen):
+            problems.append("threadsSeen contains a blank identifier")
+        if len(distinct) != len(identifiers):
+            # Counting entries does not establish that each one is a different thread. A
+            # duplicated page substitutes a thread nobody read without changing the length.
+            problems.append("threadsSeen repeats an identifier, so its length is not a count"
+                            " of threads actually seen")
+        if len(distinct) != total:
             problems.append(
                 "totalCount is " + str(total) + " and " + str(len(seen))
                 + " threads were seen")
@@ -703,12 +757,29 @@ class MergeTurn:
                 "relationship " + repr(row["relationship_id"]) + " belongs to project "
                 + repr(attachment.get("projectKey")) + ", not " + repr(row["project_key"]),
                 domain=DOMAIN_MERGE_TARGET, subject=row["target_key"], challenger=actor)
+        # The CURRENT submission only. work_reports retains every submission and generation,
+        # so distinct historical heads are ordinary evidence of revision rather than competing
+        # candidates; reading them all turned a normal correction into a permanent ambiguity
+        # that no candidate could ever pass.
+        newest = db.execute(
+            "SELECT MAX(execution_generation) AS generation FROM work_reports"
+            "  WHERE relationship_id = ? AND head_sha IS NOT NULL",
+            (row["relationship_id"],),
+        ).fetchone()
+        if newest is None or newest["generation"] is None:
+            return None, None
+        latest = db.execute(
+            "SELECT MAX(submission_no) AS submission FROM work_reports"
+            "  WHERE relationship_id = ? AND execution_generation = ? AND head_sha IS NOT NULL",
+            (row["relationship_id"], newest["generation"]),
+        ).fetchone()
         heads = [
             r["head_sha"] for r in db.execute(
                 "SELECT DISTINCT head_sha FROM work_reports"
                 "  WHERE relationship_id = ? AND head_sha IS NOT NULL"
+                "    AND execution_generation = ? AND submission_no = ?"
                 "  ORDER BY head_sha",
-                (row["relationship_id"],),
+                (row["relationship_id"], newest["generation"], latest["submission"]),
             ).fetchall()
         ]
         if not heads:
@@ -782,6 +853,8 @@ class MergeTurn:
             row = self._row_in(db, turn)
             if row["state"] != MERGING:
                 refusal = self._wrong_state(row, actor, "reporting an unknown outcome")
+            else:
+                refusal = self._authority_refusal(row, actor, "report its outcome unknown")
             if refusal is None:
                 db.execute(
                     "UPDATE merge_turns SET state = ?, close_reason = ?, updated_at = ?"
@@ -817,8 +890,17 @@ class MergeTurn:
             row = self._row_in(db, turn)
             if row["state"] != UNKNOWN:
                 refusal = self._wrong_state(row, actor, "resolving an unknown outcome")
+            else:
+                refusal = self._authority_refusal(row, actor, "resolve its outcome")
             if refusal is None:
-                landed = pr_state == "merged" or observed_base_sha != row["observed_base_sha"]
+                # Against the base the currency check CONFIRMED, not against observed_base_sha,
+                # which is null until this very call and so made every observation look like a
+                # movement. That falsely landed an open pull request and released its target.
+                # With no checked base the observation cannot establish a movement at all, so
+                # only the pull request's own state decides.
+                moved = (row["checked_base_sha"] is not None
+                         and observed_base_sha != row["checked_base_sha"])
+                landed = pr_state == "merged" or moved
                 self._close_in(
                     db, row, LANDED if landed else RETURNED,
                     "resolved from an observation: pr_state=" + str(pr_state) + "; " + evidence,
@@ -870,6 +952,11 @@ class MergeTurn:
                 refusal = self._wrong_state(row, actor, "release")
             elif disposition == RETURNED and row["holder_task_id"] != actor:
                 refusal = self._not_holder(row, actor, "return")
+            elif disposition == CANCELLED:
+                # Taking a turn away is the supervisor's, not anyone's. Evidence alone was
+                # never authority: an unrelated caller could evict a holder and promote a
+                # different claim behind it.
+                refusal = self._authority_refusal(row, actor, "take the turn away")
             if refusal is None:
                 self._close_in(
                     db, row, disposition,
