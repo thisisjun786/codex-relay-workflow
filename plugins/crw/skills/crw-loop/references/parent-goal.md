@@ -18,8 +18,11 @@ this file transfers to initiative scope; the roles themselves are in
 2. Inspect the exposed native goal tools and hooks for create, continuation and
    completion. On hosts exposing `get_goal`, `create_goal` and `update_goal`, use
    those tools in this parent. A bridge's read-only goal API is not goal-write support.
-   A hook that routes any active native goal into CXC implementation phases is a
-   compatibility blocker even for a fresh parent. Record the installed version/path,
+   A hook that prevents a goal from activating at all is a compatibility blocker even
+   for a fresh parent. A hook that lets it activate and then directs an active goal into CXC
+   implementation phases is the measured goal-idle case instead: activation stands, the directive
+   is declined, and [Record the start adjudication](#record-the-start-adjudication) holds that
+   narrowing. Record the installed version/path,
    observed rule and required supported fix. Do not disable the hook, replay hook
    events, create fake CXC evidence or initialize a placeholder implementation cycle.
 3. Verify the observation/continuation path for this run under OPS-8.1 before dispatch.
@@ -29,13 +32,68 @@ this file transfers to initiative scope; the roles themselves are in
    goal-free substitute or claim automation. Scope-authorized read-only diagnosis may
    continue while activation is blocked.
 
+## Record the start adjudication
+
+The preflight above runs at start, on recovery and after an App Server restart, and its outcome is
+recorded rather than repeated as a new user decision in every session. Write it into the
+coordination record as the start-policy record: `run_mode` and `host_compatibility` are the fields
+this lifecycle owns, and the delivery-path and approval-policy results land beside them in
+`observation_path` and `approval_policy`, together with the installed identities each was read at
+and the issue that owns an unresolved blocker. Restore it from there on the next entry. A later
+session re-reads what those values stand on and decides again only where one differs, under the
+trigger list in [Start policy](../../crw-run/references/start-policy.md).
+
+The recorded mode says which of these actually holds, in the words it will be reported in:
+
+| Recorded mode | What it means |
+| --- | --- |
+| `loop` | A native parent goal is active under this lifecycle. |
+| `goal-free-run` | No parent goal. Run carries the agreed scope, and no automatic resume is claimed or proven. |
+| `blocked` | Activation is blocked and no substitute is approved. No child is created. |
+
+A goal-free substitute is recorded and reported as `goal-free-run`. It is never reported as a Loop,
+and it never carries a claim of unattended continuation. Where preflight blocks activation and the
+request does not separately cover goal-free Run, the mode is `blocked`, the unresolved blocker is
+cited against the issue that owns it, and no child is created first. For the goal and Stop-hook
+conflict that issue is [CRW-29](https://linear.app/jun786/issue/CRW-29); its resolution is what
+clears the blocker, and until it is recorded there the blocker still stands.
+
+Disabling a hook, replaying hook events, manufacturing CXC evidence and force-completing an
+existing goal are forbidden above. They are also not offered to the user as options, because
+presenting one as a choice is how it becomes an approved plan.
+
+Since the 2026-09-20 role decision a project parent creates or reuses its own goal for the approved
+project scope as its default, while still building no CXC goalplan or FSM and never fabricating a
+source change to close it. Its continuation is the bounded Stop nudge recorded below, not a durable
+loop. That supersedes the temporary arrangement
+in which a parent ran goal-free unless a Loop was separately requested, and it carries activation
+authority for a parent already running. It opens no goal on a completed project or an unapproved
+backlog item, and an explicit user no-goal limit is a different thing that still wins.
+
+Preflight above classifies a hook that routes an active native goal into CXC implementation phases
+as a compatibility blocker. For the measured goal-idle behaviour that rule is narrowed rather than
+ignored, because activation and continuation fail differently: the goal does activate and reads
+back active, and what the block degrades is durable continuation, which is recorded as a bounded
+nudge. So this behaviour does not block activation, while a hook that actually prevents a goal from
+activating, or that cannot be declined without violating this contract, remains a blocker under
+that step. Step 2 above now carries the same split, so the two are read together rather than
+against each other.
+
+Activation is not continuation. On the measured installation the goal activates, and the
+Stop-continuation that follows is a bounded nudge carrying an unconditional PABCD directive that a
+coordination parent declines. [Start policy](../../crw-run/references/start-policy.md) records that
+mechanism and its budget, the three compatibility facts including approval-policy compatibility,
+the five pieces of evidence that must stay separate, and what is returned to CRW-29 when the host
+cannot support the goal at all. The table below still governs an existing paused, blocked or
+differently scoped goal.
+
 ## Create or reuse the parent's goal
 
 Read `get_goal` first, then choose the matching case:
 
 | Observed state | Action |
 | --- | --- |
-| No goal, or previous goal actually complete | Create the explicitly requested new goal with `create_goal`, then read it back. |
+| No goal, or previous goal actually complete | Create the project parent's goal with `create_goal`, then read it back. |
 | Matching active goal | Reuse it with the same scope; refresh the coordination record and live child ownership. |
 | Matching blocked/paused goal | Preserve it. Use an exposed, authorized resume action if supported, then verify active status; otherwise report the exact manual resume requirement. |
 | Different unfinished goal | Report the ownership/scope conflict. Never overwrite it, call it complete or create a duplicate to make room. |

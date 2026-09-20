@@ -31,6 +31,40 @@ def a_report(**overrides):
         "unresolved": ["the CLI verb lands after PR 8 merges"],
     }
     base.update(overrides)
+    # Built AFTER the overrides so it tracks the head and the pull request the caller actually
+    # asked for: a fixed handoff would name a commit the report no longer claims, which the
+    # gate refuses for the right reason at the wrong moment.
+    # A report carrying a review verdict is a correction travelling the other way, and a
+    # correction states the parent's judgment rather than the child's readiness, so it takes
+    # no handoff and would be refused for carrying one.
+    if ("handoff" not in overrides and not overrides.get("review")
+            and base.get("pr_number") is not None and base.get("head_sha")):
+        base["handoff"] = a_handoff(base["head_sha"])
+    return base
+
+
+def a_handoff(head_sha, **overrides):
+    """A candidate that is genuinely ready: enumerated review, nothing open, green required check.
+
+    CRW-128 made the handoff compulsory for a completion naming a pull request, because an
+    opt-in gate is satisfied by saying nothing and that is exactly what the report it exists to
+    refuse does. So the shared fixture now states one, and a test that wants the refusal asks
+    for it explicitly rather than getting it by omission.
+    """
+    base = {
+        "isDraft": False,
+        "baseVerifiedAt": "2026-09-20T09:00:00Z",
+        "requiredDeclared": ["dev-gate"],
+        "checks": [{"runId": "run-dev-gate", "name": "dev-gate", "headSha": head_sha,
+                    "conclusion": "success", "attempt": 1}],
+        "reviewCoverage": {"hasNextPage": False, "pagesRead": 1, "totalCount": 1,
+                           "threadsSeen": ["PRRT_ready"], "unresolved": 0},
+        "threadDispositions": [{"threadId": "PRRT_ready", "disposition": "fixed",
+                                "evidence": "addressed and rechecked on this head",
+                                "addressedBy": "a1b2c3d"}],
+        "criterionEvidence": [], "limitations": [],
+    }
+    base.update(overrides)
     return base
 
 
@@ -827,7 +861,7 @@ class FinalLine(Directions):
         # outcome would force the caller to make one up.
         stored = report.record(
             self.store, self.clock, event_id=revision_event,
-            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete")
+            **a_report(handoff=None, cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete")
         )
         self.assertEqual(stored["cxcStatus"], cxc.NEEDS_HUMAN)
         self.assertIn("NEEDS_HUMAN", str(report.read(self.store, revision_event)))
@@ -854,7 +888,7 @@ class FinalLine(Directions):
         # in the revision receipt and must still be what the child is corrected against.
         stored = report.record(
             self.store, self.clock, event_id=revision_event,
-            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
+            **a_report(handoff=None, cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
                        review=None)
         )
         message = report.render_revision(row, receipt, "del-y-a1", stored)
@@ -944,7 +978,7 @@ class FinalLine(Directions):
         row = self.delivery.get(revision_event)
         stored = report.record(
             self.store, self.clock, event_id=revision_event,
-            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+            **a_report(handoff=None, cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
                        unresolved=[f"open item {n} with some length to it" for n in range(40)])
         )
         message = report.render_revision(row, receipt, "del-p-a1", stored, budget=2600)
