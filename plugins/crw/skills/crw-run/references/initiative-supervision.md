@@ -302,12 +302,16 @@ actions. "Paused" divides the same way between a goal and a task lifecycle, and 
 between a goal and a project; OPS-8.2 keeps a paused goal and a stopped turn separate for the same
 reason.
 
-What follows from each reading is not decided here. The idle action matrix, and the rule that a
-goal existing, a goal activating and continuation observed are three readings, belong to
-[the midpoint check](../../crw-status/references/midpoint-check.md); the busy, paused, cancelled
-and archived routing belongs to OPS-8.2; and a finished project belongs to C9 below. This entry
-adds only the register each word came from, which is the thing a restarted supervisor no longer
-remembers.
+What follows from each reading is not decided here, and it is not decided by a status operation
+either. Recovery's own actions stay with
+[OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) for the busy, paused,
+cancelled and archived routing, with [Start policy](start-policy.md) for the mode, and with C9
+below for a finished project.
+[The midpoint check](../../crw-status/references/midpoint-check.md) is read for the shape of a
+status reading, its idle rows and its rule that a goal existing, a goal activating and
+continuation observed are three separate readings, and not for the goal default, which
+start-policy.md fixes and which that file predates. This entry adds only the register each word
+came from, which is the thing a restarted supervisor no longer remembers.
 
 ## Cases
 

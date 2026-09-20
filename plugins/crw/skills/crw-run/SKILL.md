@@ -780,10 +780,16 @@ fresh reading does supersede is a stale note of its own kind: a "not started" or
 line loses to this turn's reading of that same register and stays as history. A line this turn did
 not refresh is marked unrefreshed with its observation time rather than reported as current.
 
-Three endings look alike from outside, and the restatement separates them. A project the record
-shows completed is finished, and its parent resting is the shape of that rather than a failure to
-recover from; C9 in [Initiative supervision](references/initiative-supervision.md) owns it. A
-project still in progress whose returned result was never judged, or whose recorded blocker has
+Three endings look alike from outside, and the restatement separates them. A record saying
+completed is a claim rather than a verdict, and it is corroborated against the delivery evidence,
+the merged revision and the verified outcome, under
+[Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
+[Initiative supervision](references/initiative-supervision.md). Where that evidence holds the
+project is finished, and its parent resting is the shape of that rather than a failure to recover
+from. Where the label says completed and the landing or the verification is missing, the project
+is unfinished: the gap is what gets reported and the project stays in the active set, because a
+status nobody corroborated is the one thing that can hide undelivered work behind a quiet parent.
+A project still in progress whose returned result was never judged, or whose recorded blocker has
 since cleared, continues inside the approved scope and through the task that already owns it. A
 run somebody stopped stays stopped: the finding is recorded with what would release it, and
 nothing is sent.
