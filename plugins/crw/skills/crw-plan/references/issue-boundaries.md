@@ -4,6 +4,7 @@ Where one implementation issue ends, what it must carry, and how to tell that th
 is finished. The mapping itself belongs to the shared
 [issue-to-PR rule](integrations.md#issue-to-pr-mapping); this file is the judgment
 `crw-plan` applies while writing a plan, and it cites that rule instead of restating it.
+Read it with the planning rules in [crw-plan](../SKILL.md), which the cases below assume.
 
 This is the default output standard for every implementation issue this skill plans. A
 short request, "PR 단위로 정리해줘" and nothing more, gets it in full. A narrower request,
@@ -62,11 +63,11 @@ second person can repeat. It carries no repository label and no placeholder PR
 When code work has no resolvable target repository, plan the issue anyway with its
 deliverable and criteria, leave the repository label empty
 ([operating model](integrations.md#linear-operating-model)), and record the decision that
-would resolve it — which repository to create or choose, and who decides — as a named
-prerequisite blocking it. The issue is not ready for dispatch until that prerequisite is
-settled. Do not point it at a convenient checkout, and do not invent a repository or a
-placeholder issue to fill the shape; an invented target is discovered by the worker at
-assignment, after the plan claimed to be complete.
+would resolve it — which repository to create or choose, and who decides — as its own
+non-PR decision issue blocking it. The implementation issue is not ready for dispatch
+until that decision issue is settled. Do not point it at a convenient checkout, and do
+not invent a repository or a placeholder issue to fill the shape; an invented target is
+discovered by the worker at assignment, after the plan claimed to be complete.
 
 ## Align a delivered issue
 
@@ -75,23 +76,28 @@ three things first: the scope agreed when it was assigned, including its history
 criteria still open, measured against what its linked PRs actually merged; and its
 current owner and status. Then write one of these four outcomes before any reassignment.
 
-- Its delivery PR has not merged and its owner is active. The remainder stays in that
-  same PR unless the remainder is a separate deliverable by the boundary rule above, in
-  which case split now and make the new issue blocked by this one.
-- Its delivery PR merged with criteria still open. Move the open criteria to a new issue
-  with the merged one as its prerequisite, narrow this issue to what actually merged,
-  record the narrowing on the issue, and only then may it be Done.
-- The merged PR is instrumentation, a partial step or a reference. Link it as a
-  contributing PR, leave the delivery link empty, keep the issue's status, and treat none
-  of its criteria as met ([Implementation Done](integrations.md#implementation-done)).
+- Its delivery PR has not merged and its owner is active. Reconcile with that owner
+  before changing anything. The remainder stays in that same PR unless it is a separate
+  deliverable by the boundary rule above; where it is, agree the new boundary with the
+  owner first, then narrow this issue and make the new one blocked by it. A live
+  assignment is never narrowed or split before its owner has seen the change.
+- Its delivery PR merged and criteria are still open. Move the open criteria to a new
+  issue with the merged one as its prerequisite, narrow this issue to what actually
+  merged, record the narrowing on the issue, and only then may it be Done. A PR that
+  satisfied part of the accepted scope belongs here, and what it delivered stays
+  delivered.
+- The merged PR satisfies none of the accepted delivery criteria, such as instrumentation
+  that only makes a failure observable, or a reference change. Link it as a contributing
+  PR, leave the delivery link empty, keep the issue's status, and treat none of its
+  criteria as met ([Implementation Done](integrations.md#implementation-done)).
 - The issue is an existing multi-PR exception. Record the exception on the issue,
   inventory its required deliveries against the criteria still open, and reconcile with
   its current owner before dispatch.
 
 Leaving the issue open with its criteria unchanged is not alignment. It defers the
 decision to the next worker, who inherits an issue whose stated scope is larger than the
-PR it may open. Check what a linked PR will do on merge as well, and record the intended
-link type when a PR will not complete the issue
+PR it may open. Check what a linked PR does to the issue on merge as well, and record the
+intended link type when a PR will not complete it
 ([Implementation Done](integrations.md#implementation-done)).
 
 Narrowing a delivered issue is a material change to agreed scope. The authorization the
@@ -105,22 +111,29 @@ Run these in order against the written items, not the draft. The order matters: 
 changes what the next one sees.
 
 1. Coverage. Every outcome the requested scope promises maps to at least one issue
-   criterion. A gap either becomes an issue now or is reported as unplanned scope. This
-   runs first because a new issue changes every later step.
+   criterion. A gap becomes an issue now where the request authorizes it, and is reported
+   as unplanned scope where it does not. This runs first because a new issue changes every
+   later step.
 2. Duplication. No two issues claim the same deliverable in the same repository, matched
-   by deliverable and target rather than by title. This runs before relations are checked
-   because merging a duplicate removes relations.
+   by deliverable and target rather than by title. Keep one, move the other's relations
+   onto it, and drop nothing that was promised. This runs before relations are checked
+   because consolidating a duplicate moves relations.
 3. Relations. Every prerequisite stated in prose exists as a real blocking relation, and
    walking the edges finds no cycle. A cycle means the boundary is wrong: find the part
    both sides need and make it its own first issue rather than dropping an edge. Where two
    issues change the same surface, exactly one ordering exists and it is a relation, not a
    note. Two issues may hold the same file; two issues holding the same region at once is
    a collision.
-4. Read-back. After writing, fetch each touched issue and its relations again and compare
-   the observed pairs with the intended ones. Report both lists with IDs. An intended
-   relation that is absent is an incomplete write: repair it on the same IDs rather than
-   creating the item again. Where the connector cannot read relations back, report
-   written, unverified, and do not claim the relation exists.
+4. Read-back. After writing, fetch every item the plan touched — the issues and their
+   relations, and any project, milestone, document or label it wrote — and compare what is
+   observed against what was intended. Report both lists with IDs. An intended relation or
+   field that is absent is an incomplete write: repair it on the same IDs rather than
+   creating the item again. Where the connector cannot read something back, report it
+   written, unverified, and do not claim it exists.
+
+A draft-only or advisory request runs steps 1 to 3 against its draft items and their
+intended relations, omits step 4, and reports the result as checked but unwritten. Writing
+nothing is what that request asked for; skipping the check is not.
 
 Re-running the same request converges because the split follows deliverables, and a
 deliverable comes from accepted criteria that read the same on every run and match an
@@ -139,16 +152,20 @@ wrong row, and both are fixed here.
 
 | # | Given | Plan outcome | Clause |
 | --- | --- | --- | --- |
-| 1 | An outcome needs a change in the core repository and in the installer repository; the installer consumes the new core interface. | 2 issues in 1 project, 1 repository label each, installer blocked by core, combined outcome on the milestone, 0 extra issues for reading core. | Different target repository. |
-| 2 | One schema field, three consumers; one consumer fails to build unless it lands with the schema. | 3 issues: the schema with that one consumer inside it, the other two each blocked by it. Not 1 issue with 4 PRs, not 3 issues each adding the field. | Must already be landed; cannot pass verification apart. |
-| 3 | Half the scope merged last month under a Done issue; no PR is open. | 1 new issue for the undelivered half, blocked by the Done issue, its criteria not restated, 0 reopened issues. | Already delivered or owned elsewhere. |
-| 4 | "Decide whether the relay can share one database", with no code change. | 1 issue, 0 repository labels, 0 PRs; deliverable is the recorded decision with its measurement, verified by the document revision holding it; resulting implementation is a separate issue blocked by it. | Non-PR work. |
-| 5 | The target repository does not exist yet and two candidates are disputed. | 1 issue with deliverable and criteria, empty repository label, blocked by a named decision prerequisite with its owner, not ready for dispatch, 0 invented repositories. | Unresolved target. |
-| 6 | The project was created; its label write and one relation failed. | Label and relation repaired on the created ID, 0 new projects; the report names the written IDs, the unset fields, and the intended and observed relation lists after re-reading. | Read-back; repair on the same ID. |
+| 1 | An outcome needs a change in the core repository and in the installer repository; the installer consumes the new core interface. | 2 issues, 1 repository label each, installer blocked by core, combined outcome on the milestone, 0 extra issues for reading core. | Different target repository. |
+| 2 | One schema field, three consumers; one fails to build unless it lands with the schema, the other two can merge and be verified separately. | 3 issues: the schema with the coupled consumer inside it, the other two each blocked by it. Not 1 issue with 4 PRs, not 3 issues each adding the field. | Must already be landed; cannot pass verification apart. |
+| 3 | Half the scope merged last month under a Done issue, no PR is open, and the undelivered half builds on what merged. | 1 new issue for the undelivered half, blocked by the Done issue, its criteria not restated, 0 reopened issues. | Already delivered or owned elsewhere. |
+| 4 | "Decide whether the relay can share one database", with no code change. | 1 issue now, 0 repository labels, 0 PRs; deliverable is the recorded decision with its measurement, verified by the document revision holding it. Implementation the decision may later require is planned then, as its own issue blocked by this one, and is not created now. | Non-PR work. |
+| 5 | The target repository does not exist yet and two candidates are disputed. | 2 issues: 1 non-PR decision issue naming its owner, and 1 implementation issue blocked by it. Both repository labels empty, implementation not ready for dispatch, 0 invented repositories. | Unresolved target. |
+| 6 | The project was created; its label write and one relation failed. | Label and relation repaired on the created ID, 0 new projects; the report names the written IDs, the unset fields, and the intended and observed lists after re-reading. | Read-back; repair on the same ID. |
 | 7 | The same request again on the same milestone, two commits later, deliverables unchanged. | 0 new issues, 0 renames, 0 re-splits; matching by stable ID and scope; only genuinely moved items change. | Convergence. |
 | 8 | The user asks to move the milestone boundary and nothing else. | 1 milestone write, 0 issue writes; the closing check runs and reports the coverage gap the new boundary creates. | Narrow scope keeps its scope. |
-| 9 | The delivery PR is open, its owner is active, and the remaining scope needs its own merge. | Issue narrowed now to what that PR delivers, 1 new issue blocked by it, 0 reassignments, PR scope unchanged. | Align a delivered issue: unmerged delivery. |
-| 10 | The delivery PR merged part of the scope carrying a closing keyword, automation moved the issue to Done, two criteria are still open. | Conflict recorded and the issue corrected within the assignment, 1 new issue for the open criteria blocked by the merged one, original narrowed to what merged with the narrowing recorded, then Done. | Align a delivered issue: merged with criteria open. |
-| 11 | A PR that only makes the failure observable merged; the fix is unwritten. | Linked as contributing, delivery link empty, status unchanged, 0 criteria marked met, the closing keyword checked before merge. | Align a delivered issue: instrumentation. |
+| 9 | The delivery PR is open, its owner is active, and the remaining scope needs its own merge. | New boundary agreed with the owner first, then the issue narrowed to what that PR delivers and 1 new issue blocked by it. 0 reassignments, 0 changes made before that agreement, PR scope unchanged. | Align a delivered issue: unmerged delivery. |
+| 10 | The delivery PR merged part of the accepted scope carrying a closing keyword, automation moved the issue to Done, two criteria are still open. | Conflict recorded and the issue corrected within the assignment, 1 new issue for the open criteria blocked by the merged one, original narrowed to what merged with the narrowing recorded and what it delivered left delivered, then Done. | Align a delivered issue: merged with criteria open. |
+| 11 | A PR that only makes the failure observable merged; it satisfies no accepted criterion and the fix is unwritten. | Linked as contributing, delivery link empty, status unchanged, 0 criteria marked met, the issue's status confirmed against what the merge actually did. | Align a delivered issue: no accepted criterion satisfied. |
 | 12 | An old issue carries five PRs from an agreed exception, some merged. | Exception recorded, required deliveries inventoried against the open criteria, reconciled with the current owner before dispatch, links and owner and history preserved, 0 silent splits or reassignments, pattern not copied into new issues. | Align a delivered issue: existing exception. |
 | 13 | A bare "PR 단위로 정리해줘" on a milestone with no prior plan. | Every issue written carries the full issue fields, each boundary decided by the rule above, the closing check run; issue count is whatever the boundary rule yields, standard unchanged by the request's length, scope unwidened. | Default output standard. |
+| 14 | A milestone outcome has no issue that delivers it, and the request authorizes the full plan. | 1 new issue created now for that outcome, relations recomputed after it, 0 promised outcomes left unplanned. | Closing check: coverage. |
+| 15 | Two planned issues name the same deliverable in the same repository under different titles, and one of them holds a relation. | 1 issue kept, the other's relation moved onto it before relations are checked, 0 duplicate deliverables, 0 promised work dropped. | Closing check: duplication. |
+| 16 | A contract was split across two issues, and each now blocks the other. | The shared part becomes 1 new first issue, both former issues blocked by it, 0 edges dropped to break the cycle. | Closing check: relations. |
+| 17 | The connector writes relations but cannot read them back. | Relations reported written, unverified; 0 relations claimed to exist; the intended list still reported with IDs. | Closing check: read-back unavailable. |
