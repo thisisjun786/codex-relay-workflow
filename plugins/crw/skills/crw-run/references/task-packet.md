@@ -118,13 +118,15 @@ Workspace ownership:
 - Your resources: [the checkout, branch and evidence root this assignment owns, with the
   OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
   cleanup authorization, `none automatic` where no cleanup is authorized]
-- Write capability as measured: [whether the checkout, its resolved git metadata
-  (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the
-  evidence root are writable under the effective profile, and the recorded OPS-5.3 fallback
-  where they are not. A refused write is answered on this same checkout, by clearing a
-  refusal a supported route can clear or by that recorded fallback where the refusal is this
-  task's own profile, never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or
-  reset/stash]
+- Write capability: [first what the coordinator measured on the paths themselves, which does
+  not depend on this task existing yet: the checkout, its resolved git metadata
+  (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the evidence
+  root, with any OS permission, read-only mount or live writer found on them. Then the profile
+  this task is being created with and the paths it is meant to reach, which its creation receipt
+  confirms rather than this packet, and the recorded OPS-5.3 fallback where it will not reach
+  them. A refused write is answered on this same checkout, by clearing a refusal a supported
+  route can clear or by that recorded fallback where the refusal is this task's own profile,
+  never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or reset/stash]
 - Capacity and large artifacts: [the destination volume to check before a large clone,
   install, build or download, and the permitted shared read-only originals, per-task
   temporary paths and other volumes to use instead of copying a large original in here]

@@ -491,8 +491,11 @@ resources that existed before this assignment and the ones this assignment will 
 A path matching the convention for this task's name is not evidence that it belongs
 to this task, because a name is something two tasks can choose: another writer may
 hold it, or it may be what a creation that failed halfway left behind. Where the
-convention name collides, the new checkout takes a distinguishing suffix and the
-existing one is left as it is. Record the answer in the ownership columns of
+convention name collides, the distinguishing suffix goes on the task segment, so the
+checkout path and its `codex/<task>` branch move together and the existing checkout
+and branch are left as they are; suffixing the path alone leaves the branch collision
+in place, and Git refuses a second worktree on a branch another worktree already has
+checked out. Record the answer in the ownership columns of
 [OPS-5.2](references/operations.md#ops-52-ownership-is-recorded-in-columns-separately-from-the-path),
 which is where created by, editing owner, git metadata owner, retention owner and
 cleanup authorization live, rather than leaving it to be inferred from the path.
