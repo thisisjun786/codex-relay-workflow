@@ -135,5 +135,19 @@ class OwnerReadFailuresAreClassified(unittest.TestCase):
         self.assertIn("scope_bindings unreadable", reading["basis"])
 
 
+    def test_a_failure_expanding_the_unfinished_set_is_unreadable(self):
+        """RED: state() sat outside the boundary, so the second read could raise."""
+
+        class _StateRaises(_View):
+            def state(self, relationship_id):
+                raise RuntimeError("relationships unreadable")
+
+        view = _StateRaises(_Reader(["r1"], ["r1"], owners=[_owner("p")]))
+        reading = view.project_state(PROJECT)
+        self.assertEqual(reading["state"], "unreadable")
+        self.assertFalse(reading["readable"])
+        self.assertIn("relationships unreadable", reading["basis"])
+
+
 if __name__ == "__main__":
     unittest.main()

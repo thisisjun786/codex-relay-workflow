@@ -114,6 +114,12 @@ class AssignmentView:
             # unreadable shape rather than propagate a database error to a caller that asked a
             # question about completion.
             owners = self.linkage.owners(PROJECT_SCOPE_KIND, project_key)
+            # Expanded inside the boundary too. outstanding() returns ids; naming each one's
+            # state reads the same registry and store again, so a failure there has to produce
+            # the promised unreadable reading rather than raise at a caller asking about
+            # completion. This is the same escape as the owners() one, one line further down.
+            unfinished = [{"relationshipId": rid, "state": self.state(rid)["state"]}
+                          for rid in outstanding]
         except Exception as error:  # noqa: BLE001 - an unreadable store is an answer, not a crash
             return {"state": "unreadable", "readable": False, "projectKey": project_key,
                     "attached": [], "outstanding": [],
@@ -133,8 +139,6 @@ class AssignmentView:
                     "basis": "no live assignment is attached to this project, which is not the "
                              "same as every assignment being finished",
                     "limits": PROJECT_READING_LIMITS}
-        unfinished = [{"relationshipId": rid, "state": self.state(rid)["state"]}
-                      for rid in outstanding]
         if unfinished:
             return {"state": "incomplete", "readable": True, "projectKey": project_key,
                     "attached": attached, "outstanding": outstanding,
