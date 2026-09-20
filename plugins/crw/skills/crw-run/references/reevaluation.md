@@ -64,7 +64,6 @@ Closed set. A hold names the condition a later pass re-reads, and the row it res
 | `defer:edit_overlap` | the peer agreement settles, or the region is released | the agreement and its follow-up |
 | `defer:merge_window` | the window's holder releases it, or this candidate is promoted | the merge turn; integration into a shared target stays serial |
 | `defer:ownership_unverified` | a store this process measured answers the question | an unreadable store, a state directory this process cannot use, or `holds` null |
-| `defer:scope_ambiguous` | the store names one project parent for the issue's scope | the ambiguous scope reading, with both candidates |
 | `defer:disposition_unreadable` | the store becomes readable | the refused read and its detail |
 | `defer:disposition_contested` | a fresh execution generation | every contested candidate, with no winner chosen |
 | `defer:authority_pending` | the authority case that produced it is answered | the [Start policy](start-policy.md#cases-this-policy-is-accepted-against) case recorded at the start adjudication |
@@ -80,21 +79,18 @@ the one hold that travels upward.
 
 ## Proving ownership
 
-Two different questions, on two different axes, in this order.
+One question, one read: does this issue already have a responsible child?
 
-1. **Does this issue already have a responsible child?** `doctor --issue`
-   ([determine whether this store holds the assignment](relay.md#determine-whether-this-store-holds-the-assignment)).
-   It constructs nothing, so it is safe to ask before anything exists. `holds` true ends the
-   evaluation as `skip:already_owned`. `holds` null is unproved, not free:
-   `defer:ownership_unverified`.
-2. **Where `holds` is false and the candidate would otherwise be dispatched, which project parent
-   owns its scope?** `assignment-find --issue` answers that axis. It constructs a store, so ask it
-   only after step 1 reported a readable store whose identity agrees with what this process
-   measured, and compare the identity it carries against step 1's. An ambiguous scope answer is
-   `defer:scope_ambiguous`; an unreadable one is `defer:ownership_unverified`.
+`doctor --issue`
+([determine whether this store holds the assignment](relay.md#determine-whether-this-store-holds-the-assignment))
+answers it and constructs nothing, so it is safe to ask before anything exists. `holds` true ends
+the evaluation as `skip:already_owned`, and the existing child is reused rather than replaced.
+`holds` false is dispatchable on this axis. `holds` null is unproved rather than free, and so is
+a state directory this process cannot use: both are `defer:ownership_unverified` with the reason.
 
-A process that cannot use the state directory cannot run step 2 at all. That is
-`defer:ownership_unverified` with the reason, not an absence of ambiguity.
+The pass asks nothing further here. Reading the owning project parent needs an assignment to
+already exist, which is the case `holds` true has just ended, so a second lookup would add a
+store-constructing call that could only repeat what the first read settled.
 
 ## What a pass records per candidate
 
