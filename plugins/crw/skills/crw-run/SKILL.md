@@ -449,6 +449,10 @@ are reported explicitly, with no silent substitution of a different workflow.
 
 ### Check who already owns the workspace
 
+This runs before the checkout above is assigned and before the creation call, and
+its result is what the packet's workspace-ownership fields carry. It is written
+here because it is one procedure, not because it happens last.
+
 Before a checkout is assigned, read what already exists and who is answerable for
 it: the repository's worktrees with their branches and locked state, the dirty and
 untracked files in each, and any current writer. Then split the result in two, the
@@ -500,10 +504,15 @@ packet, a prompt or a hook; those carry the intent, and what constrains a write 
 the sandbox, the permission profile and the filesystem.
 
 A refused Git write is answered on the same child and the same checkout, and which
-answer applies follows from which refusal it was. Where a supported route can clear
-it, an OS permission on the original repository's Git metadata, a stale lock, a
-read-only mount, or another writer still holding the path, clear it and continue
-there. Where the refusal is the child's own permission profile, nothing here widens
+answer applies follows from which refusal it was. An environmental restriction, an
+OS permission on the original repository's Git metadata, a read-only mount, or a lock
+whose owning process has already exited, is cleared through its supported route and
+the work continues there; establish that a lock is stale before removing it, because
+a lock file records only that somebody took it. Another task still holding that path
+or that lock is not a restriction to clear but an ownership conflict: leave its work
+as it is, serialize behind it or settle it with its owner, and report the blocker
+rather than displacing a live writer.
+Where the refusal is the child's own permission profile, nothing here widens
 it: a running task keeps the settings it was created with, and the supported answer
 is the
 [OPS-5.3](references/operations.md#ops-53-who-commits-and-the-fallback-when-a-task-cannot)
@@ -744,9 +753,11 @@ still there. So the close of a run states that once, in one place: every checkou
 branch, temporary artifact, evidence root and background process this run created,
 changed, or is deliberately keeping, each with its owner, the reason it is retained,
 and the next action, including who may release it and on what event. It reuses the
-records that already exist, the project's Linear coordination record for the
-human-readable list and the private receipts for raw detail under
-[OPS-5.4](references/operations.md#ops-54-evidence-location), and adds no new store.
+records that already exist and adds no new store: the project's Linear coordination
+record for the human-readable list, or for a standalone issue the existing linked
+coordination document or this task's owned section in that issue, with the private
+receipts keyed by the issue and the actual task IDs carrying raw detail under
+[OPS-5.4](references/operations.md#ops-54-evidence-location).
 
 Write it against what was found at dispatch rather than against whatever is visible
 now, because the comparison is what separates the entries. Pre-existing resources

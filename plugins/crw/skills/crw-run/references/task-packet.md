@@ -122,6 +122,11 @@ Workspace ownership:
 - Capacity and large artifacts: [the destination volume to check before a large clone,
   install, build or download, and the permitted shared read-only originals, per-task
   temporary paths and other volumes to use instead of copying a large original in here]
+- Resource delta to report at close: [measured against the baseline above, what this task
+  created, changed, retained, shared or cleaned, each with its owner, release condition and
+  next action; the working directory, purpose, handle and running state of any process it
+  started; and any capacity actually reclaimed, kept apart from what was only proposed.
+  Only this task can see the temporary paths and processes it makes during execution]
 
 Outcome and scope:
 [User-visible behavior, acceptance criteria, intended edit surfaces]
