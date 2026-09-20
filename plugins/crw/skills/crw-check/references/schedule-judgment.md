@@ -336,7 +336,12 @@ worth discussing.
     2026-09-10, its current target is 2026-10-05, and it is unachieved; observed
     2026-09-21. I-6 labelled added after baseline, no baseline verdict, excluded from
     the baseline aggregate, and on plan against its current date. Not a baseline miss,
-    not undecidable, and not blended with the baseline scope into one rate.
+    not undecidable, and not blended with the baseline scope into one rate. Where instead I-6 has no
+    baseline target date and no change source recording when it entered scope, the
+    baseline axis is undecidable with reason no baseline recorded and the scope is
+    partially checked, while the current axis still decides on plan against
+    2026-10-05. Not the whole result undecidable because one axis is, and not the
+    missing baseline treated as an addition nobody recorded.
 
 11. **Pause.** I-12, current target 2026-09-15, required level merged, paused
     2026-09-12, source recorded as the user's decision pending a product answer, no
@@ -373,7 +378,11 @@ worth discussing.
     where the only path from a late I-16 to M3 is not required, M3 is not blocked by
     I-16. Where M3 additionally requires I-16 and I-16 is achieved, M3 is blocked by
     I-15 alone and I-16 is named as required but satisfied. Not a successor dropped
-    because some other path to it was not required.
+    because some other path to it was not required. Where M3's own target date is absent, or the
+    relation between I-15 and M3 cannot be read as required or not, that edge's impact
+    is unverified with the missing input named, and where I-16's own state cannot be
+    read, its contribution to M3 is unverified rather than assumed blocking or
+    assumed clear. Not an impact asserted over inputs nobody could read.
 
 14. **A kind that carries no commitment.** The contract records I-18's kind as
     carrying no commitment date because it records when work actually began, and
