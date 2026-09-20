@@ -127,6 +127,29 @@ claims. This document describes the first three. It is not evidence that any hos
 and a host reporting a model back is evidence that it RECORDED the request, never that a provider
 served it.
 
+### Turning it on
+
+Four steps, and the order matters because each one is a separate fact.
+
+1. Write the `roles` section into the file `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` names.
+2. Set that variable for **every** process that asks a role question: the bridge MCP server, and
+   the relay's daemon, CLI and Stop hook. They are separate processes with separate environments,
+   and one that misses it refuses role-bound deliveries rather than skipping the check.
+3. Restart them. Each holds one snapshot, so an edit to the file changes nothing until it does.
+4. Read the result back rather than assuming it: `get_capabilities` reports the bridge's declared
+   roles and its policy digest, and `relay doctor` reports the digest the relay resolved. The two
+   digests agreeing is what says both processes read the same file; the relay cannot fetch the
+   bridge's for itself, because that value comes from an MCP tool and the relay's transport
+   speaks App Server RPC.
+
+Nothing before step 4 is evidence. A file written is not a process reading it, a process reading
+it is not the other process reading the same one, and either of those is a different fact from a
+provider actually serving the model a host recorded.
+
+Deliveries held while the policy was unresolved are not lost. The hold is retry-safe on the
+ordinary recheck cadence, so they resume on the next pass once the process can read the policy,
+with no turn started in the meantime and nothing to replay by hand.
+
 ## Changing an existing task
 
 A model change on a running task is a UI action plus a re-record. The code does not perform it.
