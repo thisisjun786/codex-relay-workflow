@@ -112,18 +112,22 @@ because one of them passing says nothing about the other two.
    goal API is not remote goal-write support.
 2. **Delivery path.** Whether the active and idle paths can actually carry a callback to this
    task, under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting).
-3. **Approval-policy compatibility.** Whether the approval policy in force can carry that
-   delivery. This has already failed in practice: a supervisor on `approvalPolicy: on-request`
-   had its idle callback refused with `unsupported_approval_policy`, and automatic reporting and
-   resume stopped.
+3. **Approval-policy declaration.** Whether the policy the caller declares matches the one the
+   task is actually on. This has already failed in practice: a supervisor on
+   `approvalPolicy: on-request` had its idle callback refused with
+   `unsupported_approval_policy`, and automatic reporting and resume stopped. Read that refusal
+   precisely. It is a declaration mismatch and not an unsupported policy: the bridge declares
+   this value and never transmits it, defaults an omitted declaration to `never`, and naming the
+   policy the task is on is the supported way to reach it.
 
 Each result lands in its own recorded field: goal support in `host_compatibility`, the delivery
 path in `observation_path`, and approval-policy compatibility in `approval_policy`. Three results,
 three fields, so a later reader can tell which one failed.
 
-Record the third as its own fact. It is not a reason to lower an approval policy, and lowering one
-is not a repair for it. The bridge declares the policy it believes a thread is on and never sets
-it, so a mismatch is something to observe and report rather than to write over.
+Record the third as its own fact. The repair is to declare the policy actually observed, never to
+lower the policy: lowering one repairs nothing here and gives away a protection the task was
+running with. Because the bridge declares rather than sets this value, a mismatch is something
+to observe, declare correctly and report, never to write over.
 
 Also record what the adjudication did not change. A start policy settles a run mode, a cap and the
 compatibility facts; it does not alter worktrees, project scope, permissions or child count, and
