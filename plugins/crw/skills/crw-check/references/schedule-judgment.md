@@ -228,9 +228,15 @@ Refusing to own execution is not the same as narrowing the work around it. Insid
 approved initiative or project execution, a checkpoint includes the parent's
 confirmation and whatever already-approved successor work that approval covers, so
 being called here does not turn an approved continuation into an independent
-read-only audit. Return a schedule or evidence mismatch to the owning project parent
-and settle there, within the approval it already holds, whether the approved
-successor proceeds. Do not become the new owner of technical execution or of a merge,
+read-only audit. Route a schedule or evidence mismatch by the level that owns it. A mismatch contained
+in one project returns to that project's parent, which settles within the approval it
+already holds whether the approved successor proceeds. Where the mismatch orders work
+across projects, it returns through the invoking supervisor, which coordinates the
+affected parents, because a project parent owns sequencing inside its own project and
+never decides whether another project proceeds. A bounded helper returns the finding
+to its caller rather than contacting an owner itself, as
+[supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
+already requires. Do not become the new owner of technical execution or of a merge,
 and do not build a second path that resumes work. Explicit report-only, read-only,
 pause, and no-contact limits still win, and an independent audit keeps its own
 lookup scope.
@@ -387,4 +393,7 @@ worth discussing.
     approved continuation narrowed into an independent read-only audit because a check
     was called. Where the request does carry an explicit report-only, read-only,
     pause, or no-contact limit, that limit wins and the finding is returned without
-    contact.
+    contact. Where instead M5 sits in project A and the approved successor waiting on
+    it is in project B, the finding returns through the invoking supervisor, which
+    coordinates both parents. Not project A's parent deciding whether project B
+    proceeds, which is an ordering it does not own.
