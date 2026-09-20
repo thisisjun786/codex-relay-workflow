@@ -111,13 +111,15 @@ Authorized execution:
 - Runtime/test data access: [agreed sources and operational limits]
 
 Workspace ownership:
-- Existing resources at dispatch: [what already exists and is not yours, named so you do not
-  adopt it: the worktrees, branches and current writers for this repository with their
-  dirty/untracked state, and the temporary artifacts, evidence roots, shared originals and
-  running processes already present at the locations you are assigned. A convention path
+- Existing resources at dispatch: [everything already present, each entry labelled as already
+  owned by this assignment or owned elsewhere, since predating the run and belonging to it are
+  separate facts and a resume already owns some of what it finds: the worktrees, branches and
+  current writers for this repository with their dirty/untracked state, and the temporary
+  artifacts, evidence roots, shared originals and running processes already present at the
+  locations you are assigned. Do not adopt what is labelled owned elsewhere; a convention path
   matching your task's name is not evidence that it is your path. This is the baseline the
-  close delta below is measured against, so a leftover missing from it reads afterwards as
-  something this task created]
+  close delta below is measured against, so anything missing from it reads afterwards as
+  something this run created]
 - Your resources: [the checkout, branch and evidence root this assignment owns, with the
   OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
   cleanup authorization, `none automatic` where no cleanup is authorized]
