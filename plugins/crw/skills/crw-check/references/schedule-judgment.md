@@ -311,7 +311,10 @@ current one worth discussing.
 
 1. **Early completion.** M1, current target 2026-09-20, required level installed,
    installation receipt 2026-09-18T14:00, observed 2026-09-21T09:00. Ahead, actual
-   minus target −2 days. Not on plan, which would ignore the earlier calendar day.
+   minus target −2 days. Not on plan, which would ignore the earlier calendar day. Where the scope
+   also holds I-21, due 2026-10-01 and unachieved with no risk observed, the scope
+   overall is on plan, nothing due yet, while M1's own two-day lead is still reported
+   as its lead. Not a scope called ahead while work it still owes has not landed.
 
 2. **Normal progress.** I-7, current target 2026-09-30, required level merged,
    unachieved, no risk observation, observed 2026-09-21. On plan, nothing due yet,
@@ -387,7 +390,12 @@ current one worth discussing.
     instead I-6 carries a target but no Baseline record establishing it can be found,
     its Schedule baseline is `unconfirmed`, that axis is undecidable for that reason
     and the scope is partially checked, while the current axis still decides on plan
-    against 2026-10-05. Not the whole subject undecidable because one axis is.
+    against 2026-10-05. Not the whole subject undecidable because one axis is. Where instead I-6 carried a
+    confirmed 2026-09-20 target and an accepted change cancelled it on 2026-09-15, it
+    leaves the current judged set on 2026-09-21 and is reported as removed with that
+    Change source, neither late nor counted into the overall verdict, while the
+    baseline axis still shows the earlier plan carried it. Not an accepted scope
+    removal read as a missed delivery.
 
 11. **Pause.** I-12, current target 2026-09-15, required level merged, paused
     2026-09-12, source recorded as the user's decision pending a product answer, no
