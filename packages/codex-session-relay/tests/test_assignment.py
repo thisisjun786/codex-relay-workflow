@@ -547,3 +547,53 @@ class TheAxesStayApart(AssignmentTestCase):
         record = self.assignments.state(self._rid)
         self.assertIs(record["projection"]["verdict"], record["lastVerdict"])
         self.assertEqual(record["projection"]["assignment"]["state"], record["state"])
+
+    def test_a_verified_rejection_does_not_read_like_a_verified_acceptance(self):
+        """acks records the disposition and the turn verification independently.
+
+        Both settle as verified. Reading only that axis reports a parent who REFUSED the
+        completion exactly like one who accepted it, which is the collapse this whole
+        projection exists to prevent.
+        """
+        from codex_session_relay import identity
+
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id),
+            accepted=False, rejection_reason="revision_mismatch", adapter=self.adapter,
+        )
+        ack = self.projection()["completion"]["ack"]
+        self.assertFalse(ack["accepted"])
+        self.assertEqual(ack["rejectionReason"], "revision_mismatch")
+        # The verification axis is unchanged by the refusal, which is exactly why it cannot
+        # stand in for the disposition.
+        self.assertEqual(ack["settlement"], "verified")
+
+    def test_a_refusal_stops_being_the_reason_once_a_delivery_exists(self):
+        """Refusals are durable history; the same event can be accepted after its cause is fixed.
+
+        Returning the old refusal once a delivery has dispatched would have the projection
+        contradict itself.
+        """
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.intake.record_refusal(
+            "unassigned_turn", relationship_id=self._rid, event=event_id,
+            detail="the earlier attempt named a turn it did not own",
+        )
+        self.attempt(event_id)
+        completion = self.projection()["completion"]
+        self.assertEqual(completion["delivery"]["state"], "dispatched")
+        self.assertIsNone(
+            completion["undeliveredReason"],
+            "a dispatched delivery was reported with a historical refusal as its reason",
+        )
+
+    def test_provenance_says_whether_it_identified_one_file(self):
+        relay = self.assignments.for_issue(ISSUE)["relay"]
+        self.assertTrue(relay["store"]["identified"])
+        self.assertIsNone(relay["store"]["detail"])
+        self.assertEqual(relay["store"]["storeId"], self.store.identity)

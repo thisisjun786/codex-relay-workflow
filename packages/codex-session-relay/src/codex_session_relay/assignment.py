@@ -279,11 +279,19 @@ class AssignmentView:
                 "requestId": attempt["request_id"] if attempt is not None else None,
                 "attemptNo": attempt["attempt_no"] if attempt is not None else None,
             }
-        settled = self.store.one("SELECT verified FROM acks WHERE event_id = ?", (event_id,))
+        settled = self.store.one(
+            "SELECT verified, accepted, rejection_reason FROM acks WHERE event_id = ?",
+            (event_id,),
+        )
         tier = self.store.one(
             "SELECT tier FROM ack_evidence WHERE event_id = ?", (event_id,)
         )
         record["ack"] = {
+            # The parent's DISPOSITION, which is independent of whether the acknowledging turn
+            # could be verified. A verified rejection and a verified acceptance settle
+            # identically on the axis below, so reading only that one reports them alike.
+            "accepted": bool(settled["accepted"]) if settled is not None else None,
+            "rejectionReason": settled["rejection_reason"] if settled is not None else None,
             "settlement": settled["verified"] if settled is not None else None,
             # A second axis, not a rewording of the first: settlement says whether the
             # acknowledgement closed, the tier says what it closed on, and no row at all is
@@ -304,6 +312,12 @@ class AssignmentView:
         """
         if delivery is not None and delivery["hold_reason"]:
             return {"source": "deliveries.hold_reason", "value": delivery["hold_reason"]}
+        if delivery is not None:
+            # A refusal is durable audit history and the same deterministic event can be
+            # accepted later once its cause is corrected. Once a delivery row exists, the
+            # refusal that preceded it is no longer why anything is undelivered, and reporting
+            # it here would contradict a delivery that has since dispatched.
+            return None
         refusal = self.store.one(
             "SELECT reason FROM refusals WHERE event_id = ? ORDER BY id DESC LIMIT 1",
             (event_id,),
@@ -391,10 +405,27 @@ class AssignmentView:
         recorded for the same reason: this is the value to compare, not the evidence that
         settles the comparison.
         """
+        # The id is read through the connection this process opened; the device and inode are
+        # stat-ed from the path. Those are two different files if the path is replaced in
+        # between, and pairing them would hand out provenance no single store ever had. So the
+        # path is identified on both sides of the read and a disagreement returns unknown
+        # rather than a hybrid - the same before-and-after discipline read_only_rows uses.
+        before = self._path_identity()
         located = self.store.locate()
+        recorded_socket = self.store.meta("socket_path")
+        after = self._path_identity()
+        if before is None or after is None or before != after:
+            return {
+                "holds": holds,
+                "store": {"identified": False, "storeId": None, "dbPath": located["dbPath"],
+                          "realPath": None, "device": None, "inode": None,
+                          "recordedSocket": None,
+                          "detail": "the database at this path was replaced while it was read"},
+            }
         return {
             "holds": holds,
             "store": {
+                "identified": True,
                 "storeId": located["storeId"],
                 "dbPath": located["dbPath"],
                 "realPath": located["realPath"],
@@ -404,9 +435,19 @@ class AssignmentView:
                 # socket this process resolved: a store records the socket that created it,
                 # so a participant pointing at a different socket still reads this value and
                 # can see that the two disagree.
-                "recordedSocket": self.store.meta("socket_path"),
+                "recordedSocket": recorded_socket,
+                "detail": None,
             },
         }
+
+    def _path_identity(self):
+        import os
+
+        try:
+            info = os.stat(self.store.path)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino)
 
     def _project_context(self, owning) -> dict:
         """Which project owns this issue, additively.

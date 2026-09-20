@@ -120,6 +120,29 @@ class TheIssueHalfOfTheProof(CliBase):
         self.register()
         self.assertNotIn("issue", self.run_cli("doctor"))
 
+    def test_a_superseded_relationship_is_not_a_live_owner(self):
+        """Live ownership is a live status AND no successor, everywhere else in the package.
+
+        A repaired or interrupted store can hold an active row that already has a successor.
+        Reporting it through holds would hand a caller an obsolete relationship and child.
+        """
+        import sqlite3
+
+        relationship = self.register()
+        connection = sqlite3.connect(self.cli_store())
+        try:
+            connection.execute(
+                "UPDATE relationships SET superseded_by = 'rel-0000000000000001'"
+                " WHERE relationship_id = ?",
+                (relationship["relationshipId"],),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        issue = self.run_cli("doctor", "--issue", ISSUE)["issue"]
+        self.assertFalse(issue["holds"])
+        self.assertIsNone(issue["responsibleRelationship"])
+
 
 class CommandLine(CliBase):
     def test_register_emit_and_status_round_trip(self):

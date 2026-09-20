@@ -1564,9 +1564,11 @@ def _issue_reading(services, report, issue_key: str) -> dict:
         "SELECT (SELECT value FROM schema_meta WHERE key = 'store_id') AS store_id,"
         "       (SELECT relationship_id FROM relationships"
         "         WHERE issue_key = ? AND status IN ('active','paused')"
+        "           AND superseded_by IS NULL"
         "         ORDER BY created_at LIMIT 1) AS relationship_id,"
         "       (SELECT child_task_id FROM relationships"
         "         WHERE issue_key = ? AND status IN ('active','paused')"
+        "           AND superseded_by IS NULL"
         "         ORDER BY created_at LIMIT 1) AS child_task_id",
         (issue_key, issue_key),
     )
@@ -1681,11 +1683,13 @@ def cmd_doctor(services, args) -> dict:
         # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
         # is that a different database is never reported as healthy.
         raise PayloadExit(report, EXIT_REFUSED)
-    if issue_key and report["issue"]["storeAgreement"] == "changed":
-        # Same criterion, one level down. The rows came from a file that is not the one this
-        # process measured, so exit 0 would invite the caller to adopt a relationship out of
-        # a store it never verified - which is the duplicate-writer path, reached from the
-        # opposite direction.
+    if issue_key and report["issue"]["readable"] and report["issue"]["storeAgreement"] != "same":
+        # Same criterion, one level down, and unproven is refused exactly as a mismatch is:
+        # the rule a few lines up already says a caller that asked whether this is the same
+        # store and got no proof must not read exit 0 as yes. "changed" and "unknown" are
+        # both short of proof, so neither may exit 0 while the store WAS readable. An
+        # unreadable store is a different answer - there is simply no relay here - and it
+        # keeps exit 0 so that determining before anything exists is not an error.
         raise PayloadExit(report, EXIT_REFUSED)
     return report
 
