@@ -212,6 +212,34 @@ def recorded_pair(settings):
     return _pair(settings)
 
 
+def _unverified_citation(settings, role, policy):
+    """A cited exception that this policy does not actually authorize.
+
+    Checked before anything else, because the later comparisons can all SUCCEED without ever
+    looking at it: a record whose pair happens to equal the declared role pair returns clean on
+    that equality alone, and the citation rides along unverified. It is not inert. The unloaded
+    guard reads it and withholds a delivery whose pair had perfectly good role provenance, on
+    the strength of an id nobody wrote.
+    """
+    name = cited_exception(settings)
+    if name is None or not policy:
+        return None
+    if authorized_by_exception(settings, role, policy):
+        return None
+    return {
+        "code": RefusalReason.ROLE_BINDING_MISMATCH.value,
+        "role": role,
+        "citedException": name,
+        "digest": policy.digest,
+        "detail": (
+            f"this record cites exception {name!r}, and this host's execution policy does not "
+            f"authorize that id for role {role!r} with this pair and directory. Record what "
+            "actually authorized the creation, or nothing at all"
+        ),
+        "recovery": RECOVERY,
+    }
+
+
 
 def check_record(settings, role, policy) -> dict | None:
     """Has this task's recorded authorization fallen behind the policy for its own role?
@@ -225,6 +253,9 @@ def check_record(settings, role, policy) -> dict | None:
     let a parent-only policy silently exempt every child on the host, which is a partial policy
     failing open.
     """
+    unverified = _unverified_citation(settings, role, policy)
+    if unverified is not None:
+        return unverified
     expectation = policy.expectation(role)
     if expectation is None:
         if authorized_by_exception(settings, role, policy):
@@ -267,6 +298,11 @@ def check_binding(cited, bound, settings, policy) -> dict | None:
     """
     if bound not in ROLE_SCOPE:
         return None
+    unverified = _unverified_citation(settings, bound, policy)
+    if unverified is not None:
+        unverified["citedRole"] = cited
+        unverified["boundRole"] = bound
+        return unverified
     if cited is not None and cited != bound:
         return {
             "code": RefusalReason.ROLE_BINDING_MISMATCH.value,

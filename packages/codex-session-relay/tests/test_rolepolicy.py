@@ -522,6 +522,31 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             )
         self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
 
+    def test_a_citation_this_policy_does_not_authorize_is_refused_even_on_the_declared_pair(self):
+        """Pair equality returns clean before the citation is ever looked at.
+
+        The citation is not inert when that happens: the unloaded guard reads it and withholds a
+        delivery whose pair had perfectly good role provenance, on the strength of an id nobody
+        wrote. So a citation is verified whenever one is present.
+        """
+        from pathlib import Path
+
+        self._bind_parent()
+        declared = task_settings(
+            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+        )
+        with self.assertRaises(RegistrationError) as raised:
+            record_settings(
+                self.store, self.clock, PARENT, declared,
+                source="creation_result", role="parent", exception="not-written",
+            )
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
+        # The same record with no citation is policy-derived and records normally.
+        recorded = record_settings(
+            self.store, self.clock, PARENT, declared, source="creation_result", role="parent",
+        )
+        self.assertNotIn("citedException", recorded["settings"])
+
     def test_an_exception_that_matches_the_role_pair_is_still_an_exception(self):
         """Provenance, not resemblance.
 
