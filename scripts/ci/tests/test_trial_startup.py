@@ -47,9 +47,89 @@ VERIFIED, NOT_VERIFIED, UNKNOWN, NOT_APPLICABLE = (
 # Every relay subcommand the module may compose, written here rather than imported.
 ALLOWED = ("doctor", "assignment-find", "criteria-show", "settings-show", "service status")
 
-# Started without site processing and without pathlib: this stub is spawned thousands of times in
-# one run of this module, and an import it does not need is paid every time.
-LAUNCHER = r'''#!/usr/bin/env -S python3 -SE
+# The stub the checker spawns, in two parts.
+#
+# It is spawned about twenty times per preflight and this module runs several hundred of
+# them, so what it costs is paid thousands of times in one run. Measured on this host:
+# twenty spawns of the Python stub take 301ms, of which 8ms is process creation and the
+# rest is interpreter start. The same twenty through a shell script take 42ms.
+#
+# So the shell part serves answers rendered when the world was last flushed, and hands
+# anything it cannot serve from a file to the Python part, which is the original
+# implementation unchanged. Behaviour is preserved by construction: the fast path runs only
+# where a rendered answer exists and nothing dynamic is in play, and the fallback decides
+# everything else exactly as before. The handover happens before the call is recorded, so
+# one invocation writes one line whichever part answers it.
+LAUNCHER = r'''#!/bin/sh
+# Nothing on this path spawns a process: every process it would spawn costs more than the answer
+# it is fetching. dirname, tr, sed and a command substitution for the exit code were each worth
+# more than a millisecond a call, which this pays twenty times per preflight.
+case $0 in
+    */*) here=${0%/*} ;;
+    *) here=. ;;
+esac
+words=0
+subcommand=""
+key=""
+task=""
+wanted=""
+plain=yes
+for argument in "$@"; do
+    if [ "$wanted" = task ]; then
+        task=$argument
+        wanted=""
+    fi
+    case $argument in
+        --task) wanted=task ;;
+    esac
+    # An argument needing an escape goes to the other part, which builds the record with json.
+    case $argument in
+        *\\*|*\"*) plain=no ;;
+    esac
+    case $argument in
+        --*) ;;
+        *)
+            words=$((words + 1))
+            # --state and --socket each take a value, so the subcommand is the third bare word.
+            if [ $words -eq 3 ]; then
+                subcommand=$argument
+                key=$argument
+            elif [ $words -eq 4 ] && [ "$subcommand" = service ]; then
+                subcommand="service $argument"
+                key=service_$argument
+            fi
+            ;;
+    esac
+done
+answer=$here/answers/$key
+if [ "$subcommand" = settings-show ] && [ -n "$task" ]; then
+    answer=$answer@$task
+fi
+if [ "$plain" != yes ] || [ -e "$here/rewrite-after" ] || [ -e "$here/answers/.dynamic" ] \
+        || [ ! -f "$answer.out" ]
+then
+    exec /usr/bin/env -S python3 -SE "$here/relay-stub.py" "$@"
+fi
+quoted=""
+for argument in "$@"; do
+    if [ -n "$quoted" ]; then
+        quoted="$quoted, \"$argument\""
+    else
+        quoted="\"$argument\""
+    fi
+done
+printf '{"subcommand": "%s", "argv": [%s]}\n' "$subcommand" "$quoted" >> "$here/calls.jsonl"
+cat "$answer.out"
+if [ -f "$answer.exit" ]; then
+    read -r code < "$answer.exit"
+    exit "$code"
+fi
+exit 0
+'''
+
+# Started without site processing and without pathlib: where this part answers, an import it
+# does not need is still paid every time.
+RELAY_STUB = r'''#!/usr/bin/env -S python3 -SE
 import json, os, sys
 
 here = os.path.dirname(os.path.realpath(__file__))
@@ -75,7 +155,11 @@ rewrite = os.path.join(here, "rewrite-after")
 if os.path.exists(rewrite):
     calls = len(read("calls.jsonl").splitlines())
     if calls == int(read("rewrite-after").strip()):
-        mine = os.path.realpath(__file__)
+        # The launcher beside this part, not this part: what the checker digests before
+        # every spawn is the file it invokes, and that is the shell one.
+        mine = os.path.join(here, "codex-session-relay")
+        if not os.path.exists(mine):
+            mine = os.path.realpath(__file__)
         with open(mine, encoding="utf-8") as handle:
             body = handle.read()
         with open(mine, "w", encoding="utf-8") as handle:
@@ -179,6 +263,8 @@ class World:
         self.launcher = self.bin / "codex-session-relay"
         self.launcher.write_text(LAUNCHER, encoding="utf-8")
         self.launcher.chmod(0o755)
+        # The part that decides anything the rendered answers cannot.
+        (self.bin / "relay-stub.py").write_text(RELAY_STUB, encoding="utf-8")
         self.payloads_path = self.bin / "payloads.json"
         self.calls = self.bin / "calls.jsonl"
         self.supervisor = None
@@ -194,9 +280,53 @@ class World:
 
     def flush(self):
         self.payloads_path.write_text(json.dumps(self.payloads), encoding="utf-8")
+        self._render_answers()
         for name, payload in self.captures.items():
             (self.trial / name).write_text(json.dumps(payload), encoding="utf-8")
         (self.trial / "start.json").write_text(json.dumps(self.record), encoding="utf-8")
+
+    def _render_answers(self):
+        """What the shell part of the stub serves, rendered once per flush instead of per call.
+
+        Only what can be decided without reading the call log. Where a case asks the stub to
+        rewrite itself partway through or to answer differently after a number of calls, the
+        marker here sends every call to the Python part, which decides those exactly as it always
+        has. A subcommand with nothing rendered for it goes the same way, so an unknown one still
+        fails where it always failed.
+        """
+        answers = self.bin / "answers"
+        shutil.rmtree(answers, ignore_errors=True)
+        answers.mkdir(parents=True)
+        if isinstance(self.payloads.get("after"), dict):
+            (answers / ".dynamic").write_text("", encoding="utf-8")
+            return
+        workspaces = self.payloads.get("taskCwd") or {}
+        for key, entry in self.payloads.items():
+            if key in ("after", "taskCwd") or not isinstance(entry, dict):
+                continue
+            payload = entry.get("payload", {})
+            variants = {"": payload}
+            if key == "settings-show":
+                # The real command answers about the task it was asked about, so each one is
+                # rendered as its own answer. Without a task the shell finds nothing and the
+                # Python part answers, which is what it did before.
+                variants = {}
+                for task in sorted(set(workspaces) | {self.PARENT_A, self.CHILD_A,
+                                                      self.PARENT_B, self.CHILD_B}):
+                    asked = payload
+                    if isinstance(payload, dict):
+                        asked = dict(payload, task=task)
+                        if task in workspaces and isinstance(asked.get("settings"), dict):
+                            asked["settings"] = dict(asked["settings"], cwd=workspaces[task])
+                    variants["@" + task] = asked
+            for suffix, answer in variants.items():
+                name = key.replace(" ", "_") + suffix
+                written = (entry["stdout"] if entry.get("stdout") is not None
+                           else json.dumps(answer))
+                (answers / (name + ".out")).write_text(written, encoding="utf-8")
+                if entry.get("exit"):
+                    (answers / (name + ".exit")).write_text(str(entry["exit"]),
+                                                            encoding="utf-8")
 
     def stop(self):
         if self.supervisor is not None:
