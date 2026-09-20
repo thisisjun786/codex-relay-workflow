@@ -170,11 +170,15 @@ paused time is not subtracted from elapsed time.
 
 ## Trace the impact
 
-Walk forward along required-predecessor edges only, starting only from a subject that is
-unachieved and whose verdict is late, at risk or undecidable. Both halves matter: a
+Walk forward along required-predecessor edges only, and let the predecessor's state
+decide what the walk may say. A subject known to be achieved blocks nothing, however
+late it landed, so no walk starts from it. A subject known to be unachieved and judged
+late or at risk blocks, and its successors are named. A subject whose achievement is
+unknown, which is what an undecidable verdict from stale or missing evidence means,
+blocks nothing that can be asserted and nothing that can be ruled out either: its
+successors' impact is reported unverified with that reason rather than omitted. A
 subject that is on plan blocks nothing yet, so work waiting on it is not reported as
-blocked merely because it has not finished, and a subject that landed after its target
-keeps a late verdict while blocking nothing at all, because it is done.
+blocked merely because it has not finished.
 For each starting subject, name the successors it reaches through at least one path
 made entirely of required edges,
 and the nearest unachieved successor milestone or project. Another path that is not
