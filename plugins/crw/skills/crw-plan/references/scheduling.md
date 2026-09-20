@@ -41,8 +41,9 @@ mentioned.
 
 When the request states no dates, read the target from what delivery has actually taken: the most
 recent records of the same class of work at the same stage of the same product, each running from
-assignment through the pull request and its review to the merge or acceptance that finished it,
-under the review and host conditions this subject will meet. Recent means those records newest
+assignment to the result that finished it, through the pull request and its review where the work
+had one and to the acceptance of the agreed artifact where it did not, under the review and host
+conditions this subject will meet. Recent means those records newest
 first, matched by class, stage and conditions, and never a lookback window, because a window is
 the fixed period this section exists to refuse. Read back to the last change in the conditions
 those records describe and stop there: a record from before that change describes work under
@@ -305,3 +306,4 @@ rule here states a period.
 | 23 | Prerequisite A is confirmed on the morning of D0 under an authorized checkpoint; successors B and C both carry D5, B's `confirmed` and C's `provisional`; with A confirmed the records and a free slot put each successor's earliest day at D0. | C moves to D0 with 1 entry opening `pulled in` naming A; B: 0 moves and 0 entries, its D5 kept and its earlier readiness reported to the authority that set it; 0 schedule baselines rewritten on either. | A confirmed successor is not pulled in. |
 | 24 | An authority brings issue K's agreed deadline forward from D9 to D4 with no predecessor result behind it. | 1 move with 1 entry opening `authority` naming that decision; 0 `pulled in` entries and 0 confirmed results named; the schedule baseline unchanged. | `authority` moves in either direction. |
 | 25 | An authorized replan cancels an accepted criterion from issue L, whose target is `provisional` D9, and the records left over yield D4. | 1 move with 1 entry opening `scope changed` that names the canceled ID and the before and after dates; 0 `pulled in` entries and 0 confirmed results named; 0 schedule baselines rewritten. | The cause names the entry, not the direction. |
+| 26 | A decision issue with no repository change and no pull request; three prior decision issues of the same class carry their assignment times and the times their recorded decisions were accepted. | The target is read from those three records, which are its delivery evidence; 0 `no sample`, 0 records rejected for having no pull request, 0 repository labels. | A record runs to the result that finished it. |
