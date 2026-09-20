@@ -410,6 +410,55 @@ class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
             self.regions.agreement(record["agreementId"])["state"], "reopened",
             "the predecessor survives a refused carry-forward")
 
+    def test_a_proposer_pre_accepts_its_own_side_whichever_argument_it_used(self):
+        """Reversed arguments made a proposer pre-accept the PEER's side.
+
+        It could then accept the remaining one itself and hold both, which is an agreement
+        with one participant.
+        """
+        reversed_order = self.regions.propose(
+            repository=REPO, base_revision=REV, path="src/a.py", region_kind="file",
+            left_project="PRJ-B", right_project="PRJ-A", peer_link_id=self.pair,
+            proposer_task_id=self.alpha.task_id, constraint_text="keep the signature")
+        # PRJ-A sorts low, and alpha owns it, so alpha's acceptance is the left one.
+        self.assertIsNotNone(reversed_order["leftAcceptedAt"])
+        self.assertIsNone(reversed_order["rightAcceptedAt"])
+        # Accepting again only restates its own side, so one parent cannot complete both.
+        self.regions.settle(
+            reversed_order["agreementId"], actor=self.alpha.task_id, disposition="accepted")
+        still = self.regions.agreement(reversed_order["agreementId"])
+        self.assertEqual(still["state"], "proposed")
+        self.assertIsNone(still["rightAcceptedAt"])
+        self.regions.settle(
+            reversed_order["agreementId"], actor=self.beta.task_id, disposition="accepted")
+        self.assertEqual(
+            self.regions.agreement(reversed_order["agreementId"])["state"], "agreed")
+
+    def test_a_closed_agreement_is_proposed_again_rather_than_carried_forward(self):
+        record = self.propose("src/a.py")
+        self.regions.settle(
+            record["agreementId"], actor=self.alpha.task_id, disposition="withdrawn")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision=REV)
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
+
+    def test_a_blocked_reaffirmation_keeps_the_contest_it_recorded(self):
+        """Raising inside the transaction rolled back the row recording the contest."""
+        record = self.agreed("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2",
+            actor=self.alpha.task_id)
+        self.propose("src/a.py", revision="rev-2", right="PRJ-Z", link=self.other)
+        with self.assertRaises(CoordinationError):
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        contests = self.regions.show(repository=REPO)["conflicts"]
+        self.assertTrue(
+            [c for c in contests if c["reason"] == "region_overlap"],
+            "the contest survives the refusal that recorded it")
+
+
     def test_a_stranger_cannot_propose_an_agreement_between_two_other_projects(self):
         """A proposal pre-accepts its own side, so a forged one blocks an overlapping region."""
         with self.assertRaises(CoordinationError) as caught:

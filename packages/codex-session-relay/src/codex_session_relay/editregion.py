@@ -369,8 +369,12 @@ class EditRegions:
                 ).fetchone()
                 tenure = (highest["top"] or 0) + 1
                 agreement = agreement_id(identifier, low, high, tenure)
-                mine = "left_condition" if left_project == low else "right_condition"
-                accepted = "left_accepted_at" if left_project == low else "right_accepted_at"
+                # The side the proposer OWNS, not the argument slot it arrived in. Reversed
+                # arguments made a proposer pre-accept the PEER's side, so it could then
+                # accept the remaining one itself and hold both.
+                owned = self._owned_side(low, high, proposer_task_id)
+                mine = "left_condition" if owned == low else "right_condition"
+                accepted = "left_accepted_at" if owned == low else "right_accepted_at"
                 db.execute(
                     "INSERT INTO edit_agreements (agreement_id, region_id, repository,"
                     " base_revision, left_project, right_project, peer_link_id,"
@@ -568,11 +572,6 @@ class EditRegions:
             (closed, reason, now, now, identifier))
         self.store.journal("edit_region_closed", identifier, {"state": closed}, at=now)
 
-    @staticmethod
-    def _raise_after(refusal):
-        """Carried out of the transaction so the contest commits before the error is raised."""
-        raise refusal.error()
-
     def _owned_side(self, low, high, actor):
         """Which of the two projects the actor is the registered parent of, or None."""
         for project in (low, high):
@@ -745,6 +744,16 @@ class EditRegions:
                 raise CoordinationError(
                     RefusalReason.UNREGISTERED_SCOPE, "no agreement " + repr(identifier))
             _side, refusal = self._acting_side(db, row, actor, row["repository"])
+            if refusal is None and row["state"] not in LIVE:
+                # A withdrawn, declined or released agreement was decided. Carrying one
+                # forward recreated it on a new revision, which is a new proposal wearing a
+                # closed agreement's history.
+                refusal = Refusal(
+                    RefusalReason.AGREEMENT_NOT_OPEN,
+                    "agreement " + repr(identifier) + " is " + row["state"]
+                    + "; a closed agreement is not carried forward, it is proposed again",
+                    domain=DOMAIN_EDIT_REGION, subject=row["repository"],
+                    incumbent=row["state"], challenger=actor)
             if refusal is None:
                 chain = self._chain_from(db, row["repository"], row["base_revision"])
                 terminal = chain[-1] if chain else row["base_revision"]
@@ -782,11 +791,16 @@ class EditRegions:
                         db, low, high, row["peer_link_id"], actor, row["repository"])
                 if blocked is not None:
                     self.conflicts.record_in(db, blocked, at=now)
-                    return self._raise_after(blocked)
-                db.execute(
-                    "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
-                    " updated_at = ? WHERE agreement_id = ?",
-                    (RELEASED, "reaffirmed onto " + base_revision, now, now, identifier))
+                    # Carried OUT of the transaction. Raising here rolls back the very row
+                    # that records the contest, which is the one thing this module's write
+                    # protocol exists to prevent.
+                    refusal, carried = blocked, None
+                    error = blocked.error()
+                else:
+                    db.execute(
+                        "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
+                        " updated_at = ? WHERE agreement_id = ?",
+                        (RELEASED, "reaffirmed onto " + base_revision, now, now, identifier))
         if error is not None:
             raise error
         successor = self.propose(

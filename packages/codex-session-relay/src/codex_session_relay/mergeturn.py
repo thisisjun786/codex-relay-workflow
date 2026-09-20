@@ -759,6 +759,16 @@ class MergeTurn:
     def _review_refusal(row, actor, review):
         """Every page read, every thread seen, nothing unresolved."""
         problems = []
+        for field in ("hasNextPage", "pagesRead", "totalCount", "threadsSeen", "unresolved"):
+            if field not in review:
+                # Absent read as satisfied: hasNextPage missing was falsy, totalCount missing
+                # was zero and matched an empty threadsSeen, and unresolved missing was zero.
+                # A record that says nothing passed every check.
+                problems.append("the review record does not state " + field)
+        if problems:
+            return Refusal(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE, "; ".join(problems),
+                domain=DOMAIN_MERGE_TARGET, subject=row["target_key"], challenger=actor)
         if review.get("hasNextPage"):
             problems.append("hasNextPage is still true, so the review was not enumerated")
         if int(review.get("pagesRead", 0) or 0) < 1:

@@ -312,6 +312,30 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         self.assertEqual(rows[0]["refusal_reason"], "merge_review_incomplete")
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
 
+    def test_a_review_record_that_states_nothing_is_not_a_complete_review(self):
+        """Absent read as satisfied.
+
+        hasNextPage missing was falsy, totalCount missing was zero and matched an empty
+        threadsSeen, and unresolved missing was zero, so a record saying nothing at all passed
+        every check.
+        """
+        held = self.held()
+        with self.assertRaises(CoordinationError) as caught:
+            self.begin(held, review={"pagesRead": 1})
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_REVIEW_INCOMPLETE)
+        self.assertIn("does not state", caught.exception.detail)
+
+    def test_every_part_of_the_review_record_has_to_be_stated(self):
+        held = self.held()
+        complete = dict(GREEN)
+        for field in complete:
+            partial = {k: v for k, v in complete.items() if k != field}
+            with self.assertRaises(CoordinationError) as caught:
+                self.begin(held, review=partial)
+            self.assertEqual(
+                caught.exception.reason, RefusalReason.MERGE_REVIEW_INCOMPLETE, field)
+
+
     def test_unfinished_review_pagination_is_refused(self):
         held = self.held()
         with self.assertRaises(CoordinationError) as caught:
