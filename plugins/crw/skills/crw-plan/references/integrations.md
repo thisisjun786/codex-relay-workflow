@@ -232,8 +232,8 @@ operations that paraphrase them stop agreeing about the same item.
 | Field | What it holds, and where it is read from |
 | --- | --- |
 | Subject | The stable Linear ID and URL of one project, milestone or issue. A title, a branch or a checkout is not a subject. |
-| Schedule baseline | The target date that the earliest record established for this subject. When no record establishes one it is `unconfirmed`, and it is never filled in from the item's current date field or its creation time. |
-| Baseline record | The record that set the schedule baseline, with its own timestamp: the identified project or initiative update, the planning record, or a dated decision comment. Its absence is what makes the schedule baseline `unconfirmed`. |
+| Schedule baseline | The target date that the earliest record established for this subject, including the record a plan write creates at the moment it sets that subject's first target. It is `unconfirmed` only where a target already exists and no record establishing it can be found, and it is never filled in from the item's current date field or its creation time. |
+| Baseline record | The record that set the schedule baseline, with its own timestamp: the identified project or initiative update, the planning record, or a dated decision comment. For a first target it is the dated record written alongside that target; for an older target whose establishing record cannot be found, its absence is what makes the schedule baseline `unconfirmed`. |
 | Planned start | The date the subject is scheduled to begin, where the item carries one, which today is the project's own start date. It is a plan rather than an observation, so it never stands in for an actual start, and moving it follows the same change rule as a target. |
 | Current target | The date the item carries now: the project's own target date, the milestone's target date, or the issue's due date. |
 | Timezone | The IANA zone the dates were read and written in, stated rather than assumed. These targets are calendar dates, so a target means the end of that day in this zone and an evidence timestamp is compared in it. |

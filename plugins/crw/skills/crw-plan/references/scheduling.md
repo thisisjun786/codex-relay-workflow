@@ -72,8 +72,10 @@ coordination record the project already owns, and a dated comment on the changed
 entry carries the change's time, the deciding authority, the reason, the scope it covered with
 the stable IDs added and canceled, and the before and after dates. A later replan adds an entry
 and never overwrites the earlier one, so two plans stay comparable across added and canceled
-scope. Where no existing record establishes a first target, leave the schedule baseline
-`unconfirmed` rather than inferring one.
+scope. When this write establishes a subject's first target, the dated record it writes is that
+subject's baseline record and the target it sets is the schedule baseline. Leave the schedule
+baseline `unconfirmed` only where a target already exists and no record establishing it can be found,
+and never infer one from the current field.
 
 Moving a target date does not settle a delay. The entry that moves it records what it moved from,
 so a result that is late against the schedule baseline still reads as late after the move.
