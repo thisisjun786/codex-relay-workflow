@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Move a manual CRW installation to the plugin installation, and own what follows it.
 
-Five commands, one JSON document each, so a run leaves a receipt that can be diffed:
+Six commands, one JSON document each, so a run leaves a receipt that can be diffed:
 
     inspect     read-only: both installs, the owner of each surface, in-flight work
+    check-declaration
+                read-only: whether adding or updating a package would keep the per-tool approval
+                policy this host grants. Judges the package named by --package, which is the one
+                about to be installed rather than the one already there, and carries its payload
+                digest so the same check run afterwards can be tied to the bytes that landed
     transition  manual -> plugin, in order, --apply to act and a dry run otherwise
     disable     stop new calls without deleting anything
     remove      delete the records this repository wrote, and only those
@@ -12,6 +17,10 @@ Five commands, one JSON document each, so a run leaves a receipt that can be dif
 What none of them do: install a runtime, register a plugin, grant hook trust, stop a service, or
 delete an operational database, journal, receipt or assignment. Written, registered, trusted and
 fired are four claims, and this tool can establish the first two at most.
+
+check-declaration is a gate an operator runs, not one that intercepts anything: nothing here
+invokes codex plugin add, update or remove, and a host serves whatever declaration is installed
+whether or not this was asked first.
 
 Standard library only, and it never calls the runtime installer's install, hook or register-mcp
 commands: it reads that package's readers and writers directly, so the diagnosis those commands
@@ -27,7 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import completion  # noqa: E402
+from crw_runtime import completion, reading  # noqa: E402
 from crw_transition import inventory, steps  # noqa: E402
 
 
@@ -42,6 +51,51 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 def emit(document):
     json.dump(document, sys.stdout, indent=2, sort_keys=True, default=str)
     sys.stdout.write("\n")
+
+
+def policy_in_effect(host):
+    """Which per-tool approval policy this host is under right now, and where it comes from.
+
+    Measured: while the user table exists it wins, so that is the answer whenever the table is
+    there, and the installed declaration only answers once the table is gone. Reported on every
+    read-only command because an operator deciding whether to run codex plugin add, or codex plugin
+    remove, has no other way to see which of the two is actually gating the bridge.
+    """
+    mcp = host["mcp"]
+    if mcp.get("table") == reading.PRESENT:
+        policy = mcp.get("policy") or {}
+        return {"from": "the " + inventory.SERVER_NAME + " table in " + str(mcp.get("configPath")),
+                "state": policy.get("state"), "tools": policy.get("tools") or {},
+                "detail": policy.get("detail")}
+    # A cached directory is not a loaded plugin. Reading the declaration on the strength of the
+    # cache alone reported both tools as gated on a host that had kept the cache, lost its
+    # [plugins."crw@crw"] entry and had no table either -- a policy labelled in effect while
+    # nothing served the bridge at all.
+    plugin = host.get("plugin") or {}
+    version = plugin.get("cacheVersion")
+    if plugin.get("configEntry") != reading.PRESENT:
+        why = "no plugin entry in " + str(inventory.config_path(host["codexHome"])) + " (" \
+              + str(plugin.get("configEntry")) + "), so Codex loads no declaration here"
+    elif plugin.get("enabled") is not True:
+        why = "the plugin entry " + str(plugin.get("entryKey")) + " does not record enabled =" \
+              " true (" + repr(plugin.get("enabled")) + "), so whether Codex loads its" \
+              " declaration was not established"
+    elif not version:
+        why = "no single installed plugin version could be named" \
+              + ((": " + str(plugin["detail"])) if plugin.get("detail") else "")
+    else:
+        declared, unread = steps.declared_policy(version, inventory.SERVER_NAME)
+        if declared is None:
+            # Unreadable is not absent. Reporting an empty tool set for a declaration nobody
+            # could read states as fact the very thing that was not established.
+            return {"from": "the installed plugin declaration under " + str(version),
+                    "state": reading.UNREADABLE, "tools": {}, "detail": unread}
+        return {"from": "the installed plugin declaration under " + str(version),
+                "state": reading.PRESENT if declared else reading.ABSENT,
+                "tools": declared or {}, "detail": unread}
+    return {"from": None, "state": reading.ABSENT, "tools": {},
+            "detail": "this host has no bridge table, and " + why + ", so nothing established"
+                      " here gates the bridge's tools"}
 
 
 def host_of(args):
@@ -122,8 +176,27 @@ def verdict(results):
 def cmd_inspect(args):
     host = host_of(args)
     emit({"command": "inspect", "host": host,
+          "policyInEffect": policy_in_effect(host),
           "note": "read-only. No record was written and nothing was removed."})
     return EXIT_OK
+
+
+def cmd_check_declaration(args):
+    """Whether adding or updating a package would keep the approval policy this host grants."""
+    host = host_of(args)
+    package = Path(args.package).expanduser().resolve() if args.package \
+        else ROOT / "plugins" / "crw"
+    answer = steps.declaration_check(host, package)
+    refused = bool(answer["refusals"] or answer["packageErrors"])
+    emit({"command": "check-declaration", "outcome": "refused" if refused else "preserves",
+          **answer,
+          "policyInEffect": policy_in_effect(host),
+          "note": "read-only, and about the package named under package, not about whatever is"
+                  " installed now. Run it again against the installed version afterwards and"
+                  " compare payloadDigest: equal digests are what tie this verdict to the bytes"
+                  " that landed. This does not run codex plugin add or codex plugin update and"
+                  " cannot stop them; nothing in this repository invokes either."})
+    return EXIT_REFUSED if refused else EXIT_OK
 
 
 def cmd_transition(args):
@@ -134,6 +207,11 @@ def cmd_transition(args):
           "destination": host.get("destination"),
           "destinationFrom": host.get("destinationDerivedFrom"),
           "preserved": steps.preserved_paths(host),
+          # Before, not in effect. On an applied run the table is gone by the time this is
+          # printed, so a value labelled "in effect" would be wrong on exactly the receipt that
+          # matters most. What the run removed, if it removed anything, is on the standdown's own
+          # answer as removedPolicy.
+          "policyBefore": policy_in_effect(host),
           "windows": [
               "between the settings retire and the hook standdown the old registration still"
               " fires and finds no settings to read, so it releases the turn without recording"
@@ -160,6 +238,7 @@ def cmd_disable(args):
                           "the relay service, if one runs. Excluding a shared service is the"
                           " operator's own action and this tool never performs or claims it"],
           "preserved": steps.preserved_paths(host),
+          "policyInEffect": policy_in_effect(host),
           "note": "nothing was deleted. Every path under preserved was left exactly as it is."
                   " stops names only what is in effect on this host now; wouldStop is what an"
                   " --apply would stop and stillLive is every surface a reader must not read as"
@@ -180,12 +259,15 @@ def cmd_remove(args):
                          "the runtime installation under the destination",
                          "the relay store, the bridge ledger, the hook journal and every receipt"],
           "preserved": steps.preserved_paths(host),
+          "policyInEffect": policy_in_effect(host),
           "note": "there is deliberately no purge flag."})
     return verdict(results)
 
 
 def cmd_swap_state(args):
-    emit(steps.swap_state(host_of(args), options_of(args)))
+    host = host_of(args)
+    emit({**steps.swap_state(host, options_of(args)),
+          "policyInEffect": policy_in_effect(host)})
     return EXIT_OK
 
 
@@ -216,6 +298,11 @@ def build():
 
     inspect = sub.add_parser("inspect")
     inspect.set_defaults(handler=cmd_inspect, apply=False)
+
+    declaration = sub.add_parser("check-declaration")
+    declaration.add_argument("--package", help="the package root about to be added or updated;"
+                                              " this checkout's plugins/crw when omitted")
+    declaration.set_defaults(handler=cmd_check_declaration, apply=False)
 
     move = sub.add_parser("transition")
     move.add_argument("--apply", action="store_true")

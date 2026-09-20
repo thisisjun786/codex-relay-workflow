@@ -31,13 +31,17 @@ longer being trusted. So the transition removes it, and removal is where the car
 
 ## What it will and will not remove
 
-It removes only what it can prove runs this repository's own code:
+It removes only bytes it can render back, and only when the plugin declaration provably reproduces
+what they were doing. For the hook and the skill link that comes to the same thing as proving they
+run this repository's own code. For the bridge table it does not: a per-tool approval policy runs
+no code and was written by an operator, and it is removed on the strength of the declaration
+carrying the same gate. See [Approval policy](#approval-policy).
 
 | Surface | What is proven | Otherwise |
 | --- | --- | --- |
 | skill link | a symlink resolving to a `crw-*` skill directory inside a CRW checkout | left byte-identical, and named in the output |
 | hook entry | the command is exactly what `completion.command_for` emits for the words it names, and its script sits in a CRW checkout | left in place, the transition refuses, the hand edit is printed |
-| `config.toml` table | the bytes equal what `codexconfig.render` produces for the registration found there | left in place, the transition refuses |
+| `config.toml` table | the parent block equals what `codexconfig.render` produces for the registration found there, the registration carries no key beyond `command`, `args` and `tools`, and every tool it gates is a `[mcp_servers.<name>.tools.<tool>]` block equal to what this command renders for it | left in place, the transition refuses, and the refusal names the key or the spelling in the way |
 | bridge record | it passes the record's own shape check and names owner `user` | left in place, the transition refuses |
 
 One limit worth stating plainly: a hook file carries no provenance, so nobody can prove from it who
@@ -282,3 +286,165 @@ every receipt. There is deliberately no purge flag.
 Written, registered, trusted and fired are four claims. These commands can establish the first two.
 That a hook fired on a trusted path, that a promoted pointer serves a real installation, and that a
 round trip completed are separate observations with their own task.
+
+## Approval policy
+
+A Codex configuration can gate individual tools of an MCP server:
+
+    [mcp_servers.codex-thread-bridge]
+    command = "..."
+
+    [mcp_servers.codex-thread-bridge.tools.create_thread]
+    approval_mode = "approve"
+
+Measured on an isolated home, and the two facts that shape everything below:
+
+- While that table exists it **wins** over the plugin declaration. One entry is served, the user
+  one. So installing the plugin does not drop the gate. **Removing the table is what drops it**,
+  and the removal is step 5 of this transition.
+- There is no overlay. A configuration that keeps the `tools` sub-tables and drops `command` and
+  `args` fails to load at all: `invalid transport`, and every codex command exits 1. An orphaned
+  policy table is therefore not a harmless leftover, it is a host that cannot start.
+
+The package declares the same gate, so removing the table hands it over rather than dropping it:
+
+    "tools": { "create_thread": { "approval_mode": "approve" },
+               "send_message_to_thread": { "approval_mode": "approve" } }
+
+### What has to be true before the table can go
+
+Let U be the policy the configuration grants and P the policy the installed package declares. The
+table may be removed only when U is readable, P is readable and valid, and **every tool in U is in
+P with an equal mode**.
+
+Tools in P but not in U are allowed. They are what this package ships, and a host registered by
+`register-mcp` has no policy at all, so forbidding additions would make every ordinary transition
+impossible. They add a declared requirement rather than preserving an absent one. Tools in U but
+not in P refuse: what the host does for a tool with no declared mode is not measured, so absent
+cannot be read as preserved.
+
+**Equality, and no ranking of the modes.** The measured set is `auto`, `prompt`, `writes`,
+`approve`. `writes` names a category of calls rather than a rung on a ladder, and `prompt` against
+`approve` was never measured. Ordering them would be a guess in the one place where guessing wrong
+quietly loosens a gate. This command never rewrites a value; it only decides whether removing one
+is safe.
+
+The question is asked three times, always before a byte moves: at preflight, at the re-read inside
+the ownership lock, and inside the standdown against the exact bytes it is about to edit. A dry run
+reaches the first, so the verdict is readable without writing anything.
+
+### The supported path
+
+    python3 scripts/plugin_transition.py inspect
+    python3 scripts/plugin_transition.py check-declaration --package <candidate>
+    codex plugin add ...                       # you run this, not this tool
+    python3 scripts/plugin_transition.py check-declaration --package <installed version>
+    python3 scripts/plugin_transition.py transition
+    python3 scripts/plugin_transition.py transition --apply
+
+`check-declaration` judges the package **about to be installed**, not the one already there, and
+prints a `payloadDigest`. Running it again against the installed version and comparing digests is
+what ties the verdict to the bytes that actually landed. It exits 1 when adding that package would
+not preserve what this host grants.
+
+Nothing in this repository runs `codex plugin add`, `update` or `remove`. `check-declaration` is a
+gate you run, not one that intercepts you.
+
+### The paths that refuse, and why
+
+| Refused because | What you see |
+| --- | --- |
+| the configuration gates a tool the declaration does not | the tool, and that an undeclared mode was never measured |
+| the modes disagree | both values, and that this command does not choose between them |
+| a tool gate carries a key other than `approval_mode` | the table and the key |
+| a mode is outside the measured set | the value and the four modes |
+| the declaration could not be read | that preservation was compared with nothing |
+| the registration carries another key, such as `tool_timeout_sec` | the key, and that the declaration does not reproduce it |
+| the policy is spelled so this command cannot render it back: the quoted form, an inline table, a dotted `tools.<tool>.approval_mode` key, or a table outside the registration's own span | which tools, and the provable byte form: one table per tool, holding only `approval_mode` |
+| a policy block carries anything else, such as a comment | that block, and that a provable one is exactly two lines, the header and `approval_mode` |
+| the file is written with CRLF line endings | that this command reads configurations with universal newlines, so removing the table would rewrite every line ending in the file, outside the table as well as inside |
+
+A refusal is not a completed transition. Do not read one as evidence that the plugin install, or a
+round trip through it, succeeded.
+
+### Three limits, stated rather than implied
+
+**`register-mcp` could re-open the gate. Now guarded, with one narrower gap left open.**
+`runtime_install.py register-mcp` writes `command` and `args` only. Run again on a host that has
+already transitioned, it used to create a table with no policy, and by the measurement above that
+table wins over the declaration.
+
+The path was real and is measured: `transition --apply` writes a plugin-owned record, which the
+ownership check already refuses to register beside. `remove --apply` retires that record and
+deliberately leaves the plugin cache and its config entry alone, because `codex plugin remove`
+owns those. A `register-mcp --owner user` run after that found no record and a package that still
+declared the server, and appended the shadowing table reporting success.
+
+The ownership check now refuses that write: when an installed package already declares the server
+name being registered and no user-owned record claims it, the run is refused with that reason and
+nothing is written. It refuses rather than copying the package's approval fields into a user
+table, because copying would duplicate a declaration the package owns and leave two writers for
+one policy. A cache that cannot be read is refused too, rather than treated as declaring nothing.
+A host with no plugin installed is unaffected, which is the ordinary manual install this command
+exists for.
+
+**What is still open, stated rather than implied.** The guard is about shadowing: a user table
+under the name the package declares. Registering the same bridge under a *different* name with
+`--name` is a different failure — two bridge servers side by side rather than one hidden behind
+the other — and `_other_bridge_tables` only compares against tables already in the configuration,
+never against what a package declares. That case is measured and pinned by a test, and handed back
+to the operations lane rather than absorbed here. The sweep predicate for whoever takes it: a user
+registration starting a bridge a package also declares is a second bridge whatever table name it
+is given.
+
+**A later cache replacement is not checked at that moment.** Once the table is gone the declaration
+is the only thing gating those tools. A `codex plugin update` installing a package without the gate
+is caught by `check-declaration` if you run it, and by nothing otherwise.
+
+**`tool_timeout_sec` blocks the live host for a different reason.** A registration carrying any key
+beyond `command`, `args` and `tools` is refused, because the declaration does not reproduce it and
+removing the table would lose it. That is the same class of problem as the approval gate and it is
+not solved here; the refusal names the key so the two are not confused.
+
+### Reading `policyInEffect`
+
+`inspect`, `disable`, `remove`, `swap-state` and `check-declaration` all report which per-tool
+approval policy this host is actually under. `transition` reports `policyBefore` instead, because
+on an applied run the table is gone by the time the receipt prints, and the standdown's own answer
+carries `removedPolicy`.
+
+The source is the user table while it exists, because measurement says that table wins, and the
+installed declaration only once the table is gone. `state` is one of three answers and they are
+deliberately not interchangeable:
+
+| `state` | What it means |
+| --- | --- |
+| `PRESENT` | a policy was read, and `tools` lists it |
+| `ABSENT` | it was read, and there is no policy here: no table, no MCP document declared, the package does not declare this server, or it declares no `tools`. `detail` is null, because nothing failed |
+| `UNREADABLE` | the question was not answered: a file that could not be read, a manifest or document whose root is not an object, a declared path that is not a usable string, a server entry that is not an object, or a malformed gate. `detail` says which |
+
+`ABSENT` and `UNREADABLE` are the distinction this whole change exists to keep. An unreadable
+policy reported as absent reads as "nothing gates these tools", which is the claim that must never
+be made on an unanswered question; an absent policy reported as unreadable sends an operator
+looking for a broken file that is fine. A declaration is only ever read once the plugin entry is
+present, `enabled` is true, and one cache version can be named; otherwise the answer says which of
+those was missing, because a cached directory is not a loaded plugin.
+
+### Why CRLF is refused rather than handled
+
+This is worth stating because the failure it prevents is invisible. Configurations are read with
+universal newlines, so a CRLF file arrives as LF. The span is then rendered in LF, compares equal
+to what this repository renders, and the table reads as proven — while the parser-backed check on
+the real bytes says the opposite. Writing the result back would replace every line ending in the
+file, outside the table as well as inside, and the step's own byte check could not see it, because
+both sides of that comparison have already been translated. A command that promises to leave every
+other byte alone cannot also rewrite the whole file, so it declines the file instead.
+
+### The race this does not close
+
+The standdown reads the configuration once inside the ownership lock, derives its proof and its
+edit from those same bytes, and compares them against the file again immediately before writing.
+That serialises cooperating runs and detects a change made by anything else between the proof and
+the comparison. It is not compare-and-swap: `hostrecord.Locked` says so itself, and what stays open
+is the inside of `atomic_write`, between its temporary file and its replace. An editor that ignores
+the lock can still land there.
