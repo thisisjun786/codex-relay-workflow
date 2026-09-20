@@ -893,7 +893,8 @@ Recovery starts by restating the run in five lines, read from the
 these live and already forbids a second store:
 
 - **The fixed binding** — the initiative where this task supervises one, the project or standalone
-  issue it executes, this task's own id, and the host it runs on, each by its stable identifier.
+  issue it executes, and this task's own id, each by its stable identifier, with the host this task
+  runs on where that has been established.
   A supervisor that recovers its projects without the initiative they were approved under has lost
   the boundary, not just a label.
 - **The current temporary target**, where one exists: the other project or issue this task was

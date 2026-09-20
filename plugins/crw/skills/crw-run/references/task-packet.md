@@ -670,8 +670,10 @@ says, so read the level first and the fields second:
   evidence live, with the identifiers and current revisions the coordinator already holds.
   These are pointers to that task's own records rather than copies of them, and they are what
   lets a task that lost its context find its record instead of starting a second one.
-- The host each identifier belongs to, carried beside the ids for routing and audit rather than as
-  part of them.
+- The host each task identifier belongs to, where the interface supplied it or it was
+  independently established, carried beside the ids for routing and audit rather than as part of
+  them and named as unestablished where neither happened. An issue, a project and a pull request
+  are identified without one.
 - When the sender observed each of these facts. They are observations with a time, so a recipient
   can tell which lines are current and which were carried forward before it acts on them.
 - The observation each setting was read at, so the recipient compares the values against its own
