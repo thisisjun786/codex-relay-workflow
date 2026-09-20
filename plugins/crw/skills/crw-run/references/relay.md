@@ -296,6 +296,64 @@ Until one of those runs, a staged receipt is real progress that the parent canno
 child has not failed. This is the split described above: the child emits from the store, a
 host-capable process owns delivery.
 
+## Which children stopped, and whether anyone was told
+
+    codex-session-relay --state "$RELAY_STATE" dispositions-show --project <the project key>
+    codex-session-relay --state "$RELAY_STATE" dispositions-show --relationship <the id>
+
+Read-only, offline, and it constructs no store: a mistyped state directory answers `readable`
+false instead of creating an empty database that then honestly reports nothing. One selector is
+required and the two are exclusive. `--project` answers about live work, so an archived or
+superseded assignment is absent from it. `--relationship` answers about the assignment it names
+whatever its status, and carries that status.
+
+It exists because `assignment-find` and the verification reads answer about `ready_for_review` and
+nothing else. A child that records `blocked_needs_input` is invisible to them, so a coordinator
+reading only those concludes nothing is wrong while a child waits for a person. Use this before
+deciding that a quiet project is a healthy one.
+
+Per child it reports `turnDisposition` over the execution-only outcomes — `blocked_needs_input`,
+`failed`, `interrupted` — with `basis` saying how that was decided: `sole`,
+`latest_of_same_outcome` when several events agree, `contested` when two final dispositions
+disagree, and `none` when this generation holds no execution-only disposition at all. `none` is
+not "the child is fine": read `reviewable` beside it, which counts and lists the reviewable events
+and says `head: not_derived_here`, because which revision a generation stands on is answered by
+`assignment-show` and `revision-head`, not here. `contested` names no winner on purpose.
+
+Per event it reports the `workReport` that separates `BLOCKED` from `UNSAFE` from `NEEDS_HUMAN`.
+All three collapse onto `blocked_needs_input` in the frozen outcome enum, so when
+`workReport.recorded` is false those three cannot be told apart for that event, and nothing infers
+one of them from the outcome.
+
+Delivery is two questions, reported separately, beside the store's own `state`.
+
+| `delivery.observation` | What the records say |
+| --- | --- |
+| `unmeasured` | a final event with no delivery row and no delivery intent. Nothing establishes whether a delivery was ever attempted or even wanted; absence also covers `--no-enqueue` and an event stranded by an old generation, so it is never read as "not delivered" |
+| `refused_pre_queue` | delivery was wanted and refused for a reason that may not last, with its attempts and last error |
+| `not_sent` | the delivery exists and nothing has been sent |
+| `send_uncertain` | a send is in flight or answered unusably, which is not evidence of non-delivery |
+| `stored_not_woken` | left where the recipient reads it with no turn woken |
+| `dispatched` | the transport accepted a send and there is a turn id for it |
+| `superseded` | no longer what the assignment stands on; the state is left alone so reconciliation can still settle it |
+| `not_deliverable:<stage>` | a staged claim, which is real progress and never delivery |
+| `suppressed` | the claim was invalidated, so there is no delivery obligation to measure |
+| `state_unrecognised` / `records_disagree` | the store holds a state this reader has no word for, or rows that cannot coexist. Read it with `status` |
+
+`delivery.recipientObservation` is the other question, and the one to check before concluding a
+parent knows: `observed_host_read` when an acknowledgement rests on an App Server read of the
+recipient's own turn list, `observed_claimed` when an acknowledgement is recorded without that
+read, and `unmeasured` when neither an acknowledgement nor its evidence exists — including behind a
+`dispatched` send, because a dispatch proves the send was accepted and never that anybody read it.
+
+Exit codes differ from `doctor` deliberately. `doctor` keeps exit 0 for an unreadable database
+because determining before anything exists is not an error. This command exits 2 and prints the
+whole payload, because a coordinator asking which children are blocked and checking only the exit
+code must not read an unreadable store as "nobody". A readable store with no matching children
+exits 0 with an empty list, which is a different answer.
+
+For the per-delivery phase of a delivery that exists, and for pending intents across the whole
+store, `status` remains the reader; this command does not restate its vocabulary.
 ## When the assignment is not in the store yet
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach
