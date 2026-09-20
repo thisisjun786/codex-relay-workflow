@@ -37,6 +37,14 @@ class FakeServer:
         # the parameter" apart from "preserved because this host ignores it". The fix depends on
         # the first, and a fake that can only do the second would quietly assume the conclusion.
         self.honour_resume_policy = False
+        # Residency, and what a resume does with it. Left as None every existing test keeps
+        # exactly today's behaviour. Set to a set of thread ids, this host reports a thread
+        # outside it as notLoaded, and `resume_adopts` decides which of the two candidate hosts
+        # it is: one that APPLIES a transmitted pair while materializing a thread it did not have
+        # loaded, and one that reports the thread's own state regardless. Nobody has established
+        # which the real host is, so the suite runs against both rather than picking one.
+        self.resident = None
+        self.resume_adopts = False
         # Set to a server-to-client method name to make turn/start raise one request the client
         # has to answer, which is how an interactive thread reaches the bridge mid-turn.
         self.approval_request_on_turn = None
@@ -214,11 +222,29 @@ class FakeServer:
                 result = {"turn": turn}
             elif method == "thread/read":
                 thread = dict(self.threads[params["threadId"]])
+                if self.resident is not None:
+                    thread["status"] = {
+                        "type": "idle" if params["threadId"] in self.resident else "notLoaded"
+                    }
                 if not params.get("includeTurns"):
                     thread["turns"] = []
                 result = {"thread": thread}
             elif method == "thread/resume":
                 thread = self.threads[params["threadId"]]
+                if self.resident is not None and params["threadId"] not in self.resident:
+                    # Materializing it. An adopting host takes what it was sent, which is exactly
+                    # why the echo that follows cannot distinguish preservation from adoption.
+                    if self.resume_adopts:
+                        adopted = dict(thread.get("settings") or {})
+                        if params.get("model") is not None:
+                            adopted["model"] = params["model"]
+                        effort = (params.get("config") or {}).get("model_reasoning_effort")
+                        if effort is not None:
+                            adopted["reasoningEffort"] = effort
+                        thread["settings"] = adopted
+                        thread["model"] = adopted.get("model")
+                        thread["reasoningEffort"] = adopted.get("reasoningEffort")
+                    self.resident.add(params["threadId"])
                 # The real host reports the thread's own state; it does not adopt an override.
                 # honour_resume_policy models the opposite host, the one this fix would be wrong
                 # against if it existed: it takes the parameter when given one and falls back to

@@ -6,8 +6,9 @@ import re
 from pathlib import Path
 
 from .effects import recording
-from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
+from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY, ROLE_PAIR_VERIFIED
 from .ledger import RETRYABLE_STATUSES, Ledger
+from .roles import ROLE_MAXIMUM
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import (
     APPROVAL_LIMITS,
@@ -437,6 +438,7 @@ class Bridge:
         runtime_workspace_roots: list[str] | None = None,
         expected_sandbox_policy: dict | None = None,
         policy_exception: str | None = None,
+        role: str | None = None,
     ):
         nonempty(cwd, "cwd")
         if not Path(cwd).is_absolute():
@@ -472,6 +474,12 @@ class Bridge:
         if policy_exception is not None:
             nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
+        # Appended only when supplied, exactly like policy_exception above: an omitted role
+        # leaves the request fingerprint byte-identical, so every receipt retained before roles
+        # existed still replays through the id its caller already holds.
+        if role is not None:
+            nonempty(role, "role", ROLE_MAXIMUM)
+            params["role"] = role
         request_params = {**params, "prompt": prompt, "title": title}
         built = {}
 
@@ -486,7 +494,7 @@ class Bridge:
             # exception never covered.
             resolved = absolute_directory(cwd)
             execution = self.policy.authorize(
-                model, reasoning_effort, cwd=resolved, exception=policy_exception
+                model, reasoning_effort, cwd=resolved, exception=policy_exception, role=role
             )
             contract = SettingsContract(
                 cwd=resolved,
@@ -575,6 +583,7 @@ class Bridge:
         reasoning_effort: str | None = None,
         app_server_project_id: str | None = None,
         policy_exception: str | None = None,
+        role: str | None = None,
     ):
         if worktree_mode != "bridge-managed-retained":
             raise ValueError("Explicit bridge-managed-retained worktree ownership is required")
@@ -620,6 +629,9 @@ class Bridge:
         if policy_exception is not None:
             nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
+        if role is not None:
+            nonempty(role, "role", ROLE_MAXIMUM)
+            params["role"] = role
 
         # Built inside validate_fresh, which _mutate runs only AFTER its ledger lookup. This tool
         # predates the transmittability check, so a receipt may be retained for a policy the check
@@ -634,7 +646,7 @@ class Bridge:
             # canonical and which becomes the thread's cwd. Nothing exists on disk yet, and
             # nothing needs to: an exception names directories, not directories that exist.
             built["execution"] = self.policy.authorize(
-                model, reasoning_effort, cwd=destination, exception=policy_exception
+                model, reasoning_effort, cwd=destination, exception=policy_exception, role=role
             )
             built["contract"] = SettingsContract(
                 sandbox=sandbox,
@@ -820,6 +832,7 @@ class Bridge:
         message: str,
         expected_settings: dict | None = None,
         policy_exception: str | None = None,
+        role: str | None = None,
     ):
         nonempty(thread_id, "thread_id", 128)
         nonempty(message, "message")
@@ -849,6 +862,9 @@ class Bridge:
         if policy_exception is not None:
             nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
+        if role is not None:
+            nonempty(role, "role", ROLE_MAXIMUM)
+            params["role"] = role
         built = {}
 
         def validate_fresh():
@@ -861,6 +877,7 @@ class Bridge:
                 supplied.get("reasoning_effort"),
                 cwd=supplied.get("cwd"),
                 exception=policy_exception,
+                role=role,
             )
             built["execution"] = execution
             built["contract"] = SettingsContract(
@@ -904,11 +921,68 @@ class Bridge:
                         "id. Waiting is for when there is nothing to say yet.",
                     },
                 )
+            # What the host said this thread's runtime status was, recorded before the resume
+            # rather than inferred afterwards. It is the variable that was missing when three
+            # parents were asked to resume on a new pair and only one came back reporting it:
+            # nobody had written down which of them the host still had loaded.
+            status_before = state["thread"].get("status", {}).get("type")
+            receipt["statusBeforeResume"] = status_before
+            if status_before == "notLoaded":
+                # Transmitting a pair to a thread the host has to materialize may SET it, and
+                # whether this host does that is not established. Whether that is harmless turns
+                # entirely on where the transmitted pair came from. A pair verified against a
+                # role whose policy declares one lands the thread exactly where policy says it
+                # belongs, so adoption is the intended state. A pair that was NOT verified that
+                # way is just whatever the caller recorded, and restoring it could undo a change
+                # the user made -- which is the whole of the supervisor's case, since its pair is
+                # the user's own selection and policy deliberately declares none.
+                #
+                # The predicate is the pair's PROVENANCE, taken from the authorization that just
+                # ran rather than re-derived here. Only a pair actually compared against a
+                # declared role pair counts. An exception deliberately skips that comparison, so
+                # it is not evidence of one -- and an exception written for a supervisor would be
+                # precisely the stale operator value this guard exists to keep off the wire.
+                #
+                # It fires only where a role was NAMED. This bridge cannot read scope bindings,
+                # so on a send that names none it cannot tell an unnamed supervisor from a task
+                # with no role at all, and refusing both would stop unrelated work on every host
+                # that declared a role for entirely different tasks. Guarding what it cannot know
+                # is the relay's job, because the relay can read the binding. What this bridge
+                # can say for itself, it now says.
+                if role is not None and built["execution"].provenance != ROLE_PAIR_VERIFIED:
+                    raise RpcError(
+                        "thread/read",
+                        {
+                            "code": "unverified_pair_for_unloaded_thread",
+                            "message": "Thread is not loaded and this request's model and effort "
+                            "were not checked against a declared role pair; message withheld and "
+                            "no turn was started. A resume transmits those settings, and on a "
+                            "thread the host has to load first it may apply them, which would "
+                            "silently restore a pair the user has since changed -- the case a "
+                            "supervisor is always in, because its pair is the user's own "
+                            "selection, and the case an exception is in whenever the operator's "
+                            "file has fallen behind. Re-recording does not clear this: the "
+                            "provenance is a property of how the pair was authorized, not of "
+                            "what it says. Send once the host has the thread loaded, where the "
+                            "resume reports the thread's own state and the comparison means "
+                            "something. Where the role HAS a declared pair, stating that pair "
+                            "without citing an exception is the other way through. A supervisor "
+                            "has none by design, so loading the thread is its only route.",
+                        },
+                    )
+                # A resume that transmits a pair to a thread the host has to materialize cannot
+                # be read back as evidence: if the host applies what it was sent, the echo
+                # repeats the request and agreement proves nothing about what the thread was on
+                # beforehand. Agreement is therefore recorded as agreement, never as preservation.
+                receipt["echoIndependence"] = "not_established"
             # Resume is an explicit part of messaging, never part of discovery. It carries the
             # authorized settings and is then read as an OBSERVATION: this host reports a
-            # thread's real state rather than adopting an override, which is exactly what
-            # confirms the thread is already in the requested state. With nothing requested the
-            # params stay {threadId, excludeTurns}, byte-identical to the original behaviour.
+            # thread's real state rather than adopting an override -- measured on a thread it
+            # already had loaded, which is the only case that measurement covers. For one it has
+            # to load first the guard above decides whether transmitting a pair is safe at all,
+            # and an agreeing echo is recorded as agreement rather than preservation. With
+            # nothing requested the params stay {threadId, excludeTurns}, byte-identical to the
+            # original behaviour.
             resumed = await self.rpc.call("thread/resume", contract.resume_params(thread_id))
             receipt["resumed"] = resumed
             receipt["settings"] = contract.receipt(resumed, at="resume")

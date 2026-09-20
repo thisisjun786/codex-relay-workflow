@@ -134,6 +134,12 @@ class TaskSettings:
 
     def __init__(self, data: dict):
         self.data = dict(data or {})
+        # Set by the delivery gate when this recipient's pair was not derived from its role's
+        # declared pair. The transport reads it after its OWN thread/read, because the status
+        # the gate saw is older than the resume by a turn listing and a claim, and a recipient
+        # that unloads in between would otherwise be resumed under exactly the pair the gate
+        # meant never to transmit.
+        self.refuse_when_unloaded = False
 
     # ------------------------------------------------------------- validity
 
