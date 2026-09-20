@@ -778,6 +778,13 @@ reviewed revision, expected and observed behavior, reproducer/evidence, required
 outcome, and focused verification. For missing proof, request that verification
 without prescribing an unsupported code change.
 
+How many rounds this has taken is not a reason to send it upward. Where the criteria and the
+correction scope are already settled, the next round goes to the same task with what changed,
+and the parent judges whether the evidence still supports continuing rather than returning that
+judgement to the user. New scope, new authority, and a real contradiction in the criteria are
+decisions somebody else owns; a round count is not one of them, and neither is the cost of
+having looked again.
+
 Carry the [restoration block](references/task-packet.md#restoration-block) with every
 correction. A running task has been working for a while, may have been compacted, and
 is being addressed by a coordinator whose context it cannot see, so the facts it needs
