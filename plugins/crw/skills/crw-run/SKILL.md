@@ -456,6 +456,8 @@ Describe evidence separately:
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
+| Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| Parent runs its own goal loop | That task's own active goal and goalplan, read back under its own identity. Parents and children each own one; a parent operating without a goal is an explicitly authorized fallback rather than the default, and is recorded as the choice it is |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
@@ -508,6 +510,13 @@ review handling on it, and reports once the current head is clean; the coordinat
 decides and performs the merge, and the child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
+
+Read the child's handoff rather than rebuilding it. It already paginated the review and
+enumerated the check runs, so collecting them again repeats work this contract just assigned
+elsewhere, and re-triaging its findings opens a second review round it already owns. What the
+coordinator adds is currency: re-read the head and base immediately before merging and compare
+the counts against the record. That is a mechanical check, not a review. Where they disagree,
+return the candidate to the same child fail-closed rather than fixing it here.
 
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
