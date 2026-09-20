@@ -921,3 +921,206 @@ class DeclaredComponentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDeclaredApprovalPolicyIsChecked(unittest.TestCase):
+    """CRW-142. The only signal a bad approval declaration ever produces.
+
+    Measured on an isolated home: an invalid approval_mode in a PLUGIN declaration makes
+    codex plugin add exit 0 and codex mcp list exit 0 with ZERO entries. The server disappears and
+    no disabled_reason is recorded, because there is no entry left to carry one. The same mistake
+    in a user configuration is a loud error naming the valid set. So the host will not tell anyone
+    that the bridge is gone, and this check is what does.
+    """
+
+    def payload(self, **files):
+        return {name: ("100644", data.encode()) for name, data in files.items()}
+
+    def declaration(self, tools, server="codex-thread-bridge"):
+        entry = {"command": "python3", "cwd": ".", "args": ["./w/run.py"]}
+        if tools is not None:
+            entry["tools"] = tools
+        return json.dumps({"mcpServers": {server: entry}}).encode()
+
+    def errors(self, tools, server="codex-thread-bridge"):
+        return plugin.mcp_document_errors("m.json", self.declaration(tools, server),
+                                          self.payload(**{"w/run.py": "x"}), "release")
+
+    def test_the_measured_set_is_what_is_accepted(self):
+        for mode in plugin.APPROVAL_MODES:
+            required = dict(plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"])
+            gates = {tool: {"approval_mode": value} for tool, value in required.items()}
+            gates["other_tool"] = {"approval_mode": mode}
+            self.assertEqual(self.errors(gates), [], mode)
+
+    def test_a_mode_outside_the_measured_set_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "always"}
+        found = self.errors(gates)
+        self.assertTrue(any("not one of" in problem for problem in found), found)
+
+    def test_a_key_this_check_does_not_know_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "approve", "enabled": True}
+        found = self.errors(gates)
+        self.assertTrue(any("disappears without a word" in problem for problem in found), found)
+
+    def test_a_tools_value_that_is_not_an_object_is_refused(self):
+        self.assertTrue(self.errors(["create_thread"]))
+        self.assertTrue(self.errors({}))
+        self.assertTrue(self.errors({"create_thread": "approve"}))
+
+    def test_dropping_a_required_gate_is_refused(self):
+        found = self.errors({"create_thread": {"approval_mode": "approve"}})
+        self.assertTrue(any("send_message_to_thread" in problem for problem in found), found)
+
+    def test_weakening_a_required_gate_is_refused(self):
+        gates = {tool: {"approval_mode": value}
+                 for tool, value in plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"].items()}
+        gates["create_thread"] = {"approval_mode": "auto"}
+        found = self.errors(gates)
+        self.assertTrue(any("must gate create_thread" in problem for problem in found), found)
+
+    def test_a_server_with_no_required_gate_may_declare_none(self):
+        self.assertEqual(self.errors(None, server="some-other-server"), [])
+
+    def test_the_shipped_declaration_carries_the_gate(self):
+        document = json.loads(
+            (ROOT / "plugins" / "crw" / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+        gates = document["mcpServers"]["codex-thread-bridge"]["tools"]
+        self.assertEqual({tool: gate["approval_mode"] for tool, gate in gates.items()},
+                         plugin.REQUIRED_TOOL_APPROVALS["codex-thread-bridge"])
+
+    def test_this_repository_never_invokes_the_plugin_mutation_itself(self):
+        """Which is why check-declaration is a gate an operator runs, not an interception."""
+        # Read as syntax, not as text. Grepping for the words matched the sentences these
+        # commands print about what they deliberately do NOT do -- "the plugin cache and its
+        # config.toml entry, which codex plugin remove owns" -- and a check that cannot tell a
+        # sentence from an invocation proves nothing about either.
+        import ast
+        offenders = []
+        for path in sorted((ROOT / "scripts").rglob("*.py")):
+            if "tests" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.List, ast.Tuple)):
+                    continue
+                words = [item.value for item in node.elts
+                         if isinstance(item, ast.Constant) and isinstance(item.value, str)]
+                if "codex" in words and "plugin" in words:
+                    offenders.append(str(path) + ": " + repr(words))
+        self.assertEqual(offenders, [])
+
+
+@unittest.skipUnless(TOML_READER, "register-mcp cannot read a configuration without tomllib, so"
+                                  " on the 3.10 floor it refuses every registration for that"
+                                  " reason and none of these cases would be about the guard")
+class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
+    """CRW-142, the register-mcp half. Escalated to the operations lane and authorised by it.
+
+    _mcp_ownership already refuses a user registration when the ownership record names the plugin,
+    and _other_bridge_tables catches the same bridge under a different table name. The path left
+    open is exactly: the plugin declares the server, no plugin-owned record blocks the write, and
+    the run registers that same table name. The record check passes on absent, the other-names
+    check excludes the name being written, and codexconfig.register appends a user table.
+
+    It is reachable in one ordinary sequence. transition --apply writes a plugin-owned record;
+    remove --apply retires it and deliberately leaves the plugin cache and its config entry alone,
+    because codex plugin remove owns those. A register-mcp run after that finds no record and a
+    plugin that still declares the server. Measured: a user table wins over the declaration, so the
+    appended table shadows it, and with no approval fields it serves the bridge ungated.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Home(self.stack)
+
+    def install_plugin(self, declares=True):
+        cache = (self.home.codex_home / "plugins" / "cache" / "crw" / "crw" / "0.2.0")
+        (cache / ".codex-plugin").mkdir(parents=True)
+        (cache / ".codex-plugin" / "plugin.json").write_text(
+            (ROOT / "plugins" / "crw" / ".codex-plugin" / "plugin.json").read_text(
+                encoding="utf-8"), encoding="utf-8")
+        (cache / "wiring").mkdir(parents=True)
+        document = json.loads(
+            (ROOT / "plugins" / "crw" / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+        if not declares:
+            document["mcpServers"] = {"something-else": document["mcpServers"]["codex-thread-bridge"]}
+        (cache / "wiring" / "mcp.json").write_text(json.dumps(document), encoding="utf-8")
+        config = self.home.codex_home / "config.toml"
+        existing = config.read_text(encoding="utf-8") if config.is_file() else ""
+        config.write_text(existing + '\n[plugins."crw@crw"]\nenabled = true\n', encoding="utf-8")
+        return cache
+
+    def register(self, *extra):
+        return run("register-mcp", "--owner", "user", "--codex-home", str(self.home.codex_home),
+                   "--bridge-command", str(self.home.destination / "current" / "bin"
+                                           / "codex-thread-bridge"), *extra)
+
+    def config(self):
+        path = self.home.codex_home / "config.toml"
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    def test_the_shadowing_write_is_refused_and_nothing_is_written(self):
+        self.install_plugin()
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 1, output)
+        self.assertIn("declares", emitted["detail"])
+        self.assertIn("codex-thread-bridge", emitted["detail"])
+        self.assertIs(emitted["applied"], False)
+        self.assertIs(emitted["wrote"], False)
+        self.assertIs(emitted["otherTablesPreserved"], True)
+        self.assertEqual(self.config(), before)
+        self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
+
+    def test_a_dry_run_refuses_the_same_way(self):
+        self.install_plugin()
+        status, emitted, output = self.register()
+        self.assertEqual(status, 1, output)
+        self.assertIs(emitted["wrote"], False)
+
+    def test_without_the_plugin_the_ordinary_registration_still_works(self):
+        """The manual install is the whole reason this command exists; it must be untouched."""
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertIn("[mcp_servers.codex-thread-bridge]", self.config())
+        self.assertNotEqual(self.config(), before)
+
+    def test_a_plugin_that_declares_another_server_does_not_block_this_one(self):
+        self.install_plugin(declares=False)
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertIn("[mcp_servers.codex-thread-bridge]", self.config())
+
+    def test_a_different_table_name_is_a_separate_gap_and_is_pinned_not_guarded(self):
+        """Measured, and deliberately NOT closed by this guard. Reported to the operations lane.
+
+        The authorised guard is about SHADOWING: a user table under the name the package declares,
+        which wins over the declaration. Registering the same bridge under another name is a
+        different failure -- two bridge servers side by side rather than one hidden behind the
+        other -- and _other_bridge_tables only compares against tables already in the
+        configuration, never against what a package declares. Widening this guard to cover it
+        would be a second contract, so it is measured and handed back instead of absorbed.
+        """
+        self.install_plugin()
+        status, emitted, output = self.register("--apply", "--name", "my-bridge")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["serversNow"], ["my-bridge"])
+
+    @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
+    def test_a_cached_manifest_that_is_not_an_object_refuses_rather_than_crashing(self):
+        """Devin finding: valid JSON is not a manifest, and .get on a list is not a refusal."""
+        cache = self.install_plugin()
+        (cache / ".codex-plugin" / "plugin.json").write_text("[]", encoding="utf-8")
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 1, output)
+        self.assertNotEqual(emitted.get("outcome"), "internal_error")
+        self.assertIn("could not be read", emitted["detail"])
+        self.assertEqual(self.config(), before)
