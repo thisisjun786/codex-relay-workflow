@@ -3064,7 +3064,11 @@ class TwentySeventhHostedRound(TrialCase):
         return cells_of(self.world.preflight(), "parentLifecycle")["lifecycle:" + World.PARENT_A]
 
     def test_a_value_that_is_not_a_status_never_resolves_a_participant(self):
-        for value in (False, True, 0, None, [], ["idle"]):
+        # The empty string and a string of spaces belong here for the same reason as the rest:
+        # str() makes a word of False and 0, and strip() is what keeps a blank from becoming one.
+        # Both were already refused; neither was pinned, so a predicate that stopped stripping
+        # would have passed this suite.
+        for value in (False, True, 0, None, [], ["idle"], "", "   "):
             with self.subTest(value=value):
                 cell = self.status_cell(value)
                 self.assertEqual(cell["value"], UNKNOWN,
