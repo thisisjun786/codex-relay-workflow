@@ -215,6 +215,23 @@ class ExecutionPolicy:
         """The declared expectation for a role, or None. Read-only; it authorizes nothing."""
         return self._roles.get(role) if role is not None else None
 
+    def exception_pair(self, name):
+        """The pair and role an operator's exception authorizes, or None.
+
+        The directories it covers and the operator's note stay undisclosed, as they always have:
+        a reader needs to know WHICH pair was approved under that id to recognise a record that
+        was authorized by it, and nothing more. Read-only, and citing an id here authorizes
+        nothing -- authorize() remains the only thing that decides.
+        """
+        entry = self._exceptions.get(name) if name is not None else None
+        if entry is None:
+            return None
+        return {
+            "model": entry["model"],
+            "reasoningEffort": entry["reasoningEffort"],
+            "role": entry.get("role"),
+        }
+
     def summary(self) -> dict:
         """What a caller may learn about the policy before creating anything.
 

@@ -774,7 +774,7 @@ class DeliveryService:
         # pinned bridge's own resume carries no overrides, and on this host that returned
         # dangerFullAccess for a workspaceWrite task.
         try:
-            settings = self._settings_for(recipient)
+            settings = self._settings_for(recipient, observation.runtime_status)
         except DeliveryRefused as refusal:
             self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"],
                                     row=row)
@@ -850,7 +850,7 @@ class DeliveryService:
 
     # --------------------------------------------------------------- states
 
-    def _settings_for(self, task_id: str):
+    def _settings_for(self, task_id: str, runtime_status=None):
         """The recorded settings, validated. Absence and incompleteness both refuse."""
         from .registry import load_settings
 
@@ -891,6 +891,14 @@ class DeliveryService:
                 f"(policy {finding['digest']}). Nothing was sent and no turn was started. "
                 + rolepolicy.RECOVERY,
             )
+        # The bridge applies this rule on its own tool path, and a relay delivery does not take
+        # that path: it resumes through its own transport. Applied here too, or a send reaches a
+        # thread the tool surface would have refused.
+        unloaded = rolepolicy.check_unloaded_transmission(
+            settings, role, policy, runtime_status
+        )
+        if unloaded is not None:
+            raise unloaded
         return settings
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,

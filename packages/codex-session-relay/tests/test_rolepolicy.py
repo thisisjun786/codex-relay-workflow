@@ -386,3 +386,133 @@ class WhatTheseChecksRefuseToGuessThrough(DeliveryTestCase):
         self.assertIsNotNone(report["digest"])
         self.assertEqual(report["agreement"], "not_observable_from_here")
         self.assertIn("get_capabilities", report["compareWith"])
+
+
+class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
+    """The bridge's tool path refuses some resumes. A relay delivery never takes that path."""
+
+    def setUp(self):
+        super().setUp()
+        import os
+        from pathlib import Path
+
+        from codex_session_relay.models import Endpoint
+
+        self._previous = os.environ.get(rolepolicy.ENVIRONMENT_VARIABLE)
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        self.addCleanup(self._restore_environment)
+        self.registry.linkage.bind_scope(
+            role="supervisor", scope_key="INIT-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+
+    def _restore_environment(self):
+        import os
+
+        if self._previous is None:
+            os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        else:
+            os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+
+    def test_an_unloaded_supervisor_is_not_resumed_with_a_pair_policy_never_derived(self):
+        """Its pair is the user's own selection and the transmitted pair is whatever was
+        recorded, which is exactly what goes stale when they change it. A resume may apply what
+        it transmits to a thread the host has to load first.
+        """
+        self.adapter.set_status(PARENT, "notLoaded")
+        _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        detail = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]["detail"]
+        self.assertIn("notLoaded", detail)
+
+    def test_the_same_supervisor_is_delivered_to_once_the_host_has_it_loaded(self):
+        """Where the resume reports the thread's own state, the comparison means something."""
+        self.adapter.set_status(PARENT, "idle")
+        _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
+        self.assertIsNotNone(self.attempt(event_id))
+        self.assertEqual(len(self.adapter.sends), 1)
+
+
+class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
+    """A role-scoped exception replaces the role-pair comparison by design.
+
+    A task legitimately created under one carries a pair its role's policy does not declare, so
+    refusing it here would refuse exactly what the operator approved.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import os
+        from pathlib import Path
+
+        self._previous = os.environ.get(rolepolicy.ENVIRONMENT_VARIABLE)
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            **POLICY,
+            "exceptions": {
+                "one-task": {
+                    "model": "gpt-6-astra",
+                    "reasoningEffort": "high",
+                    "cwd": [str(Path(self.tmp).resolve())],
+                    "role": "parent",
+                }
+            },
+        })
+        self.addCleanup(self._restore_environment)
+
+    def _restore_environment(self):
+        import os
+
+        if self._previous is None:
+            os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        else:
+            os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+
+    def _bind_parent(self):
+        from codex_session_relay.models import Endpoint
+
+        return self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+
+    def _excepted(self):
+        return task_settings("/parent", model="gpt-6-astra", reasoningEffort="high")
+
+    def test_a_record_the_operators_own_exception_authorized_is_recorded_and_bound(self):
+        self._bind_parent()
+        recorded = record_settings(
+            self.store, self.clock, PARENT, self._excepted(),
+            source="creation_result", role="parent", exception="one-task",
+        )
+        self.assertEqual(recorded["settings"]["citedException"], "one-task")
+
+    def test_an_exception_written_for_another_role_exempts_nothing(self):
+        """Verified against the same file, not believed because the record says so."""
+        self._bind_parent()
+        with self.assertRaises(Exception) as raised:
+            record_settings(
+                self.store, self.clock, PARENT, self._excepted(),
+                source="creation_result", role="parent", exception="not-written-by-anyone",
+            )
+        self.assertIn(RefusalReason.ROLE_BINDING_MISMATCH.value, str(raised.exception))
+
+    def test_a_re_record_that_names_no_exception_keeps_the_one_already_recorded(self):
+        self._bind_parent()
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(),
+            source="creation_result", role="parent", exception="one-task",
+        )
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(), source="user_transition",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertEqual(stored["citedException"], "one-task")

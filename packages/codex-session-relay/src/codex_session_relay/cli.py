@@ -309,13 +309,15 @@ def cmd_register(services, args) -> dict:
     # Execution settings come from the creation result the caller already holds. Recording them
     # here is what lets a later send preserve them instead of inheriting a host default.
     recorded = {}
-    for task, raw, role in ((args.parent_task, args.parent_settings, args.parent_role),
-                            (args.child_task, args.child_settings, args.child_role)):
+    for task, raw, role, exception in (
+        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
+        (args.child_task, args.child_settings, args.child_role, args.child_exception),
+    ):
         if raw:
             # The role the CREATION cited, from the receipt's executionPolicy. Recorded beside
             # the settings so a later binding can be checked against what the task was made as.
             record_settings(services.store, services.clock, task, _settings_json(raw),
-                            source="creation_result", role=role)
+                            source="creation_result", role=role, exception=exception)
             recorded[task] = "recorded"
     payload["authorizedSettings"] = recorded or None
     return payload
@@ -338,7 +340,7 @@ def cmd_settings_record(services, args) -> dict:
     """
     return record_settings(
         services.store, services.clock, args.task, _settings_json(args.settings),
-        source=args.source, role=args.role,
+        source=args.source, role=args.role, exception=args.exception,
     )
 
 
@@ -2165,6 +2167,13 @@ def build_parser() -> argparse.ArgumentParser:
                                " that disagrees with it is refused rather than discovered later")
     register.add_argument("--child-role", choices=("supervisor", "parent", "child"),
                           help="the role the child's CREATION cited, read the same way")
+    register.add_argument("--parent-exception",
+                          help="the operator exception the parent's creation cited, from its"
+                               " receipt's executionPolicy.exception, where one authorized the"
+                               " pair instead of the role policy")
+    register.add_argument("--child-exception",
+                          help="the operator exception the child's creation cited, read the"
+                               " same way")
     register.set_defaults(handler=cmd_register)
 
     settings_record = subparsers.add_parser("settings-record")
@@ -2174,6 +2183,8 @@ def build_parser() -> argparse.ArgumentParser:
     settings_record.add_argument("--source", default="creation_result")
     settings_record.add_argument("--role", choices=("supervisor", "parent", "child"),
                                  help="the role this task's creation cited")
+    settings_record.add_argument("--exception",
+                                 help="the operator exception this task's creation cited")
     settings_record.set_defaults(handler=cmd_settings_record)
 
     settings_show = subparsers.add_parser("settings-show")

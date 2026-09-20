@@ -1081,7 +1081,7 @@ def project_key(record: dict) -> str:
 
 
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
-                    role: str | None = None) -> dict:
+                    role: str | None = None, exception: str | None = None) -> dict:
     """Record the execution settings a task was actually created with.
 
     This is the interface JUN-92 populates from the creation result Run already receives. It
@@ -1101,6 +1101,14 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
     settings = dict(settings)
     if role is not None:
         settings["citedRole"] = role
+    if exception is not None:
+        # The operator exception the creation cited, where one did. A role-scoped exception
+        # replaces the role-pair comparison by design, so a task created under one carries a
+        # pair its role's policy does not declare, and without this the relay would refuse
+        # exactly what the operator approved. It is verified against the same policy file
+        # rather than believed: an id nobody wrote, or one written for another role, or one
+        # whose pair does not match, exempts nothing.
+        settings["citedException"] = exception
     candidate = TaskSettings(settings)
     candidate.require_usable()
     from . import rolepolicy
@@ -1121,6 +1129,10 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
             carried = rolepolicy.cited_role(json.loads(existing["settings"]))
             if carried is not None:
                 settings["citedRole"] = carried
+        if exception is None and existing is not None:
+            carried = rolepolicy.cited_exception(json.loads(existing["settings"]))
+            if carried is not None:
+                settings["citedException"] = carried
         bound = rolepolicy.bound_role_in(db, task_id)
         if isinstance(bound, rolepolicy.Contested):
             raise RegistrationError(

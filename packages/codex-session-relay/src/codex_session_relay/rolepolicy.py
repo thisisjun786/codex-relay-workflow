@@ -69,6 +69,9 @@ class Declared:
     def expectation(self, role):
         return self._policy.role_expectation(role)
 
+    def exception_pair(self, name):
+        return self._policy.exception_pair(name)
+
 
 def declared(environ=None) -> "Declared | Unresolved":
     """Read the same file the bridge reads, through the same parser.
@@ -161,6 +164,31 @@ def cited_role(settings):
     return data.get("citedRole")
 
 
+def cited_exception(settings):
+    """The operator exception the creation receipt said authorized this pair, where one did."""
+    data = getattr(settings, "data", settings) or {}
+    return data.get("citedException")
+
+
+def authorized_by_exception(settings, role, policy):
+    """Was this record's pair authorized by an operator exception written for this role?
+
+    The bridge deliberately lets a role-scoped exception replace the role-pair comparison, so a
+    task legitimately created that way carries a pair its role's policy does not declare. Without
+    this, registering one would be refused for being exactly what the operator approved.
+
+    Verified rather than trusted: the exception is looked up in the same policy file and has to
+    name this role and this pair. A record citing an id nobody wrote, or one written for another
+    role, or one whose pair does not match, gets no exemption.
+    """
+    if not policy:
+        return False
+    entry = policy.exception_pair(cited_exception(settings))
+    if entry is None or entry.get("role") != role:
+        return False
+    return _pair(settings) == (entry["model"], entry["reasoningEffort"])
+
+
 def check_record(settings, role, policy) -> dict | None:
     """Has this task's recorded authorization fallen behind the policy for its own role?
 
@@ -186,6 +214,10 @@ def check_record(settings, role, policy) -> dict | None:
         return None
     model, effort = _pair(settings)
     if (model, effort) == (expectation.model, expectation.reasoning_effort):
+        return None
+    if authorized_by_exception(settings, role, policy):
+        # Approved under a named exception this same policy declares for this same role. Not a
+        # record that fell behind; a record that was never supposed to match the role pair.
         return None
     return {
         "code": RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value,
@@ -236,6 +268,8 @@ def check_binding(cited, bound, settings, policy) -> dict | None:
     model, effort = _pair(settings)
     if (model, effort) == (expectation.model, expectation.reasoning_effort):
         return None
+    if authorized_by_exception(settings, bound, policy):
+        return None
     return {
         "code": RefusalReason.ROLE_BINDING_MISMATCH.value,
         "citedRole": cited,
@@ -268,5 +302,47 @@ def refuse_contested(contested, task_id):
         f"{task_id!r} holds live bindings at {contested.roles}, and one task holds one role. "
         "Nothing was sent and no turn was started, because checking its authorization against "
         "either of them would report a clean answer derived from an arbitrary choice. Resolve "
-        "the bindings first.",
+       "the bindings first.",
+   )
+
+
+def check_unloaded_transmission(settings, role, policy, runtime_status):
+    """The refusal for transmitting a pair policy did not derive to a thread not yet loaded.
+
+    Returns None or the refusal, like every other check here, so a caller raises what it is
+    given rather than reconstructing it from a yes or no.
+
+    The bridge applies this rule on its own tool path and a relay delivery never takes that
+    path: it resumes through its own transport. So the rule is applied here too, with the same
+    predicate and the same reason. Where the role's pair comes from policy the record has
+    already been compared against it, so a host that applies what it was sent lands the thread
+    where policy says it belongs. A supervisor's pair is the user's own selection and the
+    transmitted pair is whatever was recorded, which is exactly what goes stale when they change
+    it; a pair admitted only by an operator exception is a file entry that can fall behind the
+    same way.
+    """
+    if runtime_status != "notLoaded" or not policy:
+        return None
+    expectation = policy.expectation(role)
+    derived = (
+        expectation is not None
+        and expectation.expectation == "pair"
+        and _pair(settings) == (expectation.model, expectation.reasoning_effort)
     )
+    if derived:
+        return None
+    return DeliveryRefused(
+        RefusalReason.ROLE_POLICY_UNCONFIGURED,
+        f"{task_id_of(settings)} is bound as {role!r}, the host reports it as notLoaded, and "
+        f"the pair this send would transmit was not derived from a declared role pair (policy "
+        f"{policy.digest}). Nothing was sent and no turn was started: a resume may apply what it "
+        "transmits to a thread the host has to load first, which would restore a pair the user "
+        "may have changed. Send once the host has the thread loaded, or read its current "
+        "settings and re-record the authorization from that reading.",
+    )
+
+
+def task_id_of(settings) -> str:
+    """Whatever names this record in a message. The cwd is what a reader recognises it by."""
+    data = getattr(settings, "data", settings) or {}
+    return repr(data.get("cwd") or "this recipient")
