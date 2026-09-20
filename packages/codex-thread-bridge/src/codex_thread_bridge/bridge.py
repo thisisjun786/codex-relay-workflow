@@ -6,9 +6,8 @@ import re
 from pathlib import Path
 
 from .effects import recording
-from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
+from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY, ROLE_PAIR_VERIFIED
 from .ledger import RETRYABLE_STATUSES, Ledger
-from .execution import ROLE_PAIR_VERIFIED
 from .roles import ROLE_MAXIMUM
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import (
