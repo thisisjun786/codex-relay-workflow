@@ -255,11 +255,15 @@ after dates in its own text, so an operation that cannot see a rendered diff sti
 Where the current target disagrees with the latest change record's after value, the comparison is
 unverified until the two are reconciled; neither side is silently preferred.
 
-Evidence for an actual start or finish is the landing of the delivering pull request under
-[Implementation Done](#implementation-done), an explicit user statement, or a dated decision
-record. A status timestamp that a status correction or a bulk edit produced is not that evidence,
-because it records when someone fixed the register rather than when the work began; where the two
-disagree the earlier evidenced date stands. A subject already Done or Canceled keeps the dates it
+A start and a finish take different evidence. An actual finish is evidenced by the landing of the
+delivering pull request under [Implementation Done](#implementation-done), by an explicit user
+statement, or by a dated decision record. An actual start is evidenced only by a record of the work
+beginning: the subject's own start record, an explicit user statement, or a dated decision saying
+when it began. A landing dates the finish and says nothing about the beginning, so it never fills an
+actual start, and an actual start nothing evidences stays empty rather than borrowing the finish. A
+status timestamp that a status correction or a bulk edit produced evidences neither, because it
+records when someone fixed the register rather than when the work happened; where two admissible
+dates disagree the earlier evidenced one stands. A subject already Done or Canceled keeps the dates it
 has and is not given a new target.
 
 A prerequisite is recorded at the level that is actually true. A project-level prerequisite means

@@ -43,12 +43,13 @@ target does not turn into an actual start or finish.
 
 ## Preserving what already happened
 
-Read each subject's real start and finish from the evidence the contract admits, and record the
-zone they were read in. Restore a first real start from the delivering issue's own start record,
-the landing of its pull request, or a dated decision, rather than from a timestamp that appeared
-when someone corrected a status or ran a bulk edit. Completed and canceled work stays where it
-is: it is not reopened, pulled into the new schedule, or given a fresh target so that a chart
-looks fuller than the work is.
+Read each subject's real start and finish from the evidence the contract admits for each of them,
+and record the zone they were read in. Restore a first real start from the subject's own start
+record or a dated decision saying when it began, never from a timestamp that appeared when someone
+corrected a status or ran a bulk edit, and never from a pull request landing, which dates the
+finish instead. Where nothing evidences the start, leave it empty rather than moving the finish
+into its place. Completed and canceled work stays where it is: it is not reopened, pulled into the
+new schedule, or given a fresh target so that a chart looks fuller than the work is.
 
 ## Prerequisites at the level that is true
 
