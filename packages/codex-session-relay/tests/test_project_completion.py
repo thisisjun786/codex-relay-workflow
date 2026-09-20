@@ -149,5 +149,55 @@ class OwnerReadFailuresAreClassified(unittest.TestCase):
         self.assertIn("relationships unreadable", reading["basis"])
 
 
+class TheReadingHasAReachableConsumer(unittest.TestCase):
+    """The earlier round shipped project_state with no caller but its own tests."""
+
+    def test_the_offline_command_list_names_it(self):
+        from codex_session_relay.cli import OFFLINE_COMMANDS
+
+        self.assertIn("linkage-completion", OFFLINE_COMMANDS)
+
+    def test_the_command_is_registered_with_a_project_argument(self):
+        from codex_session_relay.cli import build_parser
+
+        args = build_parser().parse_args(["linkage-completion", "--project", PROJECT])
+        self.assertEqual(args.project, PROJECT)
+        self.assertEqual(args.handler.__name__, "cmd_linkage_completion")
+
+    def test_the_command_surfaces_the_reading_and_never_says_complete(self):
+        from codex_session_relay.cli import cmd_linkage_completion
+
+        class _Services:
+            def __init__(self, view):
+                self.assignments = view
+                self.store = object()
+
+        class _Args:
+            project = PROJECT
+
+        for fixed, expected in (("merged", "complete_candidate"), ("verifying", "incomplete")):
+            view = _View(_Reader(["r1"], [] if fixed == "merged" else ["r1"],
+                                 owners=[_owner("p")]), fixed=fixed)
+            answer = cmd_linkage_completion(_Services(view), _Args())
+            self.assertEqual(answer["state"], expected)
+            self.assertNotEqual(answer["state"], "complete")
+
+    def test_the_command_passes_the_unreadable_answer_through(self):
+        from codex_session_relay.cli import cmd_linkage_completion
+
+        class _Services:
+            def __init__(self, view):
+                self.assignments = view
+                self.store = object()
+
+        class _Args:
+            project = PROJECT
+
+        view = _View(_Reader([], [], raises=RuntimeError("store gone")))
+        answer = cmd_linkage_completion(_Services(view), _Args())
+        self.assertEqual(answer["state"], "unreadable")
+        self.assertFalse(answer["readable"])
+
+
 if __name__ == "__main__":
     unittest.main()
