@@ -131,10 +131,9 @@ changes what the next one sees.
    coupled issues share one integration target, they consolidate into one merge that keeps
    every criterion. Where it does not and they land in different repositories, no boundary
    satisfies both rules: report the plan blocked on the contract decision or redesign that
-   would separate them, and do not consolidate across targets. Where two
-   issues change the same surface, exactly one ordering exists and it is a relation, not a
-   note. Two issues may hold the same file; two issues holding the same region at once is
-   a collision.
+   would separate them, and do not consolidate across targets. Where two issues change the
+   same surface, exactly one ordering exists and it is a relation, not a note. Two issues
+   may hold the same file; two issues holding the same region at once is a collision.
 4. Read-back. After writing, fetch every item the plan touched — the issues and their
    relations, and any project, milestone, document or label it wrote — and compare what is
    observed against what was intended. Report both lists with IDs. An intended relation or
@@ -189,3 +188,6 @@ wrong row, and both are fixed here.
 | 20 | An unmerged delivery issue's owner is no longer active. | Ownership recovered or reassignment authorized first; 0 scope changes and 0 dispatch before that. | Align a delivered issue: owner inactive. |
 | 21 | Two duplicate issues name the same deliverable and one blocks the other. | 1 issue kept with its relations to outside work, the 1 edge between the duplicates dropped, 0 self-blocking issues. | Boundary change carries its relations. |
 | 22 | Two issues in different repositories block each other, neither verifies alone, and no standalone contract artifact exists. | 0 consolidations across targets, 0 invented prerequisites, plan reported blocked on the contract decision or redesign that would separate them. | Closing check: cross-target cycle. |
+| 23 | The target repository runs no required checks, and one part can be reviewed and accepted on its own while the rest is unfinished. | 2 issues split on reviewability apart, 0 issues split on the absence of a gate. | Reviewable apart where checks are absent. |
+| 24 | A proposed second issue would carry only the remainder of the work, with no result of its own. | 0 new issues; the work stays with the issue that names a deliverable, 0 issues whose only criterion is the rest. | Forbidden: no observable result of its own. |
+| 25 | A prior plan split the work by directory and the directories have since been reorganized. | Issues rematched by deliverable against accepted criteria, 0 issues recreated beside the old ones, 0 splits derived from the new layout. | Convergence: layout is not a deliverable. |
