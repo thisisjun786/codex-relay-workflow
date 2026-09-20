@@ -8,7 +8,8 @@ from pathlib import Path
 from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import RETRYABLE_STATUSES, Ledger
-from .roles import ROLE_MAXIMUM, SUPERVISOR
+from .roles import PAIR as ROLE_PAIR
+from .roles import ROLE_MAXIMUM
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import (
     APPROVAL_LIMITS,
@@ -928,25 +929,38 @@ class Bridge:
             status_before = state["thread"].get("status", {}).get("type")
             receipt["statusBeforeResume"] = status_before
             if status_before == "notLoaded":
-                if role == SUPERVISOR:
-                    # The one case where transmitting the authorized pair can DESTROY the thing
-                    # it is meant to preserve. Every other role's pair is derived from policy, so
-                    # a host that applies what it was sent lands the thread on the pair policy
-                    # says it belongs on. A supervisor's pair is the user's own selection, and
-                    # the pair being transmitted is whatever was recorded -- which is exactly
-                    # what goes stale when the user changes it. So a resume here could quietly
-                    # put the supervisor back on the model the user moved it off.
+                # Transmitting a pair to a thread the host has to materialize may SET it, and
+                # whether this host does that is not established. Whether that is harmless turns
+                # entirely on where the transmitted pair came from. A pair verified against a
+                # role whose policy declares one lands the thread exactly where policy says it
+                # belongs, so adoption is the intended state. A pair that was NOT verified that
+                # way is just whatever the caller recorded, and restoring it could undo a change
+                # the user made -- which is the whole of the supervisor's case, since its pair is
+                # the user's own selection and policy deliberately declares none.
+                #
+                # The bridge cannot see scope bindings, so it cannot tell which role a thread
+                # really holds; it only knows what this request claimed. A guard that trusts the
+                # claim protects a supervisor the caller remembered to name and nothing else, so
+                # the predicate is the pair's provenance rather than the name: refuse unless this
+                # request's pair was checked against a declared role pair. Scoped to hosts that
+                # declared roles, so a host that never opted in behaves exactly as before and a
+                # source merge changes nothing until the operator turns it on.
+                expectation = self.policy.role_expectation(role)
+                verified = expectation is not None and expectation.expectation == ROLE_PAIR
+                if self.policy.declares_roles and not verified:
                     raise RpcError(
                         "thread/read",
                         {
-                            "code": "supervisor_not_loaded",
-                            "message": "Supervisor thread is not loaded; message withheld and "
-                            "no turn was started. Resuming it would transmit the recorded pair "
-                            "to a thread the host has to materialize, and this host's behaviour "
-                            "in that case is not established: if it applies what it is sent, a "
-                            "recorded pair that has since been changed by the user would be "
-                            "silently restored. Read the thread's current settings, re-record "
-                            "the authorization from that reading, and send again.",
+                            "code": "unverified_pair_for_unloaded_thread",
+                            "message": "Thread is not loaded and this request's model and effort "
+                            "were not checked against a declared role pair; message withheld and "
+                            "no turn was started. A resume transmits those settings, and on a "
+                            "thread the host has to load first it may apply them, which would "
+                            "silently restore a pair the user has since changed -- the case a "
+                            "supervisor is always in, because its pair is the user's own "
+                            "selection. State the role this recipient holds so the pair is "
+                            "verified, or read the thread's current settings and re-record the "
+                            "authorization from that reading before sending.",
                         },
                     )
                 # A resume that transmits a pair to a thread the host has to materialize cannot
@@ -956,9 +970,12 @@ class Bridge:
                 receipt["echoIndependence"] = "not_established"
             # Resume is an explicit part of messaging, never part of discovery. It carries the
             # authorized settings and is then read as an OBSERVATION: this host reports a
-            # thread's real state rather than adopting an override, which is exactly what
-            # confirms the thread is already in the requested state. With nothing requested the
-            # params stay {threadId, excludeTurns}, byte-identical to the original behaviour.
+            # thread's real state rather than adopting an override -- measured on a thread it
+            # already had loaded, which is the only case that measurement covers. For one it has
+            # to load first the guard above decides whether transmitting a pair is safe at all,
+            # and an agreeing echo is recorded as agreement rather than preservation. With
+            # nothing requested the params stay {threadId, excludeTurns}, byte-identical to the
+            # original behaviour.
             resumed = await self.rpc.call("thread/resume", contract.resume_params(thread_id))
             receipt["resumed"] = resumed
             receipt["settings"] = contract.receipt(resumed, at="resume")

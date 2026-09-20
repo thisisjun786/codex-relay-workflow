@@ -1021,10 +1021,72 @@ async def test_a_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
         {"model": "gpt-6-astra", "reasoning_effort": "high"}, None, "supervisor",
     )
     assert delivered["status"] == "failed"
-    assert delivered["rpcError"]["code"] == "supervisor_not_loaded"
+    assert delivered["rpcError"]["code"] == "unverified_pair_for_unloaded_thread"
     assert fake.count("thread/resume") == 0
     assert fake.count("turn/start") == 0
 
+
+async def test_omitting_the_role_does_not_buy_a_way_past_the_unloaded_guard(
+    configured_bridge, fake_server, tmp_path
+):
+    """The guard has to key on the pair's provenance, not on the caller naming the risk.
+
+    A guard that triggers on role == supervisor protects a supervisor whose sender remembered to
+    say so, and nothing else: the same send with the argument left off reached the host, resumed
+    the thread and restored the stale pair. This bridge cannot read scope bindings, so it cannot
+    know a recipient's real role -- which is why the question it asks instead is whether THIS
+    request's pair was checked against a declared role pair.
+    """
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy(allowed=False))
+    created = await bridge.create_thread(
+        "unnamed", str(tmp_path), model="gpt-6-astra", reasoning_effort="high", role="supervisor",
+    )
+    fake.resident = set()
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "unnamed-send", created["threadId"], "work",
+        {"model": "gpt-6-astra", "reasoning_effort": "high"},
+    )
+    assert delivered["status"] == "failed"
+    assert delivered["rpcError"]["code"] == "unverified_pair_for_unloaded_thread"
+    assert fake.count("thread/resume") == 0
+    assert fake.count("turn/start") == 0
+
+
+async def test_a_verified_role_pair_may_still_be_sent_to_a_thread_the_host_has_not_loaded(
+    configured_bridge, fake_server, tmp_path
+):
+    """Adoption is only dangerous where the pair was not derived from policy in the first place."""
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    created = await bridge.create_thread(
+        "verified", str(tmp_path), model=PARENT_MODEL, reasoning_effort=PARENT_EFFORT,
+        role="parent",
+    )
+    fake.resident = set()
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "verified-send", created["threadId"], "work",
+        {"model": PARENT_MODEL, "reasoning_effort": PARENT_EFFORT}, None, "parent",
+    )
+    assert delivered["status"] == "accepted"
+    assert delivered["echoIndependence"] == "not_established"
+
+
+async def test_a_host_that_declared_no_roles_keeps_exactly_its_previous_send_behaviour(
+    bridge, fake_server, tmp_path
+):
+    """The new restriction is scoped to hosts that opted in, so a merge changes nothing."""
+    fake, _ = fake_server
+    created = await bridge.create_thread("legacy", str(tmp_path), **EXECUTION)
+    fake.resident = set()
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "legacy-send", created["threadId"], "work", dict(EXECUTION)
+    )
+    assert delivered["status"] == "accepted"
+    assert fake.count("turn/start") == 1
 
 def test_a_role_that_is_not_the_supervisor_cannot_opt_out_of_its_own_pair():
     """Declaring `record` elsewhere would exempt that role from the only check that names it."""
@@ -1039,22 +1101,38 @@ def test_the_supervisor_cannot_be_given_a_pinned_pair_through_the_expectation_ke
                                        "reasoningEffort": EFFORT}})
 
 
-def test_naming_no_role_produces_the_same_request_fingerprint_as_before_roles_existed():
+async def test_naming_no_role_produces_the_same_request_identity_as_before_roles_existed(
+    configured_bridge, fake_server, tmp_path
+):
     """The compatibility claim is about the REQUEST identity, which is what replay keys on.
 
-    A receipt retained before this argument existed replays only while the parameters hash to the
-    same value, so the argument is appended when supplied and omitted otherwise. Asserted against
-    the ledger's own fingerprint rather than by observing a replay, because a replay observed
-    through this implementation would pass either way.
+    A receipt retained before this argument existed replays only while its parameters hash to the
+    same value. Observing a replay through this implementation would prove nothing, because an
+    always-present `role: None` would be equally consistent with itself. So this watches the
+    parameters the bridge actually hands the ledger, and separately pins that the two forms do
+    NOT hash alike -- which is what makes the omission load-bearing rather than cosmetic.
     """
     from codex_thread_bridge.ledger import Ledger
 
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    seen = []
+    original = bridge.ledger.begin
+
+    def watching(request_id, method, params, **kwargs):
+        seen.append((method, dict(params)))
+        return original(request_id, method, params, **kwargs)
+
+    bridge.ledger.begin = watching
+    await bridge.create_thread("no-role", str(tmp_path), **EXECUTION)
+    await bridge.create_thread(
+        "with-role", str(tmp_path), role="parent",
+        model=PARENT_MODEL, reasoning_effort=PARENT_EFFORT,
+    )
+    recorded = {method_params[1].get("role", "absent") for method_params in seen}
+    assert "absent" in recorded, "the bridge sent a role key for a caller that named none"
+    assert "parent" in recorded
+
     mark = Ledger._fingerprint
     base = {"cwd": "/w", "sandbox": "read-only", "model": MODEL, "reasoning_effort": EFFORT}
-    assert mark("id", "create_thread", base) == mark("id", "create_thread", dict(base))
-    # An always-present role would change every legacy fingerprint, which is why it is appended
-    # only when supplied. Both of these must differ from the omitted form.
     assert mark("id", "create_thread", base) != mark("id", "create_thread", {**base, "role": None})
-    assert mark("id", "create_thread", base) != mark(
-        "id", "create_thread", {**base, "role": "parent"}
-    )

@@ -193,6 +193,15 @@ class ExecutionPolicy:
     def mode(self) -> str:
         return "presence_only" if self._allowed is None else "allowlist"
 
+    @property
+    def declares_roles(self) -> bool:
+        """Whether this host opted into the role question at all."""
+        return bool(self._roles)
+
+    def role_expectation(self, role):
+        """The declared expectation for a role, or None. Read-only; it authorizes nothing."""
+        return self._roles.get(role) if role is not None else None
+
     def summary(self) -> dict:
         """What a caller may learn about the policy before creating anything.
 
