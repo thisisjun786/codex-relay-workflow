@@ -57,6 +57,23 @@ Disabling a hook, replaying hook events, manufacturing CXC evidence and force-co
 existing goal are forbidden above. They are also not offered to the user as options, because
 presenting one as a choice is how it becomes an approved plan.
 
+
+Since the 2026-09-20 role decision a project parent creates or reuses its own goal for the approved
+project scope as its default and uses automatic continuation, while still building no CXC goalplan
+or FSM and never fabricating a source change to close it. That supersedes the temporary arrangement
+in which a parent ran goal-free unless a Loop was separately requested, and it carries activation
+authority for a parent already running. It opens no goal on a completed project or an unapproved
+backlog item, and an explicit user no-goal limit is a different thing that still wins.
+
+Activation is not continuation. On the measured installation the goal activates, and the
+Stop-continuation that follows is a bounded nudge carrying an unconditional PABCD directive that a
+coordination parent declines. [Start policy](../../crw-run/references/start-policy.md) records that
+mechanism and its budget, the three compatibility facts including approval-policy compatibility,
+the five pieces of evidence that must stay separate, and what is returned to CRW-29 when the host
+cannot support the goal at all. The table below still governs an existing paused, blocked or
+differently scoped goal.
+
+
 ## Create or reuse the parent's goal
 
 Read `get_goal` first, then choose the matching case:

@@ -437,6 +437,14 @@ again. [Start policy](references/start-policy.md) owns the fields, the scope eac
 the re-adjudication triggers and the cases this is judged by; the standing cap and its precedence
 are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
+The first thing settled is the role, because it decides what this task opens: an initiative
+management task runs without a native goal or an automatic loop, a project parent creates or
+reuses its own goal for the approved project scope, and an issue child creates or reuses its own
+goal and keeps its CXC Loop. Record the role beside the goal state with its objective and approved
+scope, the hook compatibility, the observation path, and whether the approval policy in force can
+carry the callback this run depends on.
+
+
 Editing these instructions does not alter a turn that already loaded them, but where an installation
 links this checkout a later read of them loads the edited text, so a run spanning sessions can
 continue under instructions it did not start with. Report the local change, the pull request, the

@@ -526,6 +526,9 @@ A `crw-run` parent settles its start policy once, before it creates the first ch
 
 That number is the value chosen in one 2026-09-18 run and carried forward as the standing default. It is not a measurement of what this or any host supports, and [OPS-8.4](../../crw-run/references/operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs what may be claimed about scale, so a run that needs a different number states its own and records why. The default binds this parent's own children and is not a host-global limit: several parents share one operating scope under [OPS-3.1](../../crw-run/references/operations.md#ops-31-the-operating-scope-is-the-sharing-unit), each counts only its own children, and nothing interlocks them.
 
+The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent creates or reuses its own goal for the approved project scope and uses automatic continuation, without a CXC goalplan or FSM; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default replaced the earlier arrangement in which a parent ran goal-free unless a Loop was separately requested; an explicit user no-goal limit is separate and still wins. [Start policy](../../crw-run/references/start-policy.md) owns the role table, what the start adjudication records, and the compatibility and evidence rules.
+
+
 A value this precedence settles is applied without asking. A value it does not settle is a new decision, asked before anything is created rather than after. [Start policy](../../crw-run/references/start-policy.md) owns the recorded fields, the scope each decision carries, when a recorded decision is re-read instead of re-decided, and what bounds the number actually dispatched.
 
 ### Publish for review when the work is reviewable
