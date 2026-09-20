@@ -133,6 +133,33 @@ class RefusalReason(str, Enum):
     # one: the caller restated the outstanding set correctly and the operation is still
     # refused, because the endpoint it would have to move is part of an assignment's identity.
     HANDOVER_WOULD_STRAND = "handover_would_strand"
+    # Coordination between parents: whose turn it is to merge into a shared target, how much
+    # concurrent execution a scope has, and what two peers agreed about a shared edit region.
+    # Appended as one block at the END of the enum so a sibling inserting members mid-enum and
+    # this work never produce an overlapping hunk.
+    #
+    # A caller's next action differs per reason, which is why none of these folds into
+    # another: waiting helps a held target and never helps an unresolved one, an unmeasured
+    # bound is not a reached one, and a region nobody may claim is not a region somebody else
+    # already claimed.
+    MERGE_TURN_NOT_HELD = "merge_turn_not_held"
+    MERGE_TURN_UNRESOLVED = "merge_turn_unresolved"
+    MERGE_CANDIDATE_MOVED = "merge_candidate_moved"
+    MERGE_CURRENCY_STALE = "merge_currency_stale"
+    MERGE_REVIEW_INCOMPLETE = "merge_review_incomplete"
+    MERGE_EVIDENCE_REQUIRED = "merge_evidence_required"
+    # A count this store can take is never evidence about a file-descriptor or spend bound it
+    # cannot. "We never measured" and "it is full" are different answers and get different
+    # reasons.
+    CAPACITY_EXHAUSTED = "capacity_exhausted"
+    CAPACITY_UNMEASURED = "capacity_unmeasured"
+    SLOT_UNKNOWN = "slot_unknown"
+    REGION_TOO_BROAD = "region_too_broad"
+    REGION_OVERLAP = "region_overlap"
+    AGREEMENT_NOT_OPEN = "agreement_not_open"
+    AGREEMENT_REVISION_STALE = "agreement_revision_stale"
+    FOLLOWUP_UNASSIGNED = "followup_unassigned"
+
 
 
 class RelayError(Exception):
@@ -173,3 +200,7 @@ class StoreFault(RelayError):
 
 class LinkageError(RelayError):
     """A scope binding or a link between scopes was refused, and the reason says why."""
+
+
+class CoordinationError(RelayError):
+    """A merge turn, an execution slot or an edit-region agreement was refused."""
