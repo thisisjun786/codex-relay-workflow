@@ -63,6 +63,15 @@ OFFLINE_COMMANDS = (
     "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
+    # Coordination between parents. Like the linkage surface these read and write the store
+    # and never call the host, so an operator can run every one of them with no App Server.
+    "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
+    "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
+    "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
+    "merge-turn-unknown", "merge-turn-withdraw", "region-followup",
+    "region-followup-accept", "region-followup-settle", "region-propose",
+    "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
+    "slot-release", "slot-reserve", "usage-observe",
 ) + MARKER_COMMANDS_BY_NAME
 
 
@@ -101,6 +110,9 @@ class Services:
         self._sync = None
         self._assignments = None
         self._linkage = None
+        self._merge_turn = None
+        self._capacity = None
+        self._edit_regions = None
 
     @property
     def state_directory(self):
@@ -133,6 +145,30 @@ class Services:
 
             self._linkage = Linkage(self.store, self.clock)
         return self._linkage
+
+    @property
+    def merge_turn(self):
+        if self._merge_turn is None:
+            from .mergeturn import MergeTurn
+
+            self._merge_turn = MergeTurn(self.store, self.clock, self.linkage)
+        return self._merge_turn
+
+    @property
+    def capacity(self):
+        if self._capacity is None:
+            from .capacity import Capacity
+
+            self._capacity = Capacity(self.store, self.clock, self.linkage)
+        return self._capacity
+
+    @property
+    def edit_regions(self):
+        if self._edit_regions is None:
+            from .editregion import EditRegions
+
+            self._edit_regions = EditRegions(self.store, self.clock, self.linkage)
+        return self._edit_regions
 
     @property
     def intake(self):
@@ -457,6 +493,198 @@ def cmd_linkage_counterpart(services, args) -> dict:
     return services.linkage.counterpart(
         args.from_task, args.to_task, quoted_revision=args.quoted_revision,
         quoted_scope=args.quoted_scope, from_scope=args.from_scope)
+# ------------------------------------------------- coordination between parents
+
+
+def _json_argument(raw, what):
+    """A JSON argument decoded where the caller can be told which one was malformed.
+
+    Letting json.loads raise would reach main's bare handler and be reported as a host
+    fault, which is what an operator reads when something is wrong with the relay rather
+    than with what they typed.
+    """
+    try:
+        return json.loads(raw)
+    except ValueError as fault:
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": what + " must be JSON: " + str(fault),
+        }, EXIT_REFUSED) from fault
+
+
+def _json_shape(raw, what, wanted):
+    """Decoded AND the shape the caller downstream will index into.
+
+    Valid JSON of the wrong shape reached code that indexes it and surfaced as a host fault,
+    which is what an operator reads when the relay is broken rather than when their argument
+    is. The shape is checked where the argument is named.
+    """
+    value = _json_argument(raw, what)
+    if wanted is list:
+        if not isinstance(value, list) or not all(isinstance(e, dict) for e in value):
+            raise PayloadExit({
+                "ok": False, "reason": "bad_invocation",
+                "detail": what + " must be a JSON list of objects",
+            }, EXIT_REFUSED)
+    elif not isinstance(value, dict):
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": what + " must be a JSON object",
+        }, EXIT_REFUSED)
+    return value
+
+
+def cmd_merge_turn_request(services, args) -> dict:
+    return services.merge_turn.request(
+        repository=args.repository, base_ref=args.base_ref, project_key=args.project,
+        holder=Endpoint(args.task, args.host, cwd=args.cwd, cxc_session=args.cxc_session),
+        candidate_head=args.head, pr_number=args.pr, relationship_id=args.relationship,
+        ready=args.ready)
+
+
+def cmd_merge_turn_ready(services, args) -> dict:
+    return services.merge_turn.declare_ready(
+        args.turn, actor=args.actor, ready=args.ready, candidate_head=args.head)
+
+
+def cmd_merge_turn_attest(services, args) -> dict:
+    return services.merge_turn.attest(
+        args.turn, evidence_kind=args.evidence_kind, idempotency_key=args.idempotency_key,
+        actor=args.actor, evidence=args.evidence)
+
+
+def cmd_merge_turn_request_return(services, args) -> dict:
+    return services.merge_turn.request_return(
+        args.turn, actor=args.actor, evidence=args.evidence)
+
+
+def cmd_merge_turn_check(services, args) -> dict:
+    return services.merge_turn.begin_merge(
+        args.turn, actor=args.actor, head_sha=args.head_sha, base_sha=args.base_sha,
+        checks=_json_shape(args.checks, "--checks", list),
+        review=_json_shape(args.review, "--review", dict),
+        required=args.required or [])
+
+
+def cmd_merge_turn_land(services, args) -> dict:
+    return services.merge_turn.land(
+        args.turn, actor=args.actor, landed_sha=args.landed_sha,
+        observed_base_sha=args.observed_base_sha, evidence=args.evidence)
+
+
+def cmd_merge_turn_unknown(services, args) -> dict:
+    return services.merge_turn.report_unknown(
+        args.turn, actor=args.actor, reason=args.reason)
+
+
+def cmd_merge_turn_resolve(services, args) -> dict:
+    return services.merge_turn.resolve_unknown(
+        args.turn, actor=args.actor, observed_base_sha=args.observed_base_sha,
+        pr_state=args.pr_state, evidence=args.evidence)
+
+
+def cmd_merge_turn_release(services, args) -> dict:
+    return services.merge_turn.release(
+        args.turn, actor=args.actor, disposition=args.disposition, reason=args.reason,
+        evidence=args.evidence or "")
+
+
+def cmd_merge_turn_withdraw(services, args) -> dict:
+    return services.merge_turn.withdraw(args.turn, actor=args.actor)
+
+
+def cmd_merge_turn_show(services, args) -> dict:
+    if args.turn:
+        return _with_enforcement(services, services.merge_turn.turn(args.turn) or {
+            "ok": False, "reason": "unregistered_scope", "turnId": args.turn})
+    return _with_enforcement(
+        services, services.merge_turn.target(args.repository, args.base_ref))
+
+
+def cmd_slot_reserve(services, args) -> dict:
+    return services.capacity.reserve(
+        subject_kind=args.kind, subject_key=args.subject, parent_task_id=args.parent_task,
+        project_key=args.project, reserved_by=args.actor, detail=args.detail)
+
+
+def cmd_slot_release(services, args) -> dict:
+    return services.capacity.release(
+        subject_kind=args.kind, subject_key=args.subject, released_by=args.actor,
+        reason=args.reason, tenure=args.tenure)
+
+
+def cmd_limit_declare(services, args) -> dict:
+    return services.capacity.declare_limit(
+        scope_kind=args.scope_kind, scope_key=args.scope, dimension=args.dimension,
+        unit=args.unit, ceiling=args.ceiling, declared_by=args.declared_by,
+        source=args.source, enforce=not args.no_enforce)
+
+
+def cmd_usage_observe(services, args) -> dict:
+    return services.capacity.observe(
+        scope_kind=args.scope_kind, scope_key=args.scope, dimension=args.dimension,
+        observed=args.observed, observed_by=args.observed_by, method=args.method)
+
+
+def cmd_capacity_show(services, args) -> dict:
+    answer = services.capacity.report(
+        project_key=args.project, parent_task_id=args.parent_task,
+        initiative_key=args.initiative)
+    if args.scope:
+        answer["headroom"] = services.capacity.headroom(args.scope_kind, args.scope)
+    return _with_enforcement(services, answer)
+
+
+def cmd_region_propose(services, args) -> dict:
+    return services.edit_regions.propose(
+        repository=args.repository, base_revision=args.revision, path=args.path,
+        region_kind=args.kind, region_key=args.key or "", region_class=args.region_class,
+        regenerate_from=args.regenerate_from, left_project=args.left_project,
+        right_project=args.right_project, peer_link_id=args.peer_link,
+        proposer_task_id=args.task, constraint_text=args.constraint,
+        condition=args.condition, issue_key=args.issue, next_owner=args.next_owner)
+
+
+def cmd_region_settle(services, args) -> dict:
+    return services.edit_regions.settle(
+        args.agreement, actor=args.actor, disposition=args.disposition,
+        condition=args.condition, reason=args.reason)
+
+
+def cmd_region_restate_revision(services, args) -> dict:
+    return services.edit_regions.restate_revision(
+        repository=args.repository, from_revision=args.from_revision,
+        to_revision=args.to_revision, actor=args.actor)
+
+
+def cmd_region_reaffirm(services, args) -> dict:
+    return services.edit_regions.reaffirm(
+        args.agreement, actor=args.actor, base_revision=args.revision)
+
+
+def cmd_region_followup(services, args) -> dict:
+    return services.edit_regions.followup(
+        args.agreement, trigger_text=args.trigger, acceptance_text=args.acceptance,
+        recorded_by=args.recorded_by, issue_ref=args.issue_ref,
+        assignee_task_id=args.assignee, assignee_project=args.assignee_project)
+
+
+def cmd_region_followup_accept(services, args) -> dict:
+    return services.edit_regions.accept_followup(
+        args.followup, actor=args.actor, assignee_project=args.assignee_project)
+
+
+def cmd_region_followup_settle(services, args) -> dict:
+    return services.edit_regions.settle_followup(
+        args.followup, actor=args.actor, disposition=args.disposition, reason=args.reason)
+
+
+def cmd_region_show(services, args) -> dict:
+    return _with_enforcement(services, services.edit_regions.show(
+        repository=args.repository, base_revision=args.revision,
+        project_key=args.project, path=args.path))
+
+
 
 
 def cmd_relationship_resume(services, args) -> dict:
@@ -2464,6 +2692,249 @@ def build_parser() -> argparse.ArgumentParser:
     guard_evaluate.add_argument("--now")
     guard_evaluate.add_argument("--no-record", action="store_true")
     guard_evaluate.set_defaults(handler=cmd_guard_evaluate)
+
+    # ------------------------------------------- coordination between parents
+
+    turn_request = subparsers.add_parser("merge-turn-request")
+    turn_request.add_argument("--repository", required=True)
+    turn_request.add_argument("--base-ref", required=True)
+    turn_request.add_argument("--project", required=True)
+    turn_request.add_argument("--task", required=True)
+    turn_request.add_argument("--host", required=True)
+    turn_request.add_argument("--cwd")
+    turn_request.add_argument("--cxc-session")
+    turn_request.add_argument("--head", required=True,
+                              help="the exact candidate head this claim is for. Required,"
+                                   " because a claim with no head cannot be checked against"
+                                   " one later")
+    turn_request.add_argument("--pr", type=int)
+    turn_request.add_argument("--relationship",
+                              help="optional. When given, the recorded work report's head"
+                                   " must agree with --head before a merge may begin")
+    turn_request.add_argument("--ready", action="store_true")
+    turn_request.set_defaults(handler=cmd_merge_turn_request)
+
+    turn_ready = subparsers.add_parser("merge-turn-ready")
+    turn_ready.add_argument("--turn", required=True)
+    turn_ready.add_argument("--actor", required=True)
+    turn_ready.add_argument("--head", help="restating a different head resets readiness")
+    readiness = turn_ready.add_mutually_exclusive_group(required=True)
+    readiness.add_argument("--ready", dest="ready", action="store_true")
+    readiness.add_argument("--not-ready", dest="ready", action="store_false")
+    turn_ready.set_defaults(handler=cmd_merge_turn_ready)
+
+    turn_attest = subparsers.add_parser("merge-turn-attest")
+    turn_attest.add_argument("--turn", required=True)
+    turn_attest.add_argument("--evidence-kind", required=True)
+    turn_attest.add_argument("--idempotency-key", required=True)
+    turn_attest.add_argument("--actor", required=True)
+    turn_attest.add_argument("--evidence", required=True)
+    turn_attest.set_defaults(handler=cmd_merge_turn_attest)
+
+    turn_ask = subparsers.add_parser("merge-turn-request-return")
+    turn_ask.add_argument("--turn", required=True)
+    turn_ask.add_argument("--actor", required=True)
+    turn_ask.add_argument("--evidence", required=True)
+    turn_ask.set_defaults(handler=cmd_merge_turn_request_return)
+
+    turn_check = subparsers.add_parser("merge-turn-check")
+    turn_check.add_argument("--turn", required=True)
+    turn_check.add_argument("--actor", required=True)
+    turn_check.add_argument("--head-sha", required=True)
+    turn_check.add_argument("--base-sha", required=True)
+    turn_check.add_argument("--checks", required=True,
+                            help="JSON list of {runId, name, headSha, conclusion, attempt}")
+    turn_check.add_argument("--review", required=True,
+                            help="JSON {hasNextPage, pagesRead, totalCount, threadsSeen,"
+                                 " unresolved}")
+    turn_check.add_argument("--required", action="append",
+                            help="a check name branch protection requires. Repeat once per"
+                                 " name. This package never contacts a forge, so the set is"
+                                 " your declaration and is stored as requiredDeclared")
+    turn_check.set_defaults(handler=cmd_merge_turn_check)
+
+    turn_land = subparsers.add_parser("merge-turn-land")
+    turn_land.add_argument("--turn", required=True)
+    turn_land.add_argument("--actor", required=True)
+    turn_land.add_argument("--landed-sha", required=True)
+    turn_land.add_argument("--observed-base-sha", required=True)
+    turn_land.add_argument("--evidence", required=True)
+    turn_land.set_defaults(handler=cmd_merge_turn_land)
+
+    turn_unknown = subparsers.add_parser("merge-turn-unknown")
+    turn_unknown.add_argument("--turn", required=True)
+    turn_unknown.add_argument("--actor", required=True)
+    turn_unknown.add_argument("--reason", required=True)
+    turn_unknown.set_defaults(handler=cmd_merge_turn_unknown)
+
+    turn_resolve = subparsers.add_parser("merge-turn-resolve")
+    turn_resolve.add_argument("--turn", required=True)
+    turn_resolve.add_argument("--actor", required=True)
+    turn_resolve.add_argument("--observed-base-sha", required=True)
+    turn_resolve.add_argument("--pr-state", required=True,
+                              choices=["merged", "open", "closed"],
+                              help="only these three establish an outcome; anything else is"
+                                   " refused at the service too")
+    turn_resolve.add_argument("--evidence", required=True,
+                              help="what you observed. Elapsed time is not an observation"
+                                   " and never becomes one")
+    turn_resolve.set_defaults(handler=cmd_merge_turn_resolve)
+
+    turn_release = subparsers.add_parser("merge-turn-release")
+    turn_release.add_argument("--turn", required=True)
+    turn_release.add_argument("--actor", required=True)
+    turn_release.add_argument("--disposition", required=True,
+                              choices=["returned", "cancelled"])
+    turn_release.add_argument("--reason", required=True)
+    turn_release.add_argument("--evidence",
+                              help="required for cancelled, because the holder is not the"
+                                   " one saying it is finished")
+    turn_release.set_defaults(handler=cmd_merge_turn_release)
+
+    turn_withdraw = subparsers.add_parser("merge-turn-withdraw")
+    turn_withdraw.add_argument("--turn", required=True)
+    turn_withdraw.add_argument("--actor", required=True)
+    turn_withdraw.set_defaults(handler=cmd_merge_turn_withdraw)
+
+    turn_show = subparsers.add_parser("merge-turn-show")
+    turn_show.add_argument("--turn")
+    turn_show.add_argument("--repository")
+    turn_show.add_argument("--base-ref")
+    turn_show.set_defaults(handler=cmd_merge_turn_show)
+
+    slot_reserve = subparsers.add_parser("slot-reserve")
+    slot_reserve.add_argument("--kind", required=True)
+    slot_reserve.add_argument("--subject", required=True)
+    slot_reserve.add_argument("--parent-task", required=True)
+    slot_reserve.add_argument("--project", required=True)
+    slot_reserve.add_argument("--actor", required=True)
+    slot_reserve.add_argument("--detail")
+    slot_reserve.set_defaults(handler=cmd_slot_reserve)
+
+    slot_release = subparsers.add_parser("slot-release")
+    slot_release.add_argument("--kind", required=True)
+    slot_release.add_argument("--subject", required=True)
+    slot_release.add_argument("--actor", required=True)
+    slot_release.add_argument("--reason", required=True,
+                              help="the first reason wins. A later notification restates it"
+                                   " rather than replacing it")
+    slot_release.add_argument("--tenure", type=int,
+                              help="which tenure this release settles. Required once a"
+                                   " subject has been reserved more than once, because the"
+                                   " newest is not necessarily the one a delayed"
+                                   " notification is about")
+    slot_release.set_defaults(handler=cmd_slot_release)
+
+    limit_declare = subparsers.add_parser("limit-declare")
+    limit_declare.add_argument("--scope-kind", required=True,
+                               choices=["initiative", "project", "store"])
+    limit_declare.add_argument("--scope", required=True)
+    limit_declare.add_argument("--dimension", required=True,
+                               help="runs is the only dimension this store counts for"
+                                    " itself; any other needs usage-observe")
+    limit_declare.add_argument("--unit", required=True)
+    limit_declare.add_argument("--ceiling", type=float, required=True)
+    limit_declare.add_argument("--declared-by", required=True)
+    limit_declare.add_argument("--source", required=True)
+    limit_declare.add_argument("--no-enforce", action="store_true")
+    limit_declare.set_defaults(handler=cmd_limit_declare)
+
+    usage_observe = subparsers.add_parser("usage-observe")
+    usage_observe.add_argument("--scope-kind", required=True,
+                               choices=["initiative", "project", "store"])
+    usage_observe.add_argument("--scope", required=True)
+    usage_observe.add_argument("--dimension", required=True)
+    usage_observe.add_argument("--observed", type=float, required=True)
+    usage_observe.add_argument("--observed-by", required=True)
+    usage_observe.add_argument("--method", required=True)
+    usage_observe.set_defaults(handler=cmd_usage_observe)
+
+    capacity_show = subparsers.add_parser("capacity-show")
+    capacity_show.add_argument("--project")
+    capacity_show.add_argument("--parent-task")
+    capacity_show.add_argument("--initiative")
+    capacity_show.add_argument("--scope")
+    capacity_show.add_argument("--scope-kind", default="project",
+                               choices=["initiative", "project", "store"])
+    capacity_show.set_defaults(handler=cmd_capacity_show)
+
+    region_propose = subparsers.add_parser("region-propose")
+    region_propose.add_argument("--repository", required=True)
+    region_propose.add_argument("--revision", required=True)
+    region_propose.add_argument("--path", required=True,
+                                help="repository-relative and canonical: no leading slash,"
+                                     " no '..' and no redundant separator")
+    region_propose.add_argument("--kind", required=True,
+                                choices=["tree", "file", "symbol", "data"])
+    region_propose.add_argument("--key", help="the symbol or data key inside --path")
+    region_propose.add_argument("--class", dest="region_class", default="source",
+                                choices=["source", "generated"])
+    region_propose.add_argument("--regenerate-from",
+                                help="required for a generated region: what re-derives it")
+    region_propose.add_argument("--left-project", required=True)
+    region_propose.add_argument("--right-project", required=True)
+    region_propose.add_argument("--peer-link", required=True)
+    region_propose.add_argument("--task", required=True)
+    region_propose.add_argument("--constraint", required=True)
+    region_propose.add_argument("--condition")
+    region_propose.add_argument("--issue")
+    region_propose.add_argument("--next-owner")
+    region_propose.set_defaults(handler=cmd_region_propose)
+
+    region_settle = subparsers.add_parser("region-settle")
+    region_settle.add_argument("--agreement", required=True)
+    region_settle.add_argument("--actor", required=True)
+    region_settle.add_argument("--disposition", required=True,
+                               choices=["accepted", "declined", "withdrawn", "released"])
+    region_settle.add_argument("--condition",
+                               help="what a decline WOULD accept under, kept after it closes")
+    region_settle.add_argument("--reason")
+    region_settle.set_defaults(handler=cmd_region_settle)
+
+    region_restate = subparsers.add_parser("region-restate-revision")
+    region_restate.add_argument("--repository", required=True)
+    region_restate.add_argument("--from-revision", required=True)
+    region_restate.add_argument("--to-revision", required=True)
+    region_restate.add_argument("--actor", required=True)
+    region_restate.set_defaults(handler=cmd_region_restate_revision)
+
+    region_reaffirm = subparsers.add_parser("region-reaffirm")
+    region_reaffirm.add_argument("--agreement", required=True)
+    region_reaffirm.add_argument("--actor", required=True)
+    region_reaffirm.add_argument("--revision", required=True)
+    region_reaffirm.set_defaults(handler=cmd_region_reaffirm)
+
+    region_followup = subparsers.add_parser("region-followup")
+    region_followup.add_argument("--agreement", required=True)
+    region_followup.add_argument("--trigger", required=True)
+    region_followup.add_argument("--acceptance", required=True)
+    region_followup.add_argument("--recorded-by", required=True)
+    region_followup.add_argument("--issue-ref")
+    region_followup.add_argument("--assignee")
+    region_followup.add_argument("--assignee-project")
+    region_followup.set_defaults(handler=cmd_region_followup)
+
+    followup_accept = subparsers.add_parser("region-followup-accept")
+    followup_accept.add_argument("--followup", required=True)
+    followup_accept.add_argument("--actor", required=True)
+    followup_accept.add_argument("--assignee-project", required=True)
+    followup_accept.set_defaults(handler=cmd_region_followup_accept)
+
+    followup_settle = subparsers.add_parser("region-followup-settle")
+    followup_settle.add_argument("--followup", required=True)
+    followup_settle.add_argument("--actor", required=True)
+    followup_settle.add_argument("--disposition", required=True,
+                                 choices=["done", "dropped"])
+    followup_settle.add_argument("--reason")
+    followup_settle.set_defaults(handler=cmd_region_followup_settle)
+
+    region_show = subparsers.add_parser("region-show")
+    region_show.add_argument("--repository", required=True)
+    region_show.add_argument("--revision")
+    region_show.add_argument("--project")
+    region_show.add_argument("--path")
+    region_show.set_defaults(handler=cmd_region_show)
+
 
 
     return parser
