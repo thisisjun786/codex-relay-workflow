@@ -76,6 +76,30 @@ block with `storeId`, `dbPath`, `realPath`, `device`, `inode` and `recordedSocke
 deliberately not the socket this process resolved — so a participant pointing somewhere else can
 see the two disagree instead of the later one quietly winning.
 
+### The managed start sequence
+
+Run in this order. The determination comes FIRST, before anything exists, because that is the
+step whose absence left the question unasked; running the lookup first against the wrong path is
+what creates an empty store and reports a real assignment as absent.
+
+1. `doctor --issue <issue>` — determine. Expect `holds` false or null here.
+2. `intent-declare --dispatch-request-id <id> --issue <issue>` — the management marker, published
+   BEFORE the child exists. `dbPath` is recorded from the resolved `--state`; there is no
+   `--db-path` on this command, only `--no-db-path` to suppress it.
+3. create the child, then `register` with both endpoints and both allowed recipients.
+4. `intent-register --assignment <id> --relationship <rel> --dispatch-request-id <id> --db-path <store>`
+   — join the marker to the relationship registration actually produced.
+5. `criteria-register` — the canonical set, so a later verdict rules on agreed obligations.
+6. `doctor --issue <issue>` again — expect `holds` true, the responsible child, and
+   `storeAgreement` `same`.
+
+`tests/test_managed_execution.py` in the relay package runs exactly this sequence against a real
+store and asserts the chain, so an instruction that stopped producing it fails there. It covers
+managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
+`deliver` needs the socket, so the delivery and correction legs are asserted against a real store
+through the fake host instead. Note that the doc and the test are not yet compared automatically —
+keep them in step by hand when either changes.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
