@@ -6,7 +6,7 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains seven
+This is an experimental workflow built from a personal setup. It contains eight
 skill instruction sets, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
@@ -22,6 +22,7 @@ compatibility.
 | [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
+| [crw-tidy](plugins/crw/skills/crw-tidy/SKILL.md) | Find records that fall short of the agreed authoring rules and supplement the clear gaps |
 
 The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
 
@@ -202,6 +203,7 @@ $crw-run [Linear project link]
 $crw-loop [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
+$crw-tidy [Linear project or issue] 합의한 규칙에 미흡한 곳을 찾아 근거가 분명한 것만 정비해줘.
 ```
 
 These are invocation examples, not requests to execute while reading this file.
