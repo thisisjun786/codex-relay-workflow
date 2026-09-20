@@ -118,6 +118,21 @@ Installation creates a symlink per skill to this checkout. Repeating it preserve
 
 Edits in this checkout are visible through the installed paths immediately. Already-loaded conversation context may still contain an earlier version; read the updated skill or use a fresh task. Keep this checkout available while its skills are linked. If it moves, deliberately relink after checking the old destinations.
 
+### Confirm what you can use now
+
+A change reaches you in stages, and a report naming only the last stage it completed is easy to misread. After updating, check the stage you actually depend on, from this checkout:
+
+```sh
+git log --oneline -1
+skills_dest="${CODEX_HOME:-$HOME/.codex}/skills"   # or the --dest you installed with
+readlink "$skills_dest/crw-run"
+python3 scripts/install.py --dest "$skills_dest" --check
+```
+
+The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is bumped and the plugin is installed again.
+
+None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-plan/references/integrations.md#delivery-reach-and-current-usability).
+
 ### Retired skill migration
 
 The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
