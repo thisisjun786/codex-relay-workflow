@@ -325,6 +325,51 @@ def test_the_parent_sees_the_readiness_in_the_message_not_only_in_the_store():
     assert report._handoff_lines({"headSha": HEAD, "baseSha": BASE}) == []
 
 
+def test_an_omitted_attempt_is_not_evidence_that_this_one_is_newest():
+    """Defaulting to 1 let an omission stand for a fact.
+
+    An older successful dev-gate submitted with no attempt reads as the first one, and the
+    failing newest attempt this rule exists to catch is simply never mentioned. The entry is
+    refused for not saying, rather than assumed to be first.
+    """
+    entry = {"runId": "run-1", "name": "dev-gate", "headSha": HEAD, "conclusion": "success"}
+    problems = mergeevidence.details(mergeevidence.shape_problems(_clean_review(), [entry]))
+    assert len(problems) == 1 and "does not state attempt" in problems[0]
+    assert mergeevidence.shape_problems(_clean_review(), [dict(entry, attempt=1)]) == []
+
+
+@pytest.mark.parametrize("name", ["dev-gate\ud800", "dev" + chr(10) + "gate", "g" * 400])
+def test_a_required_check_name_that_cannot_be_rendered_is_refused_when_recorded(name):
+    """Every required name is rendered into the completion message.
+
+    Rendering happens inside the delivery claim, so a name that cannot be encoded or that
+    breaks the line fails there instead: the claim rolls back and the delivery never goes out.
+    A shape that cannot be rendered is refused where the producer can still fix it.
+    """
+    handoff = _ready_handoff(requiredDeclared=[name],
+                             checks=[_run(name)],
+                             reviewCoverage=_clean_review(totalCount=1, threadsSeen=["t1"]))
+    with pytest.raises(ReceiptRefused):
+        report._check_handoff(handoff, 12, HEAD, BASE, "ready_for_review")
+
+
+@pytest.mark.parametrize("value", ["not-a-date", "2026-09-21T02:00:00", "", "   ", None, 17])
+def test_a_base_verification_time_that_is_not_a_time_is_refused(value):
+    """Presence is not a time, and a naive stamp does not say which clock it came from."""
+    with pytest.raises(ReceiptRefused) as caught:
+        report._check_handoff(_ready_handoff(baseVerifiedAt=value), 12, HEAD, BASE,
+                              "ready_for_review")
+    assert caught.value.reason is RefusalReason.MERGE_EVIDENCE_REQUIRED
+
+
+@pytest.mark.parametrize("value", ["2026-09-21T02:00:00Z", "2026-09-21T02:00:00+00:00",
+                                   "2026-09-21T11:00:00+09:00"])
+def test_an_offset_bearing_timestamp_is_accepted_and_normalised(value):
+    accepted = report._check_handoff(_ready_handoff(baseVerifiedAt=value), 12, HEAD, BASE,
+                                     "ready_for_review")
+    assert accepted["baseVerifiedAt"].endswith("+00:00") or "+09:00" in accepted["baseVerifiedAt"]
+
+
 def _observable(refusal):
     if refusal is None:
         return None

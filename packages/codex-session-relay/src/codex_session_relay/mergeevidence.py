@@ -129,6 +129,11 @@ def shape_problems(review, checks, required=UNDECLARED, head_sha=None):
                         + type(entry[field]).__name__ + ", not a string; coercing it would"
                         " let two different runs agree")
             if "attempt" not in entry:
+                # Defaulting to 1 let an omission stand for a fact. An older successful entry
+                # submitted with no attempt reads as the first one, and the newest attempt -
+                # the failing one this rule exists to catch - is simply never mentioned.
+                bad(where + " does not state attempt, so which attempt is newest cannot be"
+                    " decided; an omitted attempt is not evidence that this is the newest")
                 continue
             attempt = entry["attempt"]
             if not _is_int(attempt):

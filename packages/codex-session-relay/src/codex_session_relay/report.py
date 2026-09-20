@@ -19,6 +19,7 @@ everywhere else.
 """
 
 import json
+from datetime import datetime
 
 from . import cxc, mergeevidence, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
@@ -458,7 +459,7 @@ def read(store, event_id: str):
     )
     if row is None:
         return None
-    return _with_handoff(store, _row(row))
+    return _with_handoff(store, _row(row))[0]
 
 
 def read_all(store, event_id: str) -> list:
@@ -471,34 +472,43 @@ def read_all(store, event_id: str) -> list:
     rows = store.all(
         "SELECT * FROM work_reports WHERE event_id = ? ORDER BY submission_no", (event_id,)
     )
-    return [_with_handoff(store, _row(row)) for row in rows]
+    return _with_handoff(store, *[_row(row) for row in rows])
 
 
-def _with_handoff(store, record: dict) -> dict:
+def _with_handoff(store, *records: dict) -> list:
     """Attach the merge-readiness evidence, when this submission recorded any.
 
     Written and never read is a record nobody can act on, and the parent is the reader this
     exists for: it restates these exact vectors to the merge turn rather than going back to
     the forge to rebuild them. Absent stays absent rather than becoming an empty shape,
     because a report with no handoff and a handoff with nothing in it are different facts.
+
+    Every submission is fetched in one read. A history is read whole by `show`, and a query
+    per row turns one read into as many as the event has submissions.
     """
-    row = store.one(
-        "SELECT * FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
-        (record["eventId"], record["submissionNo"]),
-    )
-    if row is None:
-        return record
-    record["handoff"] = {
-        "isDraft": bool(row["is_draft"]),
-        "baseVerifiedAt": row["base_verified_at"],
-        "requiredDeclared": json.loads(row["required_declared"]),
-        "checks": json.loads(row["checks"]),
-        "reviewCoverage": json.loads(row["review_coverage"]),
-        "threadDispositions": json.loads(row["thread_dispositions"]),
-        "criterionEvidence": json.loads(row["criterion_evidence"] or "[]"),
-        "limitations": json.loads(row["limitations"] or "[]"),
+    if not records:
+        return []
+    by_submission = {
+        row["submission_no"]: {
+            "isDraft": bool(row["is_draft"]),
+            "baseVerifiedAt": row["base_verified_at"],
+            "requiredDeclared": json.loads(row["required_declared"]),
+            "checks": json.loads(row["checks"]),
+            "reviewCoverage": json.loads(row["review_coverage"]),
+            "threadDispositions": json.loads(row["thread_dispositions"]),
+            "criterionEvidence": json.loads(row["criterion_evidence"] or "[]"),
+            "limitations": json.loads(row["limitations"] or "[]"),
+        }
+        for row in store.all(
+            "SELECT * FROM work_report_handoffs WHERE event_id = ?",
+            (records[0]["eventId"],),
+        )
     }
-    return record
+    for record in records:
+        found = by_submission.get(record["submissionNo"])
+        if found is not None:
+            record["handoff"] = found
+    return list(records)
 
 
 def _row(row) -> dict:
@@ -1669,6 +1679,26 @@ _HANDOFF_REASONS = {
 DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
 
 
+def _verified_at(value):
+    """A timestamp, or None for the caller to refuse.
+
+    Presence is not a time. A non-empty string passed, so a handoff could say the base was
+    verified "not-a-date" and the delivered message would print exactly that, leaving the
+    parent with a field that looks like evidence and answers nothing. An offset is required
+    for the same reason: the parent compares this against its own reading, and a naive stamp
+    does not say which clock it came from.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.isoformat()
+
+
 def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
     """The child's merge-readiness evidence, refused at the point it can still be fixed.
 
@@ -1743,8 +1773,8 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
             "the pull request is still a draft, so the review it reports was never actually "
             "requested; mark it ready for review before handing it over",
         )
-    verified_at = handoff.get("baseVerifiedAt")
-    if not (isinstance(verified_at, str) and verified_at.strip()):
+    verified_at = _verified_at(handoff.get("baseVerifiedAt"))
+    if verified_at is None:
         # The parent's one job here is to restate a base and compare it. A handoff that says
         # which head it is about and not which base, or not when the base was read, hands over
         # half of the comparison and leaves the other half to be guessed.
@@ -1763,8 +1793,12 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
     dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
     return {
         "isDraft": False,
-        "baseVerifiedAt": _bounded_optional(handoff.get("baseVerifiedAt"), "baseVerifiedAt"),
-        "requiredDeclared": sorted(str(name) for name in required),
+        "baseVerifiedAt": verified_at,
+        "requiredDeclared": sorted(
+            _bounded(_single_line(name, "a required check name"), "a required check name",
+                     LABEL_MAX)
+            for name in required
+        ),
         "checks": [dict(entry) for entry in checks],
         "reviewCoverage": dict(review),
         "threadDispositions": dispositions,
