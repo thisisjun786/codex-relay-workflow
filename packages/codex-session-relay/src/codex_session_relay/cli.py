@@ -70,6 +70,8 @@ OFFLINE_COMMANDS = (
     "service status", "service enable", "service disable", "service stop",
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
+    # Read-only, offline, and constructs no Store at all.
+    "dispositions-show",
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
@@ -996,6 +998,29 @@ def cmd_assignment_find(services, args) -> dict:
     """What to call BEFORE creating a task, so a duplicate child is never opened by accident."""
     return services.assignments.for_issue(args.issue)
 
+
+def cmd_dispositions_show(services, args) -> dict:
+    """What this scope's children last reported, and whether the store observed it being sent.
+
+    Constructs no Store. dispositions.read goes through read_only_rows, for the reason doctor does:
+    Store.__init__ opens O_RDWR, switches on WAL and runs the whole schema script, so a reader
+    pointed at a mistyped state directory would CREATE an empty relay database and then answer
+    "nothing is blocked" honestly.
+
+    An unreadable store exits refused rather than 0. doctor keeps exit 0 for an unreadable database
+    because determining before anything exists is not an error, but this command answers "which
+    children are blocked, and was anyone told", and a caller that reads only the exit code must not
+    read an unreadable store as "nobody". The whole payload still travels, so a JSON consumer reads
+    the reason rather than guessing it.
+    """
+    from .dispositions import read as read_dispositions
+
+    report = read_dispositions(
+        services.selection, project_key=args.project, relationship_id=args.relationship,
+    )
+    if not report["readable"]:
+        raise PayloadExit(report, EXIT_REFUSED)
+    return report
 
 def cmd_assignment_mark(services, args) -> dict:
     return services.assignments.mark(
@@ -2627,6 +2652,15 @@ def build_parser() -> argparse.ArgumentParser:
     assignment_find.add_argument("--issue", required=True)
     assignment_find.set_defaults(handler=cmd_assignment_find)
 
+    # Read-only and offline: it opens no adapter and constructs no Store. The two selectors are
+    # mutually exclusive because they answer different questions - a project asks about live work,
+    # a relationship asks about one named assignment whatever its status - and required because
+    # enumerating every relationship in a store is not a question this command is for.
+    dispositions_show = subparsers.add_parser("dispositions-show")
+    dispositions_scope = dispositions_show.add_mutually_exclusive_group(required=True)
+    dispositions_scope.add_argument("--project")
+    dispositions_scope.add_argument("--relationship")
+    dispositions_show.set_defaults(handler=cmd_dispositions_show)
     assignment_mark = subparsers.add_parser("assignment-mark")
     assignment_mark.add_argument("--relationship", required=True)
     assignment_mark.add_argument("--mark", required=True, choices=["merged"])
