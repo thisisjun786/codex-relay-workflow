@@ -206,7 +206,7 @@ WITNESS_WRITER = (
     "        handle.write(json.dumps({'pid': os.getpid(), 'progress': n}) + '\\n')\n"
     # Ticks faster than any interval a case declares, so a wait for the counter to move is a
     # short wait. What a case asserts is that it moved, never how often.
-    "    time.sleep(0.01)\n"
+    "    time.sleep(0.002)\n"
 )
 
 
@@ -346,7 +346,7 @@ class World:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 5
         while time.time() < deadline and not witness.exists():
-            time.sleep(0.02)
+            time.sleep(0.002)
         # The record declares a positive minimum uptime, because a bound of zero is met by a
         # process that started this instant and would report a persistence nobody observed. So
         # this waits for the supervisor to actually reach the fixture's bound instead of
@@ -370,7 +370,7 @@ class World:
                 break
             if age >= wanted:
                 break
-            time.sleep(0.02)
+            time.sleep(0.002)
         self.record["supervisor"]["pid"] = self.supervisor.pid
         self.flush()
         return self.supervisor.pid
@@ -578,8 +578,8 @@ class World:
             "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                       "challengeNonce": self.NONCE},
             "supervisor": {"pid": os.getpid(), "witness": str(self.trial / "supervisor.jsonl"),
-                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.05,
-                           "witnessAdvanceSeconds": 0.05, "service": False},
+                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.01,
+                           "witnessAdvanceSeconds": 0.01, "service": False},
             "assignment": {"relationshipId": self.RELATIONSHIP, "parentTaskId": self.PARENT_A,
                            "childTaskId": self.CHILD_A, "issueKey": self.ISSUE_A,
                            "executionGeneration": 1, "artifacts": [str(self.artifact)],
