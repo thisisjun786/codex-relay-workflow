@@ -123,6 +123,24 @@ coordinator already holds. A settings record has seven required fields:
      "runtimeWorkspaceRoots": ["/abs/path"], "model": "...", "reasoningEffort": "...",
      "environments": [...]}
 
+Record the role the creation cited alongside them, through `--parent-role`/`--child-role` on
+registration or `--role` on a settings record, taken from the receipt's `executionPolicy.role`.
+The relay compares it with the role the task is actually bound to, in whichever order those two
+facts arrive, and refuses a disagreement as `role_binding_mismatch` rather than recording it:
+the recovery for a mismatch is not re-recording, because that would write one side's answer over
+the other.
+
+After a user changes an existing task's model, re-record that task's authorization from a
+user-attributed source before the next send, with `--source user_transition`. The record is what
+a send verifies against, and a value observed on the host is evidence of what the task is running
+rather than a new approval, so nothing adopts a drifting setting on its own. Until it is
+re-recorded the send is refused as `settings_record_stale_for_role`, before any transport call.
+A process that cannot read a role policy refuses role-bound sends as `role_policy_unconfigured`
+rather than skipping the check; that hold is retry-safe, so declaring the policy and restarting
+resumes the held deliveries. `doctor` reports the policy digest this process resolved and
+compares it with the bridge's, because two processes reading two different files is a second
+source of truth that neither one can see on its own.
+
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
 `activePermissionProfile`, carry it into the record's `expectedPermissionProfile` field, which is
