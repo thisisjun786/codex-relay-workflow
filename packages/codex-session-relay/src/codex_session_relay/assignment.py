@@ -30,6 +30,19 @@ ABANDONED = "abandoned"
 
 MARKS = ("merged",)
 
+# linkage.PROJECT, spelled here for the same reason delivery spells it: linkage reaches this
+# module from inside its own functions, so a module-level import would close a ring.
+PROJECT_SCOPE_KIND = "project"
+
+PROJECT_READING_LIMITS = (
+    "A reading of what this project's children report, not a completion verdict. The strongest "
+    "state is complete_candidate: integration and verification are the parent's judgment and are "
+    "not visible here. A child's own goal status is never consulted; each assignment's state is "
+    "derived from receipts, verdicts and marks against the current head, generation and "
+    "revision. unreadable, unregistered and ambiguous are three different answers and none of "
+    "them means finished."
+)
+
 # What each state is waiting for. Derived from the same records, never stored, so it cannot go
 # stale: this is the field that answers "what happens next" without a second lookup.
 NEXT_ACTION = {
@@ -49,7 +62,7 @@ NEXT_ACTION = {
 
 
 class AssignmentView:
-    def __init__(self, store, registry, clock, *, criteria=None):
+    def __init__(self, store, registry, clock, *, criteria=None, linkage=None):
         self.store = store
         self.registry = registry
         self.clock = clock
@@ -58,6 +71,96 @@ class AssignmentView:
 
             criteria = CriteriaService(store, clock)
         self.criteria = criteria
+
+        # Optional, and read-only. linkage.outstanding() already derives its unfinished set
+        # through this class's own state(), so the project-level reading below is the same
+        # derivation lifted one level rather than a second opinion about it. Absent, the
+        # project reading says it cannot answer instead of guessing.
+        self.linkage = linkage
+
+    def project_state(self, project_key: str) -> dict:
+        """What an approved project scope's children actually say, as a reading not a verdict.
+
+        A parent's completion is computed from its children's real state, so this returns the
+        unfinished set and the basis for it and stops there. It never returns "complete": the
+        strongest thing it says is complete_candidate, because integration and verification are
+        the parent's judgment and this class cannot see them.
+
+        The four answers linkage keeps apart are kept apart here, and none of them is completion:
+
+        unreadable    the store did not answer. Not "nothing outstanding".
+        unregistered  the project has no live attached assignment at all. Not "all done".
+        ambiguous     more than one candidate owner. The reader will not choose.
+        incomplete    at least one live assignment is unfinished, named row by row.
+
+        Partial Done cannot close a parent, because complete_candidate requires the outstanding
+        set to be EMPTY rather than small. A shared project cannot close one either: attached()
+        counts every live assignment in the project, so work parked on another parent still
+        counts. And a child's own goal being complete is not consulted at all - state() is
+        derived from receipts, verdicts and marks against the current head, generation and
+        revision, so a goal a child closed on its own is not evidence here.
+        """
+        if self.linkage is None:
+            return {"state": "unreadable", "readable": False, "projectKey": project_key,
+                    "attached": [], "outstanding": [],
+                    "basis": "no linkage reader was supplied, so the project's assignments "
+                             "could not be enumerated",
+                    "limits": PROJECT_READING_LIMITS}
+        try:
+            attached = list(self.linkage.attached(project_key))
+            outstanding = list(self.linkage.outstanding(project_key))
+            # Inside the boundary, not after it. Owner enumeration reads the same store and is
+            # required to CLASSIFY the answer, so a failure here has to produce the documented
+            # unreadable shape rather than propagate a database error to a caller that asked a
+            # question about completion.
+            owners = self.linkage.owners(PROJECT_SCOPE_KIND, project_key)
+        except Exception as error:  # noqa: BLE001 - an unreadable store is an answer, not a crash
+            return {"state": "unreadable", "readable": False, "projectKey": project_key,
+                    "attached": [], "outstanding": [],
+                    "basis": f"the project's assignments could not be read: "
+                             f"{type(error).__name__}: {error}",
+                    "limits": PROJECT_READING_LIMITS}
+        if len(owners) > 1:
+            return {"state": "ambiguous", "readable": True, "projectKey": project_key,
+                    "attached": attached, "outstanding": outstanding,
+                    "competingOwners": sorted(o["taskId"] for o in owners),
+                    "basis": "the project has more than one live owner, so which parent this "
+                             "reading is about is not decided here",
+                    "limits": PROJECT_READING_LIMITS}
+        if not attached:
+            return {"state": "unregistered", "readable": True, "projectKey": project_key,
+                    "attached": [], "outstanding": [],
+                    "basis": "no live assignment is attached to this project, which is not the "
+                             "same as every assignment being finished",
+                    "limits": PROJECT_READING_LIMITS}
+        # Expanded here, AFTER the two classifications that owners() and attached() already
+        # settle, and inside a boundary of its own. outstanding() returns ids; naming each one's
+        # state reads the registry and store again, so a failure there still has to produce the
+        # promised unreadable reading rather than raise at a caller asking about completion.
+        # But it must not run any earlier: ambiguity is establishable from owners() alone, and
+        # expanding first let an unrelated state-read failure replace a definite ambiguous
+        # answer with unreadable - masking the more specific fact with the vaguer one.
+        try:
+            unfinished = [{"relationshipId": rid, "state": self.state(rid)["state"]}
+                          for rid in outstanding]
+        except Exception as error:  # noqa: BLE001 - same reason as the boundary above
+            return {"state": "unreadable", "readable": False, "projectKey": project_key,
+                    "attached": attached, "outstanding": outstanding,
+                    "basis": f"the unfinished set could not be expanded: "
+                             f"{type(error).__name__}: {error}",
+                    "limits": PROJECT_READING_LIMITS}
+        if unfinished:
+            return {"state": "incomplete", "readable": True, "projectKey": project_key,
+                    "attached": attached, "outstanding": outstanding,
+                    "unfinished": unfinished,
+                    "basis": f"{len(unfinished)} of {len(attached)} live assignments are "
+                             "unfinished",
+                    "limits": PROJECT_READING_LIMITS}
+        return {"state": "complete_candidate", "readable": True, "projectKey": project_key,
+                "attached": attached, "outstanding": [], "unfinished": [],
+                "basis": f"all {len(attached)} live assignments in this project report a "
+                         "finished state",
+                "limits": PROJECT_READING_LIMITS}
 
     # -------------------------------------------------------------------- read
 

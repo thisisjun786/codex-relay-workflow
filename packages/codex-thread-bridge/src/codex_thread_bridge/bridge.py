@@ -9,7 +9,13 @@ from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import RETRYABLE_STATUSES, Ledger
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
-from .settings import SettingsContract, annotation
+from .settings import (
+    APPROVAL_LIMITS,
+    APPROVAL_POLICIES,
+    UNATTENDED_APPROVAL_POLICY,
+    SettingsContract,
+    annotation,
+)
 from .worktrees import Worktree, WorktreeError
 
 
@@ -187,6 +193,10 @@ EXPECTED_SETTINGS_KEYS = frozenset(
         "model",
         "reasoning_effort",
         "runtime_workspace_roots",
+        # Declared, never transmitted: the caller states the policy it believes the thread is on,
+        # and the resume observation is judged against that. Omitting it declares never, which is
+        # what every caller written before this key existed meant.
+        "approval_policy",
     }
 )
 
@@ -308,6 +318,26 @@ class Bridge:
             # Readable before creating anything, so a caller learns whether an allowlist is in
             # force instead of discovering it in a refusal or assuming one that does not exist.
             "executionPolicy": self.policy.summary(),
+            # Readable for the same reason. A caller deciding whether to deliver a report to a
+            # supervisor on an interactive policy needs to know, before it asks, that delivery
+            # and approval servicing are different capabilities here and only one is offered.
+            "approvals": {
+                "declarable": list(APPROVAL_POLICIES),
+                "transmitsApprovalPolicy": False,
+                "preservation": "send_message_to_thread omits approvalPolicy from thread/resume, "
+                "so it cannot set or change the policy of a thread it did not create. Measured "
+                "on codex-cli 0.154.0 in both directions: the resume reports the thread's own "
+                "policy and does not inherit the CODEX_HOME config default.",
+                "servicesApprovals": False,
+                "onApprovalRequest": "refused_not_routed",
+                "routeToOriginalApprover": None,
+                "missingInterface": "The protocol has no method by which a second client hands "
+                "an approval request back to the client that owns the thread, so this bridge "
+                "can refuse an approval request but cannot deliver it to the thread's approver. "
+                "Whether the host shows that request to the owning client anyway is NOT "
+                "established here and is reported unverified rather than assumed.",
+                "limits": APPROVAL_LIMITS,
+            },
             # What THIS bridge offers. A tool missing here says nothing about the host: the
             # protocol has turn/interrupt and a turn queue, and this bridge withholds both.
             "exposure": {
@@ -840,12 +870,25 @@ class Bridge:
                 model=execution.model,
                 reasoning_effort=execution.reasoning_effort,
                 runtime_workspace_roots=supplied.get("runtime_workspace_roots"),
+                # ABSENT means never, which is what this tool has always assumed. Supplied, it
+                # is checked against the policies AskForApproval names before any RPC goes out.
+                # Keyed on presence rather than on the value, so an explicit null is refused
+                # instead of quietly becoming never: a discarded key is indistinguishable from
+                # one never written, which is the whole failure this contract exists to stop.
+                approval_policy=(
+                    UNATTENDED_APPROVAL_POLICY
+                    if "approval_policy" not in supplied
+                    else supplied["approval_policy"]
+                ),
             )
 
         async def action(receipt):
             contract = built["contract"]
             receipt["threadId"] = thread_id
             receipt["executionPolicy"] = dict(built["execution"].receipt)
+            # Where this connection's refusal stream stood before anything was sent, so the
+            # refusals this dispatch provoked can be told apart from another thread's.
+            mark = self.rpc.refusal_mark()
             self.ledger.save(receipt)
             state = await self.rpc.call(
                 "thread/read", {"threadId": thread_id, "includeTurns": False}
@@ -869,13 +912,21 @@ class Bridge:
             resumed = await self.rpc.call("thread/resume", contract.resume_params(thread_id))
             receipt["resumed"] = resumed
             receipt["settings"] = contract.receipt(resumed, at="resume")
+            # Recorded whether or not the settings agree, because who decides on this thread and
+            # what happens if the turn asks are facts about the thread, not a reward for passing.
+            receipt["approvals"] = contract.approvals(resumed)
             self.ledger.save(receipt)
             findings = receipt["settings"]["findings"]
             if findings:
                 first = findings[0]
                 message_text = (
-                    "Interactive approvals unsupported; message withheld. "
-                    "Continue the thread in Desktop."
+                    f"Thread approval policy is {first['returned']!r}; this request declared "
+                    f"{first['expected']!r}. Message withheld and NOT delivered; no turn was "
+                    "started. This bridge preserves a thread's approval policy and never sets "
+                    "one, so the way to deliver here is a NEW request id declaring the policy "
+                    "the thread is actually on. Declaring it does not make this bridge service "
+                    "approvals: it services none, refuses every approval request and cannot "
+                    "route one to the thread's approver."
                     if first["code"] == "unsupported_approval_policy"
                     else f"{first['code']}: {first['field']} returned {first['returned']!r}, "
                     f"expected {first['expected']!r}; message withheld"
@@ -892,9 +943,49 @@ class Bridge:
                 },
             )
             receipt["turnId"] = turn["turn"]["id"]
+            # Only the window this receipt actually spans. A turn outlives it, and the note says so.
+            receipt["approvalRequests"] = self.rpc.refusals_since(mark, thread_id)
+
+        def reconcile(receipt):
+            """Say whether the logical message reached a turn, from what actually went out.
+
+            Derived here rather than written during the operation. A delivery state written
+            before the turn/start frame would survive a process death that happened after it, so
+            a row could read status outcome_unknown beside delivery not_delivered -- telling the
+            next caller it is safe to send again when the host may already have the turn. The
+            attempted effects are the only record that cannot disagree with itself.
+            """
+            attempted = receipt.get("attemptedEffects") or []
+            if "turn/start" not in attempted:
+                delivery = "not_delivered"
+            elif receipt.get("status") == "accepted":
+                delivery = "turn_started"
+            elif receipt.get("status") == "failed":
+                delivery = "rejected"
+            else:
+                delivery = "outcome_unknown"
+            receipt["delivery"] = delivery
+            receipt["deliveryMeaning"] = {
+                "not_delivered": "No turn/start left this process, so this message was not "
+                "delivered and nothing on the host is holding it. The same logical message may "
+                "be sent once more under a NEW request id; this id keeps its refusal.",
+                "turn_started": "The host accepted this message into a new turn. That is "
+                "delivery, not completion: it does not say the peer read it, acted on it, or "
+                "finished anything.",
+                "rejected": "The turn/start went out and the host refused it. The message was "
+                "not delivered and must not be counted as work the peer received.",
+                "outcome_unknown": "A turn/start went out and no answer came back. It may have "
+                "started a turn. Do not send this message again under a new id; reconcile by "
+                "reading the thread.",
+            }[delivery]
 
         receipt = await self._mutate(
-            request_id, "send_message_to_thread", params, action, validate_fresh=validate_fresh
+            request_id,
+            "send_message_to_thread",
+            params,
+            action,
+            validate_fresh=validate_fresh,
+            reconcile=reconcile,
         )
         return await self._annotate_dispatch(receipt, built.get("contract"))
 
