@@ -203,9 +203,14 @@ def make_server(bridge: Bridge):
         requested state. On one it has to load first, that is NOT established, and the receipt
         says so: statusBeforeResume records what the host reported, and a notLoaded thread also
         carries echoIndependence "not_established", because an agreeing echo there cannot be told
-        apart from the host repeating what it was sent. A notLoaded supervisor is refused outright
-        rather than resumed, since its pair is the user's own selection and restoring a recorded
-        one could undo a change they made. An unrecognised key is
+        apart from the host repeating what it was sent. Where role names a recipient and the
+        stated pair was NOT compared against that role's declared pair -- a supervisor, whose
+        pair is the user's own selection, or a request citing an exception, which exists to skip
+        that comparison -- a notLoaded thread is refused rather than resumed, since restoring a
+        stale pair could undo a change the user made. Naming no role leaves that check undone:
+        this bridge reads no scope binding, so it cannot tell an unnamed supervisor from a task
+        with no role, and the caller that CAN read the binding owns that refusal. An unrecognised
+        key is
         rejected rather than ignored, because a discarded key is indistinguishable from a setting
         that was never requested. Any difference, or a
         setting the host does not report, withholds the message and names its own cause. The turn

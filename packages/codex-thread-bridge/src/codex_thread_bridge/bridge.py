@@ -961,8 +961,12 @@ class Bridge:
                             "silently restore a pair the user has since changed -- the case a "
                             "supervisor is always in, because its pair is the user's own "
                             "selection, and the case an exception is in whenever the operator's "
-                            "file has fallen behind. Read the thread's current settings and "
-                            "re-record the authorization from that reading before sending.",
+                            "file has fallen behind. Re-recording does not clear this: the "
+                            "provenance is a property of how the pair was authorized, not of "
+                            "what it says. Send once the host has the thread loaded, where the "
+                            "resume reports the thread's own state and the comparison means "
+                            "something; or state a pair that matches this role's declared pair "
+                            "so it can be compared.",
                         },
                     )
                 # A resume that transmits a pair to a thread the host has to materialize cannot

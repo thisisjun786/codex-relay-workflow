@@ -130,8 +130,19 @@ its own.
 Two limits are recorded rather than smoothed over. When the host reports a thread as `notLoaded`,
 a resume that transmits a pair cannot distinguish preservation from adoption, so the attempt
 records `echoIndependence: "not_established"` and no report calls those settings verified as
-preserved. And a `supervisor` observed `notLoaded` is not resumed at all: its pair is the one the
-policy does not derive, so transmitting a recorded pair could revert a change Jun made in the UI.
+preserved.
+
+And where the pair was not compared against the role's declared pair, a `notLoaded` thread is not
+resumed at all. That covers a `supervisor`, whose pair is the one the policy deliberately does not
+derive, and any request citing an exception, since an exception exists to skip that comparison.
+Transmitting such a pair could restore a value the user has since changed.
+
+This guard is only as good as what the sender says, and the bridge is explicit about where that
+stops. It reads no scope binding, so on a send that names no role it cannot tell an unnamed
+supervisor from a task that has no role at all, and refusing both would stop unrelated work on
+every host that declared a role for something else. The relay resolves the recipient's role from
+its binding and owns that refusal. A send through the bridge naming no role is therefore not
+covered by this guard, and that is a boundary rather than an oversight.
 
 An unsupported transition is recorded as what it is — the host reported the old pair, no turn was
 started, applying it needs the UI action — and no guard is bypassed to make it look applied.

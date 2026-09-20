@@ -1111,7 +1111,12 @@ async def test_a_verified_role_pair_may_still_be_sent_to_a_thread_the_host_has_n
 async def test_a_host_that_declared_no_roles_keeps_exactly_its_previous_send_behaviour(
     bridge, fake_server, tmp_path
 ):
-    """The new restriction is scoped to hosts that opted in, so a merge changes nothing."""
+    """Nothing changes for a host that never opted in, which is the merge-day case.
+
+    The guard keys on a named role rather than on the host having declared any, so this is the
+    weaker of the two compatibility claims; the stronger one is the unnamed send on a host that
+    HAS declared roles, covered separately above.
+    """
     fake, _ = fake_server
     created = await bridge.create_thread("legacy", str(tmp_path), **EXECUTION)
     fake.resident = set()
