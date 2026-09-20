@@ -1712,7 +1712,7 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("crw-elsewhere", answer["detail"])
         # Nothing at all was removed, including the seven the snapshot did prove.
         self.assertEqual(len([p for p in (host.home / "skills").iterdir()
-                              if p.name.startswith("crw-")]), 8)
+                              if p.name.startswith("crw-")]), 9)
 
     def test_an_unreadable_skill_inventory_is_not_read_as_an_empty_one(self):
         """crwOwned == [] means "none there" or "not read", and those are different hosts."""
@@ -1832,7 +1832,7 @@ class TheFindingsFromReview(TransitionCase):
         self.assertFalse(answer["applied"])
         left = sorted(p.name for p in (host.home / "skills").iterdir()
                       if p.name.startswith("crw-"))
-        self.assertEqual(len(left), 7, json.dumps(left))
+        self.assertEqual(len(left), 8, json.dumps(left))
 
     def test_a_plugin_record_that_could_not_be_rewritten_stops_before_the_table(self):
         """Absent and empty arguments are one registration here and two to the record writer."""
