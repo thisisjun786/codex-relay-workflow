@@ -645,3 +645,27 @@ progress, review outcome, and the next actionable dependency. Use the host's
 created-task directive when required. State remaining capability gaps plainly.
 This skill does not install a recurring monitor: use the automation tools only
 when ongoing background monitoring is requested.
+
+### Report delivery reach in the final update
+
+The final update above says what the work is; this says how far it got and
+what the user can use. Write the chain from
+[Delivery reach and current usability](../crw-plan/references/integrations.md#delivery-reach-and-current-usability):
+the stages this delivery has evidence for in chain order, any first stage that
+is missing or unobserved, and the two closing lines. A merged pull request
+completes the remote stage; whether anything was installed from it, and whether
+the changed capability has been run since, are separate observations this task
+either made or did not. A verified non-PR result uses the same shape over its
+input baseline, delivered output and observed verification.
+
+Keep it to the stages this delivery touched. An issue that changed only skill
+instructions has no service to activate, and saying that once is shorter than a
+readiness list nobody asked for. An issue whose criteria named installation or
+live operation keeps that stage in the report even when the answer is unverified.
+
+Do not close a gap in order to report it closed. A question about whether
+something is installed or usable is answered from what this task already
+observed; installing, starting a service, or creating a task to find out are
+separate actions under their own authorization, and
+[OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
+path when one is actually authorized.

@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, `crw-logic`, and `crw-tidy`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Skill names under each installation
 
@@ -136,6 +136,7 @@ Load the existing owner for the requested operation:
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+| Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
@@ -556,7 +557,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
@@ -704,3 +705,17 @@ Pass Linear IDs/links, embedded criteria, repository/revision identity, accepted
 Keep raw launch receipts and sensitive test evidence in established private locations; put only the necessary coordination summary in the canonical Linear document. If record-writing is outside the request or access is unavailable, return an unsynced update for the owner. Installed skills hold procedures, never project state or credentials.
 
 In final reports, mention checks that changed the conclusion and meaningful unavailable evidence. Avoid a ceremonial list of every skill.
+
+### Delivery reach and current usability
+
+A delivery report answers two questions no status word answers: how far this change actually got, and what the reader can use right now. Report the reach as an ordered chain — the source revision, the local commit, the remote branch, the installed link or version, and an observed run of the changed capability — and carry only the links this delivery actually involves. A delivery with no repository target uses the same shape over its own artifacts: the input baseline, the delivered output revision or digest, and the verification actually observed. Where one report covers several independently delivered artifacts or repositories, each gets its own chain, because one artifact's gap says nothing about another's.
+
+Choose the stages from what happened rather than from the chain's full length. Walk the chain in order, naming each stage this delivery has evidence for and, where one exists, the first stage that is missing or was never observed, saying which of the two it is. A delivery with no gap has no such stage to name. The stages are independent: never infer a later one from an earlier one, and never drop an observed later stage because an earlier one is absent, since a commit that was never pushed can still be live through a link resolving to that checkout. A stage this change cannot have, such as an installation surface it never touches, is left out rather than reported as passing, and a stage the issue's own criteria require is always named, as unverified when nothing was observed. A report that lists every stage every time trains its reader to skip the one that matters.
+
+Changing source, installing it, and refreshing an already-loaded conversation are three events, and the installation method decides what the third one costs. A linked installation resolves each skill through a symlink, so an edit is visible to the next read of that file, no reinstall is involved, and a conversation that already read the old text keeps it until the file is read again or a new task starts. A versioned plugin installation resolves a cached copy of a published version, so an edit reaches nobody until the version is bumped and installed again, and a session already running keeps the package it started with. Report the method actually observed and what the reader must do under it; where it was not checked, say so instead of assuming a linked installation. Reading a link's own target is what establishes which checkout an installed skill resolves to.
+
+Usable now is a claim about a representative user path, run through the installed entry point, with the time and environment of the most recent such run attached. Passing checks, a listed hook, an accepted delivery and a completed issue each establish only themselves. [OPS-6.1](../../crw-run/references/operations.md#ops-61-six-states-that-never-imply-one-another) already records which states never imply one another, and [OPS-11.3](../../crw-run/references/operations.md#ops-113-four-stages-that-are-not-one-event) separates a landed source change from what a host installs and executes. Use those meanings rather than restating them here.
+
+Where the run happened in a test store or a scratch path, or where an always-on process is currently stopped, the demonstration and the operating state are separate lines: what was demonstrated, in which environment, at what time; and whether the real path is serving now. Report readiness from what was observed, since a service seen stopped is not ready and that is a result rather than a gap, and reserve unverified for the part nobody read, naming the observation that would settle it. That unverified is this report's own conclusion about evidence it lacks, not the field value an installation check carries; [OPS-6.2](../../crw-run/references/operations.md#ops-62-record-shape) owns those values and the rule for a measurement time nobody made.
+
+Close with two short lines — whether the reader has to do anything, and the shortest next step to use or verify the change — and answer any question about installation, activation or availability from evidence already held rather than by going to get it, because a reinstall, a service start and a new task each keep their own authorization.

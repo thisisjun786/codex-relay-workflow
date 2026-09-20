@@ -6,7 +6,7 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains seven
+This is an experimental workflow built from a personal setup. It contains eight
 skill instruction sets, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
@@ -22,6 +22,7 @@ compatibility.
 | [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
+| [crw-tidy](plugins/crw/skills/crw-tidy/SKILL.md) | Find records that fall short of the agreed authoring rules and supplement the clear gaps |
 
 The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
 
@@ -117,6 +118,21 @@ Installation creates a symlink per skill to this checkout. Repeating it preserve
 
 Edits in this checkout are visible through the installed paths immediately. Already-loaded conversation context may still contain an earlier version; read the updated skill or use a fresh task. Keep this checkout available while its skills are linked. If it moves, deliberately relink after checking the old destinations.
 
+### Confirm what you can use now
+
+A change reaches you in stages, and a report naming only the last stage it completed is easy to misread. After updating, check the stage you actually depend on, from this checkout:
+
+```sh
+git log --oneline -1
+skills_dest="${CODEX_HOME:-$HOME/.codex}/skills"   # or the --dest you installed with
+readlink "$skills_dest/crw-run"
+python3 scripts/install.py --dest "$skills_dest" --check
+```
+
+The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is bumped and the plugin is installed again.
+
+None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-plan/references/integrations.md#delivery-reach-and-current-usability).
+
 ### Retired skill migration
 
 The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
@@ -202,6 +218,7 @@ $crw-run [Linear project link]
 $crw-loop [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
+$crw-tidy [Linear project or issue] 합의한 규칙에 미흡한 곳을 찾아 근거가 분명한 것만 정비해줘.
 ```
 
 These are invocation examples, not requests to execute while reading this file.
