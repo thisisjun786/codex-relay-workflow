@@ -4190,3 +4190,37 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(code, 1)
         self.assertNotEqual(answer.get("outcome"), "internal_error")
         self.assertEqual(answer["command"], "check-declaration")
+
+    @needs_reader
+    def test_the_standdown_revalidates_the_whole_payload_before_it_writes(self):
+        """Devin's red finding, isolated to the step that has to catch it.
+
+        preflight and plugin_refusals both validate the payload, and both run before this step.
+        The version cache takes no lock, so a replacement landing after them reaches the removal
+        having been judged on a package that is no longer there. Comparing only the tools the user
+        gates accepted exactly that: a declaration keeping create_thread = approve and adding a
+        second gate with an invalid mode passed, the table went, and the host threw out the whole
+        declaration and served no bridge.
+
+        Called directly rather than through the CLI, so the earlier gates cannot be what refuses.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.granted(self.ready())
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        declaration = cache / "wiring" / "mcp.json"
+        document = json.loads(declaration.read_text(encoding="utf-8"))
+        gates = document["mcpServers"]["codex-thread-bridge"]["tools"]
+        # Everything the user table gates is preserved exactly. The defect is elsewhere.
+        gates["some_other_tool"] = {"approval_mode": "definitely-not-a-valid-mode"}
+        declaration.write_text(json.dumps(document), encoding="utf-8")
+
+        before = host.config()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        answer = steps.mcp_table_standdown(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:1500])
+        self.assertEqual(host.config(), before)
+        self.assertIn("[mcp_servers.codex-thread-bridge]", host.config())
+        self.assertIn("approval_mode", host.config())
