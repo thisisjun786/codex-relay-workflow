@@ -891,6 +891,69 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertEqual(stored["citedException"], "__clear__")
 
 
+    def test_a_registration_that_will_bind_a_child_refuses_a_parent_citation_first(self):
+        """The citation is checked against the role the write would establish, not itself.
+
+        With --project the registration binds the relationship's child task to its issue scope
+        as a child. Comparing the cited role against the cited role answered a different
+        question and passed, so the relationship and the binding were both committed and only
+        record_settings -- reading the binding that had just landed -- refused. The refusal was
+        reported and a live wrong-role assignment stayed behind it.
+        """
+        import argparse
+        import json as _json
+        import os
+        import types
+        from pathlib import Path
+
+        from codex_session_relay.cli import cmd_register
+        from codex_session_relay.models import Endpoint
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        # The parent pair, cited as parent, for the task this registration will bind as a child.
+        # Every value here is individually legitimate; only their combination is not.
+        child_settings = task_settings(
+            self.root, model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
+        )
+        args = argparse.Namespace(
+            parent_task=PARENT, parent_host="host-a", parent_cwd="/parent",
+            parent_cxc_session="cxc-parent",
+            child_task=CHILD, child_host="host-a", child_cwd=self.root,
+            child_cxc_session="cxc-child",
+            issue="ISS-1", artifact_root=[self.root], allowed_recipient=[PARENT],
+            scope_ref=None, dispatch_request_id="dispatch-1", dispatch_turn_id=None,
+            supersedes=None, project="PROJ-1",
+            parent_settings=None, parent_role=None, parent_exception=None,
+            child_settings=_json.dumps(child_settings.data if hasattr(child_settings, "data")
+                                       else child_settings),
+            child_role="parent", child_exception=None,
+        )
+        services = types.SimpleNamespace(
+            registry=self.registry, store=self.store, clock=self.clock,
+        )
+        with self.assertRaises(RegistrationError) as raised:
+            cmd_register(services, args)
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
+        # And the point of moving the check earlier: the refusal left nothing behind it.
+        self.assertEqual(
+            self.store.all("SELECT relationship_id FROM relationships"), [],
+            "the registration was committed before the contradiction was noticed",
+        )
+        self.assertIsNone(
+            rolepolicy.bound_role(self.store, CHILD),
+            "a refused registration left the child task holding a live binding",
+        )
+        self.assertIsNone(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (CHILD,)
+            ),
+        )
+
+
     def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
         """Clearing is the user-attributed transition's privilege, not every write's."""
         from pathlib import Path

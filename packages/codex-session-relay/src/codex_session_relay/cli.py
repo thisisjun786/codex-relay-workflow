@@ -349,20 +349,32 @@ def _refuse_role_disagreement(services, args) -> None:
     """Refuse a registration whose stated roles and settings already contradict each other.
 
     Answers exactly what record_settings would answer afterwards, from the same predicate, so
-    the two cannot disagree. It reads nothing it has not been given: the roles come from the
-    arguments and the settings from the files they name.
+    the two cannot disagree. The roles and settings come from the arguments and the files they
+    name; the one thing it reads from the store is the binding each task already holds, because
+    a citation is checked against the role the task will actually be in and that is not always
+    the role the caller named.
     """
     from . import rolepolicy
     from .errors import RefusalReason, RegistrationError
+    from .linkage import CHILD
 
     policy = rolepolicy.declared()
     # Each side carries its own exception in the tuple. Recovering it from the settings value
     # by identity or equality asks the wrong question: two sides can pass the same string, and
     # then the child is validated against the parent's exception and a legitimate registration
     # is refused before anything is written.
-    for raw, role, exception in (
-        (args.parent_settings, args.parent_role, args.parent_exception),
-        (args.child_settings, args.child_role, args.child_exception),
+    #
+    # The fourth element is the role THIS write would establish. With --project the registration
+    # binds the relationship's child task to its issue scope as a child, so that -- not the role
+    # the caller cited -- is what the citation has to agree with. Comparing the cited role
+    # against itself asked a different question and passed every time: a registration citing
+    # parent for the child task committed the relationship and the binding, and only the settings
+    # write after them refused, leaving a live wrong-role assignment this function exists to
+    # prevent and nothing here could undo.
+    for task, raw, role, exception, establishes in (
+        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception, None),
+        (args.child_task, args.child_settings, args.child_role, args.child_exception,
+         CHILD if args.project else None),
     ):
         if not raw or role is None:
             continue
@@ -370,7 +382,21 @@ def _refuse_role_disagreement(services, args) -> None:
         settings["citedRole"] = role
         if exception is not None:
             settings["citedException"] = exception
-        finding = rolepolicy.check_binding(role, role, settings, policy if policy else None)
+        # A binding the task already holds outranks the one this write would establish, because
+        # registration does not move a task between roles; attaching an already-bound task is
+        # the binding it has being confirmed, not replaced.
+        bound = rolepolicy.bound_role(services.store, task)
+        if isinstance(bound, rolepolicy.Contested):
+            raise RegistrationError(
+                RefusalReason.ROLE_BINDING_MISMATCH,
+                f"{task!r} holds live bindings at {bound.roles}; one task holds one role, so "
+                "there is no single role to register settings against",
+            )
+        # Falling back to the cited role is what keeps the pair check this function already
+        # performed for a task that neither holds a binding nor gains one here.
+        finding = rolepolicy.check_binding(
+            role, bound or establishes or role, settings, policy if policy else None
+        )
         if finding is not None:
             raise RegistrationError(RefusalReason(finding["code"]), finding["detail"])
 

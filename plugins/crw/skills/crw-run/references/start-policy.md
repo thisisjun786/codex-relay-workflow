@@ -39,10 +39,14 @@ at xhigh. A project parent ran swe-2 at max until Jun moved every parent on 2026
 is now a migration fixture, kept so the transition can be reproduced and so the old value is
 recognised as superseded rather than as a second valid answer; it is never the live default.
 
-One task may be excepted by name, and the consolidated coordinator 01a0b98e currently runs
-ollama-cloud/glm-5.3 at xhigh under Jun's exception. A named exception covers the task it names
-and nothing else: it does not become a default, it is not propagated to other parents or down to
-children, and it is recorded explicitly rather than inferred from an observed pair.
+A single task may be excepted by name, and the consolidated CRW-127 coordinator currently runs
+ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception. A named exception does not become
+a default: it is not propagated to other parents or down to children, and it is recorded
+explicitly rather than inferred from an observed pair. It is also less exclusive than its name
+suggests: the policy file has no task-identity field and scopes an exception by role and
+directory, so exclusivity comes from choosing a directory one task works in. The id, that
+directory and the authorization behind them are read from the host policy and the Linear record
+rather than from here.
 
 This is a readback, not an authority. The child default is owned by
 [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)

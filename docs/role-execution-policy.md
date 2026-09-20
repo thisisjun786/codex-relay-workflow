@@ -97,36 +97,47 @@ declaring that same role, and an exception with no `role` key may be cited only 
 cites none. A directory is not a task identity, and without this an exception written for one task
 could be cited by any task in the same directory under any role.
 
-## One task on a different pair
+## Moving one task without moving its role
 
 A role's pair is the default for every task holding that role, so moving one task must not move
 the role. That is what a named exception is for, and it is the only supported way to express it:
 the operator writes an id, its single pair and the directories it covers, a request cites the id,
 and nothing else about the role changes.
 
-The current example is the CRW-127 coordinator, task `01a0b98e-dbce-79b0-9de6-7053757969ee`.
-Jun authorized it, and only it, to receive idle callbacks on `ollama-cloud/glm-5.3` at `xhigh`
-in `/home/jun/code`. Every other project parent stays on the parent pair. Written down, that is:
+One is in force as this is written. Jun authorized the CRW-127 coordinator, on 2026-09-21, to
+receive its idle callbacks on `ollama-cloud/glm-5.3` at `xhigh`; every other project parent stays
+on the parent pair. The shape is:
 
     {
       "exceptions": {
-        "crw-127-coordinator": {
+        "<id you choose>": {
           "model": "ollama-cloud/glm-5.3",
           "reasoningEffort": "xhigh",
-          "cwd": ["/home/jun/code"],
+          "cwd": ["/absolute/path/to/that/checkout"],
           "role": "parent",
-          "reason": "Jun, 2026-09-21: this coordinator only; the parent default does not move"
+          "reason": "who authorized it, when, and that the parent default does not move"
         }
       }
     }
 
-Three separate things keep that from spreading. The `role` key means only a request citing
-`parent` may cite it, so a child or a supervisor naming the id is refused rather than quietly
-covered. The `cwd` list means a parent working somewhere else is refused even though it holds the
-right role — a directory is not a task identity, but it is the narrowest scope the policy file can
-express, so it is the one that has to be stated. And the `roles` section is untouched: a reader
-asking what a project parent runs on still gets `xai/grok-4.6` at `xhigh`, because an exception is
-an exemption from the answer and never a replacement for it.
+The task id and the directory are deliberately not written here. They are operational values,
+they go stale, and the policy file on the host is the only place either is read from; this
+document would be a second source competing with it. The authorization itself belongs to the
+Linear record that carries the decision.
+
+Be exact about how far that reaches, because the section title overstates it and the mechanism
+does not. The policy file has no task-identity field, so an exception is scoped by role and by
+directory and by nothing else. The `role` key means only a request citing `parent` may cite this
+id, so a child or a supervisor naming it is refused rather than quietly covered. The `cwd` list
+means a parent working somewhere else is refused even though it holds the right role. What those
+two together do NOT give you is exclusivity: a second parent running in a covered directory could
+cite the same id and be authorized. Where that matters, give the exception a directory only one
+task works in, and treat "one task" as a property of how you scoped it rather than as something
+the checks enforce.
+
+The `roles` section is untouched either way. A reader asking what a project parent runs on still
+gets `xai/grok-4.6` at `xhigh`, because an exception is an exemption from the answer and never a
+replacement for it.
 
 The receipt says so too. A creation or send citing this id records `exception` and, under
 `roleExpectation`, the pair the role WOULD have required together with `overriddenBy`. A reader of
@@ -208,10 +219,10 @@ A model change on a running task is a UI action plus a re-record. The code does 
 `thread/resume` carries settings and reports what the thread is on, and `turn/start` is never used
 to bind them because its response reports nothing readable back. So the sequence is: change the
 setting in the UI, then re-record the authorization with
-`relay settings record --task <id> --source user_transition --settings @file`. That `source` value
-is the record of the UI action, and `settings show` and `doctor` surface it. A host observation is
-evidence of the actual value; it is never a new approval, so nothing adopts a drifting setting on
-its own.
+`codex-session-relay settings-record --task <id> --source user_transition --settings @file`.
+That `source` value is the record of the UI action, and `settings-show` and `doctor` surface it.
+A host observation is evidence of the actual value; it is never a new approval, so nothing adopts
+a drifting setting on its own.
 
 Two limits are recorded rather than smoothed over. When the host reports a thread as `notLoaded`,
 a resume that transmits a pair cannot distinguish preservation from adoption, so the attempt
