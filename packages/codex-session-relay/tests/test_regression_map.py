@@ -40,6 +40,7 @@ REAL_TIME_MODULES = (
     "test_bridge_adapter.py",
     "test_cli.py",
     "test_daemon_cadence.py",
+    "test_dispositions.py",
     "test_failure_recovery.py",
     "test_management_cli.py",
     "test_operational_scale.py",
