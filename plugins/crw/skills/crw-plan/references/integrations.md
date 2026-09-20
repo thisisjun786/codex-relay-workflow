@@ -560,6 +560,8 @@ Three things this must never become. An unavailable relay is never recorded as d
 
 Ordinary conversation is not managed transport. What the relay carries is the assignment's own traffic: the completion receipt, the acknowledgement, the verdict, and the revision request a needs-changes verdict queues. A question to a peer parent, a status answer, a clarification are peer conversation and stay on the ordinary path; forcing them through an assignment event would file conversation as delivery and make the record useless for the thing it exists to prove.
 
+Relay resume and native-goal continuation are different mechanisms and take different proof, and the word "resume" covers both, which is how they get confused. A relay resume is about an assignment: undelivered messages, an unsettled attempt, a generation waiting on its anchor, all recovered from the store. A native goal continuing is about a task deciding to keep working across turns. Neither establishes the other. A recovered assignment says nothing about whether the coordinator's goal is still active, and an active goal is not evidence that a queued correction ever reached the child. Record and prove them separately, and name which one a report is about.
+
 Existing work is not migrated by this. A project already running direct keeps its records, its owners and its pull requests, and switches only at a boundary where switching is safe and explicit. Reporting that current execution is still direct is part of the record, not something the determination hides.
 
 ### Durable cross-task delivery
