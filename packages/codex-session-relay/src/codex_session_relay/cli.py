@@ -357,6 +357,7 @@ def _refuse_role_disagreement(services, args) -> None:
     from . import rolepolicy
     from .errors import RefusalReason, RegistrationError
     from .linkage import CHILD
+    from .settings import TaskSettings
 
     policy = rolepolicy.declared()
     # Each side carries its own exception in the tuple. Recovering it from the settings value
@@ -376,9 +377,17 @@ def _refuse_role_disagreement(services, args) -> None:
         (args.child_task, args.child_settings, args.child_role, args.child_exception,
          CHILD if args.project else None),
     ):
-        if not raw or role is None:
+        if not raw:
             continue
         settings = dict(_settings_json(raw))
+        # The same completeness question record_settings asks, asked while there is still
+        # nothing to unwind, and asked of every settings value rather than only the ones that
+        # also name a role. Without it an incomplete settings file passed here, the relationship
+        # committed, and require_usable then raised over the top of it -- the same partial
+        # registration as the role disagreement, arriving through a second door.
+        TaskSettings(settings).require_usable()
+        if role is None:
+            continue
         settings["citedRole"] = role
         if exception is not None:
             settings["citedException"] = exception
@@ -449,7 +458,18 @@ def cmd_settings_show(services, args) -> dict:
             "recovery": "one task holds one role; resolve these bindings before this task can "
                         "be checked against either of them",
         }
-    elif bound and policy:
+    elif bound and not policy:
+        # Delivery treats this state as a refusal, so reporting it as deliverable would have
+        # this command disagree with the only consumer that acts on the answer. A bound task
+        # whose process cannot read a policy is not checkable, and not checkable is not clear.
+        finding = {
+            "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
+            "boundRole": bound,
+            "detail": policy.detail,
+            "recovery": "set this process's execution policy and restart it; deliveries held "
+                        "meanwhile resume on the next pass",
+        }
+    elif bound:
         finding = rolepolicy.check_record(settings, bound, policy)
     # Two questions, two fields, because folding them together loses one of the answers.
     # "usable" is about the RECORD -- are the required fields there -- and it is paired with
@@ -3434,8 +3454,18 @@ def _refuse_ambiguous_state(services, args) -> None:
 
 
 def main(argv=None) -> int:
+    from . import rolepolicy
+
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Taken here, before any work, for the same reason the bridge builds its policy in its own
+    # main(): the snapshot is supposed to be this PROCESS's, and a lazy first read made it the
+    # snapshot of whenever a role question first came up. A daemon could then start under one
+    # version of the file, serve unbound work for hours, and adopt an edit the bridge had never
+    # seen -- two processes enforcing different policies with neither one restarted, which is
+    # exactly the second policy source this is built to keep visible. It cannot fail startup: an
+    # unreadable or absent policy resolves to Unresolved, which withholds rather than raises.
+    rolepolicy.declared()
     services = None
     try:
         services = Services(args)

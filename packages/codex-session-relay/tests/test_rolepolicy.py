@@ -47,6 +47,18 @@ def write_policy(directory, mapping=None) -> str:
     return str(path)
 
 
+def write_policy_without_reset(directory, mapping=None) -> str:
+    """write_policy without dropping the snapshot, for the test that asks what a snapshot is.
+
+    Every other test stages a policy and wants the next read to see it. This one stages one and
+    wants the next read NOT to see it, which is the whole property being checked, so it cannot
+    borrow a helper whose last act is to clear the cache.
+    """
+    path = directory / "execution-policy.json"
+    path.write_text(json.dumps(mapping if mapping is not None else POLICY), encoding="utf-8")
+    return str(path)
+
+
 class RoleVocabularyIsShared(unittest.TestCase):
     def test_both_packages_spell_the_three_roles_the_same_way(self):
         """Neither package can import the other's vocabulary in both directions.
@@ -1066,6 +1078,109 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertEqual(shown["missing"], [])
         self.assertFalse(shown["deliverable"])
         self.assertIsNotNone(shown["roleFinding"])
+
+
+    def test_a_bound_task_is_not_deliverable_when_this_process_cannot_read_a_policy(self):
+        """Delivery refuses this state, so reporting it clear would disagree with the only
+        consumer that acts on the answer. Not checkable is not the same as checked and fine."""
+        import argparse
+        import os
+        import types
+
+        from codex_session_relay.cli import cmd_settings_show
+        from codex_session_relay.errors import RefusalReason as Reason
+        from codex_session_relay.models import Endpoint
+
+        os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        rolepolicy.reset()
+        self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        record_settings(
+            self.store, self.clock, PARENT,
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
+            source="creation_result",
+        )
+        services = types.SimpleNamespace(
+            registry=self.registry, store=self.store, clock=self.clock,
+        )
+        shown = cmd_settings_show(services, argparse.Namespace(task=PARENT))
+        self.assertTrue(shown["usable"], "the record itself is complete")
+        self.assertFalse(shown["deliverable"])
+        self.assertEqual(shown["rolePolicy"], "unresolved")
+        self.assertEqual(
+            shown["roleFinding"]["code"], Reason.ROLE_POLICY_UNCONFIGURED.value,
+        )
+
+
+    def test_the_policy_snapshot_is_this_process_rather_than_this_question(self):
+        """A lazy first read made the snapshot whenever a role question first came up.
+
+        A daemon could start under one version of the file, serve unbound work, and then adopt
+        an edit the bridge had never seen. main() takes the snapshot before any work, so the
+        version in force is the one the process started with.
+        """
+        import os
+        from pathlib import Path
+
+        from codex_session_relay.cli import main
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        started_on = rolepolicy.declared().digest
+        rolepolicy.reset()
+        # A command that asks no role question at all, standing in for the daemon's startup.
+        main(["--state", self.tmp, "doctor", "--issue", "ISS-404"])
+        superseded_model, superseded_effort = SUPERSEDED_PARENT
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy_without_reset(
+            Path(self.tmp), {
+                "roles": {
+                    "supervisor": {"expectation": "record"},
+                    "parent": {"model": superseded_model,
+                               "reasoningEffort": superseded_effort},
+                    "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+                }
+            },
+        )
+        self.assertEqual(
+            rolepolicy.declared().digest, started_on,
+            "the edit was adopted without a restart, so the two processes could disagree",
+        )
+
+
+    def test_an_incomplete_settings_file_refuses_before_the_relationship_commits(self):
+        """The partial registration the role check closed, arriving through a second door."""
+        import argparse
+        import json as _json
+        import os
+        import types
+        from pathlib import Path
+
+        from codex_session_relay.cli import cmd_register
+
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        args = argparse.Namespace(
+            parent_task=PARENT, parent_host="host-a", parent_cwd="/parent",
+            parent_cxc_session="cxc-parent",
+            child_task=CHILD, child_host="host-a", child_cwd=self.root,
+            child_cxc_session="cxc-child",
+            issue="ISS-1", artifact_root=[self.root], allowed_recipient=[PARENT],
+            scope_ref=None, dispatch_request_id="dispatch-1", dispatch_turn_id=None,
+            supersedes=None, project=None,
+            parent_settings=None, parent_role=None, parent_exception=None,
+            # No role cited, so only the completeness question can catch this one.
+            child_settings=_json.dumps({"model": "anthropic/claude-opus-5"}),
+            child_role=None, child_exception=None,
+        )
+        services = types.SimpleNamespace(
+            registry=self.registry, store=self.store, clock=self.clock,
+        )
+        with self.assertRaises(Exception):
+            cmd_register(services, args)
+        self.assertEqual(
+            self.store.all("SELECT relationship_id FROM relationships"), [],
+            "an incomplete settings file committed the relationship before it was refused",
+        )
 
 
     def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
