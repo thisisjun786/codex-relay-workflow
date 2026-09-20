@@ -360,7 +360,9 @@ gate you run, not one that intercepts you.
 | a mode is outside the measured set | the value and the four modes |
 | the declaration could not be read | that preservation was compared with nothing |
 | the registration carries another key, such as `tool_timeout_sec` | the key, and that the declaration does not reproduce it |
-| the policy is spelled so this command cannot render it back: the quoted form, an inline table, or a table outside the registration's own span | which tools, and the provable byte form: one table per tool, holding only `approval_mode` |
+| the policy is spelled so this command cannot render it back: the quoted form, an inline table, a dotted `tools.<tool>.approval_mode` key, or a table outside the registration's own span | which tools, and the provable byte form: one table per tool, holding only `approval_mode` |
+| a policy block carries anything else, such as a comment | that block, and that a provable one is exactly two lines, the header and `approval_mode` |
+| the file is written with CRLF line endings | that this command reads configurations with universal newlines, so removing the table would rewrite every line ending in the file, outside the table as well as inside |
 
 A refusal is not a completed transition. Do not read one as evidence that the plugin install, or a
 round trip through it, succeeded.
@@ -403,6 +405,16 @@ is caught by `check-declaration` if you run it, and by nothing otherwise.
 beyond `command`, `args` and `tools` is refused, because the declaration does not reproduce it and
 removing the table would lose it. That is the same class of problem as the approval gate and it is
 not solved here; the refusal names the key so the two are not confused.
+
+### Why CRLF is refused rather than handled
+
+This is worth stating because the failure it prevents is invisible. Configurations are read with
+universal newlines, so a CRLF file arrives as LF. The span is then rendered in LF, compares equal
+to what this repository renders, and the table reads as proven — while the parser-backed check on
+the real bytes says the opposite. Writing the result back would replace every line ending in the
+file, outside the table as well as inside, and the step's own byte check could not see it, because
+both sides of that comparison have already been translated. A command that promises to leave every
+other byte alone cannot also rewrite the whole file, so it declines the file instead.
 
 ### The race this does not close
 
