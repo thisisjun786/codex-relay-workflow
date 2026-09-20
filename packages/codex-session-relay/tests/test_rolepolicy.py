@@ -448,6 +448,40 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         self.assertEqual(len(self.adapter.sends), 1)
 
 
+    def test_a_recipient_that_unloads_after_the_observation_is_still_refused(self):
+        """The gate's status is older than the resume by a turn listing and a claim.
+
+        Deciding only on that older read let a recipient unload in between and be resumed under
+        exactly the pair the decision meant never to transmit, so the transport applies the same
+        rule on the read it takes immediately before resuming.
+        """
+        from codex_session_relay.registry import load_settings
+
+        self.adapter.set_status(PARENT, "idle")
+        _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
+        settings = self.delivery._settings_for(PARENT, "idle")
+        self.assertTrue(
+            settings.refuse_when_unloaded,
+            "a supervisor's pair is never policy-derived, so the transport must be told",
+        )
+        # And a recipient whose pair IS the declared one carries no such instruction.
+        record_settings(
+            self.store, self.clock, CHILD,
+            task_settings("/child", model="anthropic/claude-opus-5", reasoningEffort="xhigh"),
+            source="creation_result", role="child",
+        )
+        from codex_session_relay.models import Endpoint
+
+        self.registry.linkage.bind_scope(
+            role="child", scope_key="ISSUE-77",
+            endpoint=Endpoint(CHILD, "host-a", cwd="/child", cxc_session="cxc-child"),
+        )
+        self.assertFalse(load_settings(self.store, CHILD) is None)
+        child = self.delivery._settings_for(CHILD, "idle")
+        self.assertFalse(child.refuse_when_unloaded)
+
+
+
     def test_a_legacy_record_citing_an_unauthorized_exception_is_withheld_not_crashed(self):
         """The send-time gate exists to revalidate records an earlier writer admitted.
 

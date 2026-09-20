@@ -896,6 +896,14 @@ class DeliveryService:
         )
         if unloaded is not None:
             raise unloaded
+        # The status above is the one observed before this delivery listed turns and claimed
+        # itself, so it can be stale by the time the transport resumes. The transport takes its
+        # own read immediately before that resume; this is what tells it to apply the same rule
+        # there, on the state that actually holds.
+        settings.refuse_when_unloaded = (
+            rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded")
+            is not None
+        )
         return settings
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,

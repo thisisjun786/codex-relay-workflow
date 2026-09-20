@@ -1127,13 +1127,23 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
         existing = db.execute(
             "SELECT settings FROM authorized_settings WHERE task_id = ?", (task_id,)
         ).fetchone()
-        if role is None and existing is not None:
-            # The cited role is a fact about how this task was CREATED, so a later write that
-            # does not restate it must not erase it. A re-record after a user transition is the
-            # ordinary case and carries no role, and dropping it there turned a task with a
-            # known creation into one with none -- which then bound cleanly to any role at all.
+        if existing is not None:
+            # The cited role is a fact about how this task was CREATED. A later write neither
+            # erases it by omission nor replaces it by restating something else: dropping it
+            # turned a task with a known creation into one with none, and rewriting it let a
+            # task created as one role be re-recorded as another while still unbound, so the
+            # binding that followed compared against the replacement and accepted it. A user
+            # transition may change the authorized pair and its exception provenance; it may
+            # not change what the task was made as.
             carried = rolepolicy.cited_role(json.loads(existing["settings"]))
-            if carried is not None:
+            if carried is not None and role is not None and role != carried:
+                raise RegistrationError(
+                    RefusalReason.ROLE_BINDING_MISMATCH,
+                    f"{task_id!r} was created citing role {carried!r} and this record states "
+                    f"{role!r}. The creation role is not something a later write changes; "
+                    "correct whichever of the two is wrong at its source",
+                )
+            if carried is not None and role is None:
                 settings["citedRole"] = carried
         if exception is None and existing is not None:
             previous = json.loads(existing["settings"])

@@ -204,6 +204,18 @@ def test_a_policy_declaring_neither_an_allowlist_nor_a_role_is_still_a_mistake()
         ExecutionPolicy.from_mapping({})
 
 
+def test_a_role_cannot_declare_a_value_longer_than_a_request_may_state():
+    """Otherwise the policy loads and then refuses every request that names it."""
+    from codex_thread_bridge import roles
+    from codex_thread_bridge.execution import MAXIMUM
+
+    assert roles.SETTING_MAXIMUM == MAXIMUM
+    longest = "m" * MAXIMUM
+    assert declared(roles={"parent": {"model": longest, "reasoningEffort": "max"}})
+    with pytest.raises(ExecutionPolicyError):
+        declared(roles={"parent": {"model": longest + "m", "reasoningEffort": "max"}})
+
+
 def test_an_exception_answers_the_role_question_and_the_receipt_names_it():
     """The user's explicit authorization wins, and an override is never silent."""
     policy = ExecutionPolicy.from_mapping(

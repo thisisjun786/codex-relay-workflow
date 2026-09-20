@@ -349,14 +349,18 @@ def _refuse_role_disagreement(services, args) -> None:
     from .errors import RefusalReason, RegistrationError
 
     policy = rolepolicy.declared()
-    for raw, role in ((args.parent_settings, args.parent_role),
-                      (args.child_settings, args.child_role)):
+    # Each side carries its own exception in the tuple. Recovering it from the settings value
+    # by identity or equality asks the wrong question: two sides can pass the same string, and
+    # then the child is validated against the parent's exception and a legitimate registration
+    # is refused before anything is written.
+    for raw, role, exception in (
+        (args.parent_settings, args.parent_role, args.parent_exception),
+        (args.child_settings, args.child_role, args.child_exception),
+    ):
         if not raw or role is None:
             continue
         settings = dict(_settings_json(raw))
         settings["citedRole"] = role
-        exception = (args.parent_exception if raw is args.parent_settings
-                     else args.child_exception)
         if exception is not None:
             settings["citedException"] = exception
         finding = rolepolicy.check_binding(role, role, settings, policy if policy else None)

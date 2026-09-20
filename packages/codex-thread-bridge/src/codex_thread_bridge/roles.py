@@ -41,6 +41,13 @@ PAIR = "pair"
 
 ROLE_MAXIMUM = 64
 
+# The same ceiling a request's own model and effort are held to. A policy that declares a value
+# longer than a caller may state would load happily and then refuse every request naming it,
+# which is a configuration nobody can use accepted as though it were fine. Kept as a literal
+# rather than an import because execution.py imports this module, and the two are pinned equal
+# by a test on both sides.
+SETTING_MAXIMUM = 500
+
 _ENTRY_KEYS = {"model", "reasoningEffort", "expectation"}
 
 
@@ -72,7 +79,7 @@ class RoleExpectation:
 
 
 def _text(value, where, error):
-    if not isinstance(value, str) or not value.strip() or len(value) > ROLE_MAXIMUM * 8:
+    if not isinstance(value, str) or not value.strip() or len(value) > SETTING_MAXIMUM:
         raise error(f"{where} must be a non-empty string")
     return value
 
