@@ -4309,3 +4309,72 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1)
         self.assertEqual(host.config(), before)
+
+    # ------------------------------------------------------------- the pre-add gate, exercised
+    #
+    # The gate judges the CANDIDATE -- the bytes about to be installed -- and carries a payload
+    # digest so that running it again against the installed version and comparing digests ties the
+    # verdict to what actually landed. Both halves of that are claims until something runs them.
+
+    def candidate(self, edit=None):
+        """A copy of this checkout's package, optionally with its declaration edited."""
+        root = Path(self.directory) / ("candidate%d" % (len(list(Path(self.directory).glob("candidate*"))) + 1))
+        shutil.copytree(ROOT / "plugins" / "crw", root, symlinks=False)
+        if edit is not None:
+            path = root / "wiring" / "mcp.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            edit(document["mcpServers"]["codex-thread-bridge"])
+            path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        return root
+
+    @needs_reader
+    def test_the_gate_passes_a_candidate_that_preserves_what_this_host_grants(self):
+        host = self.granted(self.ready())
+        code, answer = host.call("check-declaration", "--package", str(self.candidate()))
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:1500])
+        self.assertEqual(answer["outcome"], "preserves")
+        self.assertEqual(answer["granted"], answer["declared"])
+        self.assertTrue(answer["payloadDigest"])
+
+    @needs_reader
+    def test_the_gate_refuses_a_candidate_that_would_drop_a_gate(self):
+        host = self.granted(self.ready())
+
+        def drop(entry):
+            entry["tools"].pop("send_message_to_thread")
+
+        code, answer = host.call("check-declaration", "--package", str(self.candidate(drop)))
+        self.assertEqual(code, 1)
+        self.assertEqual(answer["outcome"], "refused")
+        # The package check catches it too, because this package must keep declaring both gates.
+        self.assertTrue(answer["refusals"] or answer["packageErrors"])
+        self.assertIn("send_message_to_thread",
+                      " ".join(answer["refusals"] + answer["packageErrors"]))
+
+    @needs_reader
+    def test_the_gate_refuses_a_candidate_that_disagrees_with_this_host(self):
+        host = self.ready()
+        self.granted(host, '\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
+                           'approval_mode = "prompt"\n')
+        code, answer = host.call("check-declaration", "--package", str(self.candidate()))
+        self.assertEqual(code, 1)
+        self.assertIn("does not choose between them", " ".join(answer["refusals"]))
+
+    @needs_reader
+    def test_the_digest_distinguishes_two_packages_and_matches_an_unmodified_copy(self):
+        """What makes the pre-add verdict bindable to the bytes that landed."""
+        host = self.granted(self.ready())
+        plain = host.call("check-declaration", "--package", str(self.candidate()))[1]
+
+        def widen(entry):
+            entry["tools"]["create_thread"]["approval_mode"] = "prompt"
+
+        altered = host.call("check-declaration", "--package", str(self.candidate(widen)))[1]
+        self.assertNotEqual(plain["payloadDigest"], altered["payloadDigest"],
+                            "two different packages reported the same digest, so comparing"
+                            " digests would not tell the operator the bytes had changed")
+        # And the installed cache, which is a verbatim copy of the same package, reports the
+        # digest the candidate did. That equality is the binding the documented procedure uses.
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        installed = host.call("check-declaration", "--package", str(cache))[1]
+        self.assertEqual(installed["payloadDigest"], plain["payloadDigest"])
