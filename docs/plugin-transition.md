@@ -406,6 +406,30 @@ beyond `command`, `args` and `tools` is refused, because the declaration does no
 removing the table would lose it. That is the same class of problem as the approval gate and it is
 not solved here; the refusal names the key so the two are not confused.
 
+### Reading `policyInEffect`
+
+`inspect`, `disable`, `remove`, `swap-state` and `check-declaration` all report which per-tool
+approval policy this host is actually under. `transition` reports `policyBefore` instead, because
+on an applied run the table is gone by the time the receipt prints, and the standdown's own answer
+carries `removedPolicy`.
+
+The source is the user table while it exists, because measurement says that table wins, and the
+installed declaration only once the table is gone. `state` is one of three answers and they are
+deliberately not interchangeable:
+
+| `state` | What it means |
+| --- | --- |
+| `PRESENT` | a policy was read, and `tools` lists it |
+| `ABSENT` | it was read, and there is no policy here: no table, no MCP document declared, the package does not declare this server, or it declares no `tools`. `detail` is null, because nothing failed |
+| `UNREADABLE` | the question was not answered: a file that could not be read, a manifest or document whose root is not an object, a declared path that is not a usable string, a server entry that is not an object, or a malformed gate. `detail` says which |
+
+`ABSENT` and `UNREADABLE` are the distinction this whole change exists to keep. An unreadable
+policy reported as absent reads as "nothing gates these tools", which is the claim that must never
+be made on an unanswered question; an absent policy reported as unreadable sends an operator
+looking for a broken file that is fine. A declaration is only ever read once the plugin entry is
+present, `enabled` is true, and one cache version can be named; otherwise the answer says which of
+those was missing, because a cached directory is not a loaded plugin.
+
 ### Why CRLF is refused rather than handled
 
 This is worth stating because the failure it prevents is invisible. Configurations are read with
