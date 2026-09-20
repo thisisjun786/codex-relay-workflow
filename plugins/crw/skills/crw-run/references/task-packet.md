@@ -784,10 +784,11 @@ needed to resume:
   [Resolve the project target](../../crw-plan/references/integrations.md#resolve-the-project-target);
   what the record owes recovery is the evidence that this target was the temporary one.
 - Per state line, when it was observed, whether this turn refreshed it or carried it forward, and
-  which register it was read from; and beside each task identifier this record keeps, the host it
-  belongs to. A restart composes its restatement and any restoration block from this record rather
-  than from context it no longer has, so a field the record never held is one the next sender has
-  to omit or guess.
+  which register it was read from; and beside each task identifier this record keeps, the host
+  where the interface supplied it or it was independently established, recorded as unknown where
+  neither happened. A restart composes its restatement and any restoration block from this record
+  rather than from context it no longer has, so a field the record never held is one the next
+  sender omits and names as unestablished rather than guessing.
 - Where management moved: the outgoing task, the incoming task, what transferred and what did not,
   and the revision it took effect at. A handoff nobody recorded leaves the next recovery reading two
   owners for one project.
