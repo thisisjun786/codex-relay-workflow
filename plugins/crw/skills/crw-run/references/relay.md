@@ -195,6 +195,50 @@ coordinator already holds. A settings record has seven required fields:
      "runtimeWorkspaceRoots": ["/abs/path"], "model": "...", "reasoningEffort": "...",
      "environments": [...]}
 
+Record the role the creation cited alongside them, through `--parent-role`/`--child-role` on
+registration or `--role` on a settings record, taken from the receipt's `executionPolicy.role`.
+The relay compares it with the role the task is actually bound to, in whichever order those two
+facts arrive, and refuses a disagreement as `role_binding_mismatch` rather than recording it:
+the recovery for a mismatch is not re-recording, because that would write one side's answer over
+the other.
+
+After a user changes an existing task's model, re-record that task's authorization from a
+user-attributed source before the next send, with `--source user_transition`. The record is what
+a send verifies against, and a value observed on the host is evidence of what the task is running
+rather than a new approval, so nothing adopts a drifting setting on its own. Until it is
+re-recorded the send is refused as `settings_record_stale_for_role`, before any transport call.
+A process that cannot read a role policy refuses role-bound sends as `role_policy_unconfigured`
+rather than skipping the check; that hold is retry-safe, so declaring the policy and restarting
+resumes the held deliveries. `doctor` reports the policy digest this process resolved and
+compares it with the bridge's, because two processes reading two different files is a second
+source of truth that neither one can see on its own.
+
+
+A message to a task states the RECIPIENT's authorized pair, not the sender's. A child reporting
+to its parent states the parent's, and its own settings are unaffected by what the parent runs
+on; copying the recipient's pair into the sender is how a correction to one level spreads to
+another. The pair to state is the one RECORDED as that task's authorization, which is what a send
+verifies against. For most tasks that is the pair its role's policy declares, and it is read at
+the time of the send rather than from a memory of what the role used to run on. It is not always
+that pair: an exception authorizes one specific model and effort for one role and directory, and
+a task created under a currently valid one legitimately differs from the ordinary declared pair.
+Stating the declared pair for such a task would either fail verification or ask the host to
+change what the task runs on.
+
+The recipient's runtime state decides the mechanism as well as the settings, and it does not
+decide it alone. An ACTIVE recipient is steered into the turn it is already running, and a steer
+carries no model or effort at all, so there is nothing to state and nothing that could be
+applied. An IDLE recipient is resumed and carries its settings. A recipient the host reports as
+`notLoaded` is resumed only when its pair derives from its role's declared pair: a resume can
+apply what it transmits while the host materializes the thread, so a record-based pair — a
+supervisor's — or an exception-authorized one is refused there rather than sent. For those, wait
+until the host has the task loaded and read its state again before choosing a route; the refusal
+is retry-safe and nothing is lost meanwhile.
+
+Reading the state before choosing is what keeps those apart, and it is also what a report must
+not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a
+correction still held because its recipient was not loaded are three different facts.
+
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
 `activePermissionProfile`, carry it into the record's `expectedPermissionProfile` field, which is
@@ -217,6 +261,13 @@ relationship, and either side can be recorded afterwards with
 incomplete one is refused when it is written, and a recipient with no record at all has its send
 withheld rather than sent under a host default. `settings-show --task <id>` reports what is held
 and what is missing.
+
+Read `deliverable` rather than `usable` before a send. They answer different questions: `usable`
+is about the record alone, whether the required fields are there, and it is the field `missing`
+pairs with. `deliverable` also accounts for the role the task is actually bound to, so a complete
+record that contradicts its binding or has gone stale against the current role policy reports
+`usable: true` and `deliverable: false`, with `roleFinding` saying which. A preflight that reads
+only `usable` will approve a send the relay then withholds.
 
 Registering a different child for an issue that already has an active or paused assignment is
 refused with `duplicate_assignment`, inside the same transaction that would have inserted it, so

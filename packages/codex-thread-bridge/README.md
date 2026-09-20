@@ -158,19 +158,63 @@ assumes the stronger one. `steer_thread` and `pause_goal` select none: they put 
 turn that is already running, or change a goal's status, so they take no pair, authorize
 nothing, and carry no authorization record that might imply otherwise.
 
+
+**Was it this role's pair?** The two questions above can both be answered correctly by a task
+that is still on the wrong model. Callers that run several levels of work give each level its own
+pair, and nothing related a task's role to the pair it was started on: a project parent created
+on another level's model passed presence and the allowlist and was still wrong. So a caller may
+name the role it is creating for, through `role`, and a named role is compared against the pair
+this host declares for it.
+
+The values live in the file and nowhere else. This package ships no pair for any role, because a
+pair written into code would compete with the operator's file and would answer the approval
+question on a host that configured nothing. A role the policy does not declare is refused rather
+than defaulted, and `get_capabilities` reports the declared roles so a caller can state the pair
+this host expects instead of one it remembered.
+
+Naming a role is opt-in and the argument is appended to a request only when supplied, so a caller
+that names none behaves exactly as it did and every retained receipt still replays. `allowed` is
+optional once `roles` is declared: an allowlist constrains every task on the host, so requiring
+one in order to declare roles would narrow unrelated work as a side effect.
+
+`supervisor` is the one role that declares no pair. Its model is the user's own selection, so it
+carries `{"expectation": "record"}` and its authorization is whatever was recorded for it; a file
+that tries to pin it does not load, and no other role may declare `record` and exempt itself from
+the check. An exception may also name a `role`, and then only a request naming that role may cite
+it — a directory is not a task identity, so without this an exception written for one task could
+be cited by anything else working in the same place.
+
+One further rule applies when the host reports a thread as `notLoaded`. A resume transmits the
+settings, and on a thread the host has to materialize first it may apply them, so an agreeing
+echo cannot be told apart from the host repeating the request; the receipt records
+`statusBeforeResume` and `echoIndependence: "not_established"` for that case. Where a role was
+named and its pair was NOT compared against a declared role pair — a supervisor, or any request
+citing an exception, which exists to skip that comparison — the send is refused instead, because
+transmitting such a pair could restore a value the user has since changed. A send that names no
+role is not covered: this package reads no role binding of any kind, so it cannot tell an unnamed
+supervisor from a task with no role, and refusing both would stop unrelated work. A caller that
+can resolve the binding owns that refusal.
+
 Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 
 ```json
 {
   "allowed": [
     {"model": "anthropic/claude-opus-5", "efforts": ["xhigh"]},
-    {"model": "openai/gpt-5.6-sol", "efforts": ["high"]}
+    {"model": "openai/gpt-5.6-sol", "efforts": ["high"]},
+    {"model": "xai/grok-4.6", "efforts": ["xhigh"]}
   ],
+  "roles": {
+    "supervisor": {"expectation": "record"},
+    "parent": {"model": "xai/grok-4.6", "reasoningEffort": "xhigh"},
+    "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
+  },
   "exceptions": {
     "one-task": {
       "model": "openai/gpt-6-astra",
       "reasoningEffort": "high",
       "cwd": ["/absolute/path/to/that/checkout"],
+      "role": "parent",
       "reason": "why you allowed it; never returned to a caller"
     }
   }
@@ -183,6 +227,13 @@ process's environment; a file that is configured and cannot be used stops the se
 rather than degrading to presence-only. Directories are compared by exact string
 equality, so an entry that is absolute but not canonical is refused at startup rather
 than loading cleanly and then matching nothing.
+
+A declared role pair is still asked the allowlist question — only an exception skips that — so
+where both sections are present, `allowed` has to approve every pair `roles` declares. A file
+that declares `parent` on a model its own allowlist omits describes a role nobody could create,
+and it is refused at startup rather than at the first creation attempt. Neither section is made
+to win: letting `roles` authorize its own pair would make editing it a way to widen the
+allowlist, and letting `allowed` win would silently unmake a role.
 
 An exception is a **name, not a value**. The operator writes the id, its one model, its
 one effort and the directories it covers; a caller may cite that id through

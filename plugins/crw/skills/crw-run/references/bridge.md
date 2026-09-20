@@ -117,6 +117,13 @@ the App Server configuration. Omitting any other setting uses that configuration
 checks nothing, so supply the ones the assignment depends on: an omitted setting is
 reported but never verified.
 
+It also accepts `role`. Name the role this task is being created for and state the pair the
+host's declared policy reports for it, read from `get_capabilities` rather than remembered;
+the host then checks the answer instead of taking the caller's word. A role the policy does not
+declare is refused before any call, and no pair is supplied in its place. The rule and the
+decision it carries are in
+[Execution settings by role](../../crw-plan/references/integrations.md#execution-settings-by-role).
+
 **New retained worktree:** `create_worktree_thread` accepts a source checkout,
 full immutable commit, absent absolute destination with an existing parent,
 explicit `worktree_mode: bridge-managed-retained`, model, reasoning_effort,
@@ -124,6 +131,7 @@ sandbox, and the complete expected_sandbox_policy. Honor the tool's explicit
 ownership, permission, and prompt authorization requirements; reuse an earlier
 authorization that actually covers these choices. The pair is authorized before any
 Git work, so a refused launch leaves no worktree behind.
+It takes `role` on the same terms, authorized at the same point.
 
 This second path creates a detached, locked checkout, not a branch or
 Desktop-managed worktree. Arrange any needed branch according to project policy
@@ -212,6 +220,16 @@ Compare actual cwd, workspace roots, model, reasoningEffort, approvalPolicy, and
 the full sandbox/permission response. Do not infer OCX routing from a model ID
 or the generic modelProvider label. Missing served-provider proof stays unknown.
 
+The receipt also reports the runtime status the host gave before the resume. Where that status
+is `notLoaded`, it carries `echoIndependence: "not_established"`: the host may apply the
+settings it was sent while materializing the task, so an agreeing answer cannot be told apart
+from it repeating the request. Report such an answer as agreement, never as preservation. Where
+a role was named and its pair was not checked against that role's declared pair — a supervisor,
+whose pair is the user's own selection, or a request citing a policy exception — the send is
+refused instead, because transmitting an unchecked pair there could restore a value the user has
+since changed. A send naming no role is not covered by that check; the relay resolves a
+recipient's role from its binding and owns it.
+
 These same returned settings are what a relay records as a task's authorized
 execution settings, so a later delivery preserves them instead of inheriting a host
 default. Record BOTH sides from their own receipts; do not ask a task for them. Most
@@ -229,6 +247,8 @@ expected_sandbox_policy, runtime_workspace_roots and approval_policy. A turn on 
 what a new one costs, so a send with no stated pair is refused before the task is even
 read. The resume carries those settings and is read as an observation, and a difference
 or a setting the host does not report withholds the message instead of dispatching it.
+Name the RECIPIENT's role in `role` where it has one, so the stated pair is checked against
+that role rather than accepted as given.
 An unrecognised key is refused rather than ignored. Verify the returned settings on each
 mutation and reconcile a mismatch on the same task.
 

@@ -32,7 +32,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from . import restoration
+from . import restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
 )
@@ -774,7 +774,7 @@ class DeliveryService:
         # pinned bridge's own resume carries no overrides, and on this host that returned
         # dangerFullAccess for a workspaceWrite task.
         try:
-            settings = self._settings_for(recipient)
+            settings = self._settings_for(recipient, observation.runtime_status)
         except DeliveryRefused as refusal:
             self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"],
                                     row=row)
@@ -850,7 +850,7 @@ class DeliveryService:
 
     # --------------------------------------------------------------- states
 
-    def _settings_for(self, task_id: str):
+    def _settings_for(self, task_id: str, runtime_status=None):
         """The recorded settings, validated. Absence and incompleteness both refuse."""
         from .registry import load_settings
 
@@ -862,6 +862,48 @@ class DeliveryService:
                 " creation result before a send can preserve them",
             )
         settings.require_usable()
+        # ------------------------------------------------------------------ role policy
+        # The record is still the thing a send verifies against; this only asks whether it has
+        # fallen behind the policy for the role this task actually holds. A task bound to no
+        # scope is outside the policy and nothing about it changes.
+        role = rolepolicy.bound_role(self.store, task_id)
+        if role is None:
+            return settings
+        if isinstance(role, rolepolicy.Contested):
+            raise rolepolicy.refuse_contested(role, task_id)
+        policy = rolepolicy.declared()
+        if not policy:
+            raise rolepolicy.refuse_unresolved(policy, role, task_id)
+        finding = rolepolicy.check_record(settings, role, policy)
+        if finding is not None:
+            # Dispatched on the code the finding carries rather than on the assumption that a
+            # finding which is not the undeclared one must be a stale record. That assumption
+            # read `recorded` and `expected` off a citation finding which has neither and raised
+            # a KeyError out of the gate, leaving the delivery queued instead of withheld --
+            # a revalidation path failing open on exactly the legacy records it exists to catch.
+            raise DeliveryRefused(
+                RefusalReason(finding["code"]),
+                f"{task_id!r} is bound as {role!r}: "
+                + rolepolicy.describe(finding)
+                + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
+                + finding.get("recovery", rolepolicy.RECOVERY),
+            )
+        # The bridge applies this rule on its own tool path, and a relay delivery does not take
+        # that path: it resumes through its own transport. Applied here too, or a send reaches a
+        # thread the tool surface would have refused.
+        unloaded = rolepolicy.check_unloaded_transmission(
+            settings, role, policy, runtime_status
+        )
+        if unloaded is not None:
+            raise unloaded
+        # The status above is the one observed before this delivery listed turns and claimed
+        # itself, so it can be stale by the time the transport resumes. The transport takes its
+        # own read immediately before that resume; this is what tells it to apply the same rule
+        # there, on the state that actually holds.
+        settings.refuse_when_unloaded = (
+            rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded")
+            is not None
+        )
         return settings
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
