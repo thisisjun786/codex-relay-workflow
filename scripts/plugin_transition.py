@@ -85,6 +85,11 @@ def policy_in_effect(host):
               + ((": " + str(plugin["detail"])) if plugin.get("detail") else "")
     else:
         declared, unread = steps.declared_policy(version, inventory.SERVER_NAME)
+        if declared is None:
+            # Unreadable is not absent. Reporting an empty tool set for a declaration nobody
+            # could read states as fact the very thing that was not established.
+            return {"from": "the installed plugin declaration under " + str(version),
+                    "state": reading.UNREADABLE, "tools": {}, "detail": unread}
         return {"from": "the installed plugin declaration under " + str(version),
                 "state": reading.PRESENT if declared else reading.ABSENT,
                 "tools": declared or {}, "detail": unread}

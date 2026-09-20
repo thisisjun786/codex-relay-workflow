@@ -4622,12 +4622,22 @@ def _plugin_declared_servers(codex_home):
             continue
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                # Valid JSON is not a manifest. A root that is a list answers .get with an
+                # AttributeError, which the handler below does not catch, so register-mcp
+                # answered internal_error instead of the ownership refusal it promises. A
+                # package this cannot read is unreadable, which refuses, not absent.
+                unreadable = True
+                continue
             named = manifest.get("mcpServers")
             if not (isinstance(named, str) and named.strip()):
                 continue
             relative = named[2:] if text_prefix(named, "./", at="start") else named
             document = json.loads((version / relative).read_text(encoding="utf-8"))
-            servers = (document or {}).get("mcpServers")
+            if not isinstance(document, dict):
+                unreadable = True
+                continue
+            servers = document.get("mcpServers")
             if not isinstance(servers, dict):
                 unreadable = True
                 continue

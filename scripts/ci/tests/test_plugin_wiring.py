@@ -1112,3 +1112,15 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         status, emitted, output = self.register("--apply", "--name", "my-bridge")
         self.assertEqual(status, 0, output)
         self.assertEqual(emitted["serversNow"], ["my-bridge"])
+
+    @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
+    def test_a_cached_manifest_that_is_not_an_object_refuses_rather_than_crashing(self):
+        """Devin finding: valid JSON is not a manifest, and .get on a list is not a refusal."""
+        cache = self.install_plugin()
+        (cache / ".codex-plugin" / "plugin.json").write_text("[]", encoding="utf-8")
+        before = self.config()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 1, output)
+        self.assertNotEqual(emitted.get("outcome"), "internal_error")
+        self.assertIn("could not be read", emitted["detail"])
+        self.assertEqual(self.config(), before)

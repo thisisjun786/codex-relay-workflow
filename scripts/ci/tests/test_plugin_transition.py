@@ -4378,3 +4378,15 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
         installed = host.call("check-declaration", "--package", str(cache))[1]
         self.assertEqual(installed["payloadDigest"], plain["payloadDigest"])
+
+    @needs_reader
+    def test_an_installed_declaration_nobody_can_read_is_not_reported_as_absent(self):
+        """Devin finding: unreadable is not absent, and a receipt must not state one as the other."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        (cache / "wiring" / "mcp.json").write_text("[]", encoding="utf-8")
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["policyInEffect"]["state"], "UNREADABLE")
+        self.assertEqual(answer["policyInEffect"]["tools"], {})
