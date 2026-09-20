@@ -14,6 +14,14 @@ import pytest
 from codex_session_relay import mergeevidence
 from codex_session_relay.mergeturn import MergeTurn
 
+import json
+import pathlib
+
+ORACLE = json.loads(
+    (pathlib.Path(__file__).parent / "fixtures" / "merge_turn_oracle.json")
+    .read_text(encoding="utf-8")
+)
+
 ROW = {"target_key": "owner/repo@dev"}
 ACTOR = "task-parent"
 HEAD = "c68be165ae8ee4a645f3266eae3e9c543a851382"
@@ -243,3 +251,46 @@ def test_the_string_threads_seen_would_otherwise_have_passed():
     sneaky = _clean_review(threadsSeen="ab", totalCount=2)
     assert mergeevidence.review_problems(sneaky) == []
     assert mergeevidence.shape_problems(sneaky, []) != []
+
+
+def _observable(refusal):
+    if refusal is None:
+        return None
+    return [refusal.reason.value, refusal.detail, refusal.incumbent, refusal.challenger,
+            refusal.domain, refusal.subject]
+
+
+@pytest.mark.parametrize("label,expected", ORACLE["review"],
+                         ids=[row[0] for row in ORACLE["review"]])
+def test_review_refusal_matches_the_frozen_oracle(label, expected):
+    """The oracle was captured from the landed implementation BEFORE it delegated.
+
+    Comparing mergeturn against mergeevidence stopped proving anything the moment mergeturn
+    started calling mergeevidence: a function equals itself. What survives delegation is a
+    table of answers recorded while the two were still independent, so these are literal
+    expected values rather than a live comparison.
+
+    It pins the whole observable result, not the verdict. incumbent, challenger, domain and
+    subject reach the conflict ledger through Refusal.to_record, so a delegation that dropped
+    one would change a stored record while every pass/refuse assertion stayed green.
+    """
+    review = dict(dict(REVIEW_CORPUS)[label])
+    assert _observable(MergeTurn._review_refusal(ROW, ACTOR, review)) == expected
+
+
+@pytest.mark.parametrize("label,expected", ORACLE["checks"],
+                         ids=[row[0] for row in ORACLE["checks"]])
+def test_check_refusal_matches_the_frozen_oracle(label, expected):
+    required, checks = next((q, c) for lab, q, c in CHECKS_CORPUS if lab == label)
+    observed = MergeTurn._check_refusal(
+        ROW, ACTOR, HEAD, sorted(required), [dict(entry) for entry in checks])
+    assert _observable(observed) == expected
+
+
+def test_the_oracle_records_both_outcomes_and_every_incumbent_kind():
+    """An oracle of all-None rows would pass against an implementation that never refuses."""
+    rows = [row[1] for row in ORACLE["review"] + ORACLE["checks"]]
+    assert any(row is None for row in rows)
+    assert any(row is not None for row in rows)
+    incumbents = {row[2] for row in rows if row is not None}
+    assert "" in incumbents and any(one for one in incumbents)

@@ -23,7 +23,11 @@ declaration, which is why `required` is an argument rather than something discov
 
 from collections import namedtuple
 
-Problem = namedtuple("Problem", "code detail")
+#: `incumbent` is the party or name a refusal points at, and it is carried here rather than
+#: rebuilt by the caller because Refusal.to_record writes it into the conflict ledger. A
+#: delegation that let it default would keep every verdict identical and quietly blank a
+#: stored field, which is the kind of change a pass/refuse assertion never notices.
+Problem = namedtuple("Problem", "code detail incumbent", defaults=("",))
 
 MALFORMED = "malformed_evidence"
 REVIEW_UNSTATED = "review_unstated"
@@ -221,6 +225,9 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     def stale(detail):
         return [Problem(CHECKS_STALE, detail)]
 
+    def stale_at(detail, incumbent):
+        return [Problem(CHECKS_STALE, detail, incumbent)]
+
     if not checks:
         return stale("no check runs were restated, so nothing says this head is green")
     nameless = [
@@ -243,15 +250,15 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
         # Every entry has to be ABOUT this head, because one that is not is evidence
         # about another commit and has no business in this set.
         if entry.get("headSha") != head_sha:
-            return stale("check run " + repr(run) + " reports head "
-                         + repr(entry.get("headSha")) + ", not " + repr(head_sha))
+            return stale_at("check run " + repr(run) + " reports head "
+                            + repr(entry.get("headSha")) + ", not " + repr(head_sha), run)
         # A conclusion is only binding for a check the caller declared required. An
         # optional lint failing alongside a green dev-gate is not a reason to refuse a
         # merge, and refusing it made the declared set mean nothing.
         if str(entry.get("name", "")) in required and entry.get("conclusion") != "success":
-            return stale("required check " + repr(entry.get("name")) + " (run " + repr(run)
-                         + ") concluded " + repr(entry.get("conclusion"))
-                         + " on its newest attempt")
+            return stale_at("required check " + repr(entry.get("name")) + " (run " + repr(run)
+                            + ") concluded " + repr(entry.get("conclusion"))
+                            + " on its newest attempt", run)
     present = {
         str(entry.get("name", "")) for entry in checks
         if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
@@ -259,8 +266,8 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     }
     missing = [name for name in required if name not in present]
     if missing:
-        return stale("these checks were declared required and are not present and successful"
-                     " in the restated set: " + repr(missing))
+        return stale_at("these checks were declared required and are not present and"
+                        " successful in the restated set: " + repr(missing), missing[0])
     if not required and not present:
         # With nothing declared required, the set still has to contain something green on
         # this head; otherwise an all-red restatement would pass for want of a rule.

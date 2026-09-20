@@ -268,11 +268,15 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
              "headSha": head_sha, "submissionNo": row["submissionNo"]},
             at=now,
         )
+        # Unconditional, for the same reason the work_reports delete is: a resubmission that
+        # carries no handoff must not inherit the previous one. Leaving the old row behind
+        # would let a report that says nothing about its review be read back as though it had
+        # said what the earlier one did.
+        db.execute(
+            "DELETE FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
+            (event_id, row["submissionNo"]),
+        )
         if handoff is not None:
-            db.execute(
-                "DELETE FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
-                (event_id, row["submissionNo"]),
-            )
             db.execute(
                 "INSERT INTO work_report_handoffs (event_id, submission_no, is_draft,"
                 " base_verified_at, required_declared, checks, review_coverage,"
@@ -453,7 +457,7 @@ def read(store, event_id: str):
     )
     if row is None:
         return None
-    return _row(row)
+    return _with_handoff(store, _row(row))
 
 
 def read_all(store, event_id: str) -> list:
@@ -466,7 +470,34 @@ def read_all(store, event_id: str) -> list:
     rows = store.all(
         "SELECT * FROM work_reports WHERE event_id = ? ORDER BY submission_no", (event_id,)
     )
-    return [_row(row) for row in rows]
+    return [_with_handoff(store, _row(row)) for row in rows]
+
+
+def _with_handoff(store, record: dict) -> dict:
+    """Attach the merge-readiness evidence, when this submission recorded any.
+
+    Written and never read is a record nobody can act on, and the parent is the reader this
+    exists for: it restates these exact vectors to the merge turn rather than going back to
+    the forge to rebuild them. Absent stays absent rather than becoming an empty shape,
+    because a report with no handoff and a handoff with nothing in it are different facts.
+    """
+    row = store.one(
+        "SELECT * FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
+        (record["eventId"], record["submissionNo"]),
+    )
+    if row is None:
+        return record
+    record["handoff"] = {
+        "isDraft": bool(row["is_draft"]),
+        "baseVerifiedAt": row["base_verified_at"],
+        "requiredDeclared": json.loads(row["required_declared"]),
+        "checks": json.loads(row["checks"]),
+        "reviewCoverage": json.loads(row["review_coverage"]),
+        "threadDispositions": json.loads(row["thread_dispositions"]),
+        "criterionEvidence": json.loads(row["criterion_evidence"] or "[]"),
+        "limitations": json.loads(row["limitations"] or "[]"),
+    }
+    return record
 
 
 def _row(row) -> dict:
@@ -1623,14 +1654,27 @@ def _check_handoff(handoff, pr_number, head_sha, outcome):
     is the parent's judgment rather than the child's evidence; demanding check runs from
     either would refuse every report this contract is not about.
     """
-    if handoff is None:
-        return None
     if outcome == REVISION_OUTCOME:
+        if handoff is None:
+            return None
         raise ReceiptRefused(
             RefusalReason.DISPOSITION_CONFLICT,
             "a revision request carries no merge-readiness handoff: this event exists because "
             "the parent ruled needs_changes, and the evidence that a candidate is ready comes "
             "from the child on the completion it is about",
+        )
+    if handoff is None:
+        if pr_number is None:
+            return None
+        # The gate has to be compulsory or it is not a gate. An opt-in one is satisfied by
+        # saying nothing, which is exactly what the child in EQP-29 did: it reported the work
+        # complete and never mentioned that fourteen review threads were open. Silence about
+        # the review is the failure, so silence is what this refuses.
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "this report names a pull request and states nothing about its checks or its "
+            "review, so nothing here says the candidate is ready to hand over. Record the "
+            "merge-readiness handoff, or report the work blocked if the review is not finished",
         )
     if not isinstance(handoff, dict):
         raise ReceiptRefused(
@@ -1653,7 +1697,15 @@ def _check_handoff(handoff, pr_number, head_sha, outcome):
             "this candidate is not ready to hand over: "
             + "; ".join(mergeevidence.details(problems)),
         )
-    if handoff.get("isDraft"):
+    if not isinstance(handoff.get("isDraft"), bool):
+        # Optional and truthy meant a draft could be handed over by not mentioning it, and an
+        # integer 0 read as "not a draft" from a producer that never looked.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "the handoff states isDraft as true or false; it is how a reviewer knows the "
+            "review was actually requested, and leaving it out is not the same as false",
+        )
+    if handoff["isDraft"]:
         raise ReceiptRefused(
             RefusalReason.MERGE_EVIDENCE_REQUIRED,
             "the pull request is still a draft, so the review it reports was never actually "
