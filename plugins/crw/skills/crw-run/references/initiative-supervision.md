@@ -289,9 +289,12 @@ Label every reading with its register before anything acts on it. The fourth reg
 restart is most likely to skip, and it is what makes the second readable: a project parent's goal
 is the role default under [Start policy](start-policy.md), so an absent goal is not a resting state
 on its own. Read it against the recorded mode — `goal-free-run` accounts for it, `loop` makes it a
-finding, and `blocked` means no child should exist yet. Where no start-policy record exists, none
-was ever written: that adjudication is owed before dispatch rather than recovered. Where one
-exists, it is restored and re-adjudicated only for the fields whose conditions have changed.
+finding, and `blocked` means no child should exist yet. Where a record exists, restore it and
+re-adjudicate only the fields whose conditions have changed. Where none is found, that is unknown
+rather than proof none was written: a record can also be partial or damaged, and adjudicating from
+scratch discards whatever the missing entry alone carried, an authorized `goal-free-run` among
+them. Report it as unknown, keep what the rest of the record holds, and settle the adjudication
+before dispatch instead of dispatching on a new guess.
 
 "Blocked" is the word that most needs its register named, because a blocked goal, a recorded
 `blocked` start mode and a dependency the record carries have different owners and different next

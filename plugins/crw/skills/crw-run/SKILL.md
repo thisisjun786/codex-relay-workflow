@@ -765,12 +765,28 @@ these live and already forbids a second store:
 - **The current owner** of each piece of live work — the child task, its issue, its pull request.
 - **The one next action.**
 
+Those five are what the restatement reports. What it has to establish before reporting them, the
+settings in force and the work that has to survive the restart, is the rest of this subsection.
+
 Each line carries the time it was observed, because three claims are easy to write as one: what
 the record said when it was written, what a read this turn returned, and what an earlier decision
-settled on purpose. Only the second is the current state. An old "paused" or "not started" note is
-the first of them, so a current reading that contradicts it wins and the note stays as history. A
-line this turn did not refresh is marked unrefreshed with its observation time rather than
-reported as current.
+settled on purpose. A later observation wins only over an earlier observation of the same thing,
+in the same register. It never wins over a decision, and it never crosses registers: a host
+reporting `idle` says that no turn is running, which is not an answer to whether somebody paused
+that task, so a durable pause, a read-only or status-only scope and a no-contact instruction hold
+until their own owner records a supported transition
+([OPS-8.2](references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)). What a
+fresh reading does supersede is a stale note of its own kind: a "not started" or "last seen idle"
+line loses to this turn's reading of that same register and stays as history. A line this turn did
+not refresh is marked unrefreshed with its observation time rather than reported as current.
+
+Three endings look alike from outside, and the restatement separates them. A project the record
+shows completed is finished, and its parent resting is the shape of that rather than a failure to
+recover from; C9 in [Initiative supervision](references/initiative-supervision.md) owns it. A
+project still in progress whose returned result was never judged, or whose recorded blocker has
+since cleared, continues inside the approved scope and through the task that already owns it. A
+run somebody stopped stays stopped: the finding is recorded with what would release it, and
+nothing is sent.
 
 Two requests are answered from the restatement. A status-only request is answered with the current
 position first — what is done, what is in progress, what is waiting, and the next observation that
