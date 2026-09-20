@@ -90,8 +90,48 @@ Record them at registration, or later:
       --parent-settings @/path/to/parent-settings.json \
       --child-settings  @/path/to/child-settings.json
 
-    codex-session-relay settings-record --task <task id> --settings @/path/to/settings.json
-    codex-session-relay settings-show   --task <task id>
+   codex-session-relay settings-record --task <task id> --settings @/path/to/settings.json
+   codex-session-relay settings-show   --task <task id>
+
+
+### The role a task holds
+
+A task bound to a scope holds a role, and its recorded authorization is checked against the pair
+this host's execution policy declares for that role. The policy is the bridge's file, read from
+THIS process's environment through the bridge's own parser, so the two never drift into two
+readings of one document.
+
+Record the role the creation cited alongside the settings, and the operator exception where one
+authorized the pair instead of the role policy. Both come from the creation receipt's
+`executionPolicy`:
+
+    codex-session-relay register ... --parent-role parent --child-role child
+    codex-session-relay settings-record --task <id> --role parent --exception <id>
+
+The cited role is compared with the role the task is actually bound to, by whichever of the two
+facts arrives second, and a disagreement is `role_binding_mismatch` — refused rather than
+recorded, because the recovery for that is not re-recording. A cited exception is verified against
+the same policy file by id, role, pair and directory; one this host does not authorize exempts
+nothing.
+
+After a user changes an existing task's model, re-record its authorization from a user-attributed
+source before the next send:
+
+    codex-session-relay settings-record --task <id> --source user_transition --settings @file
+
+The record is what a send verifies against, and a value observed on the host is evidence of what
+the task is running rather than a new approval, so nothing adopts a drifting setting on its own.
+Until it is re-recorded the send is refused as `settings_record_stale_for_role`, before any
+transport call. A process that cannot read a role policy refuses role-bound sends as
+`role_policy_unconfigured` rather than skipping the check; that hold is retry-safe, so declaring
+the policy and restarting resumes the held deliveries with nothing lost.
+
+One further rule applies where the host reports a recipient as `notLoaded`. A resume transmits the
+recorded settings and may apply them to a thread the host has to load first, so a pair the policy
+did not derive — a supervisor's, whose pair is the user's own selection, or one admitted by an
+exception — is refused rather than transmitted, because it could restore a value the user has
+since changed. `doctor` reports the policy digest this process resolved; the bridge's own is
+reported by `get_capabilities` through its MCP surface and is not readable from here.
 
 `--settings` takes a JSON object inline or `@path` to a file. Every field is required, because a
 partial record cannot say what it is preserving:

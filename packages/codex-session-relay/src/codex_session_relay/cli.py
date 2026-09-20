@@ -27,7 +27,12 @@ from .manifest import build as build_manifest, freeze as freeze_manifest, revisi
 from .models import Endpoint, TurnRef
 from .receipts import ReceiptIntake, contract_record
 from .reconcile import Reconciler
-from .registry import Registry, contract_record as relationship_record, record_settings
+from .registry import (
+    CLEAR_EXCEPTION,
+    Registry,
+    contract_record as relationship_record,
+    record_settings,
+)
 from .settings import REQUIRED as REQUIRED_SETTINGS
 from .store import (
     Store, canonical_socket, compare_store, nonce_lookup, probe, resolve_state_dir,
@@ -293,6 +298,13 @@ class PayloadExit(Exception):
 
 
 def cmd_register(services, args) -> dict:
+    # Validated BEFORE anything is written. registry.register commits the relationship and, with
+    # --project, the child's binding; a settings refusal raised after that left a live wrong-role
+    # assignment behind and reported only the refusal. This command is the one caller holding
+    # both halves in its own arguments, so it can answer the question while there is still
+    # nothing to unwind. The checks inside record_settings and binding_plan remain for callers
+    # that arrive separately; neither of those can undo a write the other already committed.
+    _refuse_role_disagreement(services, args)
     record = services.registry.register(
         parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
                         cxc_session=args.parent_cxc_session),
@@ -311,11 +323,15 @@ def cmd_register(services, args) -> dict:
     # Execution settings come from the creation result the caller already holds. Recording them
     # here is what lets a later send preserve them instead of inheriting a host default.
     recorded = {}
-    for task, raw in ((args.parent_task, args.parent_settings),
-                      (args.child_task, args.child_settings)):
+    for task, raw, role, exception in (
+        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
+        (args.child_task, args.child_settings, args.child_role, args.child_exception),
+    ):
         if raw:
+            # The role the CREATION cited, from the receipt's executionPolicy. Recorded beside
+            # the settings so a later binding can be checked against what the task was made as.
             record_settings(services.store, services.clock, task, _settings_json(raw),
-                            source="creation_result")
+                            source="creation_result", role=role, exception=exception)
             recorded[task] = "recorded"
     payload["authorizedSettings"] = recorded or None
     return payload
@@ -329,6 +345,71 @@ def _settings_json(raw: str) -> dict:
     return json.loads(raw)
 
 
+def _refuse_role_disagreement(services, args) -> None:
+    """Refuse a registration whose stated roles and settings already contradict each other.
+
+    Answers exactly what record_settings would answer afterwards, from the same predicate, so
+    the two cannot disagree. The roles and settings come from the arguments and the files they
+    name; the one thing it reads from the store is the binding each task already holds, because
+    a citation is checked against the role the task will actually be in and that is not always
+    the role the caller named.
+    """
+    from . import rolepolicy
+    from .errors import RefusalReason, RegistrationError
+    from .linkage import CHILD
+    from .settings import TaskSettings
+
+    policy = rolepolicy.declared()
+    # Each side carries its own exception in the tuple. Recovering it from the settings value
+    # by identity or equality asks the wrong question: two sides can pass the same string, and
+    # then the child is validated against the parent's exception and a legitimate registration
+    # is refused before anything is written.
+    #
+    # The fourth element is the role THIS write would establish. With --project the registration
+    # binds the relationship's child task to its issue scope as a child, so that -- not the role
+    # the caller cited -- is what the citation has to agree with. Comparing the cited role
+    # against itself asked a different question and passed every time: a registration citing
+    # parent for the child task committed the relationship and the binding, and only the settings
+    # write after them refused, leaving a live wrong-role assignment this function exists to
+    # prevent and nothing here could undo.
+    for task, raw, role, exception, establishes in (
+        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception, None),
+        (args.child_task, args.child_settings, args.child_role, args.child_exception,
+         CHILD if args.project else None),
+    ):
+        if not raw:
+            continue
+        settings = dict(_settings_json(raw))
+        # The same completeness question record_settings asks, asked while there is still
+        # nothing to unwind, and asked of every settings value rather than only the ones that
+        # also name a role. Without it an incomplete settings file passed here, the relationship
+        # committed, and require_usable then raised over the top of it -- the same partial
+        # registration as the role disagreement, arriving through a second door.
+        TaskSettings(settings).require_usable()
+        if role is None:
+            continue
+        settings["citedRole"] = role
+        if exception is not None:
+            settings["citedException"] = exception
+        # A binding the task already holds outranks the one this write would establish, because
+        # registration does not move a task between roles; attaching an already-bound task is
+        # the binding it has being confirmed, not replaced.
+        bound = rolepolicy.bound_role(services.store, task)
+        if isinstance(bound, rolepolicy.Contested):
+            raise RegistrationError(
+                RefusalReason.ROLE_BINDING_MISMATCH,
+                f"{task!r} holds live bindings at {bound.roles}; one task holds one role, so "
+                "there is no single role to register settings against",
+            )
+        # Falling back to the cited role is what keeps the pair check this function already
+        # performed for a task that neither holds a binding nor gains one here.
+        finding = rolepolicy.check_binding(
+            role, bound or establishes or role, settings, policy if policy else None
+        )
+        if finding is not None:
+            raise RegistrationError(RefusalReason(finding["code"]), finding["detail"])
+
+
 def cmd_settings_record(services, args) -> dict:
     """Record or replace one task's authorized execution settings.
 
@@ -336,9 +417,17 @@ def cmd_settings_record(services, args) -> dict:
     sandbox (the full SandboxPolicy object), approvalPolicy, cwd, runtimeWorkspaceRoots, model,
     reasoningEffort and environments. Anything missing is refused here rather than at send time.
     """
+    if args.clear_exception and args.exception is not None:
+        # Asking to cite one and to drop it are two different writes. Letting either win
+        # silently would record the opposite of half of what was asked for.
+        raise SystemExit2(
+            "--clear-exception drops the citation and --exception records one; state one",
+            EXIT_USAGE,
+        )
     return record_settings(
         services.store, services.clock, args.task, _settings_json(args.settings),
-        source=args.source,
+        source=args.source, role=args.role,
+        exception=CLEAR_EXCEPTION if args.clear_exception else args.exception,
     )
 
 
@@ -348,9 +437,57 @@ def cmd_settings_show(services, args) -> dict:
     settings = load_settings(services.store, args.task)
     if settings is None:
         return {"task": args.task, "settings": None, "usable": False,
-                "missing": list(REQUIRED_SETTINGS)}
+                "deliverable": False, "missing": list(REQUIRED_SETTINGS)}
+    # The role side is reported beside the settings because the two are only meaningful
+    # together: a record is stale relative to the policy for the role its task actually holds,
+    # and reading one without the other is how a correct record and a wrong one look alike.
+    from . import rolepolicy
+    from .errors import RefusalReason
+
+    bound = rolepolicy.bound_role(services.store, args.task)
+    policy = rolepolicy.declared()
+    # Contested is not a role, and handing it to check_record produced a recovery telling an
+    # operator to declare a role named after a Python object's memory address. A store that
+    # says this task holds two roles at once is its own finding.
+    contested = isinstance(bound, rolepolicy.Contested)
+    finding = None
+    if contested:
+        finding = {
+            "code": RefusalReason.ROLE_BINDING_MISMATCH.value,
+            "boundRoles": bound.roles,
+            "recovery": "one task holds one role; resolve these bindings before this task can "
+                        "be checked against either of them",
+        }
+    elif bound and not policy:
+        # Delivery treats this state as a refusal, so reporting it as deliverable would have
+        # this command disagree with the only consumer that acts on the answer. A bound task
+        # whose process cannot read a policy is not checkable, and not checkable is not clear.
+        finding = {
+            "code": RefusalReason.ROLE_POLICY_UNCONFIGURED.value,
+            "boundRole": bound,
+            "detail": policy.detail,
+            "recovery": "set this process's execution policy and restart it; deliveries held "
+                        "meanwhile resume on the next pass",
+        }
+    elif bound:
+        finding = rolepolicy.check_record(settings, bound, policy)
+    # Two questions, two fields, because folding them together loses one of the answers.
+    # "usable" is about the RECORD -- are the required fields there -- and it is paired with
+    # "missing", so making a complete record report false would contradict the field beside it
+    # and leave no way to say "complete, and refused for another reason". "deliverable" is the
+    # question a preflight actually asks. It exists because a consumer written before roles
+    # reads "usable", would have read true here, and would have gone on to a send this record
+    # cannot carry.
     return {"task": args.task, "settings": settings.data,
-            "usable": not settings.missing(), "missing": settings.missing()}
+            "usable": not settings.missing(), "missing": settings.missing(),
+            "deliverable": not settings.missing() and finding is None,
+            "citedRole": rolepolicy.cited_role(settings),
+            "citedException": rolepolicy.cited_exception(settings),
+            "boundRole": None if contested else bound,
+            "boundRoles": bound.roles if contested else None,
+            "rolePolicyDigest": policy.digest if policy else None,
+            "rolePolicy": "declared" if policy else "unresolved",
+            "roleFinding": finding}
 
 
 def cmd_generation_open(services, args) -> dict:
@@ -1666,6 +1803,38 @@ def _sibling_stores(services) -> dict:
             "ambiguous": len(claiming) > 1}
 
 
+def _role_policy_report(services) -> dict:
+    """What THIS process resolves as a role policy, and what it cannot see from here.
+
+    "unresolved" is a finding, not a blank. It means role-bound deliveries are withheld in this
+    process until the variable is set, which is deliberate: a role check that silently does
+    nothing when its policy is missing is the failure it exists to prevent, wearing a green
+    suite. The digest is reported so receipts from the daemon, the CLI and the hook can be laid
+    beside each other, since each reads its own environment and two of them reading two
+    different files is a second policy source nothing inside this package can detect alone.
+
+    The bridge's digest is deliberately NOT fetched. It is reported by get_capabilities, which
+    is an MCP tool of the bridge server rather than an App Server method, and this adapter's
+    transport speaks only the latter. An earlier draft called it here and would have reported
+    every ordinary run as unreachable, which reads as a broken bridge rather than as a question
+    this surface cannot ask. Compare it by reading get_capabilities through the MCP client that
+    owns that connection.
+    """
+    from . import rolepolicy
+
+    policy = rolepolicy.declared()
+    return {
+        "state": "declared" if policy else "unresolved",
+        "digest": policy.digest if policy else None,
+        "detail": None if policy else policy.detail,
+        "variable": rolepolicy.ENVIRONMENT_VARIABLE,
+        "bridgeDigest": None,
+        "agreement": "not_observable_from_here",
+        "compareWith": "codex-thread-bridge get_capabilities -> executionPolicy.digest, read "
+                       "through the MCP client that owns that connection",
+    }
+
+
 def cmd_doctor(services, args) -> dict:
     """What THIS process can actually do here, measured rather than assumed.
 
@@ -1687,6 +1856,14 @@ def cmd_doctor(services, args) -> dict:
     # Emitted by every participant, so parent, child and daemon receipts can be compared
     # against each other rather than each being read as healthy on its own.
     report["accessReceipt"] = _access_receipt(services, report)
+    # ------------------------------------------------------------------ role policy
+    # Two processes reading two different policy files is a second source of truth by
+    # deployment rather than by code, and nothing inside either package can see it: each one
+    # reads its own environment and finds a perfectly valid file. So this process's digest is
+    # reported here, where a parent, a child and a daemon receipt are already read side by
+    # side and can be laid against each other. The bridge's own digest is not fetched; the
+    # report names where to read it.
+    report["rolePolicy"] = _role_policy_report(services)
 
     # The other half of OPS-3.4's conjunction, on request. Answered from the same file the
     # probe measured, so a coordinator gets one answer instead of joining two commands and
@@ -2229,6 +2406,19 @@ def build_parser() -> argparse.ArgumentParser:
                           help="authorized execution settings as JSON, or @path to a JSON file")
     register.add_argument("--child-settings",
                           help="authorized execution settings as JSON, or @path to a JSON file")
+    register.add_argument("--parent-role", choices=("supervisor", "parent", "child"),
+                          help="the role the parent's CREATION cited, from its receipt's"
+                               " executionPolicy.role. Recorded with the settings so a binding"
+                               " that disagrees with it is refused rather than discovered later")
+    register.add_argument("--child-role", choices=("supervisor", "parent", "child"),
+                          help="the role the child's CREATION cited, read the same way")
+    register.add_argument("--parent-exception",
+                          help="the operator exception the parent's creation cited, from its"
+                               " receipt's executionPolicy.exception, where one authorized the"
+                               " pair instead of the role policy")
+    register.add_argument("--child-exception",
+                          help="the operator exception the child's creation cited, read the"
+                               " same way")
     register.set_defaults(handler=cmd_register)
 
     settings_record = subparsers.add_parser("settings-record")
@@ -2236,6 +2426,14 @@ def build_parser() -> argparse.ArgumentParser:
     settings_record.add_argument("--settings", required=True,
                                  help="JSON object, or @path to a JSON file")
     settings_record.add_argument("--source", default="creation_result")
+    settings_record.add_argument("--role", choices=("supervisor", "parent", "child"),
+                                 help="the role this task's creation cited")
+    settings_record.add_argument("--exception",
+                                 help="the operator exception this task's creation cited")
+    settings_record.add_argument("--clear-exception", action="store_true",
+                                 help="drop the citation recorded for this task. An exception"
+                                      " can stop applying without the pair moving, so this is"
+                                      " said rather than inferred")
     settings_record.set_defaults(handler=cmd_settings_record)
 
     settings_show = subparsers.add_parser("settings-show")
@@ -3256,8 +3454,18 @@ def _refuse_ambiguous_state(services, args) -> None:
 
 
 def main(argv=None) -> int:
+    from . import rolepolicy
+
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Taken here, before any work, for the same reason the bridge builds its policy in its own
+    # main(): the snapshot is supposed to be this PROCESS's, and a lazy first read made it the
+    # snapshot of whenever a role question first came up. A daemon could then start under one
+    # version of the file, serve unbound work for hours, and adopt an edit the bridge had never
+    # seen -- two processes enforcing different policies with neither one restarted, which is
+    # exactly the second policy source this is built to keep visible. It cannot fail startup: an
+    # unreadable or absent policy resolves to Unresolved, which withholds rather than raises.
+    rolepolicy.declared()
     services = None
     try:
         services = Services(args)

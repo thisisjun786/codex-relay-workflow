@@ -255,7 +255,10 @@ Return:
 - Resulting behavior and scoped changed files.
 - Acceptance-criterion evidence, commands/results, and artifact paths.
 - Changed contracts and what dependent tasks need.
-- Requested/actual model and effort; disclose whether served-model proof exists.
+- Requested/actual model and effort, the role they were checked against, and whether that role's
+  pair was declared on this host or the check went unmade; disclose whether served-model proof
+  exists. A report that says verified when nothing was compared is the failure this line exists
+  to prevent.
 - For CXC Loop: goal/goalplan identifiers, final FSM state, and completion evidence.
 - Delivery artifact: [PR URL, pushed head SHA, and the state of its required checks and
   reviews, including how each finding was resolved; or the frozen diff bundle for a

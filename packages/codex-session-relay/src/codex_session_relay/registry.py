@@ -1080,20 +1080,140 @@ def project_key(record: dict) -> str:
     return f"host:{parent.get('hostId')}"
 
 
-def record_settings(store, clock, task_id: str, settings: dict, *, source: str) -> dict:
+# The source a user's own change is recorded under. Named here because the recorder treats it
+# differently: it is the one write that may drop a citation the new pair no longer needs, which
+# is what makes the documented transition reachable for a supervisor.
+USER_TRANSITION = "user_transition"
+
+
+class _ClearException:
+    """An explicit instruction to drop a citation, as a value no receipt can contain.
+
+    Told apart from simply not restating one, because inferring it from the pair cannot work: an
+    exception can stop applying without the pair moving at all -- the operator removes it and the
+    user confirms the task stays where it is -- and with no way to say so the recorder restored a
+    citation this policy no longer authorizes and then refused its own write, leaving the task
+    undeliverable with no command able to release it.
+
+    An object rather than a reserved string, because there is no reserved string available. Any
+    non-empty identifier is a legal exception id, so an operator may declare one named
+    "__clear__", and a creation receipt citing it would have been indistinguishable from the CLI
+    asking to remove a citation -- registration would pass prevalidation, drop the citation it
+    just wrote, and then refuse the exception-authorized pair against the role's declared one.
+    A private object has no spelling a policy file can reach, so every string arriving here stays
+    an identifier.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "CLEAR_EXCEPTION"
+
+
+CLEAR_EXCEPTION = _ClearException()
+
+
+def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
+                    role: str | None = None,
+                    exception: "str | _ClearException | None" = None) -> dict:
     """Record the execution settings a task was actually created with.
 
     This is the interface JUN-92 populates from the creation result Run already receives. It
     reuses creation evidence and asks nothing new of the host; it is not a first-turn handshake.
     Recording is validated up front so an unusable record is refused at registration rather than
     discovered at send time.
+
+    `role` is the role the CREATION cited, taken from the receipt's executionPolicy. It travels
+    inside the recorded settings under a reserved key rather than in a column of its own, because
+    CREATE TABLE IF NOT EXISTS never adds a column to a store that already exists and this
+    package must keep working against one. It is compared against the role the task is actually
+    bound to, in whichever order those two facts arrive: here when the binding already exists,
+    and in binding_plan when the settings do.
     """
     from .settings import TaskSettings
 
+    settings = dict(settings)
+    if role is not None:
+        settings["citedRole"] = role
+    if exception is CLEAR_EXCEPTION:
+        # Said, not inferred. Nothing is carried forward and nothing is recorded.
+        exception = None
+        settings.pop("citedException", None)
+        clearing = True
+    else:
+        clearing = False
+    if exception is not None:
+        # The operator exception the creation cited, where one did. A role-scoped exception
+        # replaces the role-pair comparison by design, so a task created under one carries a
+        # pair its role's policy does not declare, and without this the relay would refuse
+        # exactly what the operator approved. It is verified against the same policy file
+        # rather than believed: an id nobody wrote, or one written for another role, or one
+        # whose pair does not match, exempts nothing.
+        settings["citedException"] = exception
     candidate = TaskSettings(settings)
     candidate.require_usable()
-    payload = json.dumps(settings, sort_keys=True)
+    from . import rolepolicy
+
     with store.transaction() as db:
+        # ------------------------------------------------------------------ role policy
+        # Read and compared INSIDE the write transaction. Deciding first and writing after left
+        # a window in which a concurrent binding could commit between the two, which is exactly
+        # the contradiction this check exists to prevent and would have been recorded as clean.
+        existing = db.execute(
+            "SELECT settings FROM authorized_settings WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if existing is not None:
+            # The cited role is a fact about how this task was CREATED. A later write neither
+            # erases it by omission nor replaces it by restating something else: dropping it
+            # turned a task with a known creation into one with none, and rewriting it let a
+            # task created as one role be re-recorded as another while still unbound, so the
+            # binding that followed compared against the replacement and accepted it. A user
+            # transition may change the authorized pair and its exception provenance; it may
+            # not change what the task was made as.
+            carried = rolepolicy.cited_role(json.loads(existing["settings"]))
+            if carried is not None and role is not None and role != carried:
+                raise RegistrationError(
+                    RefusalReason.ROLE_BINDING_MISMATCH,
+                    f"{task_id!r} was created citing role {carried!r} and this record states "
+                    f"{role!r}. The creation role is not something a later write changes; "
+                    "correct whichever of the two is wrong at its source",
+                )
+            if carried is not None and role is None:
+                settings["citedRole"] = carried
+        if exception is None and existing is not None and not clearing:
+            previous = json.loads(existing["settings"])
+            carried = rolepolicy.cited_exception(previous)
+            # Carried only while it is still doing work, and only while this write is not the
+            # user saying otherwise. An exception exists to admit a pair the role's policy does
+            # not declare, so once a record states the declared pair there is nothing left for
+            # it to authorize. A supervisor has no declared pair at all, so that test can never
+            # release one, and a user-attributed transition to a new supervisor pair could not
+            # clear a citation that no longer covers it -- the recorder would restore the old id
+            # and then refuse its own write, with no command able to break the loop.
+            declared = rolepolicy.declared_pair_for(
+                rolepolicy.bound_role_in(db, task_id), rolepolicy.declared()
+            )
+            unchanged = rolepolicy.recorded_pair(settings) == rolepolicy.recorded_pair(previous)
+            still_needed = rolepolicy.recorded_pair(settings) != declared
+            if carried is not None and still_needed and (unchanged or source != USER_TRANSITION):
+                settings["citedException"] = carried
+        bound = rolepolicy.bound_role_in(db, task_id)
+        if isinstance(bound, rolepolicy.Contested):
+            raise RegistrationError(
+                RefusalReason.ROLE_BINDING_MISMATCH,
+                f"{task_id!r} holds live bindings at {bound.roles}; one task holds one role, so "
+                "there is no single role to record settings against",
+            )
+        if bound is not None:
+            policy = rolepolicy.declared()
+            finding = rolepolicy.check_binding(
+                rolepolicy.cited_role(settings), bound, settings, policy if policy else None
+            )
+            if finding is not None:
+                raise RegistrationError(
+                    RefusalReason(finding["code"]), finding["detail"]
+                )
+        payload = json.dumps(settings, sort_keys=True)
         db.execute(
             "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
             " VALUES (?,?,?,?)"

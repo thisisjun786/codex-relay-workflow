@@ -74,6 +74,7 @@ def make_server(bridge: Bridge):
         runtime_workspace_roots: list[str] | None = None,
         expected_sandbox_policy: dict[str, Any] | None = None,
         policy_exception: str | None = None,
+        role: str | None = None,
     ) -> dict[str, Any]:
         """Create a retained session in an existing cwd, optionally with an initial prompt.
 
@@ -83,6 +84,7 @@ def make_server(bridge: Bridge):
         no inheriting of a configured default. Where that policy declares a per-directory
         exception, policy_exception cites it by id: the id, its one model, its one effort and its
         directories all live in the host's file, so naming one is not approving one. Omitted
+        roots/policy use configured defaults and are neither transmitted nor checked. Supplied
         roots/policy use configured defaults and are neither transmitted nor checked. Supplied
         settings are transmitted: effort and the
         workspace-write policy fields travel in the start config, because the protocol has no
@@ -98,6 +100,10 @@ def make_server(bridge: Bridge):
         ID. A failed/unknown operation may have created a thread.
         A not_attempted receipt began nothing and is retried by reusing the same id.
         """
+        # role names the CRW role this task is being created for, and this host's execution
+        # policy decides that role's model and reasoning effort. Read get_capabilities for the
+        # roles it declares and state the pair it reports; a role the policy does not declare is
+        # refused before any call, because this bridge carries no pair of its own for any role.
         return await bridge.create_thread(
             request_id,
             cwd,
@@ -110,6 +116,7 @@ def make_server(bridge: Bridge):
             runtime_workspace_roots=runtime_workspace_roots,
             expected_sandbox_policy=expected_sandbox_policy,
             policy_exception=policy_exception,
+            role=role,
         )
 
     @mcp.tool(annotations=WRITE)
@@ -127,6 +134,7 @@ def make_server(bridge: Bridge):
         title: str | None = None,
         app_server_project_id: str | None = None,
         policy_exception: str | None = None,
+        role: str | None = None,
     ) -> dict[str, Any]:
         """Create a retained, locked Git worktree and a task at an approved full commit ID.
 
@@ -151,6 +159,8 @@ def make_server(bridge: Bridge):
         turn, accepted when the host took it, and outcome_unknown only when the turn went out and
         no answer came back.
         """
+        # role behaves exactly as it does on create_thread, and is authorized before any Git work
+        # happens, so a role refusal leaves no worktree behind.
         return await bridge.create_worktree_thread(
             request_id,
             source_repository,
@@ -165,6 +175,7 @@ def make_server(bridge: Bridge):
             reasoning_effort=reasoning_effort,
             app_server_project_id=app_server_project_id,
             policy_exception=policy_exception,
+            role=role,
         )
 
     @mcp.tool(annotations=WRITE)
@@ -174,6 +185,7 @@ def make_server(bridge: Bridge):
         message: str,
         expected_settings: dict[str, Any],
         policy_exception: str | None = None,
+        role: str | None = None,
     ) -> dict[str, Any]:
         """Resume the explicitly selected idle session and send one message under known settings.
 
@@ -186,9 +198,19 @@ def make_server(bridge: Bridge):
         operator-declared exception by id; because such an exception is bound to directories,
         expected_settings must also carry cwd whenever policy_exception is supplied, or the
         request is refused before the thread is read. The resume carries the settings and is read
-        as an
-        observation: this host reports a thread's real state rather than adopting an override, so
-        a match confirms the thread is already in the requested state. An unrecognised key is
+        as an observation. On a thread this host already had loaded it reports the thread's real
+        state rather than adopting an override, so a match confirms the thread is already in the
+        requested state. On one it has to load first, that is NOT established, and the receipt
+        says so: statusBeforeResume records what the host reported, and a notLoaded thread also
+        carries echoIndependence "not_established", because an agreeing echo there cannot be told
+        apart from the host repeating what it was sent. Where role names a recipient and the
+        stated pair was NOT compared against that role's declared pair -- a supervisor, whose
+        pair is the user's own selection, or a request citing an exception, which exists to skip
+        that comparison -- a notLoaded thread is refused rather than resumed, since restoring a
+        stale pair could undo a change the user made. Naming no role leaves that check undone:
+        this bridge reads no scope binding, so it cannot tell an unnamed supervisor from a task
+        with no role, and the caller that CAN read the binding owns that refusal. An unrecognised
+        key is
         rejected rather than ignored, because a discarded key is indistinguishable from a setting
         that was never requested. Any difference, or a
         setting the host does not report, withholds the message and names its own cause. The turn
@@ -228,8 +250,12 @@ def make_server(bridge: Bridge):
         A not_attempted receipt means no resume and no turn went out, so reusing that id sends
         the message rather than replaying a receipt.
         """
+        # role names the RECIPIENT's role here, not the caller's, and expected_settings must
+        # state that role's pair. The receipt also records the runtime status the host reported
+        # before the resume, because a thread the host had not loaded echoes a transmitted pair
+        # back whether or not it was already on it.
         return await bridge.send_message_to_thread(
-            request_id, thread_id, message, expected_settings, policy_exception
+            request_id, thread_id, message, expected_settings, policy_exception, role
         )
 
     @mcp.tool(annotations=READ)

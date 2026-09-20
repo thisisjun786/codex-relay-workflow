@@ -129,6 +129,7 @@ async def test_an_unconfigured_host_accepts_a_stated_pair_and_says_so(fake_serve
         assert capabilities.structuredContent["executionPolicy"] == {
             "mode": "presence_only",
             "digest": None,
+            "roles": {},
         }
         created = await session.call_tool(
             "create_thread",

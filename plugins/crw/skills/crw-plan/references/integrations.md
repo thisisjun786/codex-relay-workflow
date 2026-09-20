@@ -420,6 +420,39 @@ Start policy, creation authority and the limits that survive them stay where the
 already are in [crw-run](../../crw-run/SKILL.md#independent-implementation-tasks), and this section
 references them rather than keeping a second copy.
 
+
+#### Execution settings by role
+
+Each level runs on its own model and reasoning effort, and which pair belongs to which role is a
+recorded product decision rather than something a task infers. The supervisor's model is Jun's own
+selection and is never propagated, changed by automation, or copied to the level below it; the
+parent's and the child's come from the role policy.
+
+| Role | Model and effort | Who decides |
+| --- | --- | --- |
+| Supervisor | its own recorded setting | Jun, directly |
+| Parent | the role policy's parent pair | this policy |
+| Child | the role policy's child pair | this policy |
+
+Read the pair rather than remember it. The host's execution policy declares each role's pair, and
+`get_capabilities` reports what it declares, so a creation states the pair that policy reports for
+the role it is creating and passes the role itself so the host checks the answer. Never carry a
+pair from memory, from another project, or from a document — including this one. That habit is
+what the failure was made of: a coordinator created a project parent on a model it remembered,
+and another retried a withheld send by changing the model and keeping the previous effort.
+Reasoning-effort names are catalog values belonging to their own model; two that look similar are
+not interchangeable, and nothing maps one onto another.
+
+A role the host's policy does not declare is a blocker to report, and its recovery is declaring it
+in that host's execution policy. There is no fallback pair, because a fallback is a default and a
+default is the second source of truth this arrangement exists to remove.
+
+Changing an existing task's model is a user action plus a re-record, never something a message
+performs. After the user changes it, the authorization recorded for that task is re-recorded from
+a user-attributed source before the next send, because the record is what a send verifies against
+and a value observed on the host is evidence of what the task is running rather than a new
+approval. Until then the send is refused naming the record, and a task the host reports as not
+loaded is left alone rather than resumed under a pair that was never checked against its role.
 ### Record writes and returned proposals
 
 A Linear write belongs to the task whose own record it is, under
@@ -674,7 +707,7 @@ reports and Linear records in Korean unless explicitly requested otherwise. This
 language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
 
-Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs `anthropic/claude-opus-5` at `xhigh` reasoning effort with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
+Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the pair the role policy declares for the child role, with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. That pair is read from the declared policy at the time of the call under [Execution settings by role](#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
 This default binds only `crw-run`'s independent children. The coordinator task, other products' global configuration, and CXC internal helper role routing keep their own settings.
 

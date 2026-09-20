@@ -768,10 +768,24 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
         ledger.save(receipt)
 
         state = await rpc.call("thread/read", {"threadId": thread_id})
-        if (state.get("thread") or {}).get("status", {}).get("type") == "active":
+        status = (state.get("thread") or {}).get("status", {}).get("type")
+        receipt["statusBeforeResume"] = status
+        if status == "active":
             raise _Refusal("thread/read", {
                 "code": "thread_busy",
                 "message": "Thread is active; message withheld. Wait for completion.",
+            })
+        if status == "notLoaded" and getattr(settings, "refuse_when_unloaded", False):
+            # Decided HERE, on this read, rather than on the one the caller took before it
+            # listed turns and claimed the delivery. A recipient that unloaded in between
+            # would otherwise be resumed under the pair that decision meant never to
+            # transmit, and on a host that applies a resume's settings while materializing a
+            # thread that restores a value the user may have changed.
+            raise _Refusal("thread/read", {
+                "code": "unverified_pair_for_unloaded_thread",
+                "message": "Thread is not loaded and the pair this send would transmit was "
+                           "not derived from a declared role pair; message withheld and no "
+                           "turn was started.",
             })
 
         # Resume carries the authorized settings. It is the DETECTOR: its response reports the
