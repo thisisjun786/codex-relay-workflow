@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also handles project binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -10,7 +10,10 @@ as its coordinator: one parent per project, one child per issue. Follow the shar
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
 including standalone issues and explicit current-task work. Where the initiative above this
 project has an execution supervisor, it verifies this parent's reported outcome and instructs this
-task, never this task's children; where it has none, nothing changes. Each child owns its
+task, never this task's children; where it has none, nothing changes. An explicit designation
+naming an initiative is handled one level up, through
+[Initiative supervision](references/initiative-supervision.md), which decides where that binding
+belongs rather than assuming it belongs here. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -48,9 +51,17 @@ Run execution; they do not themselves create a goal. Inside an authorized Loop, 
 returns progress and pending obligations to the same Loop owner without creating
 another goal. Existing scope and authorization survive skill routing.
 
-An initiative link is not a Run target. Run executes one project, so resolve the project actually
-being executed under the shared target rules; the link is context, it rebinds no existing parent,
-and this skill establishes no supervisor.
+An initiative link by itself is not a target. Where a request merely cites one, resolve the
+project actually being executed under the shared target rules: the link is context and it rebinds
+no existing parent. Where the request is an explicit designation to execute that initiative's
+agreed projects, that initiative runs through its projects' own parents under
+[Initiative supervision](references/initiative-supervision.md), which also settles which task
+holds the supervisor binding: this one where it already supervises that same initiative or is free
+to take it, and not this one where it is bound to a different scope, since a task holding another
+project or issue would leave that work without its owner. Planning, a status read, a
+citation, an explanation of how the entry works, a usage question, and a quoted or unsubmitted
+example are none of them that designation, and that list is not closed: what makes one is the
+explicit request to execute, never the presence of a link.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
@@ -67,6 +78,9 @@ still govern each action, including task creation and goal activation.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
   Parent goal creation and host-driven continuation belong to an authorized Loop.
+- **Supervise an initiative:** bind the initiative, fix its approved project set and completion
+  boundary, and carry it through those projects' existing parents. Issue planning and issue
+  execution stay with each parent.
 - **Status only:** read existing tasks and evidence without waking them.
 - **Verify completed work:** inspect its exact revision and relevant behavior,
   send in-scope corrections to the existing responsible task, and recheck its
@@ -110,6 +124,10 @@ change, new ownership, or a shared resource including the order into a shared ta
 two projects share no supervisor, or answer to different ones, invent none: record the unsettled
 part, hold only that part, keep the independent work moving, and raise that decision to the user.
 Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
+An accepted condition reaches this project through its own child, on the correction path this task
+already uses, and the evidence that it landed is that child's changed revision rather than its
+acknowledgement. Return the outcome to the peer from here: a child never answers another project's
+parent, and no peer reads this project's child for its answer.
 
 For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
 host goal and automatic continuation across turns. Returning from Run hands
@@ -175,6 +193,7 @@ them. Higher-priority host/tool restrictions still apply.
 | Invocation context | Action |
 |---|---|
 | Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
+| Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
