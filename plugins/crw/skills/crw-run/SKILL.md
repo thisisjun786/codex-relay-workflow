@@ -892,8 +892,10 @@ Recovery starts by restating the run in five lines, read from the
 [coordination record](references/task-packet.md#coordination-record), which is already the place
 these live and already forbids a second store:
 
-- **The fixed binding** — the project or standalone issue, this task's own id, and the host it
-  runs on, each by its stable identifier.
+- **The fixed binding** — the initiative where this task supervises one, the project or standalone
+  issue it executes, this task's own id, and the host it runs on, each by its stable identifier.
+  A supervisor that recovers its projects without the initiative they were approved under has lost
+  the boundary, not just a label.
 - **The current temporary target**, where one exists: the other project or issue this task was
   asked to look at, recorded beside the fixed binding rather than in place of it.
 - **The approved scope** in force, with the limits that arrived with it and the start policy this
@@ -925,11 +927,15 @@ delivery shape requires under
 the pull request landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
 for accepted non-PR work it is the agreed observable result, which has no pull request by
-design. Where that evidence holds the project is finished, and its parent resting is the shape of
-that rather than a failure to recover from. Where the label says completed and the evidence its
-shape requires is missing, the project is
-unfinished: the gap is what gets reported and the project stays in the active set, because a
-status nobody corroborated is the one thing that can hide undelivered work behind a quiet parent.
+design. That test runs per subject rather than once: each scoped issue is corroborated on its own
+delivery, and the project is finished only when every obligation in its agreed scope is delivered,
+integrated and reconciled, which is the parent's own completion boundary in
+[Supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
+and is not reached by any one pull request. Where that holds the project is finished, and its
+parent resting is the shape of that rather than a failure to recover from. Where the label says
+completed and some subject still lacks the evidence its shape requires, the project is unfinished:
+that gap is what gets reported and the project stays in the active set, because a status nobody
+corroborated is the one thing that can hide undelivered work behind a quiet parent.
 A project still in progress whose returned result was never judged, or whose recorded blocker has
 since cleared, continues inside the approved scope and through the task that already owns it. A
 run somebody stopped stays stopped: the finding is recorded with what would release it, and
