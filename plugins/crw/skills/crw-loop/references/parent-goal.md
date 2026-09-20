@@ -29,6 +29,34 @@ this file transfers to initiative scope; the roles themselves are in
    goal-free substitute or claim automation. Scope-authorized read-only diagnosis may
    continue while activation is blocked.
 
+## Record the start adjudication
+
+The preflight above is performed once and its outcome is recorded, not repeated as a new user
+decision in every session. Write it into the coordination record as the `run_mode` and
+`host_compatibility` fields of [Start policy](../../crw-run/references/start-policy.md), together
+with the installed identities it was read at and the issue that owns an unresolved blocker, and
+restore it from there on the next entry. A later session re-reads those identities; it decides
+again only where one of them differs.
+
+The recorded mode says which of these actually holds, in the words it will be reported in:
+
+| Recorded mode | What it means |
+| --- | --- |
+| `loop` | A native parent goal is active under this lifecycle. |
+| `goal-free-run` | No parent goal. Run carries the agreed scope, and no automatic resume is claimed or proven. |
+| `blocked` | Activation is blocked and no substitute is approved. No child is created. |
+
+A goal-free substitute is recorded and reported as `goal-free-run`. It is never reported as a Loop,
+and it never carries a claim of unattended continuation. Where preflight blocks activation and the
+request does not separately cover goal-free Run, the mode is `blocked`, the unresolved blocker is
+cited against the issue that owns it, and no child is created first. For the goal and Stop-hook
+conflict that issue is [CRW-29](https://linear.app/jun786/issue/CRW-29); its resolution is what
+clears the blocker, and until it is recorded there the blocker still stands.
+
+Disabling a hook, replaying hook events, manufacturing CXC evidence and force-completing an
+existing goal are forbidden above. They are also not offered to the user as options, because
+presenting one as a choice is how it becomes an approved plan.
+
 ## Create or reuse the parent's goal
 
 Read `get_goal` first, then choose the matching case:

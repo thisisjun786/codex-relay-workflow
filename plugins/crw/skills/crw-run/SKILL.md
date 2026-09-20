@@ -423,6 +423,24 @@ resulting evidence, not the child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
 
+### Start policy and child cap
+
+Before any child of this run is created or registered, including through the creation tool and the
+relay registration above, settle the start policy for this run and record it: the effective run
+mode, the child cap with the bounds that produced the number actually dispatched, each decision's
+source and scope, the host compatibility outcome, and the observation path already required for
+dispatch. A value the precedence settles is applied without asking; a value that genuinely needs a
+new decision is asked before anything is created, and only the action waiting on that answer is
+held while independent authorized work continues. On a resume, after a compaction or for a later
+batch, restore the recorded values and re-read the identities they stand on instead of deciding
+again. [Start policy](references/start-policy.md) owns the fields, the scope each decision carries,
+the re-adjudication triggers and the cases this is judged by; the standing cap and its precedence
+are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
+
+Editing these instructions changes neither an installed skill nor a run already in flight. Report
+the local change, the pull request, the integration, and what is actually installed as separate
+facts.
+
 ## Observe and verify
 
 Use a compact native `wait_threads` snapshot with each task's actual host and
