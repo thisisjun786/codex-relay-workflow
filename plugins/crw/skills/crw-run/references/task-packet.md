@@ -120,8 +120,9 @@ Execution:
   requires and this assignment authorizes, and confirm it actually started. An optional
   reviewer that cannot start or stalls is recorded as a gap and does not hold you;
   a required gate does. Findings, pending CI and your own revision pushes do not send
-  it back to draft; fix on the open pull request and re-request a review of the current
-  head. Ready is review entry, not merge permission. See
+  it back to draft; fix on the open pull request and refresh only the review evidence
+  invalidated by the change. Apply the [disabled reviewer policy](merge-readiness.md#disabled-reviewer-policy)
+  before requesting or waiting for a review. Ready is review entry, not merge permission. See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
@@ -481,7 +482,9 @@ reconstruct alone:
   emitted under it is refused. The relay carries the superseded event and its digest
   itself, so the block does not repeat them.
 - The delivery artifact as it stands now: pull request URL, base and head, and which
-  required checks and reviews are outstanding on that head.
+  required checks and reviews are outstanding on that head. Include the current
+  [reviewer policy](merge-readiness.md#disabled-reviewer-policy) when it changed;
+  supersede stale review-wait instructions without discarding unresolved findings.
 - The unresolved findings, each with what would settle it.
 - The single next action this message is asking for.
 - Durable locators for the work the task itself owns: where its plan, its ledger and its
