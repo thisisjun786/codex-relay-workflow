@@ -110,6 +110,41 @@ Authorized execution:
   sends the child the previous workflow]
 - Runtime/test data access: [agreed sources and operational limits]
 
+Workspace ownership:
+- Existing resources at dispatch: [everything already present, each entry labelled as already
+  owned by this assignment or owned elsewhere, since predating the run and belonging to it are
+  separate facts and a resume already owns some of what it finds: the worktrees, branches and
+  current writers for this repository with their dirty/untracked state, and the temporary
+  artifacts, evidence roots, shared originals and running processes already present at the
+  locations you are assigned. Do not adopt what is labelled owned elsewhere; a convention path
+  matching your task's name is not evidence that it is your path. This is the baseline the
+  close delta below is measured against, so anything missing from it reads afterwards as
+  something this run created]
+- Your resources: [the checkout, branch and evidence root this assignment owns, with the
+  OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
+  cleanup authorization, `none automatic` where no cleanup is authorized. For a child this
+  call is creating, name the editing owner by the management marker this launch was issued
+  under, since the native task id does not exist until creation returns it; the coordinator
+  binds that marker to the id from the creation receipt and reads the record back, and
+  ownership is established there rather than by this line]
+- Write capability: [first what the coordinator measured on the paths themselves, which does
+  not depend on this task existing yet: the checkout, its resolved git metadata
+  (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the evidence
+  root, with any OS permission, read-only mount or live writer found on them. Then the profile
+  this task is being created with and the paths it is meant to reach, which its creation receipt
+  confirms rather than this packet, and the recorded OPS-5.3 fallback where it will not reach
+  them. A refused write is answered on this same checkout, by clearing a refusal a supported
+  route can clear or by that recorded fallback where the refusal is this task's own profile,
+  never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or reset/stash]
+- Capacity and large artifacts: [the destination volume to check before a large clone,
+  install, build or download, and the permitted shared read-only originals, per-task
+  temporary paths and other volumes to use instead of copying a large original in here]
+- Resource delta to report at close: [measured against the baseline above, what this task
+  created, changed, retained, shared or cleaned, each with its owner, release condition and
+  next action; the working directory, purpose, handle and running state of any process it
+  started; and any capacity actually reclaimed, kept apart from what was only proposed.
+  Only this task can see the temporary paths and processes it makes during execution]
+
 Outcome and scope:
 [User-visible behavior, acceptance criteria, intended edit surfaces]
 [Shared contracts, coordination boundaries, and necessary exclusions]
@@ -246,6 +281,14 @@ Return:
 Stop after this assigned result; do not auto-start another issue.
 ```
 
+The workspace-ownership fields are dispatch observations rather than a grant: what constrains
+a write is the sandbox, the permission profile and the filesystem, so a field naming a path
+the child cannot write is a mismatch to reconcile on that task before the work starts, not
+something for the child to work around. The check that produces them is
+[Check who already owns the workspace](../SKILL.md#check-who-already-owns-the-workspace),
+and what the run leaves behind is accounted for by
+[Account for the resources this run leaves behind](../SKILL.md#account-for-the-resources-this-run-leaves-behind).
+
 ### First full assignment required fields
 
 The fields below are defined above; this is the check that the first full assignment
@@ -299,6 +342,18 @@ Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
 Workflow/settings: [effective workflow, model/effort and actual permission profile]
 Working location: [permitted cwd/artifact roots; no invented Git repository]
+Workspace ownership: [what is already present at that working location and those artifact
+  roots, each entry labelled as already owned by this assignment or owned elsewhere, since
+  predating the run and belonging to it are separate facts: the temporary artifacts, evidence
+  roots, shared originals and running processes there. Do not adopt what is owned elsewhere.
+  Then this task's own working directory and artifact roots, each with the owners OPS-5.1
+  requires on this path: creator, editing owner, retention owner and cleanup authorization,
+  `none automatic` where no cleanup is authorized. Git metadata ownership is inapplicable
+  here, and so are checkout and branch ownership]
+Resource delta to report at close: [measured against that baseline, what this task created,
+  changed, retained, shared or cleaned, each with its owner, release condition and next action;
+  the working directory, purpose, handle and running state of any process it started; and any
+  capacity actually reclaimed, kept apart from what was only proposed]
 Verification: [observable acceptance criteria and independent evidence needed]
 Return: [actual task ID, result link plus delivered revision/updated-at evidence,
   or durable artifact locator plus digest; verified output snapshot if needed;
@@ -356,6 +411,11 @@ Authority: [the designation and its date, the limits in force, child-creation au
   designation carries them]
 Current state: [locators only: the project's coordination record, its live children, its open
   pull requests, and any outcome already verified]
+Retained resources: [locators and ownership for the checkouts, branches, evidence roots,
+  temporary artifacts and running processes this project's work is keeping, each with its owner,
+  the reason it is retained and the next action. Locators only, as above: the coordination record
+  holds the detail. A resource whose owner this supervisor could not establish is named as
+  unknown rather than assigned to this parent]
 Report back: [a result or blocked coordination message carrying the outcome, the evidence per
   criterion, the unresolved problems and the decisions needed. Detailed logs stay where they are]
 Workflow: [the parent's effective workflow, restated because no transport carries it]

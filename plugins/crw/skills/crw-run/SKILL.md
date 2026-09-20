@@ -478,6 +478,97 @@ links this checkout a later read of them loads the edited text, so a run spannin
 continue under instructions it did not start with. Report the local change, the pull request, the
 integration, and what is actually installed and running as separate facts.
 
+### Check who already owns the workspace
+
+This runs before the checkout above is assigned and before the creation call, and
+its result is what the packet's workspace-ownership fields carry. It is written
+here because it is one procedure, not because it happens last.
+
+[Operations contract](references/operations.md) OPS-5 owns the workspace-assignment rules
+this procedure applies: placement, the ownership columns, who commits, and where evidence
+lives. What is here is when to read them, what to compare them against and what to refuse.
+Where the two disagree, OPS-5 is the one that changes and this follows it.
+
+Before a checkout is assigned, read what already exists and who is answerable for
+it: the repository's worktrees with their branches and locked state, the dirty and
+untracked files in each, and any current writer. Then split the result in two, the
+resources that existed before this assignment and the ones this assignment will own.
+A path matching the convention for this task's name is not evidence that it belongs
+to this task, because a name is something two tasks can choose: another writer may
+hold it, or it may be what a creation that failed halfway left behind. Where the
+convention name collides, the distinguishing suffix goes on the task segment, so the
+checkout path and its `codex/<task>` branch move together and the existing checkout
+and branch are left as they are; suffixing the path alone leaves the branch collision
+in place, and Git refuses a second worktree on a branch another worktree already has
+checked out. Record the answer in the ownership columns of
+[OPS-5.2](references/operations.md#ops-52-ownership-is-recorded-in-columns-separately-from-the-path),
+which is where created by, editing owner, git metadata owner, retention owner and
+cleanup authorization live, rather than leaving it to be inferred from the path.
+
+A new checkout is created only where the work actually needs one. The same task
+reuses its existing checkout on resume and for follow-up under the same assignment,
+and a reclassification alone never relocates it
+([OPS-5.1](references/operations.md#ops-51-placement)). A temporary clone inside
+another product's directory is not a workspace; where the placement convention
+cannot be satisfied, report that rather than leaving a repository somewhere the next
+reader cannot tell whose it is. Residue from a half-finished creation stays owned
+until it is reconciled, which makes it neither free to adopt nor free to delete.
+
+Before a large clone, dependency install, build or download, check the volume that
+will actually receive the bytes and this assignment's own large artifacts, in the
+scope the work needs rather than as a survey. Keep the kinds apart while recording
+them, because they have different owners and different release conditions: source,
+dependency cache, regenerable build output, original data, and verification evidence
+a finished task is deliberately keeping. Take the permitted locations from the
+operator's working instructions and this repository's exceptions; a fixed path, a
+capacity threshold or a retention rule invented here would be a new global policy
+this assignment has no authority to make. Two children needing the same large
+original share a permitted read-only copy instead of receiving one each. A repeated
+whole-disk scan that stops the work is its own failure, and a report that a disk
+filled up is not a current measurement of it.
+
+What the assignment permits and what the child can actually write are separate
+findings, and for a linked worktree they come apart in one specific place: the
+working tree is under the checkout, while the common directory, the per-worktree
+index and the reference files are under the original repository, which
+`git rev-parse --absolute-git-dir`, `--git-common-dir` and `--git-path index`
+resolve. A successful write in the checkout therefore establishes nothing about
+writing a branch or a commit, which is the measurement
+[OPS-5.5](references/operations.md#ops-55-capability-a-new-child-is-created-with)
+asks for before the task exists. When a write is refused, say which refusal it is:
+an OS permission, the effective sandbox profile, a read-only mount, or another
+writer already holding the path or its lock. One failed command looks the same in
+all four cases and they have different answers. None of this is enforced by a
+packet, a prompt or a hook; those carry the intent, and what constrains a write is
+the sandbox, the permission profile and the filesystem.
+
+A refused Git write is answered on the same child and the same checkout, and which
+answer applies follows from which refusal it was. An environmental restriction, an
+OS permission on the original repository's Git metadata, a read-only mount, or a lock
+whose owning process has already exited, is cleared through its supported route and
+the work continues there; establish that a lock is stale before removing it, because
+a lock file records only that somebody took it. Another task still holding that path
+or that lock is not a restriction to clear but an ownership conflict: leave its work
+as it is, serialize behind it or settle it with its owner, and report the blocker
+rather than displacing a live writer. Where the refusal is the child's own permission
+profile, nothing here widens it: a running task keeps the settings it was created
+with, and the supported answer is the
+[OPS-5.3](references/operations.md#ops-53-who-commits-and-the-fallback-when-a-task-cannot)
+fallback taken deliberately and recorded, with the child still owning the source
+edits in that checkout and returning a frozen diff against the recorded baseline
+while the coordinator writes the Git metadata. What both cases refuse is the
+improvised route: redirecting `GIT_DIR`, cloning the repository somewhere writable,
+or a parent commit taken as a workaround rather than as that recorded fallback, each
+of which settles a permission problem by leaving the recorded ownership instead of
+repairing it, and leaves a delivery the review cannot trace to an owner. `reset`, `clean`,
+`stash` and `rebase` are not repairs either: they make the command succeed by
+discarding the state that explains the failure. Preserve the files, record why, and
+carry a blocker neither route clears to whoever can grant the permission.
+
+Carry the result into the packet's workspace-ownership fields
+([Launch packet](references/task-packet.md#launch-packet)), so the child is told
+what is not its own instead of deriving ownership from the path it was handed.
+
 ### Verify what this dispatch established
 
 The first full assignment carries the fields in
@@ -748,3 +839,49 @@ observed; installing, starting a service, or creating a task to find out are
 separate actions under their own authorization, and
 [OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
 path when one is actually authorized.
+
+### Account for the resources this run leaves behind
+
+A later management read should be able to say which checkout and which branch a
+piece of work used, who was answerable for it, and why anything still on disk is
+still there. So the close of a run states that once, in one place: every checkout,
+branch, temporary artifact, evidence root and background process this run created,
+changed, or is deliberately keeping, each with its owner, the reason it is retained,
+and the next action, including who may release it and on what event. It reuses the
+records that already exist and adds no new store: the project's Linear coordination
+record for the human-readable list, or for a standalone issue the existing linked
+coordination document or this task's owned section in that issue, with the private
+receipts keyed by the issue and the actual task IDs carrying raw detail under
+[OPS-5.4](references/operations.md#ops-54-evidence-location).
+
+Write it against what was found at dispatch rather than against whatever is visible
+now, because the comparison is what separates the entries. Pre-existing resources
+this run never touched, what it added, what it is keeping on purpose together with
+the event that releases it, what a failed creation left behind, and what two
+children share are five different answers. Evidence a finished task is deliberately
+retaining and residue nobody has looked at are both still on disk and are not the
+same entry. A resource whose owner cannot be established is recorded as unknown and
+returned as an open question; it does not become this task's by being found by it.
+
+Cleanup is bounded by that ownership. This run may remove its own disposable
+resources where the cleanup authorization column already covers them and their
+readers have exited. Existing dirty work, another task's cache or evidence, original
+data, active worktrees and shared services stay as they are. `reset`, `clean`,
+`stash`, `rebase` and forced deletion are not cleanup here, and an old modification
+time, a scratch-looking name or a full disk is not proof that anything is
+disposable. Keep the three claims apart when reporting: what is proposed for
+cleanup, what was actually deleted, and what capacity that actually returned.
+Proposing is the default, and anything beyond this run's authorized resources is a
+request rather than an action.
+
+Processes get their own line because they outlive the turn that started them. For
+each one this run started, record its working directory, purpose and execution
+handle, and whether it is still running at handoff; report the ones left running
+with their next action. A busy port, a matching command line or a familiar directory
+does not identify an owner, so a process this run cannot claim is reported rather
+than stopped.
+
+The inventory is a record and not an enforcement. It says who is answerable and what
+remains; whether anything is actually prevented from being written or deleted is the
+sandbox's and the filesystem's answer, observed separately. A handoff that reports
+the inventory has done that much and not more.
