@@ -5353,6 +5353,39 @@ class FortyFifthHostedRound(TrialCase):
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
+    def test_a_receipt_echoing_a_field_no_observation_builds_is_not_one(self):
+        # The contract builds actual out of its own OBSERVABLE fields alone -- the settings a
+        # creation can ask for plus the approval policy it decides without being asked, which is
+        # this module's declarable set. A key outside it is one observed() cannot have written, so
+        # the receipt carrying it is not one the bridge produced. The same rule already covered
+        # requested and verified; the echo was the side with no check on it.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            actual = self.world.captures["receipt-" + task + ".json"]["settings"]["actual"]
+            actual["futureSetting"] = "x"
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt echoing a field no observation builds was accepted")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_an_artifact_root_holding_whitespace_authorises_nothing(self):
+        # canonical() refuses whitespace in every assignment artifact, because the dispatch message
+        # names each identity as one word. So no artifact this procedure accepts can sit under a
+        # root holding it, and by the containment argument a root that cannot be the start of any
+        # acceptable artifact authorises nothing however absolute it looks.
+        scope = self.world.captures["register-B.json"]["authorizedScope"]
+        scope["artifactRoots"] = ["/repo with-space"]
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a root no acceptable artifact could sit under was read as usable")
+        self.assertEqual(cells_of(document, "boundaries")["registration:B"]["value"],
+                         NOT_VERIFIED)
+
     def test_a_reading_that_legitimately_answers_a_number_still_agrees(self):
         # Support, and the bound on that: where a payload answers a number for a written string --
         # a device, an inode, a pid -- the comparison is same() and stays textual. This is the
@@ -5598,27 +5631,40 @@ class FortyFifthHostedRound(TrialCase):
         self.assertFalse(answer["witnessNamesTheSamePidAfterTheLastProbe"],
                          "the witness this run ended on still named the declared supervisor")
 
-    def test_a_counter_that_missed_its_interval_is_not_given_another(self):
-        # And the waiting stops where the declared interval ends. A last probe that outlasts that
-        # interval leaves none of it to wait, so a counter that moves after it is a counter that
-        # did not move across the interval it was given.
-        counter = self.a_counter_this_case_controls(0.5)
+    def test_an_advance_that_happened_before_this_reading_is_not_one_it_observed(self):
+        # This replaces a case that required the wait to stop where the interval measured from the
+        # earlier gate's reading ended. That rule could not be verified: the witness carries no
+        # time, so a counter higher than the value that gate published says only that it moved at
+        # some point since, and where the probe outlasted the interval that point may be long
+        # after it. The interval is now measured by this reading from a counter it took itself, so
+        # an advance that happened during the probe and then stopped is an advance this reading
+        # never observed.
+        counter = self.a_counter_this_case_controls(0.3)
 
         def pause(seconds):
-            # Whenever anything waits, the counter moves. The point is that nothing waits here.
+            # Only while the reading this is anchored on is still waiting out its own interval.
             counter["pauses"] += 1
-            counter["move"]()
+            if counter["frozen"]:
+                time.sleep(seconds)
+            else:
+                counter["move"]()
 
-        self.a_last_probe_that(lambda: time.sleep(0.6))
+        def outlast_the_interval_then_stop():
+            # One advance inside the probe, which is what the earlier reading would have seen, and
+            # nothing after it. The probe outlasts the interval so that advance is already old.
+            counter["move"]()
+            time.sleep(0.4)
+
+        self.a_last_probe_that(outlast_the_interval_then_stop)
         document = self.world.preflight_with(pause)
         answer = document["supervisorStillRunning"]
         self.assertFalse(document["readyToStart"],
-                         "a counter that missed its declared interval was given another one")
+                         "an advance taken before this reading was counted as one it observed")
         self.assertGreaterEqual(answer["secondsSinceTheGatesOwnReading"],
                                 answer["declaredAdvanceSeconds"],
                                 "the last probe did not outlast the counter's own interval")
-        self.assertTrue(answer["advanced"],
-                        "the gate's own reading did not see the advance this case needs")
+        self.assertTrue(answer["aliveAfterTheLastProbe"],
+                        "this case is about a counter that stops, not a process that leaves")
 
     def test_a_ledger_line_cannot_write_a_verdict_into_the_report(self):
         # These four fields are the operator's own words and they are copied into the report. A

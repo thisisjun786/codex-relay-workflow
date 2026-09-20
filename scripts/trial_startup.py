@@ -564,7 +564,12 @@ def usable_root(value):
     if not isinstance(value, str) or not value:
         return False
     root = posixpath.normpath(value)
-    return posixpath.isabs(root) and not any(c in root for c in FORBIDDEN_IN_A_PATH)
+    # And whitespace, for the same reason and from the same place: canonical() refuses it in every
+    # assignment artifact because the dispatch message names each identity as one word. So no
+    # artifact this procedure accepts can hold it, and by the containment argument above a root
+    # holding it cannot be the start of one -- it authorises nothing however absolute it looks.
+    return (posixpath.isabs(root) and not any(c in root for c in FORBIDDEN_IN_A_PATH)
+            and not any(c.isspace() for c in root))
 
 
 def names_participant(payload, task, required=(), optional=()):
@@ -1871,7 +1876,15 @@ def reading_capability(record, relay):
                 beyond = sorted({key for key in (() if requested is MISSING else requested)
                                  if key not in REQUESTABLE_SETTINGS}
                                 | {key for key in (() if verified is MISSING else verified)
-                                   if key not in REQUESTABLE_SETTINGS})
+                                   if key not in REQUESTABLE_SETTINGS}
+                                 # And the echo, which the contract builds from its own OBSERVABLE
+                                 # fields alone: the settings a creation can ask for plus the
+                                 # approval policy it decides without being asked, which is this
+                                 # module's declarable set. A key outside it is one observed()
+                                 # cannot have written, so a receipt carrying it is not one the
+                                 # bridge produced.
+                                 | {key for key in (() if actual is MISSING else actual)
+                                    if key not in DECLARABLE_SETTINGS})
                 inconsistent = (verified is not MISSING and requested is not MISSING
                                 and sorted(verified) != sorted(requested))
                 unrequested = [] if requested is MISSING else sorted(
@@ -3322,17 +3335,20 @@ def supervisor_still_alive(record, answer, sleeper=time.sleep):
     pid = anchor.get("pid")
     if not anchor or not answer.get("passed"):
         return {k: v for k, v in answer.items() if not k.startswith("_")}
-    seen = witness_counter(answer.get("progressAfter"))
     declared = witness_counter(anchor.get("advanceSeconds"))
-    taken = answer.get("_readAt", time.monotonic())
-    since = time.monotonic() - taken
-    # The deadline is that reading's own moment plus the declared interval, whatever the probes
-    # between cost. A short probe leaves some of the interval still to wait; a long one leaves
-    # none of it, and neither leaves twice as much.
-    deadline = taken + (declared or 0)
+    since = time.monotonic() - answer.get("_readAt", time.monotonic())
+    # The interval is measured by this reading, from a counter this reading took.
+    #
+    # Anchoring on the value the earlier gate published could not establish what it claimed. The
+    # witness carries no time, so a counter higher than that value says only that it moved at some
+    # point since -- and where a probe outlasted the interval, that point may be long after it. The
+    # advance is therefore observed while the interval is still live: read the counter now, wait
+    # out the declared interval for it to move, and return the moment it does.
     found = read_witness(anchor.get("witness"))
-    held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+    seen = witness_counter(found.get("progress") if isinstance(found, dict) else None)
     named = isinstance(found, dict) and same(found.get("pid"), pid)
+    held = seen
+    deadline = time.monotonic() + (declared or 0)
     # Waiting only while there is still something to wait for. A witness under another pid or a
     # counter below the one already read is what a replaced supervisor leaves behind, and no
     # amount of further waiting makes either of them the poller this record declared.
