@@ -130,16 +130,7 @@ class Registry:
         rid = relationship_id(parent.task_id, child.task_id, issue_key)
         dispatch_turn_id = validated_turn_id(dispatch_turn_id)
         if project_key is None and supersedes:
-            # A replacement takes over the SAME issue, so it belongs to the same project. Left
-            # to the caller, superseding a scoped assignment without restating the project
-            # archived the outgoing child binding and the project-to-issue edge and attached
-            # no successor, so the issue silently lost its level.
-            inherited = self.store.one(
-                "SELECT s.project_key FROM relationship_scope s"
-                "  JOIN relationships r ON r.relationship_id = s.relationship_id"
-                " WHERE s.relationship_id = ? AND r.issue_key = ?",
-                (supersedes, issue_key))
-            project_key = inherited["project_key"] if inherited else None
+            project_key = self._inherited_project(self.store, rid, issue_key, supersedes)
         existing = self.store.one("SELECT * FROM relationships WHERE relationship_id = ?", (rid,))
         if existing is not None:
             record = self._row_to_record(existing)
@@ -270,6 +261,43 @@ class Registry:
             with self.store.transaction() as db:
                 self.linkage.record_conflict_in(db, raced, at=now)
 
+    @staticmethod
+    def _inherited_project(reader, rid, issue_key, supersedes):
+        """Which project a replacement belongs to when the caller did not restate one.
+
+        A replacement takes over the SAME issue, so it belongs to the same project. Left to
+        the caller, superseding a scoped assignment without restating the project archived the
+        outgoing child binding and the project-to-issue edge and attached no successor, so the
+        issue silently lost its level.
+
+        The predecessor is asked first, and the RETURNING identity's own retained scope row
+        second. A predecessor can be unscoped - every relationship registered before the
+        three-level linkage is - while the row coming back still carries the project it was
+        scoped to, and answering None there left it active with its binding and edge archived:
+        attachment() reported the retained project while the upward walk reported
+        issue_without_child, which is one store answering two ways.
+
+        Takes its reader so the same question can be asked on a caller's connection, under
+        the lock that serialises the write it decides.
+        """
+        query = (
+            "SELECT s.project_key AS project_key FROM relationship_scope s"
+            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+            " WHERE s.relationship_id = ? AND r.issue_key = ?")
+        if hasattr(reader, "one"):
+            found = reader.one(query, (supersedes, issue_key))
+            if found is None:
+                found = reader.one(
+                    "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                    (rid,))
+        else:
+            found = reader.execute(query, (supersedes, issue_key)).fetchone()
+            if found is None:
+                found = reader.execute(
+                    "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                    (rid,)).fetchone()
+        return found["project_key"] if found is not None else None
+
     def _returning_tenure(self, rid, parent, child, issue_key, dispatch_request_id,
                           dispatch_turn_id, supersedes, project_key):
         """A dead identity registered again: a second tenure, or a dead end named as one.
@@ -292,6 +320,7 @@ class Registry:
         ordinary idempotent path.
         """
         now = self.clock.iso()
+        pending = None
         with self.store.transaction() as db:
             fresh = db.execute(
                 "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
@@ -354,62 +383,101 @@ class Registry:
             # three-level linkage existed is one - and refusing on that would have shut the
             # compatibility surface out of handbacks entirely.
             outgoing = self.linkage.replaceable_child_in(db, supersedes)
-            # The predecessor first, for the reason the insert path archives first: once the
-            # returning row is live again the lifecycle guard stops recognising the outgoing
-            # one as the issue's owner, and archiving it afterwards would skip releasing the
-            # scope this tenure is about to claim.
-            db.execute(
-                "UPDATE relationships SET superseded_by = ?, status = 'archived',"
-                " updated_at = ? WHERE relationship_id = ?",
-                (rid, now, supersedes),
-            )
-            self.linkage.apply_relationship_status_in(
-                db, supersedes, "archived", previous_status=predecessor["status"])
-            generation = fresh["execution_generation"] + 1
-            # The endpoints come with it. Hosts are already known to match - the caller had to
-            # restate them to get here - but a task returning to a scope is running from
-            # whatever cwd and CXC session it has NOW, the same rule a reactivated binding
-            # follows.
-            db.execute(
-                "UPDATE relationships SET status = ?, superseded_by = NULL, supersedes = ?,"
-                " execution_generation = ?, parent_host_id = ?, parent_cwd = ?,"
-                " parent_cxc_session = ?, child_host_id = ?, child_cwd = ?,"
-                " child_cxc_session = ?, updated_at = ? WHERE relationship_id = ?",
-                (ACTIVE, supersedes, generation, parent.host_id, parent.cwd,
-                 parent.cxc_session, child.host_id, child.cwd, child.cxc_session, now, rid),
-            )
-            # reason stays NULL. The two named reasons are an initial assignment and a
-            # revision, and this is neither; the schema already allows null rather than making
-            # us invent contract vocabulary for it. What the tenure IS gets recorded where it
-            # belongs - supersedes and superseded_by carry the lineage, and the journal entry
-            # below carries the event.
-            db.execute(
-                "INSERT INTO generations (relationship_id, execution_generation,"
-                " dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at,"
-                " bound_at) VALUES (?,?,?,?,?,NULL,?,?)",
-                (rid, generation, dispatch_request_id,
-                 ANCHOR_BOUND if dispatch_turn_id else ANCHOR_PENDING,
-                 dispatch_turn_id, now, now if dispatch_turn_id else None),
-            )
-            self.store.journal(
-                "relationship_tenure_reopened", rid,
-                {"issueKey": issue_key, "executionGeneration": generation,
-                 "supersedes": supersedes, "outgoingChild": outgoing}, at=now)
-            # A generation advanced here is a generation advanced anywhere: the deliveries of
-            # the tenure that just ended are history from this moment, and without the
-            # annotation a dispatched or capped one keeps reporting as current while its
-            # acknowledgement is refused as stale.
-            self._supersede_older_deliveries_in(db, rid, generation, now)
+            # A dispatch request id belongs to the generation it opened. One retained from an
+            # EARLIER tenure of this identity cannot open another: the unique index would
+            # refuse it as a raw database error out of a public registration call, and even if
+            # it did not, generations could no longer say which dispatch opened which tenure.
+            replayed = db.execute(
+                "SELECT execution_generation FROM generations"
+                "  WHERE relationship_id = ? AND dispatch_request_id = ?",
+                (rid, dispatch_request_id),
+            ).fetchone()
+            if replayed is not None:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"dispatch request {dispatch_request_id!r} already opened generation "
+                    f"{replayed['execution_generation']} of {rid!r}, so it cannot open a "
+                    "returning tenure as well; a new tenure is a new dispatch")
+            if project_key is None:
+                # Re-asked under the lock. Decided before the transaction, an attachment
+                # landing in between left this None while the predecessor became scoped, and
+                # the tenure then archived that linkage and came back unscoped.
+                project_key = self._inherited_project(db, rid, issue_key, supersedes)
+            plan = None
             if project_key is not None:
-                reborn = db.execute(
-                    "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
-                ).fetchone()
-                refusal = self.linkage.attach_in(
-                    db, reborn, project_key, at=now, replacing=outgoing)
+                # The attachment is decided BEFORE any mutation, so the transaction that
+                # refuses can commit the contest itself. Recording it after a rollback leaves
+                # a window in which a crash loses both the change and the evidence, which is
+                # exactly what the transaction protocol in docs/linkage.md forbids.
+                candidate = {
+                    "relationship_id": rid, "issue_key": issue_key, "status": ACTIVE,
+                    "superseded_by": None, "parent_task_id": parent.task_id,
+                    "child_task_id": child.task_id, "child_host_id": child.host_id,
+                    "child_cwd": child.cwd, "child_cxc_session": child.cxc_session,
+                    "supersedes": supersedes,
+                }
+                plan, refusal = self.linkage.attach_refusal(
+                    db, candidate, project_key, replacing=outgoing)
                 if refusal is not None:
-                    failure = refusal.error()
-                    failure.raced_refusal = refusal
-                    raise failure
+                    self.linkage.record_conflict_in(db, refusal, at=now)
+                    # Committed with THIS transaction, and raised after it closes. The
+                    # mutations below are skipped, so the tenure is refused without ever
+                    # having been half-applied.
+                    pending = refusal
+            if pending is None:
+                # The predecessor first, for the reason the insert path archives first: once the
+                # returning row is live again the lifecycle guard stops recognising the outgoing
+                # one as the issue's owner, and archiving it afterwards would skip releasing the
+                # scope this tenure is about to claim.
+                db.execute(
+                    "UPDATE relationships SET superseded_by = ?, status = 'archived',"
+                    " updated_at = ? WHERE relationship_id = ?",
+                    (rid, now, supersedes),
+                )
+                self.linkage.apply_relationship_status_in(
+                    db, supersedes, "archived", previous_status=predecessor["status"])
+                generation = fresh["execution_generation"] + 1
+                # The endpoints come with it. Hosts are already known to match - the caller had to
+                # restate them to get here - but a task returning to a scope is running from
+                # whatever cwd and CXC session it has NOW, the same rule a reactivated binding
+                # follows.
+                db.execute(
+                    "UPDATE relationships SET status = ?, superseded_by = NULL, supersedes = ?,"
+                    " execution_generation = ?, parent_host_id = ?, parent_cwd = ?,"
+                    " parent_cxc_session = ?, child_host_id = ?, child_cwd = ?,"
+                    " child_cxc_session = ?, updated_at = ? WHERE relationship_id = ?",
+                    (ACTIVE, supersedes, generation, parent.host_id, parent.cwd,
+                     parent.cxc_session, child.host_id, child.cwd, child.cxc_session, now, rid),
+                )
+                # reason stays NULL. The two named reasons are an initial assignment and a
+                # revision, and this is neither; the schema already allows null rather than making
+                # us invent contract vocabulary for it. What the tenure IS gets recorded where it
+                # belongs - supersedes and superseded_by carry the lineage, and the journal entry
+                # below carries the event.
+                db.execute(
+                    "INSERT INTO generations (relationship_id, execution_generation,"
+                    " dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at,"
+                    " bound_at) VALUES (?,?,?,?,?,NULL,?,?)",
+                    (rid, generation, dispatch_request_id,
+                     ANCHOR_BOUND if dispatch_turn_id else ANCHOR_PENDING,
+                     dispatch_turn_id, now, now if dispatch_turn_id else None),
+                )
+                self.store.journal(
+                    "relationship_tenure_reopened", rid,
+                    {"issueKey": issue_key, "executionGeneration": generation,
+                     "supersedes": supersedes, "outgoingChild": outgoing}, at=now)
+                # A generation advanced here is a generation advanced anywhere: the deliveries of
+                # the tenure that just ended are history from this moment, and without the
+                # annotation a dispatched or capped one keeps reporting as current while its
+                # acknowledgement is refused as stale.
+                self._supersede_older_deliveries_in(db, rid, generation, now)
+                if plan is not None:
+                    reborn = db.execute(
+                        "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
+                    ).fetchone()
+                    self.linkage.attach_apply(db, reborn, project_key, plan, at=now)
+        if pending is not None:
+            raise pending.error()
         return self.get(rid)
 
     def _register_in_transaction(self, rid, parent, child, issue_key, roots, recipients,

@@ -2275,5 +2275,121 @@ class TheFifteenthRoundFoundTheseToo(LinkageTestCase):
         # And it still rolled back whole.
         self.assertEqual(self.registry.get(rid)["status"], "archived")
 
+
+class TheSixteenthRoundFoundTheseToo(LinkageTestCase):
+    def test_a_returning_tenure_restores_the_project_it_retained(self):
+        """The predecessor can be UNSCOPED - every relationship from before the three-level
+        linkage is - while the row coming back still holds its own relationship_scope record.
+        Inheriting None there left the tenure active with its binding and edge archived:
+        attachment() reported the retained project while the upward walk reported
+        issue_without_child, which is one store answering two ways."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        self.registry.set_status(original, "cancelled", actor="test")
+        interim = self.registry.register(
+            parent=self.parent(OTHER_PARENT),
+            child=Endpoint("01child-two", HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[OTHER_PARENT],
+            dispatch_request_id="dispatch-interim", dispatch_turn_id="turn-interim")
+        self.assertIsNone(self.linkage.attachment(interim["relationshipId"]))
+        back = self.registry.register(
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-back", dispatch_turn_id="turn-back",
+            supersedes=interim["relationshipId"])
+        self.assertEqual(back["relationshipId"], original)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+        self.assertEqual(self.linkage.attachment(original)["projectKey"], PROJECT)
+        upward = self.linkage.up(issue_key=ISSUE)
+        self.assertNotIn("issue_without_child", [gap["gap"] for gap in upward["gaps"]])
+
+    def test_a_refused_returning_tenure_commits_its_contest_and_applies_nothing(self):
+        """Recording after the rollback leaves a window where a crash loses both the change
+        and the evidence. The attachment is decided before any mutation, so the transaction
+        that refuses commits the contest itself."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        away = self.registry.register(
+            parent=self.parent(OTHER_PARENT),
+            child=Endpoint("01child-two", HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-away", dispatch_turn_id="turn-away",
+            supersedes=original, project_key=PROJECT)
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key="REL-ELSEWHERE", endpoint=Endpoint(CHILD, HOST))
+        self.assertRefused(
+            RefusalReason.ROLE_ALREADY_BOUND, self.registry.register,
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-back", dispatch_turn_id="turn-back",
+            supersedes=away["relationshipId"], project_key=PROJECT)
+        self.assertTrue(self.linkage.conflicts(linkage.ISSUE, ISSUE))
+        # Nothing was half-applied: the tenure it tried to take over is untouched and the
+        # returning identity is still dead.
+        self.assertEqual(self.registry.get(away["relationshipId"])["status"], "active")
+        self.assertEqual(self.registry.get(original)["status"], "archived")
+        self.assertEqual(self.registry.get(original)["executionGeneration"], 1)
+
+    def test_a_returning_tenure_refuses_a_dispatch_id_from_an_earlier_tenure(self):
+        """The unique index would have refused it as a raw database error out of a public
+        registration call, and generations could no longer say which dispatch opened which
+        tenure."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        away = self.registry.register(
+            parent=self.parent(OTHER_PARENT), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-away", dispatch_turn_id="turn-away",
+            supersedes=original, project_key=PROJECT)
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_CONFLICT, self.registry.register,
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-1", dispatch_turn_id="turn-replayed",
+            supersedes=away["relationshipId"], project_key=PROJECT)
+        self.assertEqual(self.registry.get(original)["status"], "archived")
+
+    def test_an_attachment_refuses_a_blank_child_endpoint(self):
+        """Only this path built an Endpoint out of stored columns instead of caller arguments,
+        so it skipped the check every other entry point makes - and a blank host produced a
+        live child binding with no routable endpoint at all."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE relationships SET child_host_id = '' WHERE relationship_id = ?",
+                (rid,))
+        with self.assertRaises(Exception) as caught:
+            self.linkage.attach_issue(rid, PROJECT)
+        self.assertIn("host id", str(caught.exception))
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+
+    def test_a_contested_scope_refuses_a_rebinding_of_its_own_live_owner(self):
+        """binding_plan read its own row as live and answered present, which said nothing
+        about whether anybody ELSE was. Rebinding and handover then reported a settled owner
+        for a scope that has two."""
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent())
+        self.store.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                " superseded_by, handover_note, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,NULL,NULL,'active',2,NULL,NULL,NULL,?,?)",
+                (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT),
+                 linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT, HOST,
+                 "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.linkage.bind_scope,
+            role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent())
+
 if __name__ == "__main__":
     unittest.main()

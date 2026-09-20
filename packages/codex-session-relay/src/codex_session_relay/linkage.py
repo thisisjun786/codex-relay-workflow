@@ -322,6 +322,13 @@ class Linkage:
                         scope_kind=scope_kind, scope_key=scope_key,
                         incumbent=current["task_id"], challenger=endpoint.task_id,
                     )
+                # Its own row being live says nothing about whether anybody ELSE is. On a
+                # store that could not install the guard index, returning "present" here let
+                # a rebinding or a handover report a settled owner for a scope that has two.
+                rivals = self._live_owners_in(db, scope_kind, scope_key, role)
+                if len(rivals) > 1:
+                    return None, self._contested_owner(
+                        scope_kind, scope_key, rivals, endpoint.task_id)
                 return (bid, "present", role, scope_kind, scope_key, endpoint), None
             # Reactivating is a claim on a scope somebody else may hold by now, and a task
             # that has since taken another role must not get one back this way. So an
@@ -882,6 +889,13 @@ class Linkage:
                 "also belong to " + repr(project_key),
                 scope_kind=ISSUE, scope_key=issue_key,
                 incumbent=elsewhere["project_key"], challenger=project_key)
+        # The endpoint this is about to bind, checked the way every other linkage entry point
+        # checks one. Only this path built an Endpoint out of stored columns instead of
+        # caller arguments, so it skipped _exact - and argparse accepts --child-host '', which
+        # produced a live child binding with a blank hostId and an issue with no routable
+        # endpoint at all.
+        _exact(child_task, "the child task id")
+        _exact(relationship_row["child_host_id"], "the child host id")
         plan, refusal = self.binding_plan(
             db, role=CHILD, scope_key=issue_key,
             endpoint=Endpoint(child_task, relationship_row["child_host_id"],
@@ -907,6 +921,16 @@ class Linkage:
         lower_status = relationship_row["status"] if relationship_row["status"] in LIVE \
             else ACTIVE
         self.apply_binding_plan(db, binding, status=lower_status, at=at)
+        # The plan can have been decided BEFORE the outgoing tenure released this scope - a
+        # returning tenure validates first so the transaction that refuses can commit its own
+        # contest - and it then read "already ours and already live" and wrote nothing. The
+        # archival that follows leaves that binding archived under a live owner. So the status
+        # is asserted here rather than inferred from the plan's action.
+        db.execute(
+            "UPDATE scope_bindings SET status = ?, updated_at = ?"
+            "  WHERE binding_id = ? AND status != ?",
+            (lower_status, at, binding[0], lower_status),
+        )
         if scope_row_missing:
             db.execute(
                 "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at)"
