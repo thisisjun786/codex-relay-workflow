@@ -1,7 +1,8 @@
 # Schedule judgment
 
-Use when a check covers a project, an initiative, or an issue that carries agreed
-dates. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
+Use when a check covers subjects that carry agreed dates, which the contract defines
+as projects, milestones and issues. An initiative-level request is judged through those
+subjects rather than as a subject of its own. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
 which [crw-plan](../../crw-plan/SKILL.md) owns, together with the delivery evidence
 this skill already pins. Where a subject's fields are absent, report that part of the
 schedule as unchecked rather than reconstructing them here. It decides whether each
@@ -39,14 +40,13 @@ coverage and is reported as one.
 
 ## Fix the deadline
 
-A date with no time of day has its deadline at the end of that calendar day in the
-schedule timezone: it is past due exactly when the calendar date of the observation
-in that timezone is later than the target date, so the target day itself is never
-late. A date carrying a time of day is compared as an instant, and both boundaries
-are inclusive — achievement exactly at the target instant is on time, and an
-observation exactly at the deadline has not yet passed it. Normalize every instant
-to the schedule timezone before comparing, including the achievement instant and
-the observation. Without a timezone the deadline cannot be fixed: that axis is
+The contract makes these targets calendar dates, so a target means the end of that
+day in the Timezone and this procedure never invents a time of day for one. A subject
+is past due exactly when the calendar date of the observation in that Timezone is
+later than its target date, so the target day itself is never late. Normalize every
+evidence instant and the observation into the Timezone before taking their calendar
+dates, which is what decides a landing late on the target day in one zone and after
+midnight in another. Without a timezone the deadline cannot be fixed: that axis is
 undecidable with the reason named, and the result is listed under unchecked scope.
 Never supply a timezone from the host, a user profile, or memory.
 
@@ -77,8 +77,8 @@ Judge each result once per axis, first match wins.
 | Row | Condition | Verdict |
 |---|---|---|
 | 1 | This axis has no date for this subject, or no Timezone, or the Current target disagrees with the latest Change source's after value, or the evidence needed to decide is stale | Undecidable, with the reason |
-| 2 | Achieved earlier than the target: an earlier calendar day for a day target, an earlier instant for a timed one | Ahead |
-| 3 | Achieved on the target day, or at or before the target instant | On plan |
+| 2 | Achieved on an earlier calendar day than the target | Ahead |
+| 3 | Achieved on the target day | On plan |
 | 4 | Achieved after the deadline | Late, reporting actual minus target |
 | 5 | Not achieved, observation after the deadline | Late, reporting elapsed time only |
 | 6 | Not achieved, observation at or before the deadline, and a listed risk observation holds | At risk, with its cause and wait class |
@@ -97,15 +97,10 @@ never reported as being on track to meet it.
 
 ## Report the difference
 
-For a day-granularity target the difference is whole calendar days in the schedule
-timezone: an achieved result reports actual minus target, negative for early, zero
-on the target day, positive for a late completion, and an unachieved past-due result
-reports elapsed days only, the observation's calendar date minus the target date, at
-least one. For a timed target the difference is a signed elapsed duration against
-the target instant rather than a day count, because two instants on one calendar day
-differ while their day count does not. Report that duration at the precision of the
-source timestamps; a difference that is not zero is never rounded or truncated to
-zero, and the sign is always kept.
+Differences are whole calendar days in the Timezone. An achieved subject reports
+actual minus target, negative for early, zero on the target day, positive for a late
+completion. An unachieved past-due subject reports elapsed days only, the observation's
+calendar date minus the target date, at least one.
 
 Do not produce a projected completion date, a remaining-work estimate, or a velocity
 or rate on any branch. An unachieved result reports how long it has been late and
@@ -159,12 +154,12 @@ Judge every subject against the Schedule baseline and against the Current target
 the same rules. A subject belongs to an axis when the contract records that axis's
 date for it, and a Schedule baseline recorded `unconfirmed`, meaning a target exists
 but no Baseline record establishing it can be found, makes the baseline axis
-undecidable for exactly that reason. A result with no baseline date whose change source records that it entered
-scope after the baseline time is labelled added after baseline: no baseline verdict,
-excluded from the baseline aggregate, judged on the current axis only, and never
-reported as undecidable, since it is a deliberate scope decision rather than a gap
-in coverage. A result with no baseline date and no such record is undecidable on
-the baseline axis, reason no baseline recorded, and the scope is partially checked.
+undecidable for exactly that reason. Because that baseline is each subject's own earliest
+established target, a subject that entered scope later still has one, set by the record
+that first gave it a target, and it is judged on both axes like any other. Its Change
+source carries when it entered and under whose decision, and the report says so, so a
+subject added mid-flight is never counted into an aggregate that claims to describe the
+plan as it stood before it arrived, and two scopes are never compared at one rate.
 
 Report both verdicts whenever they differ, with the change source and the instant
 the current date took effect. Moving a target date never removes the baseline
@@ -186,7 +181,12 @@ the whole project.
 
 Do not name the most recently touched or highest-numbered result unless it lies on a
 walked path. Where a date, a relation kind, or a predecessor's own state cannot be
-read, leave that edge's impact unverified and name the missing input.
+read, leave that edge's impact unverified and name the missing input. Where the
+graph carries one of the defects the contract checks for, a cycle among Prerequisites,
+a prerequisite whose target falls after the target of the subject needing it, an issue
+carrying a milestone's target from outside that milestone, or a required prerequisite
+absent altogether, report it as a finding and leave the impact it distorts unverified
+rather than judging through it.
 
 ## Record the judgment and reuse it
 
@@ -196,7 +196,12 @@ summary a bounded helper returns to its coordinator, or the unsynced update when
 scope is read-only. A read-only or report-only scope returns findings and never
 gains a write merely to leave a reusable record. Keep no second schedule store.
 
-Record what identifies the judgment: the result IDs, the schedule fields as read,
+Where the record reports on the schedule data itself, use the contract's two states as
+it fixes them: `recorded in the data` where dates, links and relations were written and
+read back, and `not applied in the view` where a scale, an ordering or a connection line
+the connector does not expose was left alone. Neither stands for the other.
+
+Record what identifies the judgment: the subject IDs, the schedule fields as read,
 the criteria set identity, the implementation revision, the required level with the
 evidence instant and observed-at at each level, both axis verdicts with their
 quantities, the cause and wait class, the impact list, and the query and judgment
@@ -272,7 +277,7 @@ answer it rules out. Derive the expectation from the observation before reading 
 rules back; that derivation is the check, and matching wording is not. These cases
 establish that the procedure agrees with itself. They are not evidence of runtime
 behavior, and they do not establish that a separate status report reaches the same
-verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated. Each case
+verdict. Timezone is Asia/Seoul and Target nature is `confirmed` unless stated. Each case
 lists every input that bears on its verdict, so an observation it does not list did
 not hold, and where it names only a current target the baseline carries the same
 date with no change source, leaving both axes in agreement and only the current one
@@ -336,17 +341,19 @@ worth discussing.
    with the change source and the move instant. Not the current axis alone, which
    erases the recorded delay.
 
-10. **Scope addition.** The project's baseline was recorded 2026-09-01. I-6 has no
-    baseline target date, its change source records that it entered scope on
-    2026-09-10, its current target is 2026-10-05, and it is unachieved; observed
-    2026-09-21. I-6 labelled added after baseline, no baseline verdict, excluded from
-    the baseline aggregate, and on plan against its current date. Not a baseline miss,
-    not undecidable, and not blended with the baseline scope into one rate. Where instead I-6 has no
-    baseline target date and no change source recording when it entered scope, the
-    baseline axis is undecidable with reason no baseline recorded and the scope is
-    partially checked, while the current axis still decides on plan against
-    2026-10-05. Not the whole result undecidable because one axis is, and not the
-    missing baseline treated as an addition nobody recorded.
+10. **A subject added after the plan began.** The project's plan was recorded
+    2026-09-01 and I-6 entered its scope on 2026-09-10, when the record that added it
+    set its first target of 2026-09-28; that is its Schedule baseline. Its Current
+    target is 2026-10-05 after a later move and it is unachieved. Observed 2026-09-21.
+    I-6 judged on both axes like any other subject, on plan against both, with the
+    Change source showing it entered on 2026-09-10 and under whose decision, and the
+    report keeping it out of any aggregate that claims to describe the plan as it stood
+    on 2026-09-01. Not a subject left without a baseline because it arrived late, and
+    not one folded into the earlier scope so the two are compared at one rate. Where
+    instead I-6 carries a target but no Baseline record establishing it can be found,
+    its Schedule baseline is `unconfirmed`, that axis is undecidable for that reason
+    and the scope is partially checked, while the current axis still decides on plan
+    against 2026-10-05. Not the whole subject undecidable because one axis is.
 
 11. **Pause.** I-12, current target 2026-09-15, required level merged, paused
     2026-09-12, source recorded as the user's decision pending a product answer, no
@@ -356,17 +363,15 @@ worth discussing.
     same cause and class. Not paused days subtracted, and not a pause read as an
     extension.
 
-12. **Timezone and granularity.** I-13, current target 2026-09-25, day granularity,
-    timezone Asia/Seoul; the merge its criteria require landed 2026-09-25T23:30+09:00;
-    the reader's own clock shows 2026-09-26T00:30Z. On plan, because the achievement
-    falls on the target calendar day in the schedule timezone, not late read from the
-    observer's date. With no timezone recorded, undecidable on that axis, reason no
-    timezone, listed under unchecked scope, not the host timezone used silently. I-14,
-    current target 2026-09-25T12:00, achieved exactly 2026-09-25T12:00: on plan, the
-    boundary being inclusive, quantity a signed duration of zero rather than a day
-    count. The same target achieved 2026-09-25T13:15: late, actual minus target
-    +1h15m, reported as a completed result rather than as elapsed time, not on plan
-    from the day-granularity rule applied to a timed target.
+12. **Timezone at the day boundary.** I-13, Current target 2026-09-25, Timezone
+    Asia/Seoul; the merge its criteria require landed 2026-09-25T23:30+09:00; the
+    reader's own clock shows 2026-09-26T00:30Z. On plan, because the achievement's
+    calendar date in the Timezone is the target day. Not late read from the observer's
+    date. With no Timezone recorded, undecidable on that axis for that reason and
+    listed under unchecked scope. Not the host timezone used silently. Where the same
+    merge instead landed 2026-09-27T09:00+09:00, late with actual minus target of
+    +2 days, reported as a completed result. Not elapsed days, which is the quantity
+    for a subject still unachieved.
 
 13. **Parallel issues where only one blocks.** I-15, I-16, and I-17 run in parallel,
     all requiring a merge. I-15's current target is 2026-09-15 and it has no merge;
