@@ -770,6 +770,65 @@ CREATE TABLE IF NOT EXISTS merge_turn_checks (
     recorded_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS merge_turn_checks_turn ON merge_turn_checks (turn_id, recorded_at);
+-- One lease on one execution subject. There is no stored counter anywhere here: a count is
+-- always COUNT(*) over held rows, so there is nothing to decrement twice and nothing to leak
+-- when a process dies between a decrement and the row that was supposed to explain it.
+--
+-- tenure is part of the key, so releasing and re-reserving one subject retains the released
+-- row and opens a second one. Overwriting instead would destroy the evidence a duplicate or
+-- contradictory release is detected against.
+CREATE TABLE IF NOT EXISTS execution_slots (
+    slot_id        TEXT PRIMARY KEY,
+    subject_kind   TEXT NOT NULL,
+    subject_key    TEXT NOT NULL,
+    parent_task_id TEXT NOT NULL,
+    project_key    TEXT NOT NULL,
+    initiative_key TEXT,
+    tenure         INTEGER NOT NULL,
+    state          TEXT NOT NULL,
+    reserved_by    TEXT NOT NULL,
+    reserved_at    TEXT NOT NULL,
+    released_at    TEXT,
+    released_by    TEXT,
+    release_reason TEXT,
+    detail         TEXT
+);
+CREATE INDEX IF NOT EXISTS execution_slots_held ON execution_slots (state, parent_task_id);
+
+-- A declared bound, with the dimension it bounds. 'runs' is the one dimension this store can
+-- count for itself. Every other - file descriptors, model spend - is a fact about a host or an
+-- account that no number of rows here measures, which is why a value for one can only come
+-- from execution_usage. Deriving an FD limit from a task count is the error this separation
+-- exists to make structurally impossible rather than merely discouraged.
+CREATE TABLE IF NOT EXISTS execution_limits (
+    limit_id    TEXT PRIMARY KEY,
+    scope_kind  TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    dimension   TEXT NOT NULL,
+    unit        TEXT NOT NULL,
+    ceiling     REAL NOT NULL,
+    enforce     INTEGER NOT NULL DEFAULT 1,
+    declared_by TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    revision    INTEGER NOT NULL,
+    declared_at TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- An observation of a dimension, by whom and by what method. The only way a non-runs dimension
+-- acquires a current value. A missing row is unmeasured, never zero: treating an absent
+-- measurement as no usage is the same unproven inference with more steps.
+CREATE TABLE IF NOT EXISTS execution_usage (
+    scope_kind  TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    dimension   TEXT NOT NULL,
+    observed    REAL NOT NULL,
+    observed_by TEXT NOT NULL,
+    method      TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (scope_kind, scope_key, dimension)
+);
+
 
 """
 
@@ -797,6 +856,10 @@ GUARD_INDEXES = (
      "CREATE UNIQUE INDEX IF NOT EXISTS merge_turns_one_live_claim ON merge_turns"
      " (target_key, holder_task_id)"
      " WHERE state IN ('waiting','holding','merging','unknown')"),
+    ("execution_slots_one_live_subject",
+     "CREATE UNIQUE INDEX IF NOT EXISTS execution_slots_one_live_subject ON execution_slots"
+     " (subject_kind, subject_key)"
+     " WHERE state = 'held'"),
 )
 
 
