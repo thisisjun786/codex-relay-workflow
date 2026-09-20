@@ -270,7 +270,46 @@ class AssignmentView:
             "responsibleRelationship": owning[0]["relationshipId"] if owning else None,
         }
         record.update(self._project_context(owning))
+        record["relay"] = self._relay_provenance(bool(owning))
         return record
+
+    def _relay_provenance(self, holds: bool) -> dict:
+        """Which store this answer came from, so it can be compared with the packet's.
+
+        for_issue can answer "responsibleRelationship: null" perfectly honestly and still be
+        the wrong answer, because a mistyped state directory creates an empty store and an
+        empty store has no assignments. OPS-3.4 makes the proof a conjunction - doctor
+        reporting the packet's state directory AND this lookup naming the expected
+        relationship - and a reading that cannot say which file it read cannot take part in
+        that comparison. Carrying the provenance is what lets the caller notice it asked the
+        wrong store instead of concluding the issue is unowned and opening a second writer.
+
+        holds is the predicate itself, stated once here rather than re-derived by every
+        caller from the shape of responsibleRelationship. It is scoped to THIS store, which
+        is the only honest scope for the claim.
+
+        These values are provenance, never proof. A copy of the store carries the same store
+        id and the same recorded socket, which is why compare_store grades a found nonce
+        against device and inode instead of trusting an identifier. The field name says
+        recorded for the same reason: this is the value to compare, not the evidence that
+        settles the comparison.
+        """
+        located = self.store.locate()
+        return {
+            "holds": holds,
+            "store": {
+                "storeId": located["storeId"],
+                "dbPath": located["dbPath"],
+                "realPath": located["realPath"],
+                "device": located["device"],
+                "inode": located["inode"],
+                # First-write-wins provenance out of schema_meta, and deliberately NOT the
+                # socket this process resolved: a store records the socket that created it,
+                # so a participant pointing at a different socket still reads this value and
+                # can see that the two disagree.
+                "recordedSocket": self.store.meta("socket_path"),
+            },
+        }
 
     def _project_context(self, owning) -> dict:
         """Which project owns this issue, additively.

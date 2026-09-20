@@ -55,6 +55,72 @@ class CliBase(RelayTestCase):
         )
 
 
+class TheIssueHalfOfTheProof(CliBase):
+    """OPS-3.4 makes the proof a conjunction, and nothing used to order the two halves.
+
+    Running the issue lookup first against a mistyped state directory CONSTRUCTS an empty
+    store and then honestly reports that nothing is assigned, after which a coordinator opens
+    a second writer for an issue that already has one. doctor --issue answers both halves from
+    one read-only connection, so the answer can always say which file it came from.
+    """
+
+    def cli_store(self):
+        return os.path.join(self.tmp, "relay.sqlite3")
+
+    def test_it_answers_without_creating_the_database_it_was_asked_about(self):
+        """The whole point. An absent store must stay absent after a diagnosis."""
+        self.assertFalse(os.path.exists(self.cli_store()))
+        issue = self.run_cli("doctor", "--issue", ISSUE)["issue"]
+        self.assertFalse(issue["readable"])
+        self.assertIsNone(issue["holds"])
+        self.assertFalse(
+            os.path.exists(self.cli_store()),
+            "doctor --issue created the store it was only asked to look at",
+        )
+
+    def test_an_unreadable_store_reports_null_rather_than_no_assignment(self):
+        """null and false are different answers and only one of them is safe to act on."""
+        issue = self.run_cli("doctor", "--issue", ISSUE)["issue"]
+        self.assertIsNone(issue["responsibleRelationship"])
+        self.assertIsNone(issue["holds"])
+        self.assertIn("not readable", issue["detail"])
+
+    def test_it_names_the_responsible_child_once_one_is_registered(self):
+        relationship = self.register()
+        issue = self.run_cli("doctor", "--issue", ISSUE)["issue"]
+        self.assertTrue(issue["holds"])
+        self.assertEqual(issue["responsibleChild"], CHILD)
+        self.assertEqual(
+            issue["responsibleRelationship"], relationship["relationshipId"]
+        )
+
+    def test_a_real_store_with_no_assignment_for_this_issue_says_false_not_null(self):
+        self.register()
+        issue = self.run_cli("doctor", "--issue", "SOME-OTHER-ISSUE")["issue"]
+        self.assertTrue(issue["readable"])
+        self.assertFalse(issue["holds"])
+        self.assertIsNone(issue["responsibleChild"])
+
+    def test_the_rows_and_the_identity_come_from_the_same_read(self):
+        self.register()
+        report = self.run_cli("doctor", "--issue", ISSUE)
+        self.assertEqual(report["issue"]["storeAgreement"], "same")
+        self.assertEqual(report["issue"]["storeId"], report["store"]["storeId"])
+
+    def test_a_paused_assignment_still_holds_its_issue(self):
+        """A pause does not release the issue, so it must not read as unowned."""
+        relationship = self.register()
+        self.run_cli(
+            "relationship-status", "--relationship", relationship["relationshipId"],
+            "--status", "paused", "--actor", PARENT,
+        )
+        self.assertTrue(self.run_cli("doctor", "--issue", ISSUE)["issue"]["holds"])
+
+    def test_doctor_without_the_flag_is_unchanged(self):
+        self.register()
+        self.assertNotIn("issue", self.run_cli("doctor"))
+
+
 class CommandLine(CliBase):
     def test_register_emit_and_status_round_trip(self):
         relationship = self.register()

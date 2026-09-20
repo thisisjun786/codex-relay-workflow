@@ -1,5 +1,6 @@
 """The assignment ledger: one issue, one responsible child, and where that assignment stands."""
 
+import os
 import threading
 
 from codex_session_relay import identity
@@ -405,3 +406,76 @@ class AssignmentLookup(AssignmentTestCase):
         return self.store.one(
             "SELECT relationship_id FROM relationships WHERE issue_key = ?", (issue_key,)
         )["relationship_id"]
+
+
+class TheAnswerNamesTheStoreItCameFrom(AssignmentTestCase):
+    """A lookup that cannot say which store it read cannot be compared with the packet.
+
+    OPS-3.4 makes the proof a conjunction: doctor reporting the packet's state directory AND
+    this lookup naming the expected relationship. A mistyped state directory creates an empty
+    store, and an empty store answers "nothing is assigned" perfectly honestly - after which a
+    coordinator opens a duplicate writer. These tests pin the provenance that lets the caller
+    notice it asked the wrong file.
+    """
+
+    def test_holds_is_false_before_registration_and_true_after(self):
+        self.assertFalse(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+        self.register()
+        self.assertTrue(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+
+    def test_holds_agrees_with_the_responsible_relationship_it_is_derived_from(self):
+        for issue in (ISSUE, "NOT-AN-ISSUE"):
+            found = self.assignments.for_issue(issue)
+            self.assertEqual(
+                found["relay"]["holds"], found["responsibleRelationship"] is not None
+            )
+
+    def test_a_paused_owner_still_holds_the_issue(self):
+        self.register()
+        rid = self.store.one(
+            "SELECT relationship_id FROM relationships WHERE issue_key = ?", (ISSUE,)
+        )["relationship_id"]
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        self.assertTrue(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+
+    def test_the_empty_store_answers_with_its_own_identity_not_silence(self):
+        """The dangerous answer is an honest 'no assignment' from the wrong file."""
+        found = self.assignments.for_issue("NOT-AN-ISSUE")
+        self.assertFalse(found["relay"]["holds"])
+        self.assertEqual(found["relay"]["store"]["storeId"], self.store.identity)
+        self.assertEqual(found["relay"]["store"]["dbPath"], str(self.store.path))
+
+    def test_two_stores_are_distinguishable_by_the_reading_alone(self):
+        other = Store(os.path.join(self.tmp, "elsewhere", "relay.sqlite3"))
+        self.addCleanup(other.close)
+        mine = self.assignments.for_issue(ISSUE)["relay"]["store"]
+        theirs = AssignmentView(
+            other, Registry(other, self.clock), self.clock
+        ).for_issue(ISSUE)["relay"]["store"]
+        self.assertNotEqual(mine["storeId"], theirs["storeId"])
+        self.assertNotEqual(mine["inode"], theirs["inode"])
+
+    def test_the_recorded_socket_is_provenance_and_does_not_follow_a_later_process(self):
+        """schema_meta records the socket that CREATED the store, first write wins.
+
+        That is the point: a participant pointing at a different socket still reads this
+        value, so the two can be seen to disagree instead of the later one quietly winning.
+        """
+        path = os.path.join(self.tmp, "socketed", "relay.sqlite3")
+        first = Store(path, socket_path="/tmp/crw125-first.sock")
+        self.addCleanup(first.close)
+        view = AssignmentView(first, Registry(first, self.clock), self.clock)
+        recorded = view.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        self.assertTrue(recorded.endswith("crw125-first.sock"))
+
+        second = Store(path, socket_path="/tmp/crw125-second.sock")
+        self.addCleanup(second.close)
+        again = AssignmentView(
+            second, Registry(second, self.clock), self.clock
+        ).for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        self.assertEqual(again, recorded)
+
+    def test_a_store_opened_without_a_socket_records_none(self):
+        self.assertIsNone(
+            self.assignments.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        )
