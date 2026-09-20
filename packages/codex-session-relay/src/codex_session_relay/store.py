@@ -673,6 +673,247 @@ CREATE INDEX IF NOT EXISTS scope_directives_scope ON scope_directives
 -- vocabulary checks stay in Python, rather than being written where half the stores would
 -- never get them.
 CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
+-- Coordination between parents under one supervision: whose turn it is to merge into a shared
+-- target, how much concurrent execution a scope is using against what it declared, and what
+-- two peer projects agreed about a shared edit region. Appended as one block at the END of the
+-- script, so a sibling adding tables elsewhere and this work cannot produce an overlapping
+-- hunk. Every statement is CREATE TABLE IF NOT EXISTS for the reason stated above: the script
+-- runs on every open, which reaches an existing database with a new table and never with a new
+-- column.
+
+-- A contested coordination attempt, retained after it was refused. Separate from
+-- linkage_conflicts because the domains and the reader belong to the coordination modules;
+-- writing a merge target into linkage's table would make Linkage.conflicts answer about a
+-- vocabulary it does not own. incumbent and challenger are NOT NULL because SQLite treats
+-- NULLs as distinct in a unique index, so a nullable column would let a replayed refusal
+-- insert a second row instead of converging on one.
+CREATE TABLE IF NOT EXISTS coordination_conflicts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    domain     TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    incumbent  TEXT NOT NULL DEFAULT '',
+    challenger TEXT NOT NULL DEFAULT '',
+    detail     TEXT,
+    UNIQUE (domain, subject, reason, incumbent, challenger)
+);
+
+-- One parent's claim on one merge target, waiting or holding. The target is a repository and
+-- the base ref a pull request lands on, not a project: one project can own work in several
+-- repositories and two projects can share one base branch, so keying on the project would
+-- serialise work that never contends and fail to serialise work that does.
+--
+-- holder_task_id is part of the KEY because a claim is one parent's claim, the same reason a
+-- scope binding keys with its task. tenure is in the key because the same parent taking the
+-- turn again later is a second tenure rather than a replay of the first. project_key is
+-- deliberately outside it: a handover changes who owns the project without changing which
+-- claim this is.
+CREATE TABLE IF NOT EXISTS merge_turns (
+    turn_id           TEXT PRIMARY KEY,
+    target_key        TEXT NOT NULL,
+    repository        TEXT NOT NULL,
+    base_ref          TEXT NOT NULL,
+    project_key       TEXT NOT NULL,
+    holder_task_id    TEXT NOT NULL,
+    holder_host_id    TEXT NOT NULL,
+    relationship_id   TEXT,
+    pr_number         INTEGER,
+    candidate_head    TEXT NOT NULL,
+    declared_ready    INTEGER NOT NULL DEFAULT 0,
+    state             TEXT NOT NULL,
+    tenure            INTEGER NOT NULL,
+    checked_base_sha  TEXT,
+    landed_sha        TEXT,
+    observed_base_sha TEXT,
+    close_reason      TEXT,
+    requested_at      TEXT NOT NULL,
+    held_at           TEXT,
+    merging_at        TEXT,
+    closed_at         TEXT,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS merge_turns_target ON merge_turns (target_key, state);
+
+-- Every transition and every attestation about a turn, append-only. state cannot carry both:
+-- a transport accepting a message ABOUT a turn is not the holder acting on it, and folding the
+-- first into the second is the confusion this table exists to prevent. The unique key makes a
+-- replayed notification converge on one row rather than recording a second fact.
+CREATE TABLE IF NOT EXISTS merge_turn_ledger (
+    entry_id        TEXT PRIMARY KEY,
+    turn_id         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    from_state      TEXT,
+    to_state        TEXT,
+    evidence_kind   TEXT NOT NULL,
+    actor_task_id   TEXT NOT NULL,
+    evidence        TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    UNIQUE (turn_id, idempotency_key)
+);
+
+-- What the holder restated immediately before merging. A REFUSED check is stored too, because
+-- it is the evidence for the safe return that follows it: a refusal that only raises leaves
+-- the next reader no way to learn why the turn came back.
+CREATE TABLE IF NOT EXISTS merge_turn_checks (
+    check_id       TEXT PRIMARY KEY,
+    turn_id        TEXT NOT NULL,
+    head_sha       TEXT NOT NULL,
+    base_sha       TEXT NOT NULL,
+    required       TEXT NOT NULL,
+    checks_digest  TEXT NOT NULL,
+    checks         TEXT NOT NULL,
+    review_digest  TEXT NOT NULL,
+    review         TEXT NOT NULL,
+    result         TEXT NOT NULL,
+    refusal_reason TEXT,
+    recorded_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS merge_turn_checks_turn ON merge_turn_checks (turn_id, recorded_at);
+-- One lease on one execution subject. There is no stored counter anywhere here: a count is
+-- always COUNT(*) over held rows, so there is nothing to decrement twice and nothing to leak
+-- when a process dies between a decrement and the row that was supposed to explain it.
+--
+-- tenure is part of the key, so releasing and re-reserving one subject retains the released
+-- row and opens a second one. Overwriting instead would destroy the evidence a duplicate or
+-- contradictory release is detected against.
+CREATE TABLE IF NOT EXISTS execution_slots (
+    slot_id        TEXT PRIMARY KEY,
+    subject_kind   TEXT NOT NULL,
+    subject_key    TEXT NOT NULL,
+    parent_task_id TEXT NOT NULL,
+    project_key    TEXT NOT NULL,
+    initiative_key TEXT,
+    tenure         INTEGER NOT NULL,
+    state          TEXT NOT NULL,
+    reserved_by    TEXT NOT NULL,
+    reserved_at    TEXT NOT NULL,
+    released_at    TEXT,
+    released_by    TEXT,
+    release_reason TEXT,
+    detail         TEXT
+);
+CREATE INDEX IF NOT EXISTS execution_slots_held ON execution_slots (state, parent_task_id);
+
+-- A declared bound, with the dimension it bounds. 'runs' is the one dimension this store can
+-- count for itself. Every other - file descriptors, model spend - is a fact about a host or an
+-- account that no number of rows here measures, which is why a value for one can only come
+-- from execution_usage. Deriving an FD limit from a task count is the error this separation
+-- exists to make structurally impossible rather than merely discouraged.
+CREATE TABLE IF NOT EXISTS execution_limits (
+    limit_id    TEXT PRIMARY KEY,
+    scope_kind  TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    dimension   TEXT NOT NULL,
+    unit        TEXT NOT NULL,
+    ceiling     REAL NOT NULL,
+    enforce     INTEGER NOT NULL DEFAULT 1,
+    declared_by TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    revision    INTEGER NOT NULL,
+    declared_at TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- An observation of a dimension, by whom and by what method. The only way a non-runs dimension
+-- acquires a current value. A missing row is unmeasured, never zero: treating an absent
+-- measurement as no usage is the same unproven inference with more steps.
+CREATE TABLE IF NOT EXISTS execution_usage (
+    scope_kind  TEXT NOT NULL,
+    scope_key   TEXT NOT NULL,
+    dimension   TEXT NOT NULL,
+    observed    REAL NOT NULL,
+    observed_by TEXT NOT NULL,
+    method      TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    PRIMARY KEY (scope_kind, scope_key, dimension)
+);
+-- A place in a specific tree, not a file name. region_kind separates a whole file from a symbol
+-- or a data region inside it, which is what stops one shared file from blocking every parent
+-- with business in another part of it. base_revision is part of the region because an agreement
+-- about a place is an agreement about that place in that tree.
+CREATE TABLE IF NOT EXISTS edit_regions (
+    region_id       TEXT PRIMARY KEY,
+    repository      TEXT NOT NULL,
+    base_revision   TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    region_kind     TEXT NOT NULL,
+    region_key      TEXT NOT NULL DEFAULT '',
+    region_class    TEXT NOT NULL,
+    regenerate_from TEXT,
+    recorded_at     TEXT NOT NULL
+);
+
+-- Two peer projects' agreement about one region. It confers nothing: no merge permission, no
+-- widened artifact scope, no authority to instruct. It records what both sides said they would
+-- accept and who is expected to act next. The project keys are stored in the sorted order the
+-- identity hashes, so either side proposing converges on one record.
+CREATE TABLE IF NOT EXISTS edit_agreements (
+    agreement_id      TEXT PRIMARY KEY,
+    region_id         TEXT NOT NULL,
+    repository        TEXT NOT NULL,
+    base_revision     TEXT NOT NULL,
+    left_project      TEXT NOT NULL,
+    right_project     TEXT NOT NULL,
+    peer_link_id      TEXT NOT NULL,
+    proposer_task_id  TEXT NOT NULL,
+    issue_key         TEXT,
+    constraint_text   TEXT NOT NULL,
+    left_condition    TEXT,
+    right_condition   TEXT,
+    left_accepted_at  TEXT,
+    right_accepted_at TEXT,
+    next_owner        TEXT,
+    state             TEXT NOT NULL,
+    tenure            INTEGER NOT NULL,
+    supersedes        TEXT,
+    superseded_by     TEXT,
+    close_reason      TEXT,
+    proposed_at       TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    closed_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS edit_agreements_region ON edit_agreements (region_id, state);
+CREATE INDEX IF NOT EXISTS edit_agreements_tree ON edit_agreements
+    (repository, base_revision, state);
+
+-- What the two sides agreed should happen NEXT, kept apart from the agreement so that lifting
+-- the constraint does not drop the work it implied. A null assignee is the unassigned state and
+-- is never aggregated under any parent.
+CREATE TABLE IF NOT EXISTS edit_followups (
+    followup_id      TEXT PRIMARY KEY,
+    agreement_id     TEXT NOT NULL,
+    trigger_text     TEXT NOT NULL,
+    acceptance_text  TEXT NOT NULL,
+    issue_ref        TEXT,
+    assignee_task_id TEXT,
+    assignee_project TEXT,
+    accepted_at      TEXT,
+    state            TEXT NOT NULL,
+    close_reason     TEXT,
+    recorded_by      TEXT NOT NULL,
+    recorded_at      TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+-- Which revision a repository's agreements are now stated against, append-only. One successor
+-- per revision, so a chain A->B->C leaves every earlier revision with an outgoing mark and only
+-- the newest without one. That is what lets a settlement ask whether its OWN revision was
+-- superseded, instead of asking which mark is newest - a question with no answer when two marks
+-- share an injected clock's instant.
+CREATE TABLE IF NOT EXISTS edit_revision_marks (
+    mark_id       TEXT PRIMARY KEY,
+    repository    TEXT NOT NULL,
+    from_revision TEXT NOT NULL,
+    to_revision   TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    UNIQUE (repository, from_revision)
+);
+
+
+
 """
 
 
@@ -691,6 +932,22 @@ GUARD_INDEXES = (
      "CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links"
      " (link_kind, upper_kind, upper_key, lower_kind, lower_key)"
      " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+    ("merge_turns_one_live_holder",
+     "CREATE UNIQUE INDEX IF NOT EXISTS merge_turns_one_live_holder ON merge_turns"
+     " (target_key)"
+     " WHERE state IN ('holding','merging','unknown')"),
+    ("merge_turns_one_live_claim",
+     "CREATE UNIQUE INDEX IF NOT EXISTS merge_turns_one_live_claim ON merge_turns"
+     " (target_key, holder_task_id)"
+     " WHERE state IN ('waiting','holding','merging','unknown')"),
+    ("execution_slots_one_live_subject",
+     "CREATE UNIQUE INDEX IF NOT EXISTS execution_slots_one_live_subject ON execution_slots"
+     " (subject_kind, subject_key)"
+     " WHERE state = 'held'"),
+    ("edit_agreements_one_live_per_region",
+     "CREATE UNIQUE INDEX IF NOT EXISTS edit_agreements_one_live_per_region"
+     " ON edit_agreements (region_id, left_project, right_project)"
+     " WHERE state IN ('proposed','agreed','reopened') AND superseded_by IS NULL"),
 )
 
 
