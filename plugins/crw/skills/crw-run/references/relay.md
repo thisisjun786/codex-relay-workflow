@@ -64,6 +64,20 @@ exits 2 rather than reporting a relationship you would then adopt out of an unve
 own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
 `--expect-nonce` still exist and still refuse anything short of `proven`.
 
+`unknown` is refused the same way `changed` is, whenever the database WAS readable: a caller that
+asked whether these rows came from its store and got no proof must not read exit 0 as yes, which
+is the rule the `--expect-*` comparison already applies one level up. An unreadable database is a
+different answer rather than a weaker one — there is no relay here to agree with — so it keeps
+exit 0, and determining before anything exists is not an error.
+
+`holds: false` before registration is the expected reading, not a verdict that this assignment is
+direct. Registration needs the task id creation returns, so at managed start there is genuinely
+no relationship yet. What establishes relay-managed mode at that point is the agreed state
+directory plus the declared intent naming that store, which `intent-show` reads back; `holds`
+becomes true at step 6, once registration has landed. Treating step 1's `false` as "no relay" is
+the misreading that keeps execution on the direct path, and it is why the determination is
+recorded rather than re-derived from a single lookup.
+
 An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
 are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
 constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
