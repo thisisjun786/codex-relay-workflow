@@ -65,6 +65,15 @@ in which a parent ran goal-free unless a Loop was separately requested, and it c
 authority for a parent already running. It opens no goal on a completed project or an unapproved
 backlog item, and an explicit user no-goal limit is a different thing that still wins.
 
+Preflight above classifies a hook that routes an active native goal into CXC implementation phases
+as a compatibility blocker. For the measured goal-idle behaviour that rule is narrowed rather than
+ignored, because activation and continuation fail differently: the goal does activate and reads
+back active, and what the block degrades is durable continuation, which is recorded as a bounded
+nudge. So this behaviour does not block activation, while a hook that actually prevents a goal from
+activating, or that cannot be declined without violating this contract, remains a blocker under
+that step. Recording this narrowing here does not rewrite the step itself; the two are read
+together and the wording of the step still needs its own coordinated update.
+
 Activation is not continuation. On the measured installation the goal activates, and the
 Stop-continuation that follows is a bounded nudge carrying an unconditional PABCD directive that a
 coordination parent declines. [Start policy](../../crw-run/references/start-policy.md) records that

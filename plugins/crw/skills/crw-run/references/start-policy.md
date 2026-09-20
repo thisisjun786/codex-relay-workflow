@@ -46,7 +46,7 @@ project's scope or a child count.
 
 | Field | What it holds |
 | --- | --- |
-| `run_mode` | `loop`, `goal-free-run` or `blocked`, in the vocabulary [Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) defines. For a project parent `loop` is the default; `goal-free-run` is the temporary state that exists only while activation is unresolved, or where an explicit user limit forbids a goal. |
+| `run_mode` | `loop`, `goal-free-run` or `blocked`, in the vocabulary [Parent goal lifecycle](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) defines. For a project parent `loop` is the default; `goal-free-run` applies only where the request separately authorizes goal-free Run, or where an explicit user limit forbids a goal. Unresolved activation without that authorization is `blocked`. |
 | `child_cap` | The ceiling in force, and every bound that produced the number actually dispatched. |
 | `host_compatibility` | The preflight outcome, the installed identities it was read at, and the issue that owns an unresolved blocker. |
 | `observation_path` | The waiting mode selected under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting), with the evidence that it is available. |
@@ -232,6 +232,9 @@ differently.
 
 This parent's own live children always count against its cap. Other parents' children never do;
 they inform the observation instead.
+A creation whose outcome is unresolved counts against the cap exactly as a live child does, until
+it is reconciled. An unresolved outcome means a writer may exist, so treating its slot as free is
+how a parent quietly exceeds its own ceiling while its arithmetic still looks correct.
 
 That observation is a reduction and only ever lowers the number. Where nothing was observed, no
 reduction applies and the observation is recorded as `unmeasured`, which states what was read
