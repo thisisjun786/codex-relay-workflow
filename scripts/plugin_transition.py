@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Move a manual CRW installation to the plugin installation, and own what follows it.
 
-Five commands, one JSON document each, so a run leaves a receipt that can be diffed:
+Six commands, one JSON document each, so a run leaves a receipt that can be diffed:
 
     inspect     read-only: both installs, the owner of each surface, in-flight work
+    check-declaration
+                read-only: whether adding or updating a package would keep the per-tool approval
+                policy this host grants. Judges the package named by --package, which is the one
+                about to be installed rather than the one already there, and carries its payload
+                digest so the same check run afterwards can be tied to the bytes that landed
     transition  manual -> plugin, in order, --apply to act and a dry run otherwise
     disable     stop new calls without deleting anything
     remove      delete the records this repository wrote, and only those
@@ -12,6 +17,10 @@ Five commands, one JSON document each, so a run leaves a receipt that can be dif
 What none of them do: install a runtime, register a plugin, grant hook trust, stop a service, or
 delete an operational database, journal, receipt or assignment. Written, registered, trusted and
 fired are four claims, and this tool can establish the first two at most.
+
+check-declaration is a gate an operator runs, not one that intercepts anything: nothing here
+invokes codex plugin add, update or remove, and a host serves whatever declaration is installed
+whether or not this was asked first.
 
 Standard library only, and it never calls the runtime installer's install, hook or register-mcp
 commands: it reads that package's readers and writers directly, so the diagnosis those commands
