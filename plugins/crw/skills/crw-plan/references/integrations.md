@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, `crw-logic`, and `crw-tidy`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Skill names under each installation
 
@@ -134,9 +134,9 @@ Load the existing owner for the requested operation:
 | Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
-| Report where the work stands, including a bare 중간점검 and progress against the agreed schedule | [crw-status](../../crw-status/SKILL.md) |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+| Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
@@ -557,7 +557,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
@@ -603,7 +603,7 @@ A new independent child is also created with enough capability to finish its del
 
 The coordinator applies the effective settings through the creation tool's real arguments, sends the bounded issue packet in the initial work prompt, and verifies the returned settings. When CXC Loop is the effective workflow, that prompt invokes the installed `cxc-loop` skill; an explicit non-Loop or no-goal alternative omits that invocation and names the agreed workflow instead. Loop mechanics belong to the child and its `cxc-loop`/`cxc-pabcd` skills; see [Prepare and dispatch](../../crw-run/SKILL.md#prepare-and-dispatch).
 
-- A status request reads existing tasks and evidence and wakes nothing. That is the default and it holds for a standalone lookup and for any request carrying an explicit status-only, report-only, read-only, pause or no-contact limit, which outranks everything below it. A checkpoint is the other case and is not that request: where this task holds a current supervisor designation for the same stable initiative ID, its approved project set is not complete, the execution approval is still in force and obligations remain inside it, a request such as 중간점검 checks the responsible parents and moves the work that approval already covers through each parent's existing supported path. Authority that cannot be established from the records falls back to reading. It creates no new project execution, no wider scope and no installation, restart or wake authority the assignment did not already carry. [crw-status](../../crw-status/SKILL.md) and [crw-check](../../crw-check/SKILL.md) classify one input the same way from this sentence rather than from separate copies of it.
+- A status request reads existing tasks and evidence and wakes nothing.
 - A setting the creation path cannot apply is settled before the task exists: use an already-permitted path or effective configuration that applies the requested values, or report the concrete unsupported capability. Never create a task already known to carry the wrong setting, and never silently downgrade it or claim the requested value.
 - A mismatch observed after creation is reconciled on that same task.
 - A user correction to model, effort, or workflow adjusts the same task where the transport supports it, and is reported otherwise, keeping stable IDs, unchanged permissions, and preserved progress, reconciled before any resend.
@@ -693,7 +693,6 @@ Read the selected installed `SKILL.md` and follow its workflow. Load only skills
 | Packet/report must stand alone | `shower`: fresh-context cold read when justified and delegation is available |
 | Revised document accumulated noise | `re0`: refresh only the authorized artifact |
 | Where to start or what follows finished work | [crw-next](../../crw-next/SKILL.md): gather scoped state, use `readchk` for ambiguity and `nba` for one next action |
-| Where the work currently stands | [crw-status](../../crw-status/SKILL.md): report the situation at the depth the question needs, reusing `catchup`'s evidence-first brief without its returning-reader assumption |
 
 `hate`, `prism`, `feynman`, and other skills marked `disable-model-invocation` or an equivalent explicit-only policy remain deliberate user choices. The user's current operative request must name the skill or explicitly authorize that named chain. A wrapper selection, quoted example, pasted log, or skill document mentioning it is not opt-in. Preserve the selected skill's output and independence rules.
 

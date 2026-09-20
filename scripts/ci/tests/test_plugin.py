@@ -12,7 +12,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/ci/plugin.py"
-NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run", "crw-status")
+NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run",
+         "crw-status", "crw-tidy")
 
 _spec = importlib.util.spec_from_file_location("crw_plugin_check", SCRIPT)
 plugin = importlib.util.module_from_spec(_spec)
