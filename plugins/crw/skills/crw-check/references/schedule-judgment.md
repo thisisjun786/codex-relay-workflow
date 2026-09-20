@@ -401,7 +401,12 @@ worth discussing.
     2026-09-18, the installation receipt is reused unchanged with its original
     observed-at while the current-axis verdict is recomputed to late by 4 days. Not
     the recorded ahead carried forward on the ground that the achievement itself did
-    not change.
+    not change. Where instead I-20 was recorded achieved because its required
+    installation was observed present on 2026-09-22, and a current verdict is asked
+    for on 2026-10-01 without that state being read again, the achievement does not
+    stand on a settled event: the installation is observed again, or I-20 is
+    undecidable carrying the 2026-09-22 observed-at. Not a past presence reused as a
+    current one, which would report a service nobody has looked at.
 16. **A checkpoint inside an approved execution.** An initiative execution the user
     already approved is running, and its project parent holds that approval. A
     checkpoint here finds M5 late by 4 days against a current target of 2026-09-17,
@@ -419,7 +424,10 @@ worth discussing.
     contact. Where instead M5 sits in project A and the approved successor waiting on
     it is in project B, the finding returns through the supervisor owning both
     projects, or, where no single supervisor owns them, through direct coordination
-    between the two parents with any unresolved ordering escalated to the user. Not project A's parent deciding whether project B
+    between the two parents with any unresolved ordering escalated to the user. Where projects A and B are owned by
+    different supervisors, the unresolved ordering escalates to those two supervisors
+    rather than to the user. Not one supervisor settling an ordering over a project it
+    does not own. Not project A's parent deciding whether project B
     proceeds, which is an ordering it does not own. Where this check runs as a
     bounded helper for a coordinator rather than holding the assignment itself, the
     finding goes back to that coordinator and the helper contacts no owner directly.
