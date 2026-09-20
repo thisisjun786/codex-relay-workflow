@@ -27,8 +27,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
-                         ownership, pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, firing, hooks, hostrecord,
+                         ownership, pointer, reading, residue, scope, staging, swapgate)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -3442,7 +3442,12 @@ class DeclaredSetReferenceTests(unittest.TestCase):
         modules = {"check": check, "codexconfig": codexconfig, "completion": completion,
                    "definition": definition, "hooks": hooks, "hostrecord": hostrecord,
                    "ownership": ownership, "pointer": pointer, "reading": reading,
-                   "scope": scope, "staging": staging, "swapgate": swapgate}
+                   "scope": scope, "staging": staging, "swapgate": swapgate,
+                   # The glob above pulls every module into the literal-comparison scans, but
+                   # this oracle is a hand-kept map, so a module added to the package was
+                   # scanned for one class of defect and left out of the one that compares the
+                   # source reader against what the module actually holds.
+                   "firing": firing, "residue": residue}
         trees = _runtime_trees()
         declared_by_module = _declared_by_module(trees)
         computed = set()
@@ -5399,16 +5404,16 @@ class SwapGateTests(unittest.TestCase):
     def _cells(self, *, running=False, open_attempts=0, store=None, candidate=None):
         same = {"a": "CREATE TABLE a (x TEXT)", "b": "CREATE TABLE b (y TEXT)"}
         store = store if store is not None else {"readable": True, "present": True,
-                                                 "tables": dict(same), "dbPath": "/d"}
+                                                 "objects": dict(same), "dbPath": "/d"}
         candidate = candidate if candidate is not None else {"readable": True,
-                                                             "tables": dict(same)}
+                                                             "objects": dict(same)}
         return {
             "daemon": swapgate.daemon_cell(
                 {"ok": True, "payload": {"running": running}, "command": ["service", "status"]}),
             "inFlight": swapgate.inflight_cell(
                 {"ok": True, "command": ["doctor"],
                  "payload": {"contents": {"available": True, "openAttempts": open_attempts}}}),
-            "storeTables": swapgate.tables_cell(store, candidate),
+            "storeSchema": swapgate.schema_cell(store, candidate),
         }
 
     def test_a_stopped_daemon_with_nothing_in_flight_and_agreeing_tables_is_allowed(self):
@@ -5426,16 +5431,16 @@ class SwapGateTests(unittest.TestCase):
 
     def test_a_store_holding_tables_the_candidate_does_not_declare_blocks(self):
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)",
                                               "b": "CREATE TABLE b (y TEXT)",
                                               "verdicts": "CREATE TABLE verdicts (v TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                       "objects": {"a": "CREATE TABLE a (x TEXT)",
                                                   "b": "CREATE TABLE b (y TEXT)"}})
         answer = swapgate.decide(cells)
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.NARROWS)
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.NARROWS)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
-        self.assertIn("verdicts", cells["storeTables"]["detail"],
+        self.assertIn("verdicts", cells["storeSchema"]["detail"],
                       "the refusal names the table that would be stranded")
 
     def test_a_candidate_that_adds_tables_refuses_and_says_which_tables(self):
@@ -5443,37 +5448,37 @@ class SwapGateTests(unittest.TestCase):
         so allowing this would have the new daemon perform the migration OPS-4.5 reserves for
         its own issue with its own backup."""
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                       "objects": {"a": "CREATE TABLE a (x TEXT)",
                                                   "b": "CREATE TABLE b (y TEXT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.EXTENDS)
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.EXTENDS)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
-        self.assertIn("b", cells["storeTables"]["detail"])
-        self.assertNotEqual(cells["storeTables"]["answer"], swapgate.NARROWS,
+        self.assertIn("b", cells["storeSchema"]["detail"])
+        self.assertNotEqual(cells["storeSchema"]["answer"], swapgate.NARROWS,
                             "adding is reported as its own answer, not as a downgrade")
 
     def test_a_table_defined_differently_refuses_even_though_the_names_agree(self):
         """Names alone agreed while a column differed, which is the schema change a name
         comparison cannot see."""
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE TABLE a (x TEXT, y INT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.DIFFERS)
+                                       "objects": {"a": "CREATE TABLE a (x TEXT, y INT)"}})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.DIFFERS)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
 
     def test_whitespace_is_not_a_schema_change(self):
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                                   "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                             candidate={"readable": True,
-                                       "tables": {"a": "CREATE  TABLE   a (x TEXT)"}})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.AGREES)
+                                       "objects": {"a": "CREATE  TABLE   a (x TEXT)"}})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.AGREES)
 
     def test_no_store_is_absence_and_not_agreement(self):
         cells = self._cells(store={"readable": True, "present": False, "dbPath": "/d",
-                                   "tables": None})
-        self.assertEqual(cells["storeTables"]["answer"], swapgate.NO_STORE)
+                                   "objects": None})
+        self.assertEqual(cells["storeSchema"]["answer"], swapgate.NO_STORE)
         self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.ALLOWED)
 
     def test_each_cell_that_cannot_be_read_keeps_the_installation(self):
@@ -5483,11 +5488,11 @@ class SwapGateTests(unittest.TestCase):
             "inFlight contents": {"inFlight": swapgate.inflight_cell(
                 {"ok": True, "payload": {"contents": {"available": False,
                                                       "detail": "not readable"}}})},
-            "storeTables": {"storeTables": swapgate.tables_cell(
+            "storeSchema": {"storeSchema": swapgate.schema_cell(
                 {"readable": False, "detail": "denied"},
-                {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}})},
-            "candidate tables": {"storeTables": swapgate.tables_cell(
-                {"readable": True, "present": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                {"readable": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}})},
+            "candidate tables": {"storeSchema": swapgate.schema_cell(
+                {"readable": True, "present": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}},
                 {"readable": False, "detail": "the candidate could not be asked"})},
         }
         for label, override in unreadable.items():
@@ -5506,9 +5511,9 @@ class SwapGateTests(unittest.TestCase):
 
     def test_an_established_refusal_is_named_even_when_another_cell_was_unread(self):
         cells = dict(self._cells(running=True),
-                     storeTables=swapgate.tables_cell(
+                     storeSchema=swapgate.schema_cell(
                          {"readable": False, "detail": "denied"},
-                         {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}}))
+                         {"readable": True, "objects": {"a": "CREATE TABLE a (x TEXT)"}}))
         answer = swapgate.decide(cells)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
         self.assertTrue(answer["blockedBy"], "the actionable blocker is still named")
@@ -5838,7 +5843,7 @@ class UpdateRecoveryTests(unittest.TestCase):
         schema = {"relationships": "CREATE TABLE relationships (relationship_id TEXT PRIMARY KEY)",
                   "attempts": "CREATE TABLE attempts (event_id TEXT)"}
         tables = {"readable": True, "present": not clean_store,
-                  "tables": None if clean_store else dict(schema),
+                  "objects": None if clean_store else dict(schema),
                   "dbPath": str(host.store)}
         if gate == "running daemon":
             def fake_relay(command, **kwargs):                        # noqa: F811
@@ -5899,7 +5904,7 @@ class UpdateRecoveryTests(unittest.TestCase):
                                   probes.append(str(interpreter)) if probes is not None else None,
                                   tables)[1]),
             mock.patch.object(runtime_install, "candidate_tables",
-                              return_value={"readable": True, "tables": candidate_declares}),
+                              return_value={"readable": True, "objects": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
                               side_effect=fake_classification),
         ]
@@ -7526,9 +7531,9 @@ class SchemaComparisonTests(unittest.TestCase):
     in, so normalisation stops exactly where meaning starts."""
 
     def _answer(self, store, candidate):
-        return swapgate.tables_cell(
-            {"readable": True, "present": True, "tables": store, "dbPath": "/d"},
-            {"readable": True, "tables": candidate})["answer"]
+        return swapgate.schema_cell(
+            {"readable": True, "present": True, "objects": store, "dbPath": "/d"},
+            {"readable": True, "objects": candidate})["answer"]
 
     def test_a_literal_that_differs_only_in_case_is_a_difference(self):
         self.assertEqual(
@@ -7549,9 +7554,9 @@ class SchemaComparisonTests(unittest.TestCase):
             swapgate.AGREES, "SQLite keeps the original text, so formatting drifts")
 
     def test_a_reading_carrying_only_names_cannot_answer_this_cell(self):
-        cell = swapgate.tables_cell(
-            {"readable": True, "present": True, "tables": ["a"], "dbPath": "/d"},
-            {"readable": True, "tables": ["a"]})
+        cell = swapgate.schema_cell(
+            {"readable": True, "present": True, "objects": ["a"], "dbPath": "/d"},
+            {"readable": True, "objects": ["a"]})
         self.assertFalse(cell["readable"],
                          "two name-only readings agree while a column differs, so answering on"
                          " names is answering a different question")
@@ -7561,7 +7566,7 @@ class SchemaComparisonTests(unittest.TestCase):
                  "inFlight": swapgate.inflight_cell(
                      {"ok": True, "payload": {"contents": {"available": True,
                                                            "openAttempts": 0}}}),
-                 "storeTables": cell})["verdict"],
+                 "storeSchema": cell})["verdict"],
             swapgate.UNESTABLISHED)
 
 
@@ -7694,7 +7699,7 @@ class SchemaDepthTests(unittest.TestCase):
         self.assertTrue(reading.get("readable"), str(reading.get("detail")))
         self.assertGreater(len({key.split(" ", 1)[0] for key in droppable}), 1,
                            "a fixture holding one kind cannot show a comparison losing kinds")
-        self.assertEqual(set(reading["tables"]), droppable,
+        self.assertEqual(set(reading["objects"]), droppable,
                          "the store reading and the objects this database actually owns are"
                          " different sets, so the comparison is being made on a schema the"
                          " store does not have")
@@ -7744,7 +7749,7 @@ class SchemaDepthTests(unittest.TestCase):
         reading = runtime_install.candidate_tables(RELAY_RUNTIME)
 
         self.assertTrue(reading.get("readable"), str(reading.get("detail")))
-        self.assertEqual(set(reading["tables"]), droppable,
+        self.assertEqual(set(reading["objects"]), droppable,
                          "the candidate declares objects this reading never reports, so an"
                          " update compares against a schema the runtime would not install")
         self.assertTrue(all(name.startswith("sqlite_") for name in
@@ -7781,7 +7786,7 @@ class SchemaDepthTests(unittest.TestCase):
             state = Path(temporary) / "intact"
             _built_store(state, ddl)
             whole = runtime_install.store_tables(RELAY_RUNTIME, str(state))
-        self.assertEqual(swapgate.tables_cell(whole, candidate)["answer"], swapgate.AGREES,
+        self.assertEqual(swapgate.schema_cell(whole, candidate)["answer"], swapgate.AGREES,
                          "the control: an untouched store must agree, or every refusal below is"
                          " a refusal of the fixture rather than of the missing object")
 
@@ -7791,8 +7796,8 @@ class SchemaDepthTests(unittest.TestCase):
                     state = Path(temporary) / "missing"
                     _built_store(state, ddl, drop=key)
                     reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
-                cell = swapgate.tables_cell(reading, candidate)
-                self.assertIn(cell["answer"], swapgate.TABLES_BLOCKING,
+                cell = swapgate.schema_cell(reading, candidate)
+                self.assertIn(cell["answer"], swapgate.SCHEMA_BLOCKING,
                               "a store missing " + key + " answered " + str(cell["answer"])
                               + ", so the new daemon would re-create it on its first write-open")
                 self.assertIn(key, cell["detail"], "the refusal has to name what went")
@@ -7803,7 +7808,7 @@ class SchemaDepthTests(unittest.TestCase):
                     "inFlight": swapgate.inflight_cell(
                         {"ok": True, "payload": {"contents": {"available": True,
                                                               "openAttempts": 0}}}),
-                    "storeTables": cell})["verdict"]
+                    "storeSchema": cell})["verdict"]
                 self.assertEqual(verdict, swapgate.BLOCKED,
                                  "the existing installation is kept rather than replaced over a"
                                  " store whose schema the candidate does not match")
@@ -7837,9 +7842,9 @@ class SchemaDepthTests(unittest.TestCase):
         """
         held = {"table kept": "CREATE TABLE kept (a TEXT)"}
         declared = dict(held, **{"index kept_a": "CREATE INDEX kept_a ON kept (a)"})
-        cell = swapgate.tables_cell(
-            {"readable": True, "present": True, "dbPath": "/d", "tables": held},
-            {"readable": True, "tables": declared})
+        cell = swapgate.schema_cell(
+            {"readable": True, "present": True, "dbPath": "/d", "objects": held},
+            {"readable": True, "objects": declared})
 
         self.assertEqual(cell["answer"], swapgate.EXTENDS)
         self.assertEqual(cell["evidence"]["onlyInCandidate"], ["index kept_a"])
@@ -8325,7 +8330,7 @@ class CleanHostFirstInstallTests(unittest.TestCase):
         self.assertEqual(code, 0, json.dumps(payload)[:1200])
         self.assertTrue(payload["promoted"])
         self.assertEqual(payload["swapGate"]["verdict"], swapgate.ALLOWED)
-        self.assertEqual(payload["swapGate"]["cells"]["storeTables"]["answer"],
+        self.assertEqual(payload["swapGate"]["cells"]["storeSchema"]["answer"],
                          swapgate.NO_STORE)
         self.assertEqual(reached, str(host.candidate))
 
@@ -10596,3 +10601,820 @@ class LockSiblingTests(unittest.TestCase):
             self.assertEqual(emitted[-1]["hookFile"], str(home / "hooks.json"))
             self.assertEqual(emitted[-1]["lockedPath"], str(configuration))
             self.assertIn(str(configuration), emitted[-1]["refused"])
+
+
+# =========================================================================================
+# CRW-100 - diagnosis answers the residue a failed install left
+#
+# residualPaths lived only on a failed install's own JSON result, so an operator who wanted the
+# cleanup warning after a failed update had to have kept that run's stdout. The procedure said
+# exactly that. These cases are the reading it was missing, and they are taken against a real
+# failure rather than a directory a fixture placed: the update actually runs, actually breaks
+# at a build step, and is actually prevented from removing what it created.
+# =========================================================================================
+
+
+def _diagnose_args(host, **overrides):
+    args = argparse.Namespace(
+        dest=str(host.destination), record=str(host.record_path),
+        codex_home=str(host.codex_home), state=str(host.state), socket=None, issue=None,
+        bridge_command=None, relay_command=None, bridge_arg=None, observed_tool=None,
+        trial=False, temporary=False, assignment_lookup=False, turn_status=None)
+    for name, value in overrides.items():
+        setattr(args, name, value)
+    return args
+
+
+def _diagnose(host, **overrides):
+    import runtime_install
+
+    emitted = []
+    with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+        runtime_install.cmd_diagnose(_diagnose_args(host, **overrides))
+    return emitted[-1]
+
+
+def _failed_update_leaving_its_candidate(host):
+    """An update that fails AND cannot remove what it built, which is the state that leaves a
+    residual path. Returns the failing run's own result."""
+    import runtime_install
+
+    def refusing(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    with mock.patch.object(runtime_install.shutil, "rmtree", side_effect=refusing):
+        _code, payload = UpdateRecoveryTests()._run(host, breaking="install packages")
+    return payload
+
+
+class DiagnosisReportsResidue(unittest.TestCase):
+    def test_diagnose_names_the_residue_a_failed_install_left_behind(self):
+        """The defect end to end: the failing run named the path and the diagnosis that comes
+        after it did not, so the warning existed only in stdout nobody kept."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            failure = _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)
+
+        self.assertEqual(failure["residualPaths"], [str(host.candidate)],
+                         "the fixture did not leave the residue these cases are about")
+        # Read with a default, so a command that does not answer this question at all fails on
+        # the assertion rather than on a missing key.
+        self.assertIn(str(host.candidate), found.get("residualPaths", []),
+                      "the failed run named this path and the diagnosis after it did not")
+
+    def test_the_residue_is_what_the_installer_itself_would_reclaim(self):
+        """Not a second opinion. The decision reported is staging's own, so what diagnosis
+        calls clearable and what the next install would take are one set."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)
+        entries = {entry["path"]: entry for entry in found.get("residue", {}).get("entries", [])}
+        candidate = entries.get(str(host.candidate), {})
+        self.assertEqual(candidate.get("decision"), staging.RECLAIM)
+        self.assertTrue(candidate.get("residual"))
+        self.assertIn(candidate.get("decision"), staging.REMOVES)
+
+    def test_a_dangling_pointer_the_record_claims_is_residue_and_a_foreign_one_is_not(self):
+        """A link's shape is not its ownership. pointer.remove refuses a link this command did
+        not place, and a cleanup list naming one would send an operator to remove another
+        tool's."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            claimed = _diagnose(host)
+            claimed_pointer = str(host.pointer_path)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            # A link at the destination that this host's record does not record as its own,
+            # which is the state a foreign or hand-made pointer is actually in. The path is
+            # still read -- it is where a pointer would be -- and it is still not ours.
+            record.pop("pointer", None)
+            hostrecord.save(host.record_path, record)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            foreign = _diagnose(host)
+
+        self.assertEqual(claimed.get("residue", {}).get("pointer", {}).get("finding"),
+                         residue.DANGLING_POINTER)
+        self.assertIn(claimed_pointer, claimed.get("residualPaths", []))
+        self.assertEqual(foreign["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER)
+        self.assertNotIn(foreign["residue"]["pointer"]["path"], foreign["residualPaths"],
+                         "a link the record does not claim is reported, never listed for"
+                         " removal")
+
+    def test_a_pointer_whose_placement_was_withdrawn_is_not_this_commands_residue(self):
+        """Keeping the path is not claiming the link. The ownership entry answers two questions
+        and a failed promotion takes one away: it keeps 'path' so a retry derives the same
+        pointer, and a rollback that established the link it placed is GONE withdraws
+        recordedAt and recordedBy. Read as placement evidence, that surviving path published
+        whatever link appeared at the location afterwards as this command's own residue -- and
+        pointer.remove refuses exactly such a link, so the cleanup list was naming a path its
+        own recovery would not act on.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            # Exactly the state a rollback leaves behind.
+            record["pointer"] = {"path": str(host.pointer_path)}
+            hostrecord.save(host.record_path, record)
+            self.assertFalse(hostrecord.placement_recorded(record["pointer"]),
+                             "the fixture did not build the withdrawn-placement record this"
+                             " case is about")
+            # Somebody else's dangling link arrives at that location afterwards.
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            found = _diagnose(host)
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER,
+                         "a preserved pointer PATH was read as evidence that this command"
+                         " placed the link now standing at it")
+        self.assertNotIn(str(host.pointer_path), found.get("residualPaths") or [],
+                         "a link no placement evidence claims was published as owned residue")
+
+    def test_a_destination_naming_a_user_this_host_lacks_is_a_reading_not_a_crash(self):
+        """Path.expanduser() raises RuntimeError, not OSError, for a ~user it cannot resolve,
+        and --dest is operator input rather than an internal fault. The whole diagnostic payload
+        was lost to it: the command answered nothing at all, and said nothing about the one
+        input that had failed. Every other unreadable spelling this command meets becomes a
+        reading, and this is the same class.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # Caught here so the failure is this case's own assertion rather than the
+            # traceback: "it raised" is the defect, and the case has to say so in its own
+            # words, the way the journal-path case beside it does.
+            try:
+                found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+            except Exception as error:
+                found = {"raised": type(error).__name__ + ": " + str(error)}
+        self.assertNotIn("raised", found,
+                         "a destination spelling this host cannot expand took the whole"
+                         " payload with it: " + str(found.get("raised")))
+        self.assertIsNone(found.get("internalError"),
+                          "an unexpandable --dest was reported as an internal fault rather"
+                          " than as a reading of the input that failed")
+        self.assertTrue(
+            any("could not be settled" in one
+                for one in found.get("residue", {}).get("unreadable") or []),
+            "the destination could not be read and the survey did not say so: "
+            + repr(found.get("residue", {}).get("unreadable")))
+
+    def test_a_destination_that_failed_to_expand_is_not_an_omitted_one(self):
+        """The second half of the reading above, and the harder half.
+
+        The recorded pointer is the fallback for a --dest nobody gave. Used for a --dest that
+        was given and could not be read, it scanned the installation the host record names
+        while the same answer reported the operator's destination unreadable -- so a cleanup
+        list could have been published for a destination they never asked about.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            self.assertTrue((record.get("pointer") or {}).get("path"),
+                            "the fixture has no recorded pointer, so there is nothing this"
+                            " case could have wrongly fallen back to")
+            found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+        survey = found.get("residue") or {}
+        self.assertIsNone(survey.get("destination"),
+                          "a destination that could not be read was replaced by the recorded"
+                          " pointer's own, and the survey then described that one")
+        self.assertFalse(survey.get("read"),
+                         "nothing could be scanned, and the survey said it had scanned")
+        self.assertEqual(found.get("residualPaths") or [], [],
+                         "a cleanup list was published for a destination the operator never"
+                         " named")
+        self.assertTrue(any("could not be settled" in one
+                            for one in survey.get("unreadable") or []),
+                        "the reason there is nothing to scan was dropped")
+        self.assertNotIn("no destination was named, so nothing was scanned",
+                         survey.get("unreadable") or [],
+                         "a destination WAS named; saying both is one list contradicting"
+                         " itself")
+
+    def test_an_empty_destination_is_supplied_rather_than_omitted(self):
+        """Same class as the case above, reached by a different spelling. argparse hands back
+        '' for --dest '', and the installer settles that to the current directory, so it is a
+        destination the operator named. Judged by string truthiness it read as an omitted
+        argument, and diagnosis fell back to the recorded pointer's own installation.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            self.assertTrue((record.get("pointer") or {}).get("path"),
+                            "the fixture has no recorded pointer, so there is nothing this"
+                            " case could have wrongly fallen back to")
+            elsewhere = Path(temporary) / "cwd-for-this-case"
+            elsewhere.mkdir()
+            entered = os.getcwd()
+            try:
+                os.chdir(elsewhere)
+                settled_here = os.getcwd()
+                found = _diagnose(host, dest="")
+            finally:
+                os.chdir(entered)
+        self.assertEqual((found.get("residue") or {}).get("destination"), settled_here,
+                         "--dest '' is the current directory to the installer, and diagnosis"
+                         " read it as no destination at all")
+        self.assertNotEqual((found.get("residue") or {}).get("destination"),
+                            str(Path(host.pointer_path).parent),
+                            "diagnosis fell back to the installation the host record names"
+                            " while the operator had named one")
+
+    def test_a_relative_destination_from_a_deleted_directory_is_a_reading_not_a_crash(self):
+        """Third spelling in the same class, and a different exception. absolute() reads the
+        current working directory for a relative path, and a working directory that has been
+        removed answers ENOENT -- an OSError, where the unknown ~user raises RuntimeError. Both
+        are one answer, so the predicate catches both rather than the one that was reported.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            gone = Path(temporary) / "a-working-directory-that-goes-away"
+            gone.mkdir()
+            entered = os.getcwd()
+            try:
+                os.chdir(gone)
+                gone.rmdir()
+                try:
+                    found = _diagnose(host, dest="a-relative-destination")
+                except Exception as error:
+                    found = {"raised": type(error).__name__ + ": " + str(error)}
+            finally:
+                os.chdir(entered)
+        self.assertNotIn("raised", found,
+                         "a relative destination read from a deleted working directory took"
+                         " the whole payload with it: " + str(found.get("raised")))
+        self.assertTrue(any("could not be settled" in one
+                            for one in (found.get("residue") or {}).get("unreadable") or []),
+                        "the destination could not be settled and the survey did not say so: "
+                        + repr((found.get("residue") or {}).get("unreadable")))
+
+    def test_a_recorded_pointer_that_is_not_absolute_names_no_destination(self):
+        """hostrecord.shape accepts any string for the pointer path. A relative one resolves
+        against THIS process's working directory, so with no --dest the survey described
+        wherever the diagnosis happened to be run from -- and a staging claim sitting under
+        that directory could be published as another installation's residue.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-that-is-not-a-destination"
+            abandoned = here / "env-1-abandoned"
+            abandoned.mkdir(parents=True)
+            staging.write_claim(abandoned, staging.STAGING, issue="CRW-100")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=None)
+            finally:
+                os.chdir(entered)
+        survey = found.get("residue") or {}
+        self.assertIsNone(survey.get("destination"),
+                          "a relative recorded pointer was resolved against the working"
+                          " directory and that directory was surveyed as a destination")
+        self.assertNotIn(str(abandoned), found.get("residualPaths") or [],
+                         "a staging under the caller's working directory was published as an"
+                         " installation's residue")
+        self.assertTrue(any("not absolute" in one for one in survey.get("unreadable") or []),
+                        "the recorded pointer named no destination and the survey did not say"
+                        " so: " + repr(survey.get("unreadable")))
+
+    def test_a_relative_recorded_pointer_is_read_for_no_component(self):
+        """Blocking the residue survey is not enough. Every component is classified against the
+        pointer reading too, and one taken from the working directory is a judgment about
+        another installation's link -- or about a link sitting beside the diagnosis by
+        accident."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-with-a-link-in-it"
+            here.mkdir()
+            (here / "an-environment").mkdir()
+            pointer.place(here / "current", here / "an-environment")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=None)
+            finally:
+                os.chdir(entered)
+        classified = found.get("components") or {}
+        self.assertTrue(classified, "the fixture produced no component classifications")
+        for name, component in classified.items():
+            with self.subTest(component=name):
+                self.assertFalse((component.get("conflictsRead") or {}).get("pointer"),
+                                 "a pointer reading was taken from the working directory and"
+                                 " this component was classified against it")
+                self.assertIsNone(component.get("pointerState"),
+                                  "a link beside the diagnosis was reported as this host's")
+
+    def test_both_reasons_a_destination_was_not_scanned_are_kept(self):
+        """A caller can fail to settle a destination twice. Keeping only the last of those
+        loses why the destination the operator actually named was never scanned, which is the
+        one they asked about."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+        unreadable = (found.get("residue") or {}).get("unreadable") or []
+        self.assertTrue(any("could not be settled" in one for one in unreadable),
+                        "the reason the OPERATOR's destination was not scanned was dropped: "
+                        + repr(unreadable))
+        self.assertTrue(any("not absolute" in one for one in unreadable),
+                        "the reason the recorded pointer named none was dropped: "
+                        + repr(unreadable))
+
+    def test_a_relative_recorded_pointer_is_not_surveyed_under_an_explicit_destination(self):
+        """The earlier fix turned on --dest being omitted. With an explicit destination equal
+        to the working directory the boundary check accepted the relative spelling as belonging
+        to it, read it from there, and could publish the relative string itself."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-named-as-the-destination"
+            here.mkdir()
+            (here / "an-environment").mkdir()
+            pointer.place(here / "current", here / "gone")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=str(here))
+            finally:
+                os.chdir(entered)
+        self.assertNotEqual(((found.get("residue") or {}).get("pointer") or {}).get("path"),
+                            "current",
+                            "a relative recorded pointer was read against the working"
+                            " directory because --dest happened to name it")
+        self.assertNotIn("current", found.get("residualPaths") or [],
+                         "a relative spelling reached the cleanup list")
+
+    def test_protection_reads_the_recorded_link_and_not_one_derived_from_its_directory(self):
+        """A recorded pointer does not have to be spelled with the default basename. Handed
+        only its parent, the protection check reconstructed <parent>/current and read a link
+        nobody placed, so an environment the REAL pointer still reaches answered unprotected --
+        and unprotected is what the one decision here that authorises removal reads.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            left = _diagnose(host).get("residualPaths") or []
+            self.assertTrue(left, "the fixture left no residue for this case to protect")
+            reached = Path(left[0])
+            # The link this host actually reaches a runtime through, spelled with a basename
+            # nothing would reconstruct from the directory alone.
+            link = reached.parent / "runtime-link"
+            pointer.place(link, reached)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(link), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        self.assertNotIn(str(reached), found.get("residualPaths") or [],
+                         "an environment the recorded link still reaches was published as"
+                         " removable, because the protection check read a link derived from"
+                         " that link's directory instead of the link itself")
+
+
+class ResidueNeverNamesLiveWork(unittest.TestCase):
+    """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the
+    answer must never fail in, and each is inherited from staging.decide rather than decided
+    again here."""
+
+    def _survey(self, host, **overrides):
+        return _diagnose(host, **overrides)["residue"]
+
+    def test_the_installation_in_use_is_never_residue(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertFalse(entries[str(host.previous)]["residual"])
+        self.assertEqual(found["residualPaths"], [])
+
+    def test_a_staging_the_record_selects_is_reported_and_never_cleared(self):
+        """staging.decide calls this RESUME precisely because the runtime is built and may be
+        in use. A dead lock says no installer holds it; it does not say nothing uses it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["selected"] = {c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]}
+            hostrecord.save(host.record_path, record)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.candidate)]["decision"], staging.RESUME)
+        self.assertFalse(entries[str(host.candidate)]["residual"])
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
+    def test_a_staging_somebody_still_holds_is_reported_and_never_cleared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            held = staging.Held(host.candidate).take()
+            try:
+                found = self._survey(host)
+            finally:
+                held.__exit__()
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.candidate)]["decision"], staging.OCCUPIED)
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
+    def test_the_owned_pointer_is_never_scanned_as_an_environment_under_it(self):
+        """is_dir() follows a link, so scanning it would read the claim of the environment it
+        names as though it were the link's own."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.pointer_path)]["decision"], residue.NOT_SCANNED)
+
+    def test_a_caller_that_made_no_ownership_reading_gets_no_cleanup_list(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = residue.survey(host.destination, pointer_path=host.pointer_path)
+        self.assertFalse(found["ownershipRead"])
+        self.assertEqual(found["residualPaths"], [],
+                         "no residue found and nobody looked are different answers")
+        self.assertTrue(any(entry["decision"] == residue.NOT_SCANNED
+                            for entry in found["entries"]))
+
+    def test_a_destination_that_could_not_be_listed_is_not_an_empty_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            found = residue.survey(Path(temporary) / "nothing-here",
+                                   protection=lambda environment: (False, False))
+        self.assertFalse(found["read"])
+        self.assertEqual(found["entries"], [])
+        self.assertTrue(found["unreadable"])
+
+
+class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
+    """Review on PR #52 head ef4d952, raised by both reviewers for the target and by one for
+    the destination boundary."""
+
+    def _survey(self, host, **overrides):
+        return _diagnose(host, **overrides)["residue"]
+
+    def test_a_target_that_could_not_be_read_is_not_an_absent_one(self):
+        """Path.exists() answers False for a filesystem failure exactly as it does for a file
+        that is not there, so a target behind a symlink loop, an unreadable directory or a
+        transient I/O error was reported as dangling -- and an operator was told to remove a
+        pointer whose target may be perfectly fine. A loop is used because it raises ELOOP for
+        every user, including one that can read anything."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            loop = host.destination / "loop"
+            loop.symlink_to(loop)
+            pointer.place(host.pointer_path, loop / "env")
+            found = _diagnose(host).get("residue", {}).get("pointer", {})
+        # The behaviour first, then the name for it: a command that reports this pointer as
+        # clearable fails on the defect rather than on a constant it does not have.
+        self.assertFalse(found.get("residual"),
+                         "a target nobody could look at is not a target established absent")
+        self.assertEqual(found.get("finding"), residue.UNREADABLE_POINTER_TARGET)
+
+    def test_a_child_that_could_not_be_inspected_is_not_reported_as_a_plain_file(self):
+        """scandir can succeed while a child's own metadata lookup fails. is_dir() reports that
+        as False, which is indistinguishable from a regular file, so an incomplete scan was
+        presented as a complete one with an empty cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            real_lstat = residue.os.lstat
+            target = str(host.previous)
+
+            def refusing(path, *args, **kwargs):
+                if str(path) == target:
+                    raise OSError(errno.EIO, "input/output error")
+                return real_lstat(path, *args, **kwargs)
+
+            with mock.patch.object(residue.os, "lstat", side_effect=refusing):
+                found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[target]["decision"], residue.NOT_SCANNED)
+        self.assertTrue(any(target in note for note in found["unreadable"]),
+                        "a child nobody could inspect left no trace in the unreadable list")
+
+    def test_a_relative_destination_still_owns_its_own_pointer(self):
+        """Installs record an absolute pointer path. A --dest spelled relatively kept that
+        spelling, so the boundary check compared an absolute parent with a relative root and
+        disowned a dangling pointer sitting in the very destination being surveyed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            here = os.getcwd()
+            try:
+                os.chdir(str(host.destination.parent))
+                found = _diagnose(host, dest=host.destination.name)
+            finally:
+                os.chdir(here)
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER)
+        self.assertIn(str(host.pointer_path), found["residualPaths"],
+                      "the pointer under this very destination was disowned over a spelling")
+
+    def test_a_destination_that_could_not_be_listed_still_publishes_its_pointer_repair(self):
+        """The two exits used to differ: the listing-failure path returned before the pointer
+        was copied into residualPaths, so a cell saying residual=true sat above an empty
+        cleanup list and the repair was silently dropped."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            real_scandir = residue.os.scandir
+
+            def refusing(path, *args, **kwargs):
+                if str(path) == str(host.destination):
+                    raise OSError(errno.EACCES, "permission denied")
+                return real_scandir(path, *args, **kwargs)
+
+            with mock.patch.object(residue.os, "scandir", side_effect=refusing):
+                found = _diagnose(host)
+        self.assertFalse(found["residue"]["read"])
+        self.assertTrue(found["residue"]["unreadable"])
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER)
+        self.assertIn(str(host.pointer_path), found["residualPaths"],
+                      "an established pointer repair was dropped because a listing beside it"
+                      " could not be made")
+
+    def test_an_environment_the_recorded_pointer_reaches_is_never_reclaimable(self):
+        """cmd_install deliberately reuses a previously recorded pointer across a destination
+        change. Asking protected_environment about --dest then asked about a pointer the host
+        does not use, so an environment the real pointer still reaches -- under a record that
+        does not select it -- classified as reclaimable while a process could be running out
+        of it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "old-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            # The pointer the host actually reaches a runtime through lives under the OLD
+            # destination and names a staging under the new one.
+            pointer.place(far, host.candidate)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        entries = {entry["path"]: entry for entry in found["residue"]["entries"]}
+        self.assertNotEqual(entries[str(host.candidate)]["decision"], staging.RECLAIM,
+                            "a live target of the pointer this host uses was reported as"
+                            " clearable")
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
+    def test_a_relative_destination_with_no_recorded_pointer_still_reads_its_own_pointer(self):
+        """A legacy or foreign-pointer host records no pointer, so the fallback derives one
+        from --dest. Built from the raw spelling while the survey root was absolute, the two
+        boundary operands compared unequal and a pointer sitting inside the very destination
+        being surveyed was reported as another installation's and never inspected."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record.pop("pointer", None)
+            hostrecord.save(host.record_path, record)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            here = os.getcwd()
+            try:
+                os.chdir(str(host.destination.parent))
+                found = _diagnose(host, dest=host.destination.name)
+            finally:
+                os.chdir(here)
+        self.assertNotEqual(found["residue"]["pointer"]["finding"],
+                            residue.POINTER_OUTSIDE_DESTINATION,
+                            "the pointer inside this destination was disowned over a spelling")
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER,
+                         "the record claims no pointer, so the link is reported and kept")
+
+    def test_two_spellings_of_one_destination_are_one_destination(self):
+        """Path.absolute() keeps '..', so /tmp/detour/../dest and /tmp/dest are the same
+        directory written two ways. Compared lexically unequal, an owned dangling pointer in
+        the surveyed destination was disowned."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            # The detour has to EXIST: a path the kernel answers ENOENT for is not this
+            # destination written differently, it is a destination that cannot be reached, and
+            # the comparison is required to say so.
+            (host.destination.parent / "detour").mkdir()
+            detour = host.destination.parent / "detour" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "one destination written two ways read as two destinations")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_symlink_traversal_is_not_treated_as_the_same_directory(self):
+        """Lexical cancellation is not sound: the kernel follows a symlink before applying
+        '..', so /srv/link/../dest is not /srv/dest when link points elsewhere. A pointer that
+        passes only the lexical test must stay out of the cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            elsewhere = Path(temporary) / "elsewhere"
+            (elsewhere / "child").mkdir(parents=True)
+            link = host.destination.parent / "link"
+            link.symlink_to(elsewhere / "child")
+            # Lexically this cancels to <root>/dest; through the kernel it names
+            # <root>/elsewhere/dest, which is not the directory the pointer sits in.
+            detour = host.destination.parent / "link" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION,
+                         "a pointer that only passes the lexical test reached the boundary")
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_recorded_path_that_cannot_name_a_file_is_a_reading_not_a_crash(self):
+        """hostrecord.shape accepts any string for the pointer path, including one carrying a
+        NUL. scandir raises ValueError rather than OSError for it, so an otherwise readable
+        host record produced an internalError where a reading belongs."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(host.destination / "cur\x00rent"),
+                                 "recordedAt": "2026-09-18T00:00:00Z", "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            # Caught here so the failure is the assertion below rather than the traceback
+            # itself: "it raised" is the defect, and the case has to say so in its own words.
+            try:
+                found = residue.survey(
+                    Path(str(host.destination / "un\x00readable")),
+                    pointer_path=record["pointer"]["path"],
+                    pointer_ownership=record["pointer"],
+                    protection=lambda environment: (False, False))
+            except Exception as error:
+                found = {"read": None, "unreadable": [], "residualPaths": [],
+                         "raised": type(error).__name__ + ": " + str(error)}
+        self.assertIsNotNone(found["read"],
+                             "a path that cannot name a file raised out of the survey instead"
+                             " of answering: " + str(found.get("raised")))
+        self.assertFalse(found["read"])
+        self.assertTrue(found["unreadable"], "a path that cannot name a file left no reading")
+        self.assertEqual(found["residualPaths"], [],
+                         "nothing was established, so nothing is recommended for removal")
+
+    def test_cleanup_guidance_never_reads_as_an_unconditional_delete(self):
+        """This survey holds no lock. An install taking one immediately after the liveness
+        check can be building in that directory while the reading still says DEAD, so the
+        guidance points at the path the installer reclaims under its own lock and says what
+        removing it by hand would require."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)["residue"]
+        self.assertTrue(found["recoveryRequires"])
+        guidance = " ".join(found["recoveryRequires"])
+        self.assertIn("no lock", guidance)
+        self.assertIn("reclaim", guidance)
+
+    def test_pointer_cleanup_guidance_never_reads_as_an_unconditional_delete(self):
+        """Same class as the directory guidance, and one step further. Rereading before
+        removing does not close the gap -- a run can repoint the link between the reread and
+        the removal -- so the guidance names repointing as the recovery and declines to
+        recommend removal by hand at all."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            found = _diagnose(host)["residue"]
+        guidance = " ".join(found["recoveryRequires"])
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+        self.assertIn("under the lock this reading did not hold", guidance)
+        self.assertIn("does NOT recommend removing the link by hand", guidance)
+
+    def test_a_symlink_alias_of_the_destination_is_the_destination(self):
+        """--dest may be a symlink alias of the directory the recorded pointer sits in. Those
+        spellings differ lexically while naming one directory, and refusing them omitted an
+        owned dangling pointer from the cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            found = _diagnose(host, dest=str(alias))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "a symlink alias of this very destination read as another one")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_an_alias_combined_with_a_parent_step_still_names_this_destination(self):
+        """Resolution is the kernel's own answer, so it handles the two cases that broke the
+        earlier attempts at once: an alias of this destination is this destination, and
+        'link/..' resolves to where the link actually pointed rather than cancelling."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            # An alias AND a parent step, which the both-forms-must-agree rule rejected.
+            combined = alias / "sub" / ".."
+            (host.destination / "sub").mkdir()
+            found = _diagnose(host, dest=str(combined))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "an alias combined with a parent step read as another destination")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_parent_step_through_a_link_is_still_not_this_destination(self):
+        """SUPPORT, not evidence of the defect: this passes before the fix too. It holds the
+        direction the fix must not break -- the kernel follows the link first, so
+        <root>/link/.. is not <root> when link points into a sibling tree."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            elsewhere = Path(temporary) / "elsewhere"
+            (elsewhere / "child").mkdir(parents=True)
+            link = host.destination.parent / "link"
+            link.symlink_to(elsewhere / "child")
+            detour = host.destination.parent / "link" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION)
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_destination_the_kernel_cannot_reach_never_claims_the_pointer(self):
+        """realpath is best-effort and collapses 'missing/..', so a destination the kernel
+        answers ENOENT for compared equal to a real one: the scan failed and a recorded
+        dangling pointer under the real directory was still claimed as this survey's residue."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            unreachable = host.destination.parent / "missing" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(unreachable))
+        self.assertFalse(found["residue"]["read"],
+                         "the fixture did not produce the unscannable destination this is about")
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"],
+                         "a destination that was never scanned claimed a pointer as its own")
+
+    def test_the_pointer_place_is_excluded_through_an_alias_of_this_destination(self):
+        """scandir returns children in the surveyed root's spelling, so an exclusion holding
+        the pointer's own spelling missed it whenever --dest was an alias. A real directory
+        standing where the pointer belongs was then classified RECLAIM while the pointer cell
+        beside it read NOT_A_LINK and promised it was left exactly as it is."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.pointer_path.unlink()
+            # A real directory where the pointer belongs, carrying an abandoned claim.
+            host.pointer_path.mkdir()
+            staging.write_claim(host.pointer_path, staging.STAGING, issue="CRW-100")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            found = _diagnose(host, dest=str(alias))
+        entries = {Path(entry["path"]).name: entry for entry in found["residue"]["entries"]}
+        self.assertEqual(entries[host.pointer_path.name]["decision"], residue.NOT_SCANNED)
+        self.assertNotIn(entries[host.pointer_path.name]["path"], found["residualPaths"],
+                         "the pointer cell says this path is left as it is, and the entry"
+                         " beside it listed the same object for removal")
+
+    def test_a_child_sharing_a_foreign_pointer_s_name_is_still_scanned(self):
+        """The exclusion is for THIS destination's pointer. Excluding by basename alone
+        suppressed a local child that merely shared the name of a pointer recorded elsewhere,
+        and an abandoned staging sitting at that child vanished from cleanup."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.pointer_path.unlink()
+            host.pointer_path.mkdir()
+            staging.write_claim(host.pointer_path, staging.STAGING, issue="CRW-100")
+            elsewhere = Path(temporary) / "old-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            pointer.place(far, elsewhere / "env")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        entries = {Path(entry["path"]).name: entry for entry in found["residue"]["entries"]}
+        self.assertNotEqual(entries[host.pointer_path.name]["decision"], residue.NOT_SCANNED,
+                            "a local child was skipped because a pointer recorded under another"
+                            " destination happens to share its name")
+
+    def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
+        """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
+        can sit under a different destination from the one --dest named. Surveying it here
+        published a cleanup path belonging to another installation while the payload claimed to
+        describe this one."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "other-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            pointer.place(far, elsewhere / "env-that-went-away")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        self.assertEqual(found["residue"]["destination"], str(host.destination))
+        self.assertNotIn(str(far), found["residualPaths"],
+                         "this survey names one destination and listed a path under another")
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION)

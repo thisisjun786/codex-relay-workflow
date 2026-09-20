@@ -836,7 +836,7 @@ reconciled. Three readings answer that, each filling only its own cell:
 | --- | --- |
 | `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
 | `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
-| `storeTables` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows` |
+| `storeSchema` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows`. Keyed by kind AND name, so its evidence lists carry `index sync_ready` rather than `sync_ready`: a trigger may share a table's name, and an object whose kind changed is one object lost and a different one gained rather than one redefinition. The key was `storeTables` while it already held all of that, which named it narrower than its contents |
 
 The in-flight cell reads twice, and the order is the point. The relay reports contents
 unavailable both for a store that is missing and for one it cannot read, and those are opposite
@@ -1510,9 +1510,26 @@ running against settings the command had just reported it would not install. The
 and the append are still not one atomic step, so the registration is read back afterwards and a
 second copy is reported rather than claimed away.
 
-`hook-status` writes nothing of its own, but it is not inert: answering whether the runtime
-offers `guard-evaluate` means running that runtime with `--help`, and what that runtime does
-is outside this command's control. The command says so in its own output.
+`hook-status` writes nothing of its own, but it is not inert: it RUNS two of the programs a
+host registers, and what those programs do is outside this command's control. Answering whether
+the runtime offers `guard-evaluate` means running that runtime with `--help`. Answering whether
+the registered interpreter is an interpreter at all means running the first word of the
+registered command with `-c` and a generated nonce, because a file being present and executable
+establishes nothing about what runs: a program that exits quietly is indistinguishable from a
+working interpreter by any reading of the filesystem, and every Stop would succeed at running it
+and never reach the adapter. Both invocations exist only to answer and exit. Neither is the
+adapter's firing path, and neither can write a journal record, so a reading cannot manufacture
+the firing evidence it is reporting on. The command names the program it ran and the invocation
+it made in the cell's own evidence, so a receipt shows the reading's cost rather than only its
+conclusion.
+
+What running the interpreter establishes is narrow, and the limit is stated rather than left to
+be inferred: the registered first word answers as a supported Python at the spelling this host
+resolves. It does not establish that the registration would start. The command was never run as
+written, the argument convention was never exercised, and a wrapper's own target is deliberately
+not followed -- so a wrapper that answers `-c` while rejecting its normal argv still reads as
+answering. `firingRecordAbsence` therefore treats a present pair as "nothing establishes that
+this cannot start" and never as "this starts".
 
 `hook-status` probes these paths through the four reading states rather than asking whether a
 file is there. A runtime behind a permission wall and one that was never installed answer
@@ -1532,11 +1549,23 @@ turn and is recorded.
 
 ## Registration is not firing
 
-`runtime_install.py hook-status` reads and writes nothing. It answers registration, the host's
+`runtime_install.py hook-status` writes nothing, and reads rather than changes -- with the one
+exception above, that it runs the registered runtime and the registered interpreter to ask them
+what they are. It answers registration, the host's
 trust state, whether the registered command's target still exists, the settings, the runtime,
-whether that runtime offers the subcommand, this hook's own record of its invocations, the
-guard's records, and the daemon, each as its own cell. `not_read` is used where a question was
-not asked and is never written as an absence.
+whether that runtime offers the subcommand, this hook's own record of its invocations, why
+there is no such record when there is none, the guard's records, and the daemon, each as its
+own cell. `not_read` is used where a question was not asked and is never written as an absence.
+
+The cause cell is `firingRecordAbsence`, and it exists because "there is no record" had several
+repairs behind it and the command answered none of them. It takes no reading of its own: each
+cause declares which cells answer it, every rule runs rather than the first match winning — a
+host whose settings and whose adapter are both gone needs two repairs and is told so — and an
+ambiguity is carried as candidates instead of being settled by choosing. Where several
+registrations name several settings files, each of those files and the journal under it is
+read, because reading one of them and reporting an absence says nothing about the others, and
+reading none of them is what made a hook that had fired indistinguishable from one that never
+had. The operator procedure below lists every cause and the two limits that remain.
 
 This hook records one entry per invocation by default, and the default is not frugality. The
 guard publishes an observation only when it selected an assignment, so on a host with no managed
@@ -1792,20 +1821,26 @@ printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagno
 import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
-cell = json.load(open(status))["firingJournal"]
+payload = json.load(open(status))
+cell = payload["firingJournal"]
 # hook-status omits journalRoot whenever its firing-journal reading could not name a usable
-# journal, and that is several states rather than one. This reading does not distinguish them,
-# and nothing here guesses which: it reports the absence, with the cell's own evidence, and
-# stops. The paragraph after this block says what is not distinguished. Failing on the missing
-# key instead would leave a traceback where a reading belongs.
+# journal, and that is several states rather than one. The command now answers WHICH of them,
+# in firingRecordAbsence, so this reads the cause beside the absence instead of stopping at it.
+# Read with a default, because a host carrying an older runtime answers the absence and not the
+# cause, and a traceback where a reading belongs is worse than a row that says so.
+cause = payload.get("firingRecordAbsence", {})
 if "journalRoot" not in cell:
     print(json.dumps({"firingJournal": cell.get("value"),
                       "firingJournalEvidence": cell.get("evidence"),
                       "journalRoot": None,
                       "recordsForThisTurn": None,
+                      "cause": cause.get("value"),
+                      "causeEvidence": cause.get("evidence"),
+                      "causeCandidates": [c["cause"] for c in cause.get("candidates") or []],
                       "detail": "no journal to attribute a turn to, so this row is unreadable"
-                                " for this run rather than zero. Why there is none is not"
-                                " distinguished by this reading"}, indent=2))
+                                " for this run rather than zero. 'cause' says why there is"
+                                " none, and carries every candidate rather than choosing one"
+                                " when it could not be settled"}, indent=2))
     raise SystemExit(0)
 root = Path(cell["journalRoot"]).expanduser()
 # The same shapes hook-status counts, and one entry that cannot be decoded does not take the
@@ -1880,10 +1915,10 @@ else
 fi
 
 # If an update has failed here, it has already restored what it found. Read that back rather
-# than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is the
-# only place that field is written. diagnose reports the selection and the pointer as they now
-# stand and has no residualPaths to give, so an operator who looks for it there finds nothing
-# and concludes there was nothing to clear. That is why the install above is kept.
+# than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is what
+# THAT RUN left. diagnose answers residualPaths too, and it is a different reading of a
+# different question: what is on the destination NOW. Neither is a superset of the other, so
+# the install result above is kept rather than replaced by the diagnosis below.
 #
 # residualOwnership and recoveryRequires are read from the same result and for the same reason.
 # A rollback can settle the LINK and fail to settle the RECORD, and what that leaves is a claim
@@ -1956,25 +1991,79 @@ postpone the install; it is only a reason two of the seven cannot be taken.
 
 Every field this section tells you to read is one the command it names actually emits, which is
 worth stating because it was not always true: the closing `diagnose` used to be where an
-operator was sent for `residualPaths`, and only an install failure result carries that field.
+operator was sent for `residualPaths` when only an install failure result carried that field.
 `failedStep`, `retriable`, `residualPaths`, `removedCandidate` and `pointer` come from the
-install result kept above; `firingJournal` and `journalRoot` from `hook-status`;
+install result kept above. `diagnose` emits `residualPaths` and `residue` of its own, read
+from the destination as it stands: an entry is residue when the installer's own decision
+would reclaim it, so this reports that decision rather than a second opinion about the same
+directory. It is not guaranteed to be the same SET as a later install's: this command asks
+about the pointer the host record names, `cmd_install` asks about the destination it was
+invoked with, and on a host whose recorded pointer lies elsewhere those differ -- with this
+command the conservative of the two. Which question the installer should ask is a decision
+about the installer and is not this issue's to make. A staging the record selects, one somebody
+still holds, one whose owner could not be established, and a finished environment nothing
+selects are each reported with that decision's own reason and none of them is listed for
+removal — a dead staging lock says no installer holds the directory, never that nothing is
+running out of it. The owned pointer reaches `residualPaths` only when it dangles AND the host
+record records that a link **this command placed** is at that path; a dangling link the record
+does not claim is reported as foreign and left alone, because a link's shape is not its
+ownership. Those are two different readings of one entry: a failed promotion keeps the pointer
+`path`, so a retry derives the same pointer, and a rollback that established the link it placed
+is gone withdraws `recordedAt` and `recordedBy`. A record in that state names a location and
+claims no link, so whatever link stands there afterwards is reported as foreign.
+`firingJournal`, `journalRoot` and `firingRecordAbsence` come from `hook-status`;
 `skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
 `repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
 themselves, which is why the snippet reads the records rather than the count.
 
-One of those readings does not distinguish what it is telling you, and the honest thing is to
-say so rather than to guess in the snippet. `hook-status` omits `journalRoot` whenever its
-firing-journal reading could not name a usable journal, and that covers at least five different
-states: no hook registered for the event, registrations naming different settings files, a
-settings path spelled relatively, settings the command could not read, and journaling not
-configured. **The absence of `journalRoot` does not say which of those it is**, and neither does
-anything else this block runs. So the snippet reports the absence with the cell's own evidence
-and stops there rather than choosing a cause. The `registration` and `configuration` cells of
-the same payload are where an operator looks next, and they narrow it without settling it: an
-ambiguous registration and a relative spelling are both states in which a hook IS registered
-and its settings still did not resolve. Telling those apart needs the command to report the
-cause, which is a change to the command and not to this page.
+That reading used to stop at the absence. `hook-status` omits `journalRoot` whenever its
+firing-journal reading could not name a usable journal, and that covers several different
+states — no hook registered for the event, registrations naming different settings files, a
+settings path spelled relatively, settings the command could not read, and journalling not
+configured — which an operator then had to guess between or stop at. `firingRecordAbsence`
+answers which one. It takes no reading of its own: every cause is decided over the cells
+beside it, and each declares which of them answers it.
+
+| Cause | What it says | What it does not say |
+| --- | --- | --- |
+| `not_registered` | the hook file was read and registers this adapter for nothing, so nothing on this host invokes it now | that the file is the one the host loads, or that nothing was ever recorded — a registration removed after the hook fired leaves its journal where it was, and this answer names those records rather than reading past them |
+| `record_path_unidentified` | a registration spells its settings relatively, or names none, so no file reachable from here answers for it | that the hook has or has not recorded |
+| `adapter_cannot_run` | the registered adapter or its interpreter is not there, so the host cannot start it | that it was ever startable |
+| `settings_absent` / `settings_unusable` | **one or more** registrations name a settings file that is absent, or that this hook's own reader rejects, so every invocation of *those* registrations releases without recording | which repair the file needs, or anything about a peer registration whose settings are fine |
+| `journalling_off` | one or more registrations keep no journal, so those record nothing about their own invocations by configuration | anything about firing, for those registrations |
+| `recorded_on_another_path` | one journal these registrations name holds records while another was read and holds none | which registration the host ran |
+| `nothing_recorded` | every journal belonging to a registration that can start and has usable settings was read and holds no record | that the hook never ran |
+| `several_causes` | more than one cause is established and each needs its own repair | that repairing one of them is enough |
+| `cause_unreadable` | the cause was not settled; `candidates` carries every one still standing | which of them it is |
+
+Every cause above is decided **per registration**, because every registration in the hook file
+runs and reads its own settings. One registration with a missing settings file beside one that
+is fine answers `several_causes`, not the healthier of the two — a peer that works is not
+evidence about a peer that does not. The one place that goes the other way is deliberate: a
+registration the host cannot start is left out of the journal questions entirely, because its
+journal is empty *because* it cannot start, and reading it as a fact about journalling would
+invent a second cause for one repair.
+
+Two limits remain, and they are the reason the last two values exist. Under
+`journalPolicy: faults_only` the guard records only an invocation that faulted, so an empty
+journal is equally what a hook that fires constantly and never faults leaves behind and what a
+hook that never fired leaves behind; that host answers `cause_unreadable` carrying both
+`policy_records_only_faults` and `nothing_recorded`, and it does not choose. And
+`nothing_recorded` is named for the journal rather than for the hook on purpose: a journal
+write that fails removes what it left and cannot record its own failure, so "it never ran" and
+"it ran and every record failed to be written" are one observation here. **Neither of those is
+resolved by this command, and neither is guessed at.**
+
+A third limit is about cost rather than about truth. `hook-status` now opens every absolute
+settings path a registration names and lists the journal under it, so its work is bounded by
+the number of registrations rather than by one file. That bound is a count and not a clock: a
+journal root on an unavailable network mount makes this command slow, and it has no budget of
+its own to stop at. The hook's own Stop path is unaffected — it reads the one settings file its
+own registration names, under the timeout it is registered with.
+
+This changes what the command answers and not what the acceptance readings are. The hook
+callback row is still answered by `firingJournal`; the cause is detail beside it, and the
+seven readings remain seven.
 
 Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
 relay this host already has rather than the runtime just installed under the destination -- and
