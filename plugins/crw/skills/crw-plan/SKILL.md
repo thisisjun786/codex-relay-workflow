@@ -27,6 +27,12 @@ Distinguish proposed, implemented, reviewed, merged, deployed, and behaviorally 
 
 Identify the goal, product classification, and finishable outcome separately using the shared [Linear operating model](references/integrations.md#linear-operating-model). Reuse existing initiative/project IDs and team conventions. Do not infer product identity from a checkout folder name or merge distinct products because their repositories are related.
 
+## Explain the design
+
+When the request is to understand or review a system rather than to plan one, what a component is for, whether an existing owner can be left where it is, how the parts fit, or whether a proposed change actually helps, follow [Design explanation](references/design-explanation.md). It fixes what the answer must carry: the visible result first, then which process runs and which store keeps, what actually refuses, how far each claim is built, and how an improvement would be judged. A question asked repeatedly is usually a sign that the last answer was a list of components, not evidence of a defect in the system.
+
+Two rules hold without opening it. A registered hook, a line in a prompt and a merged source edit establish no enforcement, no installation and no live behaviour; each of those is a separate fact needing its own evidence. And an explanation-only request executes nothing, while a Linear reflection the request or its existing scope already covers is applied, read back, and not sent for the same approval again.
+
 ## Shape the plan
 
 - **Initiative input:** the agreed goal, finish condition, scope and open decisions from `crw-define` or an existing accepted definition. Preserve its identity. When the request covers initiative or full-plan updates, link contributing projects and align the page body using the shared [initiative body standard](references/integrations.md#initiative-body-standard): explain each project's contribution and handoff, leaving issue-level detail below. A project/issue-only update reads the parent as context and proposes any needed parent change without writing it. Return material goal changes to definition within the request's scope.
