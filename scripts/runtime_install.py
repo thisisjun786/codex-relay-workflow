@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from crw_runtime import (bridgerecord, check, codexconfig, completion, definition, hooks,
-                         hostrecord, ownership, pointer, reading, scope, staging, swapgate)
+                         hostrecord, ownership, pointer, reading, residue, scope, staging,
+                         swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -348,7 +349,10 @@ def pointer_state(pointer_path, record, data):
         if not root.is_absolute():
             root = Path(path).parent / root
         root = root.resolve()
-    except (OSError, ValueError) as error:
+    except reading.RESOLVE_FAILURES as error:
+        # Below 3.11 a symlink loop comes out of pathlib as RuntimeError rather than
+        # OSError(ELOOP), so catching only OSError answered with a reading on 3.13 and let a
+        # traceback out of the whole diagnosis on this repository's own floor.
         read["detail"] = ("the pointer's target could not be resolved: "
                           + type(error).__name__ + ": " + str(error))
         return read
@@ -369,7 +373,7 @@ def pointer_state(pointer_path, record, data):
         try:
             if not within(Path(location).resolve(), root):
                 outside.append(str(location))
-        except (OSError, ValueError) as error:
+        except reading.RESOLVE_FAILURES as error:
             read["detail"] = ("a recorded selection could not be resolved: "
                               + type(error).__name__ + ": " + str(error))
             return read
@@ -378,7 +382,7 @@ def pointer_state(pointer_path, record, data):
     return read
 
 
-def protected_environment(record, environment, destination, data):
+def protected_environment(record, environment, destination, data, pointer_path=None):
     """Whether an environment is in use, so a later run must not remove it.
 
     Two readings and they are reported as two: the record's selection, and the pointer on disk.
@@ -386,6 +390,12 @@ def protected_environment(record, environment, destination, data):
     answer, because an environment nobody could establish as free is not an environment that is
     free. That direction is the safe one: the cost of keeping a directory is a named residual
     path, and the cost of removing a live one is the accident this exists to prevent.
+
+    'pointer_path' is the link to read, for a caller that KNOWS which link this host reaches a
+    runtime through. A caller that knows only a destination lets the deterministic path be
+    derived from it, which is what a run choosing where to PUT a link has. Derived from a
+    destination alone, a recorded pointer whose basename is not the default one named a link
+    nobody placed, and an environment the real pointer still reaches read as unprotected.
     """
     selects = None
     if record is not None:
@@ -394,9 +404,10 @@ def protected_environment(record, environment, destination, data):
             root = Path(environment).resolve()
             selects = any(within(Path(location).resolve(), root)
                           for location in selected if location)
-        except (OSError, ValueError):
+        except reading.RESOLVE_FAILURES:
             selects = None
-    names = pointer.names(pointer.pointer_path(destination), environment)
+    names = pointer.names(Path(pointer_path) if pointer_path
+                          else pointer.pointer_path(destination), environment)
     protected = selects is not False or names is not False
     return protected, {
         "recordSelectsIt": selects,
@@ -431,21 +442,21 @@ try:
     os.lstat(str(database))
 except FileNotFoundError:
     print(json.dumps({"readable": True, "present": False, "dbPath": str(database),
-                      "tables": None, "detail": None}))
+                      "objects": None, "detail": None}))
     raise SystemExit(0)
 except OSError as error:
     print(json.dumps({"readable": False, "present": None, "dbPath": str(database),
-                      "tables": None,
+                      "objects": None,
                       "detail": type(error).__name__ + ": " + str(error)}))
     raise SystemExit(0)
 answer = read_only_rows(selection, """ + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """)
 if not answer["readable"] or answer["detail"]:
     print(json.dumps({"readable": False, "present": True, "dbPath": str(database),
-                      "tables": None,
+                      "objects": None,
                       "detail": answer["detail"] or "the store could not be read"}))
     raise SystemExit(0)
 print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
-                  "tables": {row["object"]: row["sql"] for row in answer["rows"]},
+                  "objects": {row["object"]: row["sql"] for row in answer["rows"]},
                   "detail": None}))
 """
 
@@ -459,7 +470,7 @@ from codex_session_relay import store
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
 rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
-print(json.dumps({"readable": True, "tables": {row[0]: row[1] for row in rows},
+print(json.dumps({"readable": True, "objects": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
 """
 
@@ -469,13 +480,13 @@ def _asked(argv, what, timeout=120):
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
-        return {"readable": False, "command": argv, "tables": None, "present": None,
+        return {"readable": False, "command": argv, "objects": None, "present": None,
                 "detail": what + " could not be asked: " + type(error).__name__ + ": "
                           + error.__str__()}
     try:
         answer = json.loads(done.stdout)
     except ValueError:
-        return {"readable": False, "command": argv, "tables": None, "present": None,
+        return {"readable": False, "command": argv, "objects": None, "present": None,
                 "detail": what + " did not answer with JSON: "
                           + (done.stderr or done.stdout).strip()[-400:]}
     answer["command"] = argv
@@ -1037,12 +1048,117 @@ def cmd_diagnose(args):
     # scope to read, and the caller says so by passing None rather than by omitting the
     # keyword: no conflict found and nobody looked are different answers.
     destination = getattr(args, "dest", None)
+    # Settled once, here, and used by everything below that compares paths. A --dest spelled
+    # relatively is a different string from the absolute path an install records, and two
+    # readings of the same destination in two spellings compare unequal: the fallback pointer
+    # was built from the raw spelling while the survey root was absolute, so a pointer sitting
+    # inside the surveyed destination was reported as belonging to another one and never
+    # inspected at all.
+    # Path.expanduser() raises RuntimeError -- not OSError -- for a ~user this host cannot
+    # resolve, and --dest is operator input rather than an internal fault. Losing the whole
+    # diagnostic payload to it was the worst of both answers: nothing diagnosed, and nothing
+    # said about the single input that failed. A spelling that cannot be expanded becomes a
+    # reading here, the way every other unreadable spelling this command meets already does.
+    # A LIST, because this command can fail to settle a destination twice -- an unresolvable
+    # --dest beside a recorded pointer that names none -- and keeping only the last of those
+    # loses why the destination the operator actually named was never scanned.
+    settled_destination, unreadable_destination = None, []
+    # Asked as "was the option given", not "is its string non-empty". --dest '' is a spelling
+    # and not an absence: the installer settles it to the current directory, and judging it by
+    # truthiness made this command read the one destination the operator did name as no
+    # destination at all.
+    if destination is not None:
+        try:
+            settled_destination = Path(destination).expanduser().absolute()
+        # OSError as well as RuntimeError: absolute() reads the current working directory for a
+        # relative spelling, and a working directory that has been removed answers ENOENT. Both
+        # are one answer here -- this command could not settle the path it was given.
+        except (OSError, RuntimeError) as error:
+            unreadable_destination.append(
+                "the destination named by --dest could not be settled: " + str(destination)
+                + ": " + type(error).__name__ + ": " + str(error))
     # The recorded pointer first: that is the link this host actually reaches a runtime
     # through, and a --dest supplied here only names where to look when nothing is recorded.
     owned_pointer = ((record or {}).get("pointer") or {}).get("path")
-    if not owned_pointer and destination:
-        owned_pointer = str(pointer.pointer_path(destination))
-    pointer_read = pointer_state(owned_pointer, record, data) if owned_pointer else None
+    if not owned_pointer and settled_destination:
+        owned_pointer = str(pointer.pointer_path(settled_destination))
+    # Only an ABSOLUTE recorded pointer names a link this command can read. hostrecord.shape
+    # accepts any string for it, and a relative one resolves against THIS process's working
+    # directory, so every reading taken from it would be about whatever sits beside the
+    # diagnosis rather than about this host's installation.
+    recorded_names_a_destination = bool(owned_pointer) and Path(owned_pointer).is_absolute()
+    if owned_pointer and not recorded_names_a_destination:
+        unreadable_destination.append(
+            "the host record's pointer path is not absolute (" + str(owned_pointer) + "), so it"
+            " names no link this command can read and no destination it can survey")
+    # Answered from the recorded link or not at all. A component classified against a pointer
+    # read from the working directory is classified against another installation's link.
+    pointer_read = (pointer_state(owned_pointer, record, data)
+                    if recorded_names_a_destination else None)
+    # What a run left behind on this destination. Asked here because `residualPaths` used to
+    # live only on a failed install's own result, so an operator who wanted the cleanup warning
+    # after a failed update had to have kept that run's stdout; the procedure said so, and this
+    # is the reading it was missing. The destination comes from --dest, or from the directory
+    # the recorded pointer sits in when no --dest was given, because that is the destination
+    # this host actually reaches a runtime through.
+    # Settled to the absolute form an install records, because the boundary check below
+    # compares this with a pointer parent. A --dest spelled relatively kept that spelling here
+    # while the record holds an absolute path, so an owned dangling pointer under the very
+    # destination being surveyed compared unequal and was reported as another installation's.
+    # A destination that was SUPPLIED and could not be read is not an omitted one. Falling
+    # back here scanned the recorded pointer's own directory and could have filled
+    # residualPaths from an installation the operator never named, inside the same answer
+    # that reported the destination they did name as unreadable. The pointer is the fallback
+    # for a missing --dest, never for an unusable one.
+    residue_root = (settled_destination if destination is not None
+                    else (Path(owned_pointer).parent if recorded_names_a_destination else None))
+    # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
+    # through is the recorded one, and it does not have to sit under the destination this run
+    # was invoked with.
+    pointer_home = (Path(owned_pointer).parent if recorded_names_a_destination
+                    else residue_root)
+
+    def ownership_of(environment):
+        """The caller's ownership reading, which residue never takes for itself.
+
+        protected_environment is deliberately conservative -- it answers protected when either
+        the record or the pointer names the environment AND when either of those readings
+        failed -- and 'selected' is True only when the record was read and names it. Both are
+        passed through unchanged, because the decision they feed is the installer's own.
+
+        It is asked about the RECORDED pointer's own directory, not about this survey's root.
+        protected_environment derives the pointer from the destination it is handed, and
+        cmd_install deliberately reuses a previously recorded pointer across a destination
+        change, so handing it --dest asked about a pointer the host does not use: an
+        environment the real pointer still reaches, under a record that does not select it,
+        classified as reclaimable while a live process was running out of it.
+        """
+        # The recorded link itself where there is one, not a link derived from its directory.
+        # A recorded pointer whose basename is not the default one names a link nobody would
+        # reconstruct, and an environment that link still reaches then read as unprotected --
+        # which is the one reading here that authorises removal.
+        protected, detail = protected_environment(
+            record, environment, pointer_home, data,
+            pointer_path=owned_pointer if recorded_names_a_destination else None)
+        return protected, detail["recordSelectsIt"]
+
+    residual = residue.survey(
+        residue_root,
+        # A pointer that names no link this command can read is not handed to the survey at
+        # all, whether or not --dest was supplied: read against the working directory, the
+        # boundary check accepted it as belonging to an explicit destination equal to that
+        # directory, and the relative string could reach residualPaths.
+        pointer_path=owned_pointer if recorded_names_a_destination else None,
+        # The whole ownership entry, not the path out of it: a rollback keeps the path and
+        # withdraws the evidence that a link this command placed is at it, and only the
+        # record itself can tell those two states apart.
+        pointer_ownership=((record or {}).get("pointer")
+                           if recorded_names_a_destination else None),
+        # A destination this command could not even spell out is the survey's own unreadable
+        # reading, so it is carried in the same list as every other one rather than reported
+        # as no destination having been named.
+        unreadable=unreadable_destination,
+        protection=None if residue_root is None else ownership_of)
     try:
         classes = {
             c["component"]: classify_component(
@@ -1175,6 +1291,12 @@ def cmd_diagnose(args):
         "skillLinks": links,
         "components": classes,
         "mcpRegistration": registration,
+        # The same key the install failure result uses, and deliberately not the same set: that
+        # one is what THAT RUN left, read from the run itself, and this is what is on the
+        # destination now. Neither is a superset of the other, and an empty answer here never
+        # means a failed run left nothing behind.
+        "residualPaths": residual["residualPaths"],
+        "residue": residual,
         "scope": summary,
         "assignment": assignment,
         "scopeReadings": readings,
@@ -3229,7 +3351,7 @@ def _swap_gate(data, record, *, environment, python, socket_path=None, state=Non
         "inFlight": swapgate.inflight_cell(
             scope.relay(["doctor"], executable=executable, socket=socket_path, state=state),
             store_presence(interpreter, state, socket_path)),
-        "storeTables": swapgate.tables_cell(
+        "storeSchema": swapgate.schema_cell(
             store_tables(interpreter, state, socket_path), candidate_tables(python)),
     })
 

@@ -22,6 +22,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from . import reading
+
 POINTER_NAME = "current"
 
 # What is at the pointer path. Four answers, decided by an ordered observation.
@@ -163,5 +165,7 @@ def names(path, environment):
         if not pointed.is_absolute():
             pointed = Path(path).parent / pointed
         return pointed.resolve() == Path(environment).resolve()
-    except (OSError, ValueError):
+    except reading.RESOLVE_FAILURES:
+        # A loop raises RuntimeError below 3.11 and OSError above it, and either way nobody
+        # could tell what this pointer names, which is what None says.
         return None

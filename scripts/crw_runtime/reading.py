@@ -72,12 +72,97 @@ OMISSION_DECLARED = {
 SHAPE_FAILURES = (TypeError, AttributeError, LookupError, ValueError)
 READ_FAILURES = SHAPE_FAILURES + (OSError,)
 
+# Resolving a path is the one read whose failure type depends on the interpreter. Below 3.11
+# pathlib raises RuntimeError("Symlink loop from ...") where 3.11 and later raise
+# OSError(ELOOP), so a caller that catches only OSError answers with a reading on one
+# interpreter and dies with a traceback on the other -- and this repository's floor is 3.10.
+# Declared here so both resolve sites ask for the same set rather than each remembering the
+# difference. RuntimeError is NOT in READ_FAILURES: swallowing it around ordinary logic would
+# hide real defects, and it belongs only where a path is being resolved.
+RESOLVE_FAILURES = READ_FAILURES + (RuntimeError,)
+
+
+def same_directory(one, other):
+    """Whether two spellings name the same directory, established by asking the filesystem.
+
+    os.path.samefile stats both and compares the device and inode the kernel reports, so it
+    answers the question the kernel would answer: an alias of this destination is this
+    destination, and 'link/..' lands where the link actually pointed rather than cancelling.
+    It also raises when either path is not traversable, which is the half that pure string
+    work cannot do.
+
+    Four attempts reached this, and the three that failed are worth keeping written down
+    because each was wrong in a way the next one reintroduced:
+
+      - raw strings made ONE directory into two whenever the spelling differed, and an owned
+        dangling pointer in the surveyed destination was disowned;
+      - lexically normalised strings made TWO directories into one, because normpath cancels
+        'X/..' without knowing X is a symlink;
+      - requiring both forms to agree brought the first failure back for any path combining an
+        alias with '..';
+      - resolution alone fixed that and still collapsed 'missing/..', because realpath is
+        best-effort: it equated a destination the kernel answers ENOENT for with a real one,
+        so a pointer could be claimed for a destination that was never scanned.
+
+    Every one of those was a STRING answering a question about the filesystem. This asks the
+    filesystem. A failure establishes nothing and is answered "different", which keeps an
+    unverified pointer out of a cleanup list -- the direction it fails in on purpose.
+
+    Ask this only where BOTH spellings are being read together. Where one side was read
+    EARLIER, ask path_identity instead: re-statting a stored spelling asks about whatever it
+    names now, which is not the question the earlier reading answered.
+    """
+    try:
+        return os.path.samefile(str(one), str(other))
+    except (OSError, ValueError):
+        return False
+
+
+def path_identity(path):
+    """The identity the kernel gives a path NOW, as a value a later comparison can be pinned to.
+
+    same_directory asks whether two spellings name one thing at the moment it is called. That is
+    the wrong question when one side was read earlier: a symlink retargeted in between matches
+    its NEW target, and a caller comparing against the stored spelling would then reuse a
+    reading taken from the old one -- a wrong reading rather than a missing one, which is the
+    failure this module exists to avoid.
+
+    It lives here beside same_directory because both are the same subject: what the kernel, and
+    not a string, says two paths are. A destination a survey describes and a journal a
+    registration records through are both named by spellings that can be aliases.
+
+    None where the kernel could not answer, and a None must never compare equal to anything: an
+    identity that was not established may not collapse two readings into one.
+    """
+    try:
+        found = os.stat(str(path))
+    except (OSError, ValueError):
+        return None
+    return (found.st_dev, found.st_ino)
+
+
+def descriptor_identity(opened):
+    """The identity of the object a descriptor is open on, which nothing can retarget.
+
+    path_identity answers for a SPELLING at the moment it is asked, which is all a lookup can
+    claim and is enough to ASK whether a reading already taken covers this spelling. It is not
+    enough to PUBLISH one under, and that asymmetry is the whole point of having both.
+
+    Takes an open file or a raw descriptor, because a caller that wants to HOLD an inode open
+    so it cannot be recycled has the second and a caller that is reading has the first.
+    """
+    try:
+        found = os.fstat(opened if isinstance(opened, int) else opened.fileno())
+    except (OSError, ValueError):
+        return None
+    return (found.st_dev, found.st_ino)
+
 
 class Reading:
     """A value and the state of the attempt that produced it."""
 
     def __init__(self, value=None, state=PRESENT, *, exception=None, source=None,
-                 at=None, detail=None, field=None):
+                 at=None, detail=None, field=None, identity=None, holder=None):
         self.value = value
         self.state = state
         self.exception = exception
@@ -85,6 +170,20 @@ class Reading:
         self.at = at
         self.detail = detail
         self.field = field
+        # What the kernel called the object these BYTES came from, taken from the descriptor
+        # they were read through rather than from a second lookup of the path. A caller that
+        # wants to know whether two spellings named one file cannot ask a path for that: a link
+        # retargeted between the lookup and the open files the bytes under an identity they
+        # never came from, which is a wrong reading rather than a missing one. None wherever it
+        # was not established, and a None must never compare equal to anything.
+        self.identity = identity
+        # A descriptor still open on the very object these bytes were read through, for a
+        # caller that will use 'identity' as a KEY. An identity stops being one the moment the
+        # object can be recycled, and reopening the path to hold it is a second lookup: if the
+        # path was replaced in between and the replacement inherited the inode, the check
+        # passes while the caller pins the new object and keeps the old one's bytes. Only the
+        # original descriptor closes that. Whoever asked for it closes it; release() is that.
+        self.holder = holder
 
     @property
     def ok(self):
@@ -203,26 +302,113 @@ def observe(path, what):
     return None
 
 
-def read_json(path, what, *, absent=None, shape=None):
+def release(found):
+    """Close a descriptor a reading is holding, once its identity is no longer a key."""
+    holder = getattr(found, "holder", None)
+    if holder is None:
+        return
+    found.holder = None
+    try:
+        os.close(holder)
+    except OSError:
+        pass
+
+
+def _held(opened):
+    """A private duplicate of the descriptor the bytes came through, or None."""
+    try:
+        return os.dup(opened.fileno())
+    except (OSError, ValueError):
+        return None
+
+
+def _observe_descriptor(descriptor, path, what):
+    """What is on the end of a descriptor the caller holds, asked of the descriptor.
+
+    observe() asks the PATH, which is the right question when the path is what will be opened.
+    It is the wrong one here and it undoes the reason the descriptor was pinned: a spelling
+    unlinked after it was pinned answers ABSENT, although the object is held open and reads
+    perfectly -- so two registrations aliasing one file had one of them report the file gone
+    while the other read it. Held open, the object exists; what is left to establish is that it
+    is a regular file, which is the same thing observe() settles for a path.
+    """
+    try:
+        found = os.fstat(descriptor)
+    except (OSError, ValueError) as error:
+        return failure(error, source=path, what=what,
+                       detail="what this descriptor holds could not be established")
+    if not stat_module.S_ISREG(found.st_mode):
+        return Reading(state=UNREADABLE, source=path,
+                       detail="this descriptor holds a " + _kind(found.st_mode))
+    return None
+
+
+def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=None):
     """Read one JSON record, returning a Reading rather than a sentinel.
 
     'absent' is the value an established absence carries, so a caller can start from an empty
     record without that being mistaken for one it read. 'shape' is called with the parsed
     value and may raise to reject a shape the caller cannot use.
+
+    'hold' keeps a descriptor open on the object that was read, for a caller that will use the
+    reading's identity as a cache key. It must be released, and only a caller that asked for it
+    has anything to release.
+
+    'descriptor' is an object the CALLER already holds open, read instead of the path. A caller
+    that pinned a set of spellings and then compares them has to read through those same pins,
+    or the comparison is about one object and the bytes about another.
     """
-    settled = observe(path, what)
+    settled = (observe(path, what) if descriptor is None
+               else _observe_descriptor(descriptor, path, what))
     if settled is not None:
         if settled.state == ABSENT:
             settled.value = absent() if callable(absent) else absent
         return settled
+    holder = None
+    identity = None
     try:
         with region(path, what):
-            value = json.loads(Path(str(path)).read_text(encoding="utf-8"))
+            # Opened ONCE, and the identity taken from that descriptor. Reading the bytes and
+            # then asking the path what it is are two lookups, and a link retargeted between
+            # them answers for a file these bytes did not come from -- so a caller merging two
+            # spellings on that identity would reuse a reading taken from somewhere else.
+            # A descriptor cannot be retargeted, so there is no interval left to race.
+            #
+            # TEXT mode, with the encoding named, because that is what Path.read_text did here
+            # and the difference is not cosmetic: text mode translates universal newlines, so
+            # a record containing CR or CRLF reaches json at a different offset without it, and
+            # the line and column a malformed one reports are part of what an operator reads.
+            if descriptor is None:
+                stream = open(str(path), "r", encoding="utf-8")
+            else:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                stream = os.fdopen(os.dup(descriptor), "r", encoding="utf-8")
+            with stream as opened:
+                identity = descriptor_identity(opened)
+                # Taken BEFORE the parse, because a record that fails to parse is still a
+                # record that was read from an object, and a caller keying on identity needs
+                # the unreadable ones too: two spellings of one unparseable file read twice
+                # could otherwise disagree about it. Every exit below either hands it over or
+                # closes it.
+                holder = _held(opened) if hold else None
+                value = json.loads(opened.read())
             if shape is not None:
                 shape(value)
     except Refused as refused:
-        return refused.reading
-    return Reading(value=value, state=PRESENT, source=path)
+        # The refusal is about this object, so it carries the object's identity and, where one
+        # was asked for, the descriptor holding it. Losing them here meant an unreadable file
+        # was the one kind of reading nothing could key on.
+        found = refused.reading
+        if getattr(found, "identity", None) is None:
+            found.identity = identity
+            found.holder = holder
+        elif holder is not None:
+            try:
+                os.close(holder)
+            except OSError:
+                pass
+        return found
+    return Reading(value=value, state=PRESENT, source=path, identity=identity, holder=holder)
 
 
 def read_text(path, what, *, absent=""):
