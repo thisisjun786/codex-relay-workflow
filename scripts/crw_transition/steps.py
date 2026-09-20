@@ -308,6 +308,12 @@ def declared_policy(root, name=None):
     except (OSError, ValueError) as error:
         return None, (str(manifest_path) + " could not be read (" + type(error).__name__ + ": "
                       + str(error) + ")")
+    if not isinstance(manifest, dict):
+        # Valid JSON is not a manifest. A document whose root is a list parses cleanly and then
+        # answers .get with an AttributeError, which left the pre-install gate reporting an
+        # internal error instead of the refusal it had already accumulated.
+        return None, (str(manifest_path) + " is a manifest object, found "
+                      + type(manifest).__name__)
     named = manifest.get("mcpServers")
     if not (isinstance(named, str) and named.strip()):
         return None, str(manifest_path) + " declares no MCP document"
@@ -317,6 +323,9 @@ def declared_policy(root, name=None):
     except (OSError, ValueError) as error:
         return None, (str(path) + " is declared and could not be read (" + type(error).__name__
                       + ": " + str(error) + ")")
+    if not isinstance(document, dict):
+        return None, (str(path) + " is an MCP document object, found "
+                      + type(document).__name__)
     servers = (document or {}).get("mcpServers")
     if not isinstance(servers, dict):
         return None, str(path) + " holds no mcpServers object"
@@ -1518,10 +1527,23 @@ def mcp_table_standdown(host, options, *, apply=False):
                            "the table changed after it was read and is no longer the block this"
                            " repository renders, so it is left alone"
                            + (": " + str(again["detail"]) if again.get("detail") else ""))
-        # The last place the approval question is asked, on the same bytes about to be edited and
+        # The last place both questions are asked, on the same bytes about to be edited and
         # against the package as it stands now. preflight and the lock re-read both ran earlier;
-        # a cache replaced since then would otherwise serve a declaration nobody compared.
-        losing = policy_complaints(host, again, plugin=inventory.read_plugin(host["codexHome"]))
+        # the version cache has no lock, so a replacement landing since then would otherwise
+        # serve a declaration nobody compared.
+        #
+        # The whole payload, not only the tools the user gates. Comparing the preserved subset
+        # alone accepted a replacement that kept create_thread = approve and added a second gate
+        # carrying an invalid mode: the comparison passed, the table was removed, and the host
+        # threw out the entire declaration, leaving no bridge at all. A defect anywhere in that
+        # document costs the whole server, so the whole document is what has to be valid here.
+        fresh = inventory.read_plugin(host["codexHome"])
+        losing = list(policy_complaints(host, again, plugin=fresh))
+        if fresh.get("cacheVersion"):
+            losing += payload_complaints(host["repoRoot"], fresh["cacheVersion"])[0]
+        else:
+            losing.append("no single installed plugin version could be named now, so what would"
+                          " serve this server after the table is removed was not established")
         if losing:
             return _answer("mcp table standdown", REFUSED, "; ".join(losing))
         block = (again.get("tableSpan") or again["renderedTable"]).strip()

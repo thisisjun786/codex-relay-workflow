@@ -58,15 +58,30 @@ def policy_in_effect(host):
         return {"from": "the " + inventory.SERVER_NAME + " table in " + str(mcp.get("configPath")),
                 "state": policy.get("state"), "tools": policy.get("tools") or {},
                 "detail": policy.get("detail")}
-    version = (host.get("plugin") or {}).get("cacheVersion")
-    if version:
-        declared, why = steps.declared_policy(version, inventory.SERVER_NAME)
+    # A cached directory is not a loaded plugin. Reading the declaration on the strength of the
+    # cache alone reported both tools as gated on a host that had kept the cache, lost its
+    # [plugins."crw@crw"] entry and had no table either -- a policy labelled in effect while
+    # nothing served the bridge at all.
+    plugin = host.get("plugin") or {}
+    version = plugin.get("cacheVersion")
+    if plugin.get("configEntry") != reading.PRESENT:
+        why = "no plugin entry in " + str(inventory.config_path(host["codexHome"])) + " (" \
+              + str(plugin.get("configEntry")) + "), so Codex loads no declaration here"
+    elif plugin.get("enabled") is not True:
+        why = "the plugin entry " + str(plugin.get("entryKey")) + " does not record enabled =" \
+              " true (" + repr(plugin.get("enabled")) + "), so whether Codex loads its" \
+              " declaration was not established"
+    elif not version:
+        why = "no single installed plugin version could be named" \
+              + ((": " + str(plugin["detail"])) if plugin.get("detail") else "")
+    else:
+        declared, unread = steps.declared_policy(version, inventory.SERVER_NAME)
         return {"from": "the installed plugin declaration under " + str(version),
                 "state": reading.PRESENT if declared else reading.ABSENT,
-                "tools": declared or {}, "detail": why}
+                "tools": declared or {}, "detail": unread}
     return {"from": None, "state": reading.ABSENT, "tools": {},
-            "detail": "this host has no bridge table and no single installed plugin version, so"
-                      " nothing here gates the bridge's tools"}
+            "detail": "this host has no bridge table, and " + why + ", so nothing established"
+                      " here gates the bridge's tools"}
 
 
 def host_of(args):

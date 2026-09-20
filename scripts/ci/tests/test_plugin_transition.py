@@ -4166,3 +4166,27 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
             self.assertEqual(code, 0, command + ": "
                              + json.dumps(answer["results"], indent=2)[:1200])
             self.assertIn("policyInEffect", answer)
+
+    @needs_reader
+    def test_a_cached_plugin_that_codex_does_not_load_is_not_reported_as_in_effect(self):
+        """Devin finding: a cache directory is not a loaded plugin."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+        text = host.config().replace('[plugins."crw@crw"]', '[plugins."gone@gone"]')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["policyInEffect"]["tools"], {})
+        self.assertIn("no plugin entry", answer["policyInEffect"]["detail"])
+
+    @needs_reader
+    def test_a_candidate_whose_manifest_is_not_an_object_refuses_rather_than_crashing(self):
+        """Devin finding: valid JSON is not a manifest, and .get on a list is an internal error."""
+        host = self.ready()
+        broken = Path(self.directory) / "candidate"
+        (broken / ".codex-plugin").mkdir(parents=True)
+        (broken / ".codex-plugin" / "plugin.json").write_text("[]", encoding="utf-8")
+        code, answer = host.call("check-declaration", "--package", str(broken))
+        self.assertEqual(code, 1)
+        self.assertNotEqual(answer.get("outcome"), "internal_error")
+        self.assertEqual(answer["command"], "check-declaration")
