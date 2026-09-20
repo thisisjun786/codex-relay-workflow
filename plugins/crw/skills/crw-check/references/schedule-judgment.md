@@ -156,9 +156,15 @@ result is already due, the overall result is likewise undecidable and partially
 checked, because a deadline that passed unchecked cannot be reported as nothing due
 yet. Otherwise the scope is on plan, nothing due yet.
 
-Undecidable never enters the severity order. Report it beside the overall verdict as
-unchecked scope, naming how many results and why, so an undecidable result cannot
-hide a late one and a late one cannot hide missing coverage.
+Undecidable never enters the severity order, but it does bound how positive the overall
+verdict may be. Where any subject that is already due is undecidable, the overall verdict
+is never on plan and never ahead: a late or at risk member still decides it, because a
+known delay is the more actionable fact and must not be softened by missing evidence
+elsewhere, and otherwise the overall is undecidable with the scope partially checked. A
+scope cannot report schedule success over a deadline nobody checked. Report the
+undecidable subjects beside the overall verdict as unchecked scope, naming how many and
+why, so an undecidable subject cannot hide a late one and a late one cannot hide missing
+coverage.
 
 ## Judge both axes
 
@@ -314,7 +320,11 @@ current one worth discussing.
    minus target −2 days. Not on plan, which would ignore the earlier calendar day. Where the scope
    also holds I-21, due 2026-10-01 and unachieved with no risk observed, the scope
    overall is on plan, nothing due yet, while M1's own two-day lead is still reported
-   as its lead. Not a scope called ahead while work it still owes has not landed.
+   as its lead. Not a scope called ahead while work it still owes has not landed. Where I-21 is
+   instead due 2026-09-19 and undecidable because its evidence was not re-read, the
+   overall is undecidable with the scope partially checked, not on plan and not ahead,
+   while M1's lead is still reported. Not schedule success claimed over a deadline
+   nobody checked.
 
 2. **Normal progress.** I-7, current target 2026-09-30, required level merged,
    unachieved, no risk observation, observed 2026-09-21. On plan, nothing due yet,
