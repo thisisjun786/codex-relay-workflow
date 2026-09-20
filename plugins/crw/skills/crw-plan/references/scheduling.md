@@ -18,7 +18,9 @@ about them.
 
 The same write carries the four facts a reader has to act on today. The critical path is the
 chain of prerequisites whose targets leave no room between one result's confirmation and the
-next one's target, so two readers derive the same chain. The immediately startable batch is every
+next one's target, counted over the prerequisites still open, because a result already confirmed
+constrains nothing. Where two chains tie, both are on it and the project's target is the latest
+target on either, so two readers derive the same answer. The immediately startable batch is every
 subject whose wait cause is `none` and whose execution state does not already report it started;
 an empty actual start never decides that on its own, because the field stays empty wherever no
 evidence exists, including for work that is already running. Every other subject carries its real
@@ -26,8 +28,9 @@ wait cause together with the observable event that would end it, and that event 
 re-evaluation condition rather than a date chosen to serve as one.
 
 A calendar target marks when a result is expected. It is not a gate: starting or finishing
-earlier needs no permission and no change to the target, and only a `confirmed` deadline, the
-user's own stop, or execution nobody authorized keeps work from beginning now.
+earlier needs no permission and no change to the target. Three things survive that, and none of
+them is a date before which work may not start. A `confirmed` deadline is a date this plan does
+not move. The user's own stop halts the work it names. Execution nobody authorized does not begin.
 
 Scope holds while doing it. A request that updates one issue reads the initiative and project as
 context and proposes any parent schedule change without writing it. A scoped project update
@@ -63,10 +66,13 @@ records set this subject's own target and nothing else: they produce no multipli
 no rule of days for another class, stage or product. Record which records were read as the
 subject's delivery evidence, so a later reader sees that the target was read rather than chosen.
 
-Where no comparable record exists, propose that same earliest day, mark the target `provisional`,
-record the delivery evidence as `no sample`, and name the gap in the record that sets it, instead
-of padding the date until evidence appears. No precision is required of that target and none is
-claimed for it.
+Where no comparable record exists, propose that same earliest day as the day the result is
+expected to finish, mark the target `provisional`, record the delivery evidence as `no sample`,
+and name the gap in the record that sets it, instead of padding the date until evidence appears.
+It is deliberately the aggressive end rather than an estimate, and no precision is claimed for it.
+Where it proves short, the subject reads late against it: a first record arriving is not one of
+the reasons that move a target, so an optimistic day shows as lateness instead of disappearing
+into a quiet extension.
 
 Order comes from the prerequisites, and each target is then placed inside the dates already
 approved around it: the project window it belongs to, the milestone it completes, and the results
@@ -120,9 +126,9 @@ begins after the deferral is met rather than around it.
 
 Subjects with no edge between them and no shared region are placed together in the earliest window
 the result that frees them allows, up to the concurrency the execution side states. A stated limit
-bounds the work in flight rather than the window: where the records show a subject finishing inside
-that window, the slot it frees is open again within it, and only the subjects that still do not fit
-carry `host`. Because these
+bounds what runs at once rather than what the window holds, and the two are read separately: a
+subject with no free slot carries `host` until one opens, while its target stays inside the window
+wherever the records show that slot freeing within it. Because these
 targets are calendar dates, that usually reads as one date carrying several subjects, which is the
 point: a plan that spreads independent work one subject to a day has recorded a wait that nothing
 causes. Four shapes do exactly that, and none of them is written: placing subjects serially day by
@@ -181,14 +187,20 @@ any of them hides the delay it was recording. The subject reads late against bot
 carries its real wait cause instead. A later target is written only when the accepted scope
 actually changed, a real blocker actually appeared, or a predecessor's own recorded move actually
 shifted the critical path; the entry opens with `scope changed`, `blocked` or `critical path`,
-names the scope, the blocker or the predecessor's entry, and leaves both baselines readable.
+names the scope, the blocker or the predecessor's entry, and leaves both baselines readable. A date
+the deciding authority itself sets is the fourth case and opens with `authority`: it records that
+authority's own decision, such as an agreed deadline they moved, and is never a reason this plan
+supplies for itself.
 `critical path` carries only a predecessor's own recorded move: a predecessor that is merely late
 leaves its successors' targets where they are, and they read late in turn, because the alternative
 launders every extension through the first delay.
 
-Two requests are refused rather than written. A second extension of the same subject whose reason
-repeats the previous entry's is drift, and it returns as an explicit replan need naming what has
-not changed since. Regenerating every target from the current date is refused whatever the request
+Two requests are refused rather than written. A second attempt to extend the same subject on a
+reason already recorded or already refused, carrying no evidence that was not there the first time,
+is drift, and it returns as an explicit replan need naming what has not changed since. A refusal
+writes no entry, so the attempt it refused is what the next one is compared against, and a repeated
+word that carries genuinely new evidence and a newly justified date is an ordinary change rather
+than drift. Regenerating every target from the current date is refused whatever the request
 calls it: a replan moves the subjects whose evidence actually changed and leaves every other
 target and baseline where it stands.
 
@@ -255,7 +267,7 @@ rule here states a period.
 | # | Given | Plan outcome | Clause |
 | --- | --- | --- | --- |
 | 1 | Three issues, no edge between them, no shared region, the execution side states room for three, records show hours. | All three carry target D0 and wait cause `none`, all three in the startable batch; 0 serial day placements, 0 buffers added. | Placing independent work. |
-| 2 | The same three where the execution side states room for two and the records show each of them finishing inside that window. | All three carry D0 and `none`, because the stated limit bounds the work in flight and the slot the first pair frees is open again inside the window; 0 days added, 0 limits invented. A third the records did not fit inside the window would carry `host` naming the stated limit instead. | Concurrency is read, not created. |
+| 2 | The same three where the execution side states room for two and the records show each of them finishing inside that window. | All three carry D0, because the slot the first pair frees opens again inside the window; the first two carry `none` and are the startable batch, and the third carries `host` naming the stated limit until that slot opens; 0 days added, 0 limits invented. | Concurrency is read, not created. |
 | 3 | Prerequisite A is confirmed merged on the morning of D0; successor B's current target is D2 and `provisional`; the checkpoint carries schedule-change authority; records show hours. | B re-evaluated in that same turn to D0, with 1 entry opening `pulled in` naming A, before D2 and after D0, and the schedule baseline still D2 and readable; 0 entries overwritten, 0 waits for D2. | Checkpoint: pull-in. |
 | 4 | The same as 3 with no schedule-change authority. | 0 writes; 1 replan request to the parent naming B and A's confirmed result; B still reads D2 in the data. | Authority. |
 | 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the child already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the child. |
@@ -265,11 +277,11 @@ rule here states a period.
 | 9 | Successor F needs the API shape that decision issue G has not settled, and G is `awaiting authority`. | F is `undetermined` with wait cause `prerequisite` naming G and the decision as the event that ends it; 0 invented dates, 0 `provisional` targets assuming the decision. | Undetermined where the prerequisite carries no date. |
 | 10 | The user states that the GUI project follows the port; the port targets D10; the GUI's design, API, screens and verification issues have no edges among themselves. | 1 project-level prerequisite on the GUI whose record line names the user's decision; every GUI issue carries `prerequisite`; 0 GUI issues in the startable batch and 0 placed before D10; their own parallelism recorded behind it. | An authority decides the level. |
 | 11 | Issue H's pull request merged; its criteria include an installation nobody has approved. | H unfinished with its actual finish empty and wait cause `decision`; 0 target moves, 0 criteria dropped, 0 finishes recorded from the merge. | A wait is never a finish. |
-| 12 | Same-class records show implementation landing within hours and review completing days after the pull request opens. | The target is read from the whole record and falls on the day review completes; after delivery the subject carries `review`, which also covers its required checks and the merge; 0 review or check criteria reduced, 0 claims about another class. | The record runs to acceptance. |
+| 12 | Same-class records show implementation landing within hours and review completing days after the pull request opens. | The target is read from the whole record and falls on the day review completes; while its delivery is waiting on that review the subject carries `review`, which also covers its required checks and the merge, and the word leaves once the merge lands; 0 review or check criteria reduced, 0 claims about another class. | The record runs to acceptance. |
 | 13 | A class with no comparable record; prerequisites confirmed; a slot exists. | Target D0, `provisional`, delivery evidence `no sample`, the gap named in the record that sets it; 0 default periods, 0 `undetermined`, 0 precision claimed. | No sample. |
 | 14 | Two comparable records match equally well; one landed in three hours, the other in nine. | The target follows the nine-hour record and the roadmap names the spread; 0 targets read from the faster run alone. | Which record the target follows. |
 | 15 | The user adds a criterion to issue I on D1 under an authorized project plan write, and the records covering the added work put I's earliest day past its current target. | 1 move with 1 entry opening `scope changed`, carrying the IDs added and the before and after dates; the schedule baseline unchanged and still readable; 0 overwrites. Had the added work still fitted the current target, 0 moves and 0 entries; had the request carried no schedule-change authority, 0 writes and 1 proposal. | Recording a change. |
-| 16 | A checkpoint on D3 finds I unfinished against its D1 target, with no scope change, no blocker and no predecessor move, and refuses the extension it was asked for; on D4 the same extension is requested again for the same reason. | 0 target moves on either day; I reads late against both datums with its real wait cause; the D4 request is refused as drift and returns 1 explicit replan need naming what has not changed since D3. | No auto-roll; a repeated extension is drift. |
+| 16 | A checkpoint on D3 finds I unfinished against its D1 target, with no scope change, no blocker and no predecessor move, and refuses the extension it was asked for; on D4 the same extension is requested again on the same reason and with no evidence that was not there on D3. | 0 target moves and 0 entries on either day; I reads late against both datums with its real wait cause; the D4 attempt is refused as drift and returns 1 explicit replan need naming what has not changed since D3. | No auto-roll; a repeated attempt is drift. |
 | 17 | A request to rewrite every target from the current date. | 0 writes and a refusal; what is offered instead is a scoped replan naming a cause per subject, leaving every other target and baseline where it stands. | Regeneration refused. |
 | 18 | Predecessor J's target moves later with `blocked`; K follows J with no room between them; L does not depend on J. | K moves with 1 entry opening `critical path` naming J's entry, its baseline preserved; L: 0 moves. | The critical path carries a legal move. |
 | 19 | Predecessor J is merely late at its target; K depends on J. | 0 moves on either; both read late and K carries `prerequisite`; 0 `critical path` entries. | Lateness travels as lateness, not as dates. |
