@@ -79,7 +79,8 @@ still govern each action, including task creation and goal activation.
   prerequisites, then launch only that batch.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
-  Parent goal creation and host-driven continuation belong to an authorized Loop.
+  The parent goal's lifecycle and host-driven continuation belong to `crw-loop`, and the role
+  policy makes that goal the default.
 - **Supervise an initiative:** bind the initiative, fix its approved project set and completion
   boundary, and carry it through those projects' existing parents. Issue planning and issue
   execution stay with each parent.
@@ -131,11 +132,11 @@ already uses, and the evidence that it landed is that child's changed revision r
 acknowledgement. Return the outcome to the peer from here: a child never answers another project's
 parent, and no peer reads this project's child for its answer.
 
-For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
-host goal and automatic continuation across turns. Returning from Run hands
-control back to that same owner. Explicit pause/no-goal limits still win, and existing
+[crw-loop](../crw-loop/SKILL.md) owns the parent host goal and its continuation across turns,
+and the role policy makes that goal the default rather than something a request must ask for.
+Returning from Run hands control back to that same owner. Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
-avoid a guard. The default absence of a Run parent goal does not alter child CXC defaults.
+avoid a guard. A parent holding its own goal does not alter child CXC defaults.
 
 ## Independent implementation tasks
 
