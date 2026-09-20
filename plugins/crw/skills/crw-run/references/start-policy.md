@@ -132,7 +132,8 @@ Activation and durable continuation are different claims, and on the measured in
 the first holds. Keep them apart in every report.
 
 The goal activates: a project parent creates or reuses its native goal and reads it back active.
-What follows is not durable automatic continuation. On CXC `0.2.33`, `handleStop` in the
+What follows is not durable automatic continuation. Measured on CXC `0.2.33` and re-read on `0.2.34`,
+`handleStop` in the
 `pabcd-state` component blocks the stop when a goal reads `active` while the phase is `IDLE` and no
 orchestration is in flight, and the continuation it injects carries an unconditional directive to
 enter PABCD, adding a loop-initialisation line when no goalplan slug is bound. A coordination
@@ -140,11 +141,14 @@ parent declines that directive, because this contract forbids it a goalplan or a
 closing a goal early, and it spends the continued turn on its coordination duties instead. The
 honest exits the block itself names are completing the goal or recording it blocked.
 
-That budget is finite. Three consecutive stop-blocks are allowed per phase against an absolute
-ceiling of twenty-four, and the per-phase allowance recharges only on a phase transition, a
-work-phase switch, or a measured improvement. A coordination parent produces none of those by
-design, so its allowance never recharges. The result is a bounded number of wake-ups rather than a
-durable loop, and it is reported as a bounded nudge and not as automatic continuation.
+That budget is finite, though not in the way a first reading suggests. Three consecutive blocks are
+allowed, and the next one releases instead, so the turn can end. The release also clears the
+per-phase counter, and a cleared counter no longer matches the phase it is compared against, so the
+stop after it reads as progress and can open another burst of three. What never resets is the
+absolute total: every stop advances it, block and release alike, and twenty-four is the ceiling. A
+coordination parent therefore gets bursts of at most three wake-ups separated by releases, bounded
+overall by that total. That is a finite nudge budget, reported as such, and not durable automatic
+continuation.
 
 Because a compaction can lose this, the goal objective and the recovery record both state in plain
 words that this is a coordination goal which never runs loop initialisation, never enters PABCD,
