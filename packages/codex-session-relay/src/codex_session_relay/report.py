@@ -20,7 +20,7 @@ everywhere else.
 
 import json
 
-from . import cxc, restoration
+from . import cxc, mergeevidence, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
 from .identity import request_id as derive_request_id
 from .transport import (
@@ -78,7 +78,7 @@ def show_command(event_id: str) -> str:
 def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summary, next_action,
            pr_number=None, pr_url=None, pr_state=None, base_ref=None, base_sha=None,
            head_sha=None, criteria_digest=None, evidence=None, unresolved=None, review=None,
-           restore=None, submission_no=1) -> dict:
+           restore=None, submission_no=1, handoff=None) -> dict:
     """Store one report, validated, bound to the revision it describes.
 
     Identity is READ from the stored event, never accepted from the caller. Taking the
@@ -186,6 +186,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     unresolved = _check_unresolved(unresolved)
     restore = _check_restore(restore)
     submission_no = _submission(submission_no)
+    handoff = _check_handoff(handoff, pr_number, head_sha, outcome)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -267,6 +268,33 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
              "headSha": head_sha, "submissionNo": row["submissionNo"]},
             at=now,
         )
+        if handoff is not None:
+            db.execute(
+                "DELETE FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
+                (event_id, row["submissionNo"]),
+            )
+            db.execute(
+                "INSERT INTO work_report_handoffs (event_id, submission_no, is_draft,"
+                " base_verified_at, required_declared, checks, review_coverage,"
+                " thread_dispositions, criterion_evidence, limitations, recorded_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id, row["submissionNo"], 1 if handoff["isDraft"] else 0,
+                    handoff["baseVerifiedAt"], json.dumps(handoff["requiredDeclared"]),
+                    json.dumps(handoff["checks"]), json.dumps(handoff["reviewCoverage"]),
+                    json.dumps(handoff["threadDispositions"]),
+                    json.dumps(handoff["criterionEvidence"]),
+                    json.dumps(handoff["limitations"]), now,
+                ),
+            )
+            row["handoff"] = handoff
+            store.journal(
+                "handoff_recorded", event_id,
+                {"headSha": head_sha, "prNumber": pr_number,
+                 "threadsSeen": handoff["reviewCoverage"]["totalCount"],
+                 "submissionNo": row["submissionNo"]},
+                at=now,
+            )
         if projection is not None:
             store.journal("restoration_rendered", event_id, projection, at=now)
     row["recordedAt"] = now
@@ -1563,3 +1591,147 @@ def _ack_lines(event_id):
         "contain that turn id, which is what distinguishes acknowledging from echoing.",
         f"Full record: {show_command(event_id)}",
     ]
+
+
+# ------------------------------------------------------------------- merge readiness
+
+#: Which refusal a problem code becomes. The next action genuinely differs for each, which is
+#: why the predicate returns codes rather than prose: an undeclared required set is something
+#: the child must go and read, a stale check is something it must wait for or re-run, and an
+#: unenumerated review is something it must finish. Folding them into one reason would tell a
+#: producer that something is wrong without telling it which thing to do.
+_HANDOFF_REASONS = {
+    mergeevidence.MALFORMED: RefusalReason.MALFORMED_RECEIPT,
+    mergeevidence.REVIEW_UNSTATED: RefusalReason.MERGE_REVIEW_INCOMPLETE,
+    mergeevidence.REVIEW_INCOMPLETE: RefusalReason.MERGE_REVIEW_INCOMPLETE,
+    mergeevidence.CHECKS_STALE: RefusalReason.MERGE_CURRENCY_STALE,
+    mergeevidence.REQUIRED_UNDECLARED: RefusalReason.MERGE_EVIDENCE_REQUIRED,
+}
+
+DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
+
+
+def _check_handoff(handoff, pr_number, head_sha, outcome):
+    """The child's merge-readiness evidence, refused at the point it can still be fixed.
+
+    This is the gate CRW-128 exists for. A child reported EQP-29 complete with fourteen
+    unresolved review threads and nothing in the contract objected, because the completion
+    path tested that the turn had ended and never what the review said.
+
+    It applies ONLY to a completion report that names a pull request. A report with no pull
+    request has no merge readiness to state, and a revision request travelling the other way
+    is the parent's judgment rather than the child's evidence; demanding check runs from
+    either would refuse every report this contract is not about.
+    """
+    if handoff is None:
+        return None
+    if outcome == REVISION_OUTCOME:
+        raise ReceiptRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            "a revision request carries no merge-readiness handoff: this event exists because "
+            "the parent ruled needs_changes, and the evidence that a candidate is ready comes "
+            "from the child on the completion it is about",
+        )
+    if not isinstance(handoff, dict):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a merge-readiness handoff is an object, not a {type(handoff).__name__}",
+        )
+    if pr_number is None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a merge-readiness handoff describes a pull request, but none is named; give the "
+            "pull request number, or leave the handoff out",
+        )
+    review = handoff.get("reviewCoverage")
+    checks = handoff.get("checks", [])
+    required = handoff.get("requiredDeclared", mergeevidence.UNDECLARED)
+    problems = mergeevidence.handoff_problems(head_sha, review, checks, required=required)
+    if problems:
+        raise ReceiptRefused(
+            _HANDOFF_REASONS[problems[0].code],
+            "this candidate is not ready to hand over: "
+            + "; ".join(mergeevidence.details(problems)),
+        )
+    if handoff.get("isDraft"):
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "the pull request is still a draft, so the review it reports was never actually "
+            "requested; mark it ready for review before handing it over",
+        )
+    dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
+    return {
+        "isDraft": False,
+        "baseVerifiedAt": _bounded_optional(handoff.get("baseVerifiedAt"), "baseVerifiedAt"),
+        "requiredDeclared": sorted(str(name) for name in required),
+        "checks": [dict(entry) for entry in checks],
+        "reviewCoverage": dict(review),
+        "threadDispositions": dispositions,
+        "criterionEvidence": _check_evidence(handoff.get("criterionEvidence")),
+        "limitations": [
+            _single_line(_required(item, "a limitation"), "a limitation")
+            for item in _sequence(handoff.get("limitations"), "limitations")
+        ],
+    }
+
+
+def _check_dispositions(entries, review):
+    """Every thread that was seen carries a judged disposition, and a judgment carries evidence.
+
+    A count of unresolved threads says the buttons were pressed. It does not say anybody read
+    the finding, and the criteria this implements are explicit that disputed, duplicate and
+    already-resolved findings are judged with a reason rather than cleared mechanically. So a
+    thread the child saw and did not account for is missing, and 'resolved' is not among the
+    words it may account for it with.
+    """
+    judged = {}
+    for item in _sequence(entries, "threadDispositions"):
+        if not isinstance(item, dict):
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each thread disposition is an object naming its thread, not {item!r}",
+            )
+        identifier = item.get("threadId")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "each thread disposition names the review thread it is about",
+            )
+        identifier = identifier.strip()
+        if identifier in judged:
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"two dispositions name thread {identifier!r}; one thread carries one "
+                "judgment, so the second would silently replace the first",
+            )
+        disposition = item.get("disposition")
+        if disposition not in DISPOSITIONS:
+            raise ReceiptRefused(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                f"thread {identifier!r} is recorded as {disposition!r}, which is not a "
+                f"judgment. Use one of: {', '.join(DISPOSITIONS)}. Resolving a thread is a "
+                "button, not a finding anybody ruled on",
+            )
+        note = _single_line(_required(item.get("evidence"), "a disposition evidence"),
+                            "a disposition evidence")
+        addressed = item.get("addressedBy")
+        if disposition == "fixed" and not (isinstance(addressed, str) and addressed.strip()):
+            raise ReceiptRefused(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                f"thread {identifier!r} is recorded fixed without the commit that fixed it; "
+                "a per-finding trail is the finding, the commit that addressed it, and the "
+                "recheck",
+            )
+        judged[identifier] = {
+            "threadId": identifier, "disposition": disposition, "evidence": note,
+            "addressedBy": addressed.strip() if isinstance(addressed, str) else None,
+        }
+    seen = [str(one) for one in (review.get("threadsSeen") or [])]
+    unaccounted = [one for one in seen if one not in judged]
+    if unaccounted:
+        raise ReceiptRefused(
+            RefusalReason.MERGE_REVIEW_INCOMPLETE,
+            "these review threads were seen and carry no judged disposition: "
+            + repr(unaccounted),
+        )
+    return [judged[one] for one in seen]
