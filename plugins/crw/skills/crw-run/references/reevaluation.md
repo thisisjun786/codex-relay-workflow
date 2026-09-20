@@ -88,9 +88,9 @@ the evaluation as `skip:already_owned`, and the existing child is reused rather 
 `holds` false is dispatchable on this axis. `holds` null is unproved rather than free, and so is
 a state directory this process cannot use: both are `defer:ownership_unverified` with the reason.
 
-The pass asks nothing further here. Reading the owning project parent needs an assignment to
-already exist, which is the case `holds` true has just ended, so a second lookup would add a
-store-constructing call that could only repeat what the first read settled.
+The pass asks nothing further here, because what it needs at this point is issue-child ownership
+and that read has just answered it. Which project parent owns a scope is a different axis with
+its own readers, and it is not what decides whether this candidate may be dispatched.
 
 ## What a pass records per candidate
 
