@@ -6,8 +6,8 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains seven
-skill instruction sets, a symlink installer, and the two Python packages the
+This is an experimental workflow built from a personal setup. It contains the skill
+instruction sets listed below, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
 runtime, and offline contract checks do not establish live Codex hook or Desktop
@@ -20,6 +20,7 @@ compatibility.
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
 | [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
 | [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
+| [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Report where work stands, including the supervisor midpoint check and progress against the agreed schedule |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
@@ -117,6 +118,21 @@ Installation creates a symlink per skill to this checkout. Repeating it preserve
 
 Edits in this checkout are visible through the installed paths immediately. Already-loaded conversation context may still contain an earlier version; read the updated skill or use a fresh task. Keep this checkout available while its skills are linked. If it moves, deliberately relink after checking the old destinations.
 
+### Confirm what you can use now
+
+A change reaches you in stages, and a report naming only the last stage it completed is easy to misread. After updating, check the stage you actually depend on, from this checkout:
+
+```sh
+git log --oneline -1
+skills_dest="${CODEX_HOME:-$HOME/.codex}/skills"   # or the --dest you installed with
+readlink "$skills_dest/crw-run"
+python3 scripts/install.py --dest "$skills_dest" --check
+```
+
+The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is bumped and the plugin is installed again.
+
+None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-plan/references/integrations.md#delivery-reach-and-current-usability).
+
 ### Retired skill migration
 
 The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
@@ -201,6 +217,7 @@ $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·�
 $crw-run [Linear project link]
 $crw-loop [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
+$crw-status 중간점검. 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 ```
 
@@ -283,6 +300,17 @@ and views remain the user's choice. See the shared
 delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one
 evidence-backed action with a clear completion condition. Standalone advice does
 not launch work; a question during an authorized run does not pause that run.
+
+`crw-status` answers the other half of that question: not what to do next, but where
+the work actually is. A bare 중간점검 in a supervision task walks the initiative binding
+down to its project parents and issue children, and a portfolio question keeps every
+project's one-line status while only the detail narrows. It separates source, checks,
+an actual merge, installation and observed behavior, judges progress against the agreed
+schedule, and reports what it could not verify. A standalone status call, and any call carrying an
+explicit report-only, read-only, pause or no-contact limit, writes nothing and wakes nobody. A
+중간점검 inside an initiative execution Jun already approved is the other branch: it checks the
+responsible parents and moves the work that approval already covers, then reports what it actually
+did. Either way it returns control to whoever is executing and starts nothing that was not approved.
 
 During an existing delegated workflow, a completion check sends actionable
 in-scope corrections to the responsible task and verifies the result without
