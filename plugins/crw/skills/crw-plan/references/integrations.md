@@ -383,6 +383,9 @@ the revision it read, the reason, the smallest sufficient change and its evidenc
 which decides and writes. A supervisor's authority to write that record comes from its own
 assignment exactly as a parent's does; the binding identifies the scope and grants nothing.
 Accepted design text is preserved rather than rewritten.
+The same boundary holds for every other sub-task an owner opens and for every route a write could
+take; what a returned proposal carries, and what the owner does with it, are in
+[record writes and returned proposals](#record-writes-and-returned-proposals).
 
 Bind a supervisor by stable initiative ID, the parent by stable project ID and each child by its
 issue ID. An initiative spanning projects may have one execution supervisor; it never becomes a
@@ -450,6 +453,46 @@ a user-attributed source before the next send, because the record is what a send
 and a value observed on the host is evidence of what the task is running rather than a new
 approval. Until then the send is refused naming the record, and a task the host reports as not
 loaded is left alone rather than resumed under a pair that was never checked against its role.
+### Record writes and returned proposals
+
+A Linear write belongs to the task whose own record it is, under
+[supervisor, parent and child scope](#supervisor-parent-and-child-scope), and that holds for every
+sub-task an owner opens rather than for a registered child alone. A planning sub-task drafting a
+specification, an implementation child, a review or audit helper and an internal helper agent all
+reach the same boundary: they read what their assignment allows, and they create, edit and delete
+nothing there, no document, no issue field, no comment, no relation and no status. Whether a relay
+holds the assignment decides where a receipt goes, not who writes.
+
+What a sub-task returns instead is the document or issue ID, the revision or updated-at it read,
+why the change is needed, the smallest change that would do, and links to the evidence and
+artifacts behind it. A local draft of the proposed wording is useful and is still a draft: it is
+reported as a proposal waiting on its owner, never as applied in Linear, and a file, a branch or a
+message holding that text somewhere else is the same draft.
+
+Exposure is not authorization. Linear write tools appearing in a sub-task's profile, a broad
+permission profile, and an assignment naming the very document it is about are none of them a
+grant, and an owner's authority over its own record does not travel to a sub-task with the work:
+authority comes from the assignment, never from the reachable surface. Nor is there a route around
+it, since another connector, a script, a CLI, a scheduled job or the sub-task's own helper agent
+writing on its behalf is the same write. An explicit later instruction from the user is decided on
+its own terms, for the records it names.
+
+The owner that receives a proposal reads the record as it stands now before applying anything. The
+proposal names the revision it was built on, so a record that moved since is reconciled against
+the evidence rather than overwritten: the parts that still hold are applied, and a part another
+actor has already changed or contradicted is raised instead of being reverted. Apply only what
+this assignment's own authority covers, preserve unrelated fields, history and other people's
+edits under [Linear holds canonical documents](#linear-holds-canonical-documents), and read the
+result back before reporting it, as
+[Use the available Linear capability](#use-the-available-linear-capability) requires. A write the
+assignment already authorizes is simply made, not sent back to the user for an approval already
+given.
+
+A write that fails or returns an ambiguous result stays with that owner: read the current state,
+record what happened, and retry the write itself. It is never a reason to re-run the sub-task's
+completed implementation or verification, which is finished work at a revision the failed write
+never touched. Until a readback confirms it, the record is reported as unwritten with its proposal
+still open.
 
 ### Direct coordination between parents
 
