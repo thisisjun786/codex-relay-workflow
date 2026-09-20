@@ -34,6 +34,11 @@ no-create, no-merge, pause, model and resource limits survive routing. No-goal p
 activation of this goal-backed Loop: report that limit, and perform goal-free Run only
 if the request separately covers it. Do not silently substitute Run and call it Loop.
 
+An initiative is not a Loop target. A designation to execute an initiative's approved projects
+binds at that level through
+[Initiative supervision](../crw-run/references/initiative-supervision.md), and this lifecycle stays
+the project parent's: it creates no supervisor goal, and no goal for any other task.
+
 Read the existing project coordination record and live ownership before acting.
 Restore project/parent IDs, agreed issue scope and finish boundary, permissions,
 child/turn IDs, worktrees, PRs and revisions, observation mode, pending receipts,

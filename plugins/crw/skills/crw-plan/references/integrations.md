@@ -23,7 +23,10 @@ repository identity. One repository may support several Linear projects, and
 one project may involve several repositories. Resolve names to stable project
 IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
-title alone. A rename or changed initiative relation does not change a binding.
+title alone. A rename or changed initiative relation does not change a binding. An initiative is
+itself a target only for an explicit designation to execute its approved projects, which binds at
+that level through [Initiative supervision](../../crw-run/references/initiative-supervision.md);
+cited as context by any other operation it changes no binding.
 
 Use [Project parent binding](integrations.md#project-parent-binding) to designate, record, restore,
 or switch the fixed management task, including its app title and pin. Refresh
@@ -130,6 +133,7 @@ Load the existing owner for the requested operation:
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
+| Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
 
@@ -280,9 +284,11 @@ supervisor's or a parent's coordination goal is its own, and neither is mixed wi
 implementation FSM.
 
 This contract fixes the roles; it does not establish how a supervisor is instantiated. A task
-becomes a supervisor only by an explicit designation naming the initiative, an initiative link by
-itself rebinds no existing parent, and no supervisor title convention or binding procedure is
-defined here. Start policy, creation authority and the limits that survive them stay where they
+becomes a supervisor only by an explicit designation naming the initiative, and an initiative link
+by itself rebinds no existing parent. That designation, the approved project set it fixes, the
+completion boundary and the reuse of the parents already running are in
+[Initiative supervision](../../crw-run/references/initiative-supervision.md).
+Start policy, creation authority and the limits that survive them stay where they
 already are in [crw-run](../../crw-run/SKILL.md#independent-implementation-tasks), and this section
 references them rather than keeping a second copy.
 
@@ -321,7 +327,11 @@ Five things are distinct and are recorded separately: the transport accepted the
 recipient understood and agreed, the owning parent instructed its child, the change was actually
 made, and the result was verified. Silence is not consent and a successful send is not agreement.
 A conditional acceptance is recorded as conditional, together with the condition that would make it
-applied, and it is never cited as applied evidence. An agreement between two parents binds no third
+applied, and it is never cited as applied evidence. Those facts are produced along one path that
+stays inside the ownership that already exists: the parent that accepted a condition carries it to
+its own child by the correction route it already uses, keeps that child's adoption evidence, which
+is the revision where the change took effect rather than the child's acknowledgement, and returns
+the outcome to the peer itself. An agreement between two parents binds no third
 project: a follow-up proposal records its trigger, its acceptance condition and whether the next
 owner accepted, and it stays marked unassigned until that owner accepts it explicitly. Where the
 follow-up is a required dependency, unassigned is escalated as a blocker rather than left standing
@@ -458,7 +468,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
@@ -516,7 +526,7 @@ This applies where the assignment's scope expressly covers publication. Where it
 
 Where publication IS in scope, draft marks an implementation not yet worth reading. It is not a waiting room until reviewers finish. When the change is complete enough to review, it is published as a pull request that is open for review: created non-draft, or an existing draft transitioned to Ready for review. Ready is review entry, not merge permission and not proof the work is done.
 
-Each step below is a separate recorded fact, in this order: implement with the local validation the change actually needs; open the PR non-draft or transition the existing draft to Ready for review; request the review the repository requires and the assignment's authorization covers, and confirm it actually started, because a request that never started is not a review; reproduce, fix, reply to and resolve findings, re-requesting a review of the CURRENT head whenever the head moves; report `ready_for_parent_review` only once the relevant review, check, and finding gates are met. The coordinator then compares the issue's criteria against the current diff, base, head, checks, and reviews, and may merge under existing authorization. Release and deployment need Jun's approval.
+Each step below is a separate recorded fact, in this order: implement with the local validation the change actually needs; open the PR non-draft or transition the existing draft to Ready for review; request the review the repository requires and the assignment's authorization covers, and confirm it actually started, because a request that never started is not a review; reproduce, fix, reply to and resolve findings, refreshing only the review evidence invalidated by a changed head, under the [active reviewer policy](../../crw-run/references/merge-readiness.md#disabled-reviewer-policy); report `ready_for_parent_review` only once the relevant review, check, and finding gates are met. The coordinator then compares the issue's criteria against the current diff, base, head, checks, and reviews, and may merge under existing authorization. Release and deployment need Jun's approval.
 
 An optional reviewer that cannot start, stalls, or sits outside the authorized scope does not become an indefinite wait: use the fallback in [Merge readiness](../../crw-run/references/merge-readiness.md), record the gap, and continue. A required review gate is not waivable that way.
 
@@ -555,6 +565,8 @@ Dependency identity, installation ownership, the shared relay service and its du
 Two consequences reach every operation in this reference. One relay service and one durable store serve a whole operating scope, meaning one host, one OS user, and one App Server, shared by parents across repositories and Linear projects, so no operation creates a service or a store of its own and no parent shuts down a service other parents are using. And each assignment routes on its bound identifiers rather than on a display name, a branch, or a working directory, so results, corrections, and permissions never cross between parents.
 
 ### Review evidence is independent of the provider
+
+Apply the [disabled reviewer policy](../../crw-run/references/merge-readiness.md#disabled-reviewer-policy) to new assignments and existing task recovery before deciding which reviews to request or await.
 
 Use the target repository's actual review configuration and observed results. Public/private visibility alone does not determine which reviewers run or what they can access. No named bot, vendor, or repository-management app is a universal dependency; a planned integration is not proof of an operational reviewer. Requirements come from the repository policy, enforced rules, and the assignment.
 
