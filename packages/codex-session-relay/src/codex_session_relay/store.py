@@ -673,6 +673,104 @@ CREATE INDEX IF NOT EXISTS scope_directives_scope ON scope_directives
 -- vocabulary checks stay in Python, rather than being written where half the stores would
 -- never get them.
 CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
+-- Coordination between parents under one supervision: whose turn it is to merge into a shared
+-- target, how much concurrent execution a scope is using against what it declared, and what
+-- two peer projects agreed about a shared edit region. Appended as one block at the END of the
+-- script, so a sibling adding tables elsewhere and this work cannot produce an overlapping
+-- hunk. Every statement is CREATE TABLE IF NOT EXISTS for the reason stated above: the script
+-- runs on every open, which reaches an existing database with a new table and never with a new
+-- column.
+
+-- A contested coordination attempt, retained after it was refused. Separate from
+-- linkage_conflicts because the domains and the reader belong to the coordination modules;
+-- writing a merge target into linkage's table would make Linkage.conflicts answer about a
+-- vocabulary it does not own. incumbent and challenger are NOT NULL because SQLite treats
+-- NULLs as distinct in a unique index, so a nullable column would let a replayed refusal
+-- insert a second row instead of converging on one.
+CREATE TABLE IF NOT EXISTS coordination_conflicts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    domain     TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    incumbent  TEXT NOT NULL DEFAULT '',
+    challenger TEXT NOT NULL DEFAULT '',
+    detail     TEXT,
+    UNIQUE (domain, subject, reason, incumbent, challenger)
+);
+
+-- One parent's claim on one merge target, waiting or holding. The target is a repository and
+-- the base ref a pull request lands on, not a project: one project can own work in several
+-- repositories and two projects can share one base branch, so keying on the project would
+-- serialise work that never contends and fail to serialise work that does.
+--
+-- holder_task_id is part of the KEY because a claim is one parent's claim, the same reason a
+-- scope binding keys with its task. tenure is in the key because the same parent taking the
+-- turn again later is a second tenure rather than a replay of the first. project_key is
+-- deliberately outside it: a handover changes who owns the project without changing which
+-- claim this is.
+CREATE TABLE IF NOT EXISTS merge_turns (
+    turn_id           TEXT PRIMARY KEY,
+    target_key        TEXT NOT NULL,
+    repository        TEXT NOT NULL,
+    base_ref          TEXT NOT NULL,
+    project_key       TEXT NOT NULL,
+    holder_task_id    TEXT NOT NULL,
+    holder_host_id    TEXT NOT NULL,
+    relationship_id   TEXT,
+    pr_number         INTEGER,
+    candidate_head    TEXT NOT NULL,
+    declared_ready    INTEGER NOT NULL DEFAULT 0,
+    state             TEXT NOT NULL,
+    tenure            INTEGER NOT NULL,
+    landed_sha        TEXT,
+    observed_base_sha TEXT,
+    close_reason      TEXT,
+    requested_at      TEXT NOT NULL,
+    held_at           TEXT,
+    merging_at        TEXT,
+    closed_at         TEXT,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS merge_turns_target ON merge_turns (target_key, state);
+
+-- Every transition and every attestation about a turn, append-only. state cannot carry both:
+-- a transport accepting a message ABOUT a turn is not the holder acting on it, and folding the
+-- first into the second is the confusion this table exists to prevent. The unique key makes a
+-- replayed notification converge on one row rather than recording a second fact.
+CREATE TABLE IF NOT EXISTS merge_turn_ledger (
+    entry_id        TEXT PRIMARY KEY,
+    turn_id         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    from_state      TEXT,
+    to_state        TEXT,
+    evidence_kind   TEXT NOT NULL,
+    actor_task_id   TEXT NOT NULL,
+    evidence        TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    UNIQUE (turn_id, idempotency_key)
+);
+
+-- What the holder restated immediately before merging. A REFUSED check is stored too, because
+-- it is the evidence for the safe return that follows it: a refusal that only raises leaves
+-- the next reader no way to learn why the turn came back.
+CREATE TABLE IF NOT EXISTS merge_turn_checks (
+    check_id       TEXT PRIMARY KEY,
+    turn_id        TEXT NOT NULL,
+    head_sha       TEXT NOT NULL,
+    base_sha       TEXT NOT NULL,
+    required       TEXT NOT NULL,
+    checks_digest  TEXT NOT NULL,
+    checks         TEXT NOT NULL,
+    review_digest  TEXT NOT NULL,
+    review         TEXT NOT NULL,
+    result         TEXT NOT NULL,
+    refusal_reason TEXT,
+    recorded_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS merge_turn_checks_turn ON merge_turn_checks (turn_id, recorded_at);
+
 """
 
 
@@ -691,6 +789,14 @@ GUARD_INDEXES = (
      "CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links"
      " (link_kind, upper_kind, upper_key, lower_kind, lower_key)"
      " WHERE status IN ('active','paused') AND superseded_by IS NULL"),
+    ("merge_turns_one_live_holder",
+     "CREATE UNIQUE INDEX IF NOT EXISTS merge_turns_one_live_holder ON merge_turns"
+     " (target_key)"
+     " WHERE state IN ('holding','merging','unknown')"),
+    ("merge_turns_one_live_claim",
+     "CREATE UNIQUE INDEX IF NOT EXISTS merge_turns_one_live_claim ON merge_turns"
+     " (target_key, holder_task_id)"
+     " WHERE state IN ('waiting','holding','merging','unknown')"),
 )
 
 
