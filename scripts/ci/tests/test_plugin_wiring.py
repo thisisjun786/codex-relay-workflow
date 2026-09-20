@@ -916,7 +916,7 @@ class DeclaredComponentTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(result["expectedSkillNames"],
                          ["crw:crw-check", "crw:crw-define", "crw:crw-logic", "crw:crw-loop",
-                          "crw:crw-next", "crw:crw-plan", "crw:crw-run",
+                          "crw:crw-next", "crw:crw-plan", "crw:crw-refactor", "crw:crw-run",
                           "crw:crw-status", "crw:crw-tidy"])
 
 
