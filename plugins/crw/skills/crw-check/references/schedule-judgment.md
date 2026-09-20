@@ -1,0 +1,341 @@
+# Schedule judgment
+
+Use when a check covers a project, an initiative, or an issue that carries agreed
+dates. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
+which [crw-plan](../../crw-plan/SKILL.md) owns and which CRW-143 adds to that
+reference, together with the delivery evidence this skill already pins. It decides
+whether each result is ahead of, on, or behind its agreed date, and which later
+result a slip actually blocks. It does not write a schedule, define a contract
+field, keep a second copy of any date, or replace the criterion comparison it runs
+beside. Read [Merge readiness](../../crw-run/references/merge-readiness.md) for the
+CI and review evidence a delivery claim rests on; this procedure consumes that
+evidence and does not restate it.
+
+## Pin the schedule
+
+Read, per result, the contract's stable ID, baseline target date, current target
+date, baseline time, timezone, target kind, actual achievement evidence, change
+source, and required predecessors. Add what this skill already pins: the delivery
+level that result's own criteria require, the evidence at that level with both its
+instant and the time it was observed, the observation instant, and the judgment
+time. The observation instant is the query time, because the evidence is only as
+current as that read. Report both times; when their calendar dates differ in the
+schedule timezone, query again before ruling or state that the verdict stands as
+of the query date.
+
+A result is judged only when its kind carries a commitment date. A kind the
+contract records as carrying none is kept as evidence, listed under unchecked
+scope, and never judged or aggregated. The contract owns which kinds carry a
+commitment; read that property rather than restating the vocabulary, and never
+invent a target for a kind that has none.
+
+Name the checked and the unchecked scope for the whole request, not only for the
+results that happened to be decidable. A result left unchecked is a gap in
+coverage and is reported as one.
+
+## Fix the deadline
+
+A date with no time of day has its deadline at the end of that calendar day in the
+schedule timezone: it is past due exactly when the calendar date of the observation
+in that timezone is later than the target date, so the target day itself is never
+late. A date carrying a time of day is compared as an instant, and both boundaries
+are inclusive — achievement exactly at the target instant is on time, and an
+observation exactly at the deadline has not yet passed it. Normalize every instant
+to the schedule timezone before comparing, including the achievement instant and
+the observation. Without a timezone the deadline cannot be fixed: that axis is
+undecidable with the reason named, and the result is listed under unchecked scope.
+Never supply a timezone from the host, a user profile, or memory.
+
+## Decide achievement
+
+A result is achieved only when evidence exists at the delivery level its own
+criteria require. This skill already separates source existence, passing checks,
+integration, deployment, and observed behavior, and
+[Implementation Done](../../crw-plan/references/integrations.md#implementation-done)
+already makes merge, installation, and live behavior three separate claims; apply
+those rules here rather than restating them. A lower level reached early is an
+observation, never an achievement: a merge that landed well before the date does
+not achieve a result whose criteria require installation, and the report keeps both
+facts, the early merge and the unproven installation.
+
+Issue counts, Done ratios, milestone percentages, a finished agent turn, a
+merge-ready flag, and a green check establish neither achievement nor speed. The
+achievement instant is the instant of the required-level evidence, never the time
+the check read it.
+
+## Order the verdict
+
+Judge each result once per axis, first match wins.
+
+| Row | Condition | Verdict |
+|---|---|---|
+| 1 | This axis has no date for this result, or no timezone, or the evidence needed to decide is stale | Undecidable, with the reason |
+| 2 | Achieved earlier than the target: an earlier calendar day for a day target, an earlier instant for a timed one | Ahead |
+| 3 | Achieved on the target day, or at or before the target instant | On plan |
+| 4 | Achieved after the deadline | Late, reporting actual minus target |
+| 5 | Not achieved, observation after the deadline | Late, reporting elapsed time only |
+| 6 | Not achieved, observation at or before the deadline, and a listed risk observation holds | At risk, with its cause and wait class |
+| 7 | Not achieved, observation at or before the deadline | On plan, as nothing due yet |
+
+Evidence is stale when it was not read at this observation and the result was not
+terminal when it was last read. A passed deadline with stale evidence is row 1, not
+row 5, because the result may have been achieved since; the report carries the last
+known state and the time it was observed.
+
+Ahead is reachable only through row 2 and needs real early achievement at the
+required level. Rows 3 and 7 are both on plan and are not interchangeable: row 3
+names the achievement, row 7 says only that nothing was due by the observation.
+Neither promises anything about a date still ahead, and being before a deadline is
+never reported as being on track to meet it.
+
+## Report the difference
+
+For a day-granularity target the difference is whole calendar days in the schedule
+timezone: an achieved result reports actual minus target, negative for early, zero
+on the target day, positive for a late completion, and an unachieved past-due result
+reports elapsed days only, the observation's calendar date minus the target date, at
+least one. For a timed target the difference is a signed elapsed duration against
+the target instant rather than a day count, because two instants on one calendar day
+differ while their day count does not. Report that duration at the precision of the
+source timestamps; a difference that is not zero is never rounded or truncated to
+zero, and the sign is always kept.
+
+Do not produce a projected completion date, a remaining-work estimate, or a velocity
+or rate on any branch. An unachieved result reports how long it has been late and
+nothing about when it will land.
+
+## Name the risk
+
+Before the deadline, only these observations make a result at risk, and each carries
+one wait class. A required predecessor that is itself late or at risk on its current
+axis, or whose current target date is not earlier than this result's deadline so the
+ordering cannot hold: internal coordination wait. The required delivery level
+unreached while a lower one has been reached: internal coordination wait, or
+external failure where an attempt was made and failed outside the team's control. An
+approval or decision the criteria require and the user has not given: user decision
+wait. An active pause or blocker, classified by its recorded source — the user
+paused it, user decision wait; the team paused it, internal coordination wait; an
+outage stopped it, external failure.
+
+A predecessor merely unfinished while still inside its own deadline is not one of
+these, or every dependent chain would sit permanently at risk. A predecessor that is
+undecidable is not one either; it leaves the successor's impact unverified. Any
+other observation is a note in the report and changes no verdict.
+
+## Aggregate the scope
+
+Aggregate over every result with a decidable verdict that is due at or before the
+observation, or achieved, or carrying a risk observation. The overall verdict is the
+most severe in that set: late, then at risk, then on plan, then ahead. Ahead needs
+every member achieved and at least one ahead.
+
+Where no result in the requested scope has a decidable verdict, the overall result
+is undecidable and the scope is partially checked; it never defaults to on plan.
+Where the set is empty and an undecidable result is already due, the overall result
+is likewise undecidable and partially checked, because a deadline that passed
+unchecked cannot be reported as nothing due yet. Only an empty set with no due
+undecidable result is on plan, nothing due yet.
+
+Undecidable never enters the severity order. Report it beside the overall verdict as
+unchecked scope, naming how many results and why, so an undecidable result cannot
+hide a late one and a late one cannot hide missing coverage.
+
+## Judge both axes
+
+Judge every result against the baseline target and against the current one, by the
+same rules. A result belongs to an axis when the contract records that axis's date
+for it. A result with no baseline date whose change source records that it entered
+scope after the baseline time is labelled added after baseline: no baseline verdict,
+excluded from the baseline aggregate, judged on the current axis only, and never
+reported as undecidable, since it is a deliberate scope decision rather than a gap
+in coverage. A result with no baseline date and no such record is undecidable on
+the baseline axis, reason no baseline recorded, and the scope is partially checked.
+
+Report both verdicts whenever they differ, with the change source and the instant
+the current date took effect. Moving a target date never removes the baseline
+verdict or its quantity, and results belonging to different scopes are never
+compared at one rate. A pause is a change source and a cause, never a credit:
+paused time is not subtracted from elapsed time.
+
+## Trace the impact
+
+Walk forward along required-predecessor edges only. For each unachieved result, name
+the successors whose every path from it runs through required edges, and the nearest
+unachieved successor milestone or project. Where a successor has several required
+predecessors, it is blocked by the ones actually unachieved and the others are named
+as not blocking. A project or initiative is affected only where the walk reaches its
+own completion condition; waiting on part of a result is never reported as blocking
+the whole project.
+
+Do not name the most recently touched or highest-numbered result unless it lies on a
+walked path. Where a date, a relation kind, or a predecessor's own state cannot be
+read, leave that edge's impact unverified and name the missing input.
+
+## Record the judgment and reuse it
+
+The judgment goes where this skill already records its result and nowhere else: the
+linked Linear coordination document under an existing management assignment, the
+summary a bounded helper returns to its coordinator, or the unsynced update when the
+scope is read-only. A read-only or report-only scope returns findings and never
+gains a write merely to leave a reusable record. Keep no second schedule store.
+
+Record what identifies the judgment: the result IDs, the schedule fields as read,
+the criteria set identity, the implementation revision, the required level with the
+evidence instant and observed-at at each level, both axis verdicts with their
+quantities, the cause and wait class, the impact list, and the query and judgment
+times. The schedule verdict is its own field. It is never a per-criterion
+disposition: verified, needs_changes, and unverified remain the three recordable
+ones, and a late schedule does not turn a satisfied criterion into needs_changes.
+
+Reuse rests on two separate conditions. An event that already happened, such as a
+merge that landed, stays valid, keeps its original observed-at, and is not gathered
+again to answer a schedule question. A claim about a current state, such as an
+installation being present or absent or an approval outstanding, holds only for the
+query that observed it; a later demand for a current verdict either observes it
+again or reports that result partially checked with the earlier observed-at. A
+verdict itself is reused at the same revision, the same criteria, and the same
+schedule fields, which is this skill's existing reuse rule rather than a new one,
+and a later reader recomputes the deadline and the difference from the recorded
+dates and instants instead of repeating the audit. That is what lets a consumer take
+the verdict without rerunning the criterion comparison. Whether a separate status
+report reaches the same verdict is a property of that operation and is not
+established here.
+
+## What the check refuses
+
+Record the verdict, the owner each affected next step returns to, and the route.
+Refuse to move a date, rewrite a schedule, change a Done state, start or resume
+execution, create a worker, or repeat a notification beyond the one delivery the
+record already makes; retrying a failed write is that same delivery, not a repeat.
+Return needed schedule changes to [crw-plan](../../crw-plan/SKILL.md) and already
+accepted corrections to the existing owner by the path this skill already defines,
+and put a needed user decision in the report's last block. A passed or approaching
+deadline changes no criterion, no review requirement, and no delivery level.
+
+## Order the report
+
+A progress or interim report leads with the schedule: the overall verdict with the
+query and judgment times, then the notable lead and delay per result with its
+baseline date, current date, achievement or last known evidence, and difference,
+then the affected next steps, then internal coordination waits and user decisions.
+Keep it short. A completion check keeps this skill's existing lead, the verification
+result and the action actually taken, and places the schedule block immediately
+after it.
+
+## Judgment cases
+
+Each case states what was observed, the expected verdict, and the plausible wrong
+answer it rules out. Derive the expectation from the observation before reading the
+rules back; that derivation is the check, and matching wording is not. These cases
+establish that the procedure agrees with itself. They are not evidence of runtime
+behavior, and they do not establish that a separate status report reaches the same
+verdict. Dates are Asia/Seoul and kinds carry a commitment unless stated.
+
+1. **Early completion.** M1, current target 2026-09-20, required level installed,
+   installation receipt 2026-09-18T14:00, observed 2026-09-21T09:00. Ahead, actual
+   minus target −2 days. Not on plan, which would ignore the earlier calendar day.
+
+2. **Normal progress.** I-7, current target 2026-09-30, required level merged,
+   unachieved, no risk observation, observed 2026-09-21. On plan, nothing due yet,
+   with no claim about 09-30. Not ahead, which needs a real early achievement.
+
+3. **Overdue and incomplete.** I-8, current target 2026-09-15, required level
+   merged, no merge, observed 2026-09-21T09:00. Late, elapsed 6 days, no
+   actual-minus-target. Not a projected completion date or a rate.
+
+4. **A late predecessor before the successor's deadline.** P, current target
+   2026-09-15, unachieved; S, current target 2026-09-28, with P as a required
+   predecessor; observed 2026-09-21. P late by 6 days; S at risk, cause a required
+   predecessor late, wait class internal coordination wait, impact S blocked by P.
+   Not S on plan because its own date is still ahead.
+
+5. **No dates.** I-9 has neither a baseline nor a current target date and is the
+   only result in scope, observed 2026-09-21. I-9 undecidable on both axes, reason
+   no target date, listed under unchecked scope; the overall result undecidable and
+   the scope partially checked. Not an overall on plan produced by an empty set.
+
+6. **Future dates with no interim results.** A project whose current target is
+   2026-10-31, required level installed, nothing due earlier, no delivery evidence,
+   observed 2026-09-21. On plan, nothing due yet, stating that the claim covers only
+   up to the observation. Not on track to finish 2026-10-31.
+
+7. **Merged but not installed.** I-10's criteria require installation; the PR merged
+   2026-09-18T10:00; current target 2026-09-25; no installation evidence; observed
+   2026-09-21. Not achieved; at risk, cause the required level unreached while the
+   source is merged, wait class internal coordination wait, and the report keeps
+   source merged 2026-09-18, seven days before target, installation unverified. Where
+   an installation attempt on 2026-09-20 failed because an upstream registry was
+   unreachable, still at risk with wait class external failure. Not ahead or complete
+   read from the early merge.
+
+8. **Stale evidence past a deadline.** I-11, current target 2026-09-15, required
+   level merged; the last read, 2026-09-10, showed it unachieved and not terminal; it
+   was not read again at this query; observed 2026-09-21. Undecidable, reason evidence
+   not re-read since 2026-09-10, carrying last known unachieved at 2026-09-10. Not
+   late, which asserts a state nobody observed.
+
+9. **Late against the baseline, on plan against a moved target.** M2, baseline target
+   2026-09-10, current target 2026-09-25, moved 2026-09-12, change source replan with
+   its decision link, required level merged, unachieved, observed 2026-09-21. Baseline
+   axis late by 11 days; current axis on plan, nothing due yet; both reported together
+   with the change source and the move instant. Not the current axis alone, which
+   erases the recorded delay.
+
+10. **Scope addition.** The project's baseline was recorded 2026-09-01. I-6 has no
+    baseline target date, its change source records that it entered scope on
+    2026-09-10, its current target is 2026-10-05, and it is unachieved; observed
+    2026-09-21. I-6 labelled added after baseline, no baseline verdict, excluded from
+    the baseline aggregate, and on plan against its current date. Not a baseline miss,
+    not undecidable, and not blended with the baseline scope into one rate.
+
+11. **Pause.** I-12, current target 2026-09-15, required level merged, paused
+    2026-09-12, source recorded as the user's decision pending a product answer, no
+    re-approved date, observed 2026-09-21. Late, elapsed 6 days, cause paused
+    2026-09-12 by user decision, wait class user decision wait, the paused interval
+    not subtracted. With the current target at 2026-09-30 instead, at risk with the
+    same cause and class. Not paused days subtracted, and not a pause read as an
+    extension.
+
+12. **Timezone and granularity.** I-13, current target 2026-09-25, day granularity,
+    timezone Asia/Seoul; the merge its criteria require landed 2026-09-25T23:30+09:00;
+    the reader's own clock shows 2026-09-26T00:30Z. On plan, because the achievement
+    falls on the target calendar day in the schedule timezone, not late read from the
+    observer's date. With no timezone recorded, undecidable on that axis, reason no
+    timezone, listed under unchecked scope, not the host timezone used silently. I-14,
+    current target 2026-09-25T12:00, achieved exactly 2026-09-25T12:00: on plan, the
+    boundary being inclusive, quantity a signed duration of zero rather than a day
+    count. The same target achieved 2026-09-25T13:15: late, actual minus target
+    +1h15m, reported as a completed result rather than as elapsed time, not on plan
+    from the day-granularity rule applied to a timed target.
+
+13. **Parallel issues where only one blocks.** I-15, I-16, and I-17 run in parallel
+    and only I-15 is a required predecessor of M3. I-15 is late; I-16 and I-17 are on
+    plan against their own later dates. The project's completion condition requires M3
+    and M4, and M4 has no required predecessor among the three. Observed 2026-09-21.
+    M3 blocked by I-15, with I-16 and I-17 named as not blocking; the project affected
+    at M3 while M4 and the parallel issues continue; the project not reported blocked.
+    Not whole-project blockage, and not I-17 named because it is the newest.
+
+14. **A kind that carries no commitment.** The contract records I-18's kind as
+    carrying no commitment date because it records when work actually began, and
+    I-19's as carrying none because authority is still pending; I-19 is a required
+    predecessor of a due result S whose criteria need that decision. Observed
+    2026-09-21. I-18 and I-19 both outside the judged set, kept as evidence and listed
+    under unchecked scope; S at risk, cause an approval the criteria require and the
+    user has not given, wait class user decision wait. Not a start record read as a
+    deadline, and not a target invented for a kind that carries none.
+
+15. **Reusing a recorded judgment.** I-20's criteria require installation. A judgment
+    recorded 2026-09-21T09:00 observed the merge landed 2026-09-18T10:00 and
+    installation not yet present, with current target 2026-09-30, so the verdict was
+    at risk, cause the required level unreached while the source is merged, wait class
+    internal coordination wait. A later reader at 2026-09-29 holds the same revision,
+    criteria, and schedule fields and wants a current verdict. The merge is reused with
+    its original observed-at and not gathered again; the installation-not-present claim
+    is not carried forward, so it is observed again at this query or I-20 is reported
+    partially checked with the 2026-09-21 observed-at; the verdict and its cause are
+    recomputed from the recorded inputs rather than re-audited. At 2026-10-01, past the
+    target and with no new evidence, the verdict is not carried forward and I-20 is
+    undecidable pending a re-read rather than late. Not a stale verdict carried past
+    the deadline, not a current-state claim treated as a settled event, and not the
+    full criterion audit rerun to answer a schedule question.
