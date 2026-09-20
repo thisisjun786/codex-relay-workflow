@@ -486,12 +486,24 @@ print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
 # The candidate's schema comes from its own DDL applied to an in-memory database, so nothing is
 # created anywhere and the answer is the schema that relay would actually install. It asks the
 # same question the store side asks, from the same value.
+#
+# The script alone is NOT that schema. Store.__init__ runs it and THEN applies GUARD_INDEXES one
+# at a time, so a store any runtime has opened read-write holds those as well, and a candidate
+# that stopped at the script declared six objects fewer than the runtime installs. Once a host
+# had opened its store even once, storeSchema read NARROWS and the gate refused every promotion
+# after it -- permanently, because the refusal correctly left the store alone, so the next
+# attempt met the same difference. Applied here FROM THE SAME TUPLE rather than from a copy of
+# their SQL, so revising an index cannot drift the declaration and the installation apart again.
+# The in-memory database is fresh, so the rows that can make one of these fail on a live store
+# do not exist here and a failure would be a real defect rather than the tolerated case.
 _CANDIDATE_TABLES_PROGRAM = """
 import json, sqlite3
 from codex_session_relay import store
 
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
+for _name, _statement in store.GUARD_INDEXES:
+    database.execute(_statement)
 rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
 print(json.dumps({"readable": True, "objects": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))

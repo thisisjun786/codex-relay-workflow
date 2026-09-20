@@ -7719,7 +7719,46 @@ def _relay_ddl():
     raise AssertionError("the relay's store.py no longer binds DDL at module level")
 
 
-def _partitioned(ddl):
+def _relay_guard_indexes():
+    """The indexes Store.__init__ applies AFTER the schema script, read from the same source.
+
+    store.DDL is not the whole of what opening a store installs. __init__ runs the script and
+    then applies these one at a time, so a store any runtime has opened read-write holds them.
+    Read out of store.py rather than restated here: an index added or revised there is carried
+    by this oracle instead of being silently left behind by it.
+    """
+    tree = ast.parse((RELAY_SRC / "store.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "GUARD_INDEXES"
+                for target in node.targets):
+            return tuple(ast.literal_eval(node.value))
+    raise AssertionError("the relay's store.py no longer binds GUARD_INDEXES at module level")
+
+
+def _opened_store(state):
+    """A store created the way a runtime creates one: by the relay's own Store class.
+
+    Deliberately NOT the schema script replayed here. What this covers is precisely that
+    opening a store installs more than the script it runs, so a fixture that replayed the
+    script would repeat the candidate's own mistake and then agree with it.
+    """
+    import runtime_install
+
+    presence = runtime_install.store_presence(RELAY_RUNTIME, str(state))
+    assert presence.get("readable"), presence.get("detail")
+    database = Path(presence["dbPath"])
+    database.parent.mkdir(parents=True, exist_ok=True)
+    done = subprocess.run(
+        [RELAY_RUNTIME, "-c",
+         "import sys\nfrom codex_session_relay import store\nstore.Store(sys.argv[1])\n",
+         str(database)],
+        capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return database
+
+
+def _partitioned(ddl, guards=()):
     """Every catalog row a scratch copy lets you DROP, and every row it refuses.
 
     SQLite's own division between what a user declared and what SQLite maintains for itself,
@@ -7732,6 +7771,8 @@ def _partitioned(ddl):
     def built():
         connection = sqlite3.connect(":memory:")
         connection.executescript(ddl)
+        for _name, statement in guards:
+            connection.execute(statement)
         return connection
 
     catalogue = built()
@@ -7750,7 +7791,7 @@ def _partitioned(ddl):
     return droppable, refused
 
 
-def _built_store(state, ddl, drop=None):
+def _built_store(state, ddl, drop=None, guards=()):
     """Build a store at the path the RELAY resolves for this state directory.
 
     The path is asked of the relay rather than spelled here, because which file a state
@@ -7766,6 +7807,8 @@ def _built_store(state, ddl, drop=None):
     connection = sqlite3.connect(str(database))
     try:
         connection.executescript(ddl)
+        for _name, statement in guards:
+            connection.execute(statement)
         if drop is not None:
             kind, name = drop.split(" ", 1)
             connection.execute('DROP ' + kind + ' "' + name.replace('"', '""') + '"')
@@ -7856,16 +7899,23 @@ class SchemaDepthTests(unittest.TestCase):
                                     " means nothing")
 
     @needs_relay
-    def test_the_candidate_reading_is_every_object_its_own_ddl_creates(self):
-        """REGRESSION. The candidate side, measured the same way against the relay's real DDL.
+    def test_the_candidate_reading_is_every_object_opening_a_store_creates(self):
+        """REGRESSION. The candidate side, measured against what OPENING a store installs.
 
         This is the half that decides what an update would install, and the relay's schema has
         held indexes all along: eight of them, none of which reached the comparison.
+
+        The oracle was the schema script alone, and that was too narrow (CRW-167). Store.__init__
+        runs the script and THEN applies GUARD_INDEXES, so the script is not the whole of what a
+        runtime installs and a candidate measured against the script agreed with its own
+        omission. The claim here is widened rather than relaxed: the candidate must now declare
+        strictly more than it was previously asked for, and both sides are still derived from
+        store.py instead of listed.
         """
         import runtime_install
 
         ddl = _relay_ddl()
-        droppable, refused = _partitioned(ddl)
+        droppable, refused = _partitioned(ddl, _relay_guard_indexes())
         reading = runtime_install.candidate_tables(RELAY_RUNTIME)
 
         self.assertTrue(reading.get("readable"), str(reading.get("detail")))
@@ -7875,6 +7925,46 @@ class SchemaDepthTests(unittest.TestCase):
         self.assertTrue(all(name.startswith("sqlite_") for name in
                             (key.split(" ", 1)[1] for key in refused)),
                         "a row the relay's own schema owns cannot be dropped: " + repr(refused))
+
+    @needs_relay
+    def test_a_store_the_runtime_itself_opened_still_promotes(self):
+        """REGRESSION (CRW-167). The update path, closed by the runtime's own first write-open.
+
+        Found live during CRW-116's real-host promotion rather than constructed here. The
+        candidate program applied store.DDL and stopped; Store.__init__ applies the DDL and THEN
+        GUARD_INDEXES. So the moment any runtime opened the store read-write it held six objects
+        the candidate never declared, storeSchema read NARROWS, and the gate refused every later
+        promotion -- permanently, because each refusal correctly left the store exactly as it
+        was, so the next attempt met the same difference.
+
+        The store is built by the relay's own Store rather than by replaying the script, because
+        replaying the script would reproduce the candidate's own omission and then agree with
+        it. The indexes are named from store.GUARD_INDEXES rather than counted, so revising that
+        tuple fails this loudly instead of passing quietly.
+        """
+        import runtime_install
+
+        guards = _relay_guard_indexes()
+        self.assertTrue(guards,
+                        "store.py declares no guard indexes, so this case proves nothing")
+
+        candidate = runtime_install.candidate_tables(RELAY_RUNTIME)
+        self.assertTrue(candidate.get("readable"), str(candidate.get("detail")))
+        undeclared = {"index " + name for name, _statement in guards} - set(candidate["objects"])
+        self.assertEqual(undeclared, set(),
+                         "the candidate does not declare indexes that opening a store installs,"
+                         " so a store any runtime has opened reads as narrower than the runtime"
+                         " that would replace it: " + repr(sorted(undeclared)))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "opened"
+            _opened_store(state)
+            reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+        self.assertTrue(reading.get("readable"), str(reading.get("detail")))
+        cell = swapgate.schema_cell(reading, candidate)
+        self.assertEqual(cell["answer"], swapgate.AGREES,
+                         "a store the runtime itself opened answered " + str(cell["answer"])
+                         + ", so the documented update path is closed: " + str(cell["detail"]))
 
     @needs_relay
     def test_a_store_missing_one_object_of_any_kind_refuses_the_swap(self):
@@ -7891,7 +7981,8 @@ class SchemaDepthTests(unittest.TestCase):
         import runtime_install
 
         ddl = _relay_ddl()
-        droppable, _refused = _partitioned(ddl)
+        guards = _relay_guard_indexes()
+        droppable, _refused = _partitioned(ddl, guards)
         candidate = runtime_install.candidate_tables(RELAY_RUNTIME)
         self.assertTrue(candidate.get("readable"), str(candidate.get("detail")))
 
@@ -7904,7 +7995,7 @@ class SchemaDepthTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / "intact"
-            _built_store(state, ddl)
+            _built_store(state, ddl, guards=guards)
             whole = runtime_install.store_tables(RELAY_RUNTIME, str(state))
         self.assertEqual(swapgate.schema_cell(whole, candidate)["answer"], swapgate.AGREES,
                          "the control: an untouched store must agree, or every refusal below is"
@@ -7914,7 +8005,7 @@ class SchemaDepthTests(unittest.TestCase):
             with self.subTest(kind):
                 with tempfile.TemporaryDirectory() as temporary:
                     state = Path(temporary) / "missing"
-                    _built_store(state, ddl, drop=key)
+                    _built_store(state, ddl, drop=key, guards=guards)
                     reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
                 cell = swapgate.schema_cell(reading, candidate)
                 self.assertIn(cell["answer"], swapgate.SCHEMA_BLOCKING,
