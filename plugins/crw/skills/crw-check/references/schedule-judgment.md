@@ -224,13 +224,27 @@ accepted corrections to the existing owner by the path this skill already define
 and put a needed user decision in the report's last block. A passed or approaching
 deadline changes no criterion, no review requirement, and no delivery level.
 
+Refusing to own execution is not the same as narrowing the work around it. Inside an
+approved initiative or project execution, a checkpoint includes the parent's
+confirmation and whatever already-approved successor work that approval covers, so
+being called here does not turn an approved continuation into an independent
+read-only audit. Return a schedule or evidence mismatch to the owning project parent
+and settle there, within the approval it already holds, whether the approved
+successor proceeds. Do not become the new owner of technical execution or of a merge,
+and do not build a second path that resumes work. Explicit report-only, read-only,
+pause, and no-contact limits still win, and an independent audit keeps its own
+lookup scope.
+
 ## Order the report
 
 A progress or interim report leads with the schedule: the overall verdict with the
 query and judgment times, then the notable lead and delay per result with its
 baseline date, current date, achievement or last known evidence, and difference,
 then the affected next steps, then internal coordination waits and user decisions.
-Keep it short. A completion check keeps this skill's existing lead, the verification
+Keep it short. Where a mismatch was routed, keep three facts apart that collapse
+easily into one: that a correction request was sent, that the owning parent actually
+resumed, and that a result was verified. Only the third is delivery, and the first
+never implies the second. A completion check keeps this skill's existing lead, the verification
 result and the action actually taken, and places the schedule block immediately
 after it.
 
@@ -359,3 +373,18 @@ worth discussing.
     undecidable pending a re-read rather than late. Not a stale verdict carried past
     the deadline, not a current-state claim treated as a settled event, and not the
     full criterion audit rerun to answer a schedule question.
+16. **A checkpoint inside an approved execution.** An initiative execution the user
+    already approved is running, and its project parent holds that approval. A
+    checkpoint here finds M5 late by 4 days against a current target of 2026-09-17,
+    with its successor M6 unachieved and reachable from M5 through a required edge.
+    Observed 2026-09-21. Nothing in the request restricts this check to report-only,
+    read-only, paused, or no-contact. M5 late by 4 days; M6 named as blocked; the
+    mismatch returned to the owning project parent, which decides inside its existing
+    approval whether the approved successor proceeds; and the report keeping the
+    correction request it sent apart from whether that parent actually resumed and
+    from any result since verified. Not this check taking over the execution or the
+    merge, not a second path that resumes the work itself, and not the surrounding
+    approved continuation narrowed into an independent read-only audit because a check
+    was called. Where the request does carry an explicit report-only, read-only,
+    pause, or no-contact limit, that limit wins and the finding is returned without
+    contact.
