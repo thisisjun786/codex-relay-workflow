@@ -159,13 +159,71 @@ class AssignmentView:
             a for a in assignments
             if a["relationshipStatus"] in ("active", "paused") and a["state"] != CLOSED
         ]
-        return {
+        record = {
             "issueKey": issue_key,
             "assignments": assignments,
             # The one to reuse, if there is one. A paused assignment is still the owner.
             "responsibleChild": owning[0]["childTaskId"] if owning else None,
             "responsibleRelationship": owning[0]["relationshipId"] if owning else None,
         }
+        record.update(self._project_context(owning))
+        return record
+
+    def _project_context(self, owning) -> dict:
+        """Which project owns this issue, additively.
+
+        scopeState tells the three answers apart. scoped means the store named a project,
+        unscoped means it answered that there is none - which is every assignment registered
+        before the three-level linkage existed, and a normal answer rather than an error - and
+        unreadable means the store did not answer at all. A caller can distinguish them, and
+        none of them is completion.
+        """
+        import sqlite3
+
+        blank = {"projectKey": None, "projectParentTaskId": None, "scopeState": "unscoped"}
+        if not owning:
+            return blank
+        try:
+            scoped = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                (owning[0]["relationshipId"],),
+            )
+            if scoped is None:
+                return blank
+            from .linkage import Linkage, PARENT as PARENT_ROLE, PROJECT as PROJECT_SCOPE
+
+            held = Linkage(self.store, self.clock).owners(
+                PROJECT_SCOPE, scoped["project_key"])
+            parent_task = owning[0]["parentTaskId"]
+            if len(held) > 1:
+                # Two live owners, which only a store whose unique index could not be
+                # installed can hold. This view is what a coordinator reads before acting on
+                # an issue, so naming whichever sorted first would hand it a guessed parent
+                # wearing the same shape as a known one. The contest is the answer.
+                return {
+                    "projectKey": scoped["project_key"],
+                    "projectParentTaskId": None,
+                    "scopeState": "ambiguous",
+                    "projectParentCandidates": sorted(
+                        record["taskId"] for record in held),
+                    "parentOwnsProject": None,
+                }
+            holder = held[0] if held else None
+            return {
+                "projectKey": scoped["project_key"],
+                "projectParentTaskId": holder["taskId"] if holder else None,
+                "scopeState": "scoped",
+                # A parent handover moves the SCOPE and not the assignments under it, so these
+                # two can legitimately disagree. Surfaced here rather than left to be noticed,
+                # because this view is what a coordinator reads before acting on an issue: the
+                # assignment still answers to the parent named on its own row, and the project
+                # is owned by somebody else.
+                "parentOwnsProject": (holder is not None
+                                      and holder["taskId"] == parent_task),
+            }
+        except sqlite3.Error:
+            return {"projectKey": None, "projectParentTaskId": None,
+                    "scopeState": "unreadable"}
 
     # ------------------------------------------------------------------- write
 

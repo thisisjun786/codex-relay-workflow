@@ -11,7 +11,8 @@ from codex_session_relay.currency import STALE_GENERATION, SUPERSEDED as SUPERSE
 from codex_session_relay.models import TurnRef
 from codex_session_relay.transport import DEFERRED_BUSY, DISPATCHED, SUPERSEDED
 
-from .support import CHILD, PARENT, DeliveryTestCase
+from .support import CHILD, HOST, ISSUE, PARENT, DeliveryTestCase
+from codex_session_relay.models import Endpoint
 
 
 class PreSendSupersession(DeliveryTestCase):
@@ -36,6 +37,35 @@ class PreSendSupersession(DeliveryTestCase):
         self.accept(payload)
         self.delivery.enqueue(payload["eventId"])
         return relationship, payload["eventId"]
+
+    def test_a_returning_tenure_annotates_the_deliveries_it_left_behind(self):
+        """A generation advanced by a handback is a generation advanced.
+
+        The returning tenure increments the generation by its own route rather than through
+        open_generation_in, so without the same annotation a delivery from the previous tenure
+        keeps reporting as current while its acknowledgement is refused as stale.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        rid = relationship["relationshipId"]
+        away = self.registry.register(
+            parent=Endpoint("01parent-two", HOST, cwd="/parent"),
+            child=Endpoint(CHILD, HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-away", dispatch_turn_id="turn-away",
+            supersedes=rid)
+        back = self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"),
+            child=Endpoint(CHILD, HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-back", dispatch_turn_id="turn-back",
+            supersedes=away["relationshipId"])
+        self.assertEqual(back["relationshipId"], rid, "the handback is the same identity")
+        self.assertEqual(back["executionGeneration"], 2)
+        noted = self.store.one(
+            "SELECT reason FROM delivery_supersession WHERE event_id = ?", (event_id,))
+        self.assertIsNotNone(
+            noted, "the previous tenure's delivery was left looking current")
+        self.assertEqual(noted["reason"], STALE_GENERATION)
 
     def test_a_queued_delivery_is_annotated_when_the_generation_advances(self):
         """_claim does suppress a stale queued row - but attempt() can return BEFORE _claim.
