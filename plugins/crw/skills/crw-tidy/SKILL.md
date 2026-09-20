@@ -31,6 +31,8 @@ Give every judged item one disposition:
 | Conflict | Sources that should agree do not, so no supplement follows from the evidence |
 | Unverified | A partial listing, a read failure, an unknown-result write, missing access, or corroborating evidence the rule requires that does not exist yet, left the question open |
 
+Where more than one row could apply, take them in this order: Exception when the rule expressly exempts the record, then Conflict when binding sources already disagree, then Unverified when the evidence a judgement needs is absent or unread, and only then Conforms or Gap. A shortfall whose sources disagree is a conflict, never a gap to be filled with whichever passage you happen to be able to quote.
+
 An exception is not a defect and is reported as the exception it is. A conflict is recorded with the disagreeing sources and the decision that would settle it; do not resolve it by taking whichever reading needs the smallest edit. Unverified is the honest outcome of a failed or partial read, and it never becomes "no violation found".
 
 ## Supplement within authority
