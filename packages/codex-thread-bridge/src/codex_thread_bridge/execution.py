@@ -17,6 +17,14 @@ WAS IT APPROVED? Only a host that configured a policy file can answer that, so t
 compared only where one exists, and every receipt says which of the two modes was in force rather
 than letting a reader assume the stronger one.
 
+IS IT THIS ROLE'S PAIR? A later failure showed the first two questions can both be answered
+correctly by a task that is still on the wrong model, because CRW runs three levels and each is
+meant to run on a different pair. A caller may therefore name the role it is creating for, and a
+named role is checked against the pair this host's policy declares for it. Naming one is opt-in,
+so nothing that does not name a role behaves differently than before; but naming one this host
+does not declare is refused rather than defaulted, for the same reason an undeclared exception is:
+the point of asking is to be checked by someone other than yourself. See `roles`.
+
 The allowlist deliberately cannot be reached from a tool argument. It is read once, in the server's
 main(), from a file named by this process's own environment, and handed to the Bridge as a
 constructor argument with no setter. A caller's entire input surface is the tool parameter list, so
@@ -40,6 +48,9 @@ import hashlib
 import json
 from pathlib import Path
 from typing import NamedTuple
+
+from . import roles
+from .roles import ROLE_MISMATCH, ROLE_UNKNOWN
 
 ENVIRONMENT_VARIABLE = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 
@@ -166,11 +177,16 @@ def _no_duplicates(pairs):
 class ExecutionPolicy:
     """What this host allows. Constructed before the first tool call and never mutated after."""
 
-    def __init__(self, allowed: dict | None = None, exceptions: dict | None = None, *, digest=None):
+    def __init__(self, allowed: dict | None = None, exceptions: dict | None = None,
+                 declared_roles: dict | None = None, *, digest=None):
         # None is not an empty allowlist. It means no host answer exists to the approval question,
         # so only the presence question is asked, and the receipt says so.
         self._allowed = allowed
         self._exceptions = dict(exceptions or {})
+        # Same principle one question further along: no declared role means this host has no
+        # answer to the role question, and a caller that names one is refused rather than
+        # silently unchecked.
+        self._roles = dict(declared_roles or {})
         self._digest = digest
 
     @property
@@ -182,17 +198,38 @@ class ExecutionPolicy:
 
         The digest identifies the file without disclosing its path or its contents, so a
         coordinator can tell that the allowlist changed without being handed the operator's notes.
+
+        The declared roles and their pairs ARE disclosed, because the whole point of declaring
+        them is that a caller states the pair this host expects for the role rather than one it
+        remembered. A model id is not a secret; the exception directories and the operator's notes
+        still are.
         """
-        return {"mode": self.mode, "digest": self._digest}
+        return {
+            "mode": self.mode,
+            "digest": self._digest,
+            "roles": {role: expectation.receipt() for role, expectation in self._roles.items()},
+        }
 
     @classmethod
     def from_mapping(cls, data, *, digest=None) -> "ExecutionPolicy":
         data = _object(data, "the execution policy must be a JSON object")
-        _only(data, {"allowed", "exceptions"}, "the execution policy")
+        _only(data, {"allowed", "exceptions", "roles"}, "the execution policy")
+        # Parsed first so a malformed roles section stops startup naming itself, rather than
+        # after an allowlist error that has nothing to do with what the operator just edited.
+        declared_roles = roles.parse(data.get("roles"), ExecutionPolicyError)
         entries = data.get("allowed")
-        if not isinstance(entries, list) or not entries:
+        # Optional ONLY because roles are declared. An allowlist constrains every task on this
+        # host, so requiring one in order to declare roles would narrow what unrelated work may
+        # run here as a side effect of a CRW decision. Absent, the approval question simply stays
+        # unanswered and the mode says so. A file declaring neither is a mistake, not an empty
+        # policy, so it is still refused.
+        if entries is None and declared_roles:
+            allowed = None
+            entries = []
+        elif not isinstance(entries, list) or not entries:
             raise ExecutionPolicyError("allowed must be a non-empty list of {model, efforts}")
-        allowed: dict = {}
+        else:
+            allowed = {}
         for entry in entries:
             entry = _object(entry, "each allowed entry must be an object")
             _only(entry, {"model", "efforts"}, "an allowed entry")
@@ -210,10 +247,20 @@ class ExecutionPolicy:
         for name, entry in declared.items():
             _identifier(name, "an exception id", EXCEPTION_ID_MAXIMUM)
             entry = _object(entry, f"exception {name!r} must be an object")
-            _only(entry, {"model", "reasoningEffort", "cwd", "reason"}, f"exception {name!r}")
+            _only(entry, {"model", "reasoningEffort", "cwd", "reason", "role"},
+                  f"exception {name!r}")
             absent = sorted({"model", "reasoningEffort", "cwd"} - set(entry))
             if absent:
                 raise ExecutionPolicyError(f"exception {name!r} is missing {absent}")
+            # Optional, and it narrows rather than widens. A directory is not a task identity, so
+            # without it an exception written for one task can be cited by anything else working
+            # in the same directory. With it, only a request naming that role may cite it.
+            scoped_role = entry.get("role")
+            if scoped_role is not None and scoped_role not in roles.ROLES:
+                raise ExecutionPolicyError(
+                    f"exception {name!r} role {scoped_role!r} is not a role; "
+                    f"supported are {sorted(roles.ROLES)}"
+                )
             roots = entry["cwd"]
             if not isinstance(roots, list) or not roots:
                 raise ExecutionPolicyError(f"exception {name!r} needs at least one cwd")
@@ -247,8 +294,9 @@ class ExecutionPolicy:
                     entry["reasoningEffort"], f"the effort of exception {name!r}"
                 ),
                 "cwd": tuple(roots),
+                "role": scoped_role,
             }
-        return cls(allowed, exceptions, digest=digest)
+        return cls(allowed, exceptions, declared_roles, digest=digest)
 
     @classmethod
     def from_file(cls, path) -> "ExecutionPolicy":
@@ -271,10 +319,21 @@ class ExecutionPolicy:
         configured = (environ.get(ENVIRONMENT_VARIABLE) or "").strip()
         return cls.from_file(configured) if configured else PRESENCE_ONLY
 
-    def authorize(self, model, reasoning_effort, *, cwd=None, exception=None) -> Execution:
-        """Decide before anything is sent. Every refusal happens here, with no RPC issued."""
+    def authorize(self, model, reasoning_effort, *, cwd=None, exception=None,
+                  role=None) -> Execution:
+        """Decide before anything is sent. Every refusal happens here, with no RPC issued.
+
+        The order of the three branches is behaviour, not tidiness. Presence is settled first, so
+        an omitted value is always reported as omitted rather than as the wrong pair for a role.
+        The exception comes next, because it is the user's explicit authorization for this task
+        and checking the role first would refuse the very pair they approved. The role check runs
+        only when no exception was cited, and the allowlist last, so a pair that is wrong for its
+        role says so instead of reporting the broader "not allowed on this host".
+        """
         stated_model = _stated(model, "model")
         stated_effort = _stated(reasoning_effort, "reasoning_effort")
+        expectation = None
+        overridden_by = None
         if exception is not None:
             entry = self._exceptions.get(exception)
             if entry is None:
@@ -285,6 +344,19 @@ class ExecutionPolicy:
                     "policy_exception",
                     exception,
                     "no exception with this id is declared in this host's execution policy",
+                )
+            # Scope by role as well as by directory, in both directions. An exception written for
+            # one role may only be cited by a request naming that role, and an exception with no
+            # role may only be cited by a request naming none -- which is every caller that
+            # existed before roles did, so nothing already working changes.
+            if entry.get("role") != role:
+                raise ExecutionRefused(
+                    EXCEPTION_OUT_OF_SCOPE,
+                    "policy_exception",
+                    role,
+                    f"exception {exception!r} is declared for role {entry.get('role')!r} and this "
+                    f"request cites {role!r}",
+                    allowed=[entry.get("role")],
                 )
             if cwd is None:
                 # Named apart from the wrong-directory case: the caller supplied no directory at
@@ -321,7 +393,39 @@ class ExecutionPolicy:
                         f"exception {exception!r} authorizes {field} {authorized!r} only",
                         allowed=[authorized],
                     )
-        elif self._allowed is not None:
+            # Recorded rather than silent. A reader of this receipt can see that a role
+            # expectation existed and exactly which exception replaced it.
+            overridden_by = exception
+        elif role is not None:
+            expectation = self._roles.get(role)
+            if role not in roles.ROLES or expectation is None:
+                raise ExecutionRefused(
+                    ROLE_UNKNOWN,
+                    "role",
+                    role,
+                    "no such role is declared in this host's execution policy; this bridge "
+                    "declares no pair of its own for any role",
+                    allowed=sorted(self._roles),
+                )
+            if expectation.expectation == roles.PAIR:
+                for field, requested, authorized in (
+                    ("model", stated_model, expectation.model),
+                    ("reasoning_effort", stated_effort, expectation.reasoning_effort),
+                ):
+                    # Exact string equality, like every other comparison here. There is no alias
+                    # table, so an effort named max and one named xhigh are two different values
+                    # and neither stands in for the other.
+                    if requested != authorized:
+                        raise ExecutionRefused(
+                            ROLE_MISMATCH,
+                            field,
+                            requested,
+                            f"role {role!r} runs {field} {authorized!r} on this host",
+                            allowed=[authorized],
+                        )
+        # The allowlist is the last question, and an exception has already answered it: the
+        # operator wrote that pair down themselves, which is what an exception is for.
+        if exception is None and self._allowed is not None:
             efforts = self._allowed.get(stated_model)
             if efforts is None:
                 raise ExecutionRefused(
@@ -346,6 +450,13 @@ class ExecutionPolicy:
                 "mode": self.mode,
                 "digest": self._digest,
                 "exception": exception,
+                "role": role,
+                "roleExpectation": (
+                    {**expectation.receipt(), "overriddenBy": None} if expectation is not None
+                    else ({"role": role, "expectation": None, "model": None,
+                           "reasoningEffort": None, "overriddenBy": overridden_by}
+                          if role is not None else None)
+                ),
                 "model": stated_model,
                 "reasoningEffort": stated_effort,
                 "limits": LIMITS,

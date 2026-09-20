@@ -39,7 +39,7 @@ class RelabellingPolicy:
     def summary(self):
         return {"mode": self.mode, "digest": "stub"}
 
-    def authorize(self, model, reasoning_effort, *, cwd=None, exception=None):
+    def authorize(self, model, reasoning_effort, *, cwd=None, exception=None, role=None):
         assert isinstance(model, str) and isinstance(reasoning_effort, str)
         return Execution(
             *RELABELLED,
@@ -74,10 +74,203 @@ def policy_for(directory):
 # --------------------------------------------------------------------------- the policy itself
 
 
+# ------------------------------------------------------------------- roles (CRW-127)
+#
+# The third question. The two above it can both be answered correctly by a task that is still on
+# the wrong model, because each of CRW's three levels is meant to run on a different pair. These
+# cases assert the same thing the rest of this file does: not that an error was raised, but that
+# nothing was dispatched.
+
+PARENT_MODEL = "devin/swe-2"
+PARENT_EFFORT = "max"
+
+
+def roles_policy(directory=None, *, roles=None, allowed=True):
+    """A policy declaring roles, with the allowlist present or absent as the case needs."""
+    policy = {}
+    if allowed:
+        policy["allowed"] = [
+            {"model": MODEL, "efforts": [EFFORT]},
+            {"model": PARENT_MODEL, "efforts": [PARENT_EFFORT]},
+        ]
+    policy["roles"] = roles if roles is not None else {
+        "supervisor": {"expectation": "record"},
+        "parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT},
+        "child": {"model": MODEL, "reasoningEffort": EFFORT},
+    }
+    return policy
+
+
+def declared(directory=None, **kwargs):
+    return ExecutionPolicy.from_mapping(roles_policy(directory, **kwargs), digest="roles-digest")
+
+
+def test_a_role_this_host_never_declared_is_refused_rather_than_defaulted():
+    """The whole point of naming a role is to be checked by someone other than yourself.
+
+    A host with no roles section has no answer, and inventing one in code would be the second
+    source of truth this feature exists to remove.
+    """
+    policy = ExecutionPolicy.from_environment({})
+    with pytest.raises(ExecutionRefused) as raised:
+        policy.authorize(MODEL, EFFORT, role="parent")
+    assert raised.value.code == "execution_role_unknown"
+    assert raised.value.field == "role"
+    # And naming none still behaves exactly as it did before roles existed.
+    assert policy.authorize(MODEL, EFFORT).model == MODEL
+
+
+def test_a_word_that_is_not_a_role_is_refused_like_one_that_was_never_declared():
+    with pytest.raises(ExecutionRefused) as raised:
+        declared().authorize(MODEL, EFFORT, role="coordinator")
+    assert raised.value.code == "execution_role_unknown"
+
+
+@pytest.mark.parametrize(
+    ("role", "model", "effort", "field"),
+    [
+        # A parent on the child's pair: the exact shape of the observed failure, where both the
+        # presence and the allowlist questions answer yes.
+        ("parent", MODEL, EFFORT, "model"),
+        ("parent", PARENT_MODEL, EFFORT, "reasoning_effort"),
+        ("child", MODEL, PARENT_EFFORT, "reasoning_effort"),
+        ("child", PARENT_MODEL, PARENT_EFFORT, "model"),
+    ],
+)
+def test_a_pair_that_is_not_this_roles_pair_is_refused(role, model, effort, field):
+    with pytest.raises(ExecutionRefused) as raised:
+        declared().authorize(model, effort, role=role)
+    assert raised.value.code == "execution_role_mismatch"
+    assert raised.value.field == field
+
+
+def test_max_and_xhigh_are_two_values_and_neither_stands_in_for_the_other():
+    """No alias table exists, and this is the case that would have caught the retry that failed.
+
+    A coordinator whose send was withheld changed the model to the parent's and kept the child's
+    effort. Both spellings load as themselves, and each is refused for the other's role.
+    """
+    policy = declared()
+    assert policy.summary()["roles"]["parent"]["reasoningEffort"] == PARENT_EFFORT
+    assert policy.summary()["roles"]["child"]["reasoningEffort"] == EFFORT
+    assert PARENT_EFFORT != EFFORT
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "max"
+    with pytest.raises(ExecutionRefused):
+        policy.authorize(PARENT_MODEL, EFFORT, role="parent")
+
+
+@pytest.mark.parametrize("missing", [None, "", "   "])
+def test_presence_is_settled_before_the_role(missing):
+    """An omitted value is reported as omitted, never as the wrong pair for its role."""
+    with pytest.raises(ExecutionRefused) as raised:
+        declared().authorize(missing, EFFORT, role="parent")
+    assert raised.value.code in ("execution_setting_missing", "execution_setting_invalid")
+    assert raised.value.field == "model"
+
+
+def test_a_supervisor_keeps_the_pair_it_was_given_and_the_receipt_says_where_it_came_from():
+    """Its model is the user's own selection, so policy declares no pair to compare against."""
+    execution = declared(allowed=False).authorize("gpt-6-astra", "high", role="supervisor")
+    assert (execution.model, execution.reasoning_effort) == ("gpt-6-astra", "high")
+    assert execution.receipt["roleExpectation"]["expectation"] == "record"
+    assert execution.receipt["roleExpectation"]["model"] is None
+
+
+def test_a_supervisor_is_exempt_from_the_role_question_and_not_from_the_allowlist():
+    """Declaring no pair for it says who chooses the model, not that the host stops checking."""
+    with pytest.raises(ExecutionRefused) as raised:
+        declared().authorize("gpt-6-astra", "high", role="supervisor")
+    assert raised.value.code == "execution_not_allowed"
+
+
+def test_a_policy_that_pins_the_supervisors_model_does_not_load():
+    """The rule that keeps the parent policy from propagating upward is a load-time refusal."""
+    with pytest.raises(ExecutionPolicyError) as raised:
+        declared(roles={"supervisor": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}})
+    assert "supervisor" in str(raised.value)
+
+
+def test_roles_can_be_declared_without_imposing_an_allowlist_on_every_other_task():
+    """Requiring one would narrow unrelated work as a side effect of a CRW decision."""
+    policy = declared(allowed=False)
+    assert policy.mode == "presence_only"
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").model == PARENT_MODEL
+    # The approval question stays unanswered, so an unlisted pair naming no role still passes.
+    assert policy.authorize(UNAPPROVED, "low").model == UNAPPROVED
+
+
+def test_a_policy_declaring_neither_an_allowlist_nor_a_role_is_still_a_mistake():
+    with pytest.raises(ExecutionPolicyError):
+        ExecutionPolicy.from_mapping({})
+
+
+def test_an_exception_answers_the_role_question_and_the_receipt_names_it():
+    """The user's explicit authorization wins, and an override is never silent."""
+    policy = ExecutionPolicy.from_mapping(
+        {
+            **roles_policy(),
+            "exceptions": {
+                "one-task": {
+                    "model": UNAPPROVED,
+                    "reasoningEffort": "high",
+                    "cwd": ["/tmp"],
+                    "role": "parent",
+                }
+            },
+        },
+        digest="roles-digest",
+    )
+    execution = policy.authorize(UNAPPROVED, "high", cwd="/tmp", exception="one-task",
+                                role="parent")
+    assert execution.model == UNAPPROVED
+    assert execution.receipt["roleExpectation"]["overriddenBy"] == "one-task"
+
+
+@pytest.mark.parametrize(
+    ("declared_role", "cited_role"),
+    [
+        # Written for a parent, cited by a child working in the same directory.
+        ("parent", "child"),
+        # Written without a role, cited by a request that names one. A directory is not a task
+        # identity, so this is the loophole that would otherwise let any role in that directory
+        # skip its own check.
+        (None, "parent"),
+    ],
+)
+def test_an_exception_does_not_cover_a_role_it_was_not_written_for(declared_role, cited_role):
+    entry = {"model": UNAPPROVED, "reasoningEffort": "high", "cwd": ["/tmp"]}
+    if declared_role is not None:
+        entry["role"] = declared_role
+    policy = ExecutionPolicy.from_mapping(
+        {**roles_policy(), "exceptions": {"one-task": entry}}, digest="roles-digest"
+    )
+    with pytest.raises(ExecutionRefused) as raised:
+        policy.authorize(UNAPPROVED, "high", cwd="/tmp", exception="one-task", role=cited_role)
+    assert raised.value.code == "execution_exception_out_of_scope"
+
+
+def test_an_exception_written_before_roles_existed_still_works_for_a_caller_that_names_none():
+    policy = ExecutionPolicy.from_mapping(
+        {
+            **roles_policy(),
+            "exceptions": {
+                "one-task": {"model": UNAPPROVED, "reasoningEffort": "high", "cwd": ["/tmp"]}
+            },
+        },
+        digest="roles-digest",
+    )
+    assert policy.authorize(
+        UNAPPROVED, "high", cwd="/tmp", exception="one-task"
+    ).model == UNAPPROVED
+
+
+
 def test_an_unconfigured_host_still_demands_a_stated_pair():
     """The presence question has an answer everywhere; only approval needs a configured file."""
     policy = ExecutionPolicy.from_environment({})
-    assert policy.summary() == {"mode": "presence_only", "digest": None}
+    # An empty roles map is the honest answer to "which roles does this host declare", and it is
+    # what tells a caller that naming one here would be refused rather than silently unchecked.
+    assert policy.summary() == {"mode": "presence_only", "digest": None, "roles": {}}
     with pytest.raises(ExecutionRefused) as raised:
         policy.authorize(None, EFFORT)
     assert raised.value.code == "execution_setting_missing"
@@ -293,6 +486,68 @@ async def test_a_refusal_leaves_the_request_id_usable(bridge, fake_server, tmp_p
 
 
 @pytest.mark.parametrize(
+    ("role", "pair", "code"),
+    [
+        ("parent", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_mismatch"),
+        ("parent", {"model": PARENT_MODEL, "reasoning_effort": EFFORT},
+         "execution_role_mismatch"),
+        ("reviewer", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_unknown"),
+    ],
+)
+async def test_a_creation_for_the_wrong_role_never_reaches_the_host(
+    configured_bridge, fake_server, tmp_path, role, pair, code
+):
+    """Decided locally, so the refusal costs nothing and leaves nothing behind.
+
+    The ledger row is the structural half of the claim: authorization runs before begin(), and
+    every RPC is issued after it, so an id that is still unknown could not have reached the host.
+    """
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.create_thread("wrong-role", str(tmp_path), prompt="work", role=role, **pair)
+    assert raised.value.code == code
+    assert fake.calls == [], "a refused creation reached the host"
+    assert fake.count("turn/start") == 0
+    with pytest.raises(ValueError, match="Unknown request_id"):
+        bridge.ledger.get("wrong-role")
+
+
+async def test_a_corrected_role_request_succeeds_under_the_same_id(
+    configured_bridge, fake_server, tmp_path
+):
+    """Retry re-authorizes rather than inheriting the first attempt's decision."""
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    with pytest.raises(ExecutionRefused):
+        await bridge.create_thread("retried", str(tmp_path), prompt="work", role="parent",
+                                   **EXECUTION)
+    receipt = await bridge.create_thread(
+        "retried", str(tmp_path), prompt="work", role="parent",
+        model=PARENT_MODEL, reasoning_effort=PARENT_EFFORT,
+    )
+    assert receipt["status"] == "accepted"
+    start = next(params for name, params in fake.calls if name == "thread/start")
+    assert start["model"] == PARENT_MODEL
+    assert start["config"]["model_reasoning_effort"] == PARENT_EFFORT
+    assert receipt["executionPolicy"]["role"] == "parent"
+    assert receipt["executionPolicy"]["roleExpectation"]["model"] == PARENT_MODEL
+
+
+async def test_naming_no_role_leaves_the_request_identical_to_one_made_before_roles_existed(
+    configured_bridge, fake_server, tmp_path
+):
+    """A retained receipt only replays while its request fingerprint is unchanged."""
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    first = await bridge.create_thread("stable", str(tmp_path), prompt="work", **EXECUTION)
+    assert first["status"] == "accepted"
+    replayed = await bridge.create_thread("stable", str(tmp_path), prompt="work", **EXECUTION)
+    assert replayed.get("replayed") is True
+    assert fake.count("thread/start") == 1
+
+
+@pytest.mark.parametrize(
     ("model", "effort", "field"),
     [
         (UNAPPROVED, "high", "model"),
@@ -395,6 +650,8 @@ async def test_an_approved_pair_records_the_mode_it_was_approved_under(
         "mode": "allowlist",
         "digest": "test-digest",
         "exception": None,
+        "role": None,
+        "roleExpectation": None,
         "model": MODEL,
         "reasoningEffort": EFFORT,
         "limits": receipt["executionPolicy"]["limits"],
@@ -622,3 +879,63 @@ async def test_an_exception_on_the_resume_path_must_state_its_directory(
     )
     assert delivered["status"] == "accepted"
     assert delivered["executionPolicy"]["exception"] == "one-task"
+
+
+
+# ------------------------------------------------- residency and what an echo can prove (CRW-127)
+#
+# Three project parents were asked to resume on a new pair. The one the host had not loaded came
+# back reporting the new pair; the two it had loaded came back reporting the old one and their
+# messages were withheld. Nobody recorded residency at the time, so the cause is not established,
+# and these cases deliberately do not assert one. They run the same request against both candidate
+# hosts and assert that the bridge is safe under either.
+
+
+async def test_a_loaded_thread_reports_its_own_pair_and_the_message_is_withheld(
+    bridge, fake_server, tmp_path
+):
+    """The observed idle case: the host answers with what the thread is actually on."""
+    fake, _ = fake_server
+    created = await bridge.create_thread("resident", str(tmp_path), **EXECUTION)
+    thread_id = created["threadId"]
+    fake.resident = {thread_id}
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "resident-send", thread_id, "work",
+        {"model": PARENT_MODEL, "reasoning_effort": PARENT_EFFORT},
+    )
+    assert delivered["status"] == "failed"
+    assert delivered["statusBeforeResume"] == "idle"
+    assert "echoIndependence" not in delivered
+    assert delivered["settings"]["findings"][0]["code"] == "settings_not_preserved"
+    assert fake.count("turn/start") == 0
+
+
+@pytest.mark.parametrize("adopts", [True, False])
+async def test_an_unloaded_thread_never_lets_an_echo_stand_as_proof_of_preservation(
+    bridge, fake_server, tmp_path, adopts
+):
+    """The observed notLoaded case, run against both candidate hosts.
+
+    Where the host adopts, the echo repeats the request and the settings agree. Where it does not,
+    they disagree and the message is withheld. Either way the receipt records that the thread was
+    not loaded, so an agreeing echo is recorded as agreement and never as preservation.
+    """
+    fake, _ = fake_server
+    created = await bridge.create_thread("absent", str(tmp_path), **EXECUTION)
+    thread_id = created["threadId"]
+    fake.resident = set()
+    fake.resume_adopts = adopts
+    delivered = await bridge.send_message_to_thread(
+        "absent-send", thread_id, "work",
+        {"model": PARENT_MODEL, "reasoning_effort": PARENT_EFFORT},
+    )
+    assert delivered["statusBeforeResume"] == "notLoaded"
+    assert delivered["echoIndependence"] == "not_established"
+    if adopts:
+        assert delivered["status"] == "accepted"
+        assert delivered["settings"]["findings"] == []
+    else:
+        assert delivered["status"] == "failed"
+        assert delivered["settings"]["findings"][0]["code"] == "settings_not_preserved"
+        assert fake.count("turn/start") == 0
