@@ -1530,6 +1530,88 @@ def _contents(services, report) -> dict:
             "openAttempts": open_attempts, "detail": None}
 
 
+def _issue_reading(services, report, issue_key: str) -> dict:
+    """Whether a relay holds THIS issue, answered from the file the probe just measured.
+
+    OPS-3.4 states the proof as a conjunction: doctor reporting the packet's state directory,
+    TOGETHER WITH the issue lookup naming the expected relationship. Those were two commands
+    and nothing ordered them. Run the lookup first against a mistyped state directory and it
+    CONSTRUCTS an empty store, then honestly answers that nothing is assigned - after which a
+    coordinator concludes the issue is unowned and opens a second writer. Answering both
+    halves here is what removes the gap, because one read cannot disagree with itself about
+    which file it read.
+
+    Constructs no Store, like the rest of doctor: read_only_rows opens the database read-only
+    and stats the path before and after, so a rename during the read returns no rows at all
+    rather than rows a caller would attribute to the wrong file.
+
+    Deliberately narrow. It reports what ONE read-only connection can support - whether a live
+    relationship exists here and which child owns it - and leaves the scoped/unscoped/
+    ambiguous/unreadable project reading to AssignmentView.for_issue, which already owns it. A
+    second implementation of those four states would be a second opinion about them.
+    """
+    from .store import read_only_rows
+
+    blank = {"key": issue_key, "readable": False, "holds": None, "responsibleChild": None,
+             "responsibleRelationship": None, "storeId": None, "storeAgreement": "unknown"}
+    if not report["access"]["dbReadable"]:
+        return {**blank, "detail": "the database is not readable from this process"}
+    # Scalar subqueries, so the store id comes back on the SAME read even when the issue has
+    # no assignment. A query that returned the identity only alongside rows would go silent in
+    # exactly the case this command exists for: an empty store answering "nothing assigned".
+    read = read_only_rows(
+        services.selection,
+        "SELECT (SELECT value FROM schema_meta WHERE key = 'store_id') AS store_id,"
+        "       (SELECT relationship_id FROM relationships"
+        "         WHERE issue_key = ? AND status IN ('active','paused')"
+        "           AND superseded_by IS NULL"
+        "         ORDER BY created_at LIMIT 1) AS relationship_id,"
+        "       (SELECT child_task_id FROM relationships"
+        "         WHERE issue_key = ? AND status IN ('active','paused')"
+        "           AND superseded_by IS NULL"
+        "         ORDER BY created_at LIMIT 1) AS child_task_id",
+        (issue_key, issue_key),
+    )
+    if not read["readable"] or read["detail"] or not read["rows"]:
+        return {**blank, "detail": read["detail"] or "the store could not be read"}
+
+    row = read["rows"][0]
+    located = report.get("store") or {}
+    # Three facts have to agree before this reading may be acted on: the id minted in the file,
+    # and the device and inode the READ itself measured, against what the probe measured. The
+    # id alone cannot settle it, because a copy of the bytes carries the same id.
+    agreement = "same"
+    for observed, expected in (
+        (row["store_id"], located.get("storeId")),
+        (read.get("device"), located.get("device")),
+        (read.get("inode"), located.get("inode")),
+    ):
+        if observed is None or expected is None:
+            agreement = "unknown"
+            break
+        if observed != expected:
+            agreement = "changed"
+            break
+
+    if agreement != "same":
+        # A relationship read out of a file that is not the one measured is not this
+        # assignment's answer, so holds stays null rather than being reported beside the
+        # disagreement. cmd_doctor refuses on it.
+        return {**blank, "readable": True, "storeId": row["store_id"],
+                "storeAgreement": agreement,
+                "detail": "the rows did not come from the store this process measured"}
+    return {
+        "key": issue_key,
+        "readable": True,
+        "holds": row["relationship_id"] is not None,
+        "responsibleChild": row["child_task_id"],
+        "responsibleRelationship": row["relationship_id"],
+        "storeId": row["store_id"],
+        "storeAgreement": "same",
+        "detail": None,
+    }
+
+
 def _sibling_stores(services) -> dict:
     """Other stores beside this one that never recorded which socket they serve.
 
@@ -1581,6 +1663,13 @@ def cmd_doctor(services, args) -> dict:
     # against each other rather than each being read as healthy on its own.
     report["accessReceipt"] = _access_receipt(services, report)
 
+    # The other half of OPS-3.4's conjunction, on request. Answered from the same file the
+    # probe measured, so a coordinator gets one answer instead of joining two commands and
+    # owning the order between them.
+    issue_key = getattr(args, "issue", None)
+    if issue_key:
+        report["issue"] = _issue_reading(services, report, issue_key)
+
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
     report["nonce"] = nonce
     comparison = compare_store(
@@ -1593,6 +1682,14 @@ def cmd_doctor(services, args) -> dict:
         # A caller that asked whether this is the same store and got no proof must not read
         # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
         # is that a different database is never reported as healthy.
+        raise PayloadExit(report, EXIT_REFUSED)
+    if issue_key and report["issue"]["readable"] and report["issue"]["storeAgreement"] != "same":
+        # Same criterion, one level down, and unproven is refused exactly as a mismatch is:
+        # the rule a few lines up already says a caller that asked whether this is the same
+        # store and got no proof must not read exit 0 as yes. "changed" and "unknown" are
+        # both short of proof, so neither may exit 0 while the store WAS readable. An
+        # unreadable store is a different answer - there is simply no relay here - and it
+        # keeps exit 0 so that determining before anything exists is not an error.
         raise PayloadExit(report, EXIT_REFUSED)
     return report
 
@@ -2497,6 +2594,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--expect-store", help="the store id another participant reported")
     doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
     doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")
+    doctor.add_argument(
+        "--issue",
+        help="also answer whether this store holds an assignment for this issue identity",
+    )
     doctor.set_defaults(handler=cmd_doctor)
 
     subparsers.add_parser("store-identity").set_defaults(handler=cmd_store_identity)

@@ -213,7 +213,125 @@ class AssignmentView:
             "reviewedSetDigest": verdict["setDigest"] if verdict else None,
             "current": criteria_current,
         }
+        record["projection"] = self._projection(
+            relationship_id, generation, head, verdict, state
+        )
         return record
+
+    def _projection(self, relationship_id, generation, head, verdict, state) -> dict:
+        """Five vocabularies, kept apart, each anchored to the event it was read under.
+
+        They are not interchangeable and collapsing any two loses the distinction a caller
+        needs. `staged` is an EVENT stage and never a delivery state; `acknowledged` IS a
+        delivery state; and an acknowledgement settles on one axis while carrying its evidence
+        on another, so a bridge receipt saying an attempt was accepted still says nothing about
+        receipt, application or verification.
+
+        Anchored, because an unanchored read pairs whatever each table happens to hold. After a
+        needs_changes verdict the assignment has a completion in the previous generation and a
+        queued correction in the current one; reporting the old acknowledgement beside the new
+        delivery would describe a state that never existed. The two get separate anchors rather
+        than one, because head_revision only ever names a ready_for_review event - so while the
+        correction is the thing everyone is waiting for, it would otherwise be invisible here.
+        """
+        correction = self.store.one(
+            "SELECT event_id FROM events"
+            " WHERE relationship_id = ? AND execution_generation = ?"
+            "   AND outcome = 'revision_request' AND suppressed_reason IS NULL"
+            " ORDER BY event_id LIMIT 1",
+            (relationship_id, generation),
+        )
+        return {
+            "completion": self._anchored(head["eventId"], generation),
+            "correction": self._anchored(
+                correction["event_id"] if correction else None, generation
+            ),
+            # Referenced, never recomputed. state() derived both of these above and a second
+            # derivation here would be a second source of truth for one fact.
+            "verdict": verdict,
+            "assignment": {"state": state},
+        }
+
+    def _anchored(self, event_id, generation) -> dict:
+        record = {"eventId": event_id, "executionGeneration": generation,
+                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None}
+        if event_id is None:
+            # A null is an answer. A row borrowed from another generation is not.
+            record["detail"] = "this generation has no such event"
+            return record
+        # ONE statement, so ONE snapshot. SQLite gives every autocommit SELECT its own, and
+        # reading the event, the delivery, the attempt and the acknowledgement separately lets
+        # a delivery worker commit in between: the answer would then pair a delivery state with
+        # an acknowledgement that never coexisted with it, which is exactly the combination
+        # this projection exists to make impossible. The attempt joins on attempt_count so the
+        # request id is the CURRENT attempt's, not whichever row sorted first after a retry.
+        row = self.store.one(
+            "SELECT e.stage AS stage,"
+            "       d.event_id AS delivered, d.state AS delivery_state,"
+            "       d.hold_reason AS hold_reason,"
+            "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
+            "       k.event_id AS acked, k.verified AS ack_verified,"
+            "       k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection,"
+            "       v.tier AS ack_tier,"
+            "       (SELECT reason FROM refusals WHERE event_id = e.event_id"
+            "         ORDER BY id DESC LIMIT 1) AS refusal_reason"
+            "  FROM events e"
+            "  LEFT JOIN deliveries d ON d.event_id = e.event_id"
+            "  LEFT JOIN attempts a ON a.event_id = e.event_id"
+            "                      AND a.attempt_no = d.attempt_count"
+            "  LEFT JOIN acks k ON k.event_id = e.event_id"
+            "  LEFT JOIN ack_evidence v ON v.event_id = e.event_id"
+            " WHERE e.event_id = ?",
+            (event_id,),
+        )
+        if row is None:
+            record["detail"] = "the store holds no such event"
+            return record
+        record["event"] = {"stage": row["stage"]}
+        if row["delivered"] is not None:
+            record["delivery"] = {
+                "state": row["delivery_state"],
+                "requestId": row["request_id"],
+                "attemptNo": row["attempt_no"],
+            }
+        record["ack"] = {
+            # The parent's DISPOSITION, independent of whether the acknowledging turn could be
+            # verified. A verified rejection and a verified acceptance settle identically on
+            # the axis below, so reading only that one reports them alike.
+            "accepted": bool(row["ack_accepted"]) if row["acked"] is not None else None,
+            "rejectionReason": row["ack_rejection"] if row["acked"] is not None else None,
+            "settlement": row["ack_verified"] if row["acked"] is not None else None,
+            # A second axis, not a rewording of the first: settlement says whether the
+            # acknowledgement closed, the tier says what it closed on, and no row at all is
+            # unrecorded rather than unverified.
+            "evidenceTier": row["ack_tier"] if row["ack_tier"] is not None else "unrecorded",
+        }
+        record["undeliveredReason"] = self._undelivered_reason(row)
+        return record
+
+    def _undelivered_reason(self, row):
+        """Copied verbatim from the row that recorded it, saying which row that was.
+
+        Two tables can explain one event's delivery and they answer different questions, so the
+        source travels with the value instead of being guessed from its shape. Most specific
+        first: a hold is about THIS delivery, a refusal is about a write that was rejected.
+        failed_operations is deliberately not in this chain - it is keyed by scope rather than
+        by event, so attributing one to a particular delivery would be an inference, not a copy.
+
+        Reads only what the single projection statement already returned, so the reason cannot
+        come from a later snapshot than the delivery it is explaining.
+        """
+        if row["delivered"] is not None and row["hold_reason"]:
+            return {"source": "deliveries.hold_reason", "value": row["hold_reason"]}
+        if row["delivered"] is not None:
+            # A refusal is durable audit history and the same deterministic event can be
+            # accepted later once its cause is corrected. Once a delivery row exists, the
+            # refusal that preceded it is no longer why anything is undelivered, and reporting
+            # it here would contradict a delivery that has since dispatched.
+            return None
+        if row["refusal_reason"] is not None:
+            return {"source": "refusals.reason", "value": row["refusal_reason"]}
+        return None
 
     def _resolve(self, row, head, verdict, relationship_id, generation, current_mark,
                  criteria_current=True) -> str:
@@ -270,7 +388,73 @@ class AssignmentView:
             "responsibleRelationship": owning[0]["relationshipId"] if owning else None,
         }
         record.update(self._project_context(owning))
+        record["relay"] = self._relay_provenance(bool(owning))
         return record
+
+    def _relay_provenance(self, holds: bool) -> dict:
+        """Which store this answer came from, so it can be compared with the packet's.
+
+        for_issue can answer "responsibleRelationship: null" perfectly honestly and still be
+        the wrong answer, because a mistyped state directory creates an empty store and an
+        empty store has no assignments. OPS-3.4 makes the proof a conjunction - doctor
+        reporting the packet's state directory AND this lookup naming the expected
+        relationship - and a reading that cannot say which file it read cannot take part in
+        that comparison. Carrying the provenance is what lets the caller notice it asked the
+        wrong store instead of concluding the issue is unowned and opening a second writer.
+
+        holds is the predicate itself, stated once here rather than re-derived by every
+        caller from the shape of responsibleRelationship. It is scoped to THIS store, which
+        is the only honest scope for the claim.
+
+        These values are provenance, never proof. A copy of the store carries the same store
+        id and the same recorded socket, which is why compare_store grades a found nonce
+        against device and inode instead of trusting an identifier. The field name says
+        recorded for the same reason: this is the value to compare, not the evidence that
+        settles the comparison.
+        """
+        # The id is read through the connection this process opened; the device and inode are
+        # stat-ed from the path. Those are two different files if the path is replaced in
+        # between, and pairing them would hand out provenance no single store ever had. So the
+        # path is identified on both sides of the read and a disagreement returns unknown
+        # rather than a hybrid - the same before-and-after discipline read_only_rows uses.
+        before = self._path_identity()
+        located = self.store.locate()
+        recorded_socket = self.store.meta("socket_path")
+        after = self._path_identity()
+        if before is None or after is None or before != after:
+            return {
+                "holds": holds,
+                "store": {"identified": False, "storeId": None, "dbPath": located["dbPath"],
+                          "realPath": None, "device": None, "inode": None,
+                          "recordedSocket": None,
+                          "detail": "the database at this path was replaced while it was read"},
+            }
+        return {
+            "holds": holds,
+            "store": {
+                "identified": True,
+                "storeId": located["storeId"],
+                "dbPath": located["dbPath"],
+                "realPath": located["realPath"],
+                "device": located["device"],
+                "inode": located["inode"],
+                # First-write-wins provenance out of schema_meta, and deliberately NOT the
+                # socket this process resolved: a store records the socket that created it,
+                # so a participant pointing at a different socket still reads this value and
+                # can see that the two disagree.
+                "recordedSocket": recorded_socket,
+                "detail": None,
+            },
+        }
+
+    def _path_identity(self):
+        import os
+
+        try:
+            info = os.stat(self.store.path)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino)
 
     def _project_context(self, owning) -> dict:
         """Which project owns this issue, additively.

@@ -167,3 +167,58 @@ class RevisionRoundtrip(VerificationTestCase):
         self.emit_correction(request["supersedesRevisionHash"])
         self.assertEqual(head_revision(self.store.db, self._rid, 2)["evidence"],
                          UNKNOWN_PREDECESSOR)
+
+
+class TheCorrectionIsVisibleWhileItIsQueued(RevisionRoundtrip):
+    """The queued correction is what everyone is waiting for, and it was invisible.
+
+    head_revision only ever names a ready_for_review event, so between a needs_changes verdict
+    and the child's re-emit the new generation has no head. A projection anchored only on that
+    head would report the PREVIOUS generation's acknowledgement beside nothing at all, and an
+    operator reading it could not see that a correction had been queued to the child.
+    """
+
+    def projection(self):
+        from codex_session_relay.assignment import AssignmentView
+
+        return AssignmentView(self.store, self.registry, self.clock).state(
+            self._rid
+        )["projection"]
+
+    def test_the_correction_gets_its_own_anchor_in_the_new_generation(self):
+        first = self.acknowledged()
+        request = self.request_correction(first)
+
+        projection = self.projection()
+        correction = projection["correction"]
+        self.assertEqual(correction["eventId"], request["eventId"])
+        self.assertEqual(correction["executionGeneration"], 2)
+        self.assertEqual(
+            correction["delivery"]["state"], "dispatched",
+            "request_correction attempts the send, so the correction has really gone out",
+        )
+
+    def test_the_old_acknowledgement_is_not_reported_beside_the_new_delivery(self):
+        """The mixture this anchoring exists to prevent."""
+        first = self.acknowledged()
+        request = self.request_correction(first)
+
+        projection = self.projection()
+        # The completion anchor has no event in generation 2: the child has not re-emitted.
+        self.assertIsNone(projection["completion"]["eventId"])
+        self.assertIsNone(projection["completion"]["ack"])
+        self.assertIn("no such event", projection["completion"]["detail"])
+        # And the correction carries generation 2's own delivery, not generation 1's.
+        self.assertEqual(projection["correction"]["eventId"], request["eventId"])
+        self.assertNotEqual(projection["correction"]["eventId"], first)
+
+    def test_once_the_child_re_emits_both_anchors_are_in_the_same_generation(self):
+        first = self.acknowledged()
+        request = self.request_correction(first)
+        corrected = self.emit_correction(request["supersedesRevisionHash"])
+
+        projection = self.projection()
+        self.assertEqual(projection["completion"]["eventId"], corrected["eventId"])
+        self.assertEqual(projection["completion"]["executionGeneration"], 2)
+        self.assertEqual(projection["correction"]["executionGeneration"], 2)
+

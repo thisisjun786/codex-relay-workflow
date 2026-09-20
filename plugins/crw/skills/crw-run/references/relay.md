@@ -42,6 +42,78 @@ state directory under the user state home and could not connect to the App Serve
 which is why the split below existed there. Reuse that as a recorded observation, not as a rule
 that holds everywhere.
 
+## Determine whether this store holds the assignment
+
+    codex-session-relay --state "$RELAY_STATE" doctor --issue <the exact issue identity>
+
+Adds an `issue` block to the doctor report: `holds`, `responsibleChild`,
+`responsibleRelationship`, the `storeId` the rows actually came from, and `storeAgreement`.
+
+It exists because the proof was a conjunction split across two commands with nothing ordering
+them. `doctor` said which store this process reached; `assignment-find` said who owns the issue;
+and running the second one first against a mistyped state directory CREATES an empty store, which
+then answers "no assignment" perfectly honestly. A coordinator that believes that answer opens a
+second writer for an issue that already has one. Asking both halves of one read-only connection is
+what removes the gap, because a single read cannot disagree with itself about which file it read.
+
+`storeAgreement` compares the store id returned by that read, and the device and inode the read
+itself measured, against what the probe measured. `same` is the only value to act on. `changed`
+means the rows came from a file this process did not measure, and it returns `holds: null` and
+exits 2 rather than reporting a relationship you would then adopt out of an unverified store.
+`unknown` means one side could not be established. None of this is proof of store identity on its
+own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
+`--expect-nonce` still exist and still refuse anything short of `proven`.
+
+`unknown` is refused the same way `changed` is, whenever the database WAS readable: a caller that
+asked whether these rows came from its store and got no proof must not read exit 0 as yes, which
+is the rule the `--expect-*` comparison already applies one level up. An unreadable database is a
+different answer rather than a weaker one — there is no relay here to agree with — so it keeps
+exit 0, and determining before anything exists is not an error.
+
+`holds: false` before registration is the expected reading, not a verdict that this assignment is
+direct. Registration needs the task id creation returns, so at managed start there is genuinely
+no relationship yet. What establishes relay-managed mode at that point is the agreed state
+directory plus the declared intent naming that store, which `intent-show` reads back; `holds`
+becomes true at step 6, once registration has landed. Treating step 1's `false` as "no relay" is
+the misreading that keeps execution on the direct path, and it is why the determination is
+recorded rather than re-derived from a single lookup.
+
+An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
+are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
+constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
+create the database it was asked to look at, and a rename during the read returns no rows rather
+than rows attributed to the wrong file.
+
+`assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
+block with `storeId`, `dbPath`, `realPath`, `device`, `inode` and `recordedSocket`.
+`recordedSocket` is the socket the store recorded when it was created, first write wins, and
+deliberately not the socket this process resolved — so a participant pointing somewhere else can
+see the two disagree instead of the later one quietly winning.
+
+### The managed start sequence
+
+Run in this order. The determination comes FIRST, before anything exists, because that is the
+step whose absence left the question unasked; running the lookup first against the wrong path is
+what creates an empty store and reports a real assignment as absent.
+
+1. `doctor --issue <issue>` — determine. Expect `holds` false or null here.
+2. `intent-declare --dispatch-request-id <id> --issue <issue>` — the management marker, published
+   BEFORE the child exists. `dbPath` is recorded from the resolved `--state`; there is no
+   `--db-path` on this command, only `--no-db-path` to suppress it.
+3. create the child, then `register` with both endpoints and both allowed recipients.
+4. `intent-register --assignment <id> --relationship <rel> --dispatch-request-id <id> --db-path <store>`
+   — join the marker to the relationship registration actually produced.
+5. `criteria-register` — the canonical set, so a later verdict rules on agreed obligations.
+6. `doctor --issue <issue>` again — expect `holds` true, the responsible child, and
+   `storeAgreement` `same`.
+
+`tests/test_managed_execution.py` in the relay package runs exactly this sequence against a real
+store and asserts the chain, so an instruction that stopped producing it fails there. It covers
+managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
+`deliver` needs the socket, so the delivery and correction legs are asserted against a real store
+through the fake host instead. Note that the doc and the test are not yet compared automatically —
+keep them in step by hand when either changes.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
