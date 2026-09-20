@@ -46,6 +46,13 @@ REVISION = "revision_request"
 # it IS answered by the child's reply.
 EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+
+# linkage.PROJECT and linkage.ISSUE, spelled here rather than imported. linkage reaches registry
+# and assignment from inside its own functions, and delivery is reached from registry, so a
+# module-level import would close that ring. Two string literals cannot drift far, and a test
+# asserts they still equal the linkage constants.
+PROJECT_SCOPE = "project"
+ISSUE_SCOPE = "issue"
 MANIFEST_LINES = 10
 NEWLINE = chr(10)
 
@@ -74,13 +81,93 @@ def _overflow_line(items, event_id, *, shown=MANIFEST_LINES, name_block=True):
 
 class DeliveryService:
     def __init__(self, store, registry, intake, clock, *, policy=None,
-                 require_lifecycle_evidence: bool = True):
+                 require_lifecycle_evidence: bool = True, linkage=None):
         self.store = store
         self.registry = registry
         self.intake = intake
         self.clock = clock
         self.policy = policy or RetryPolicy()
         self.require_lifecycle_evidence = require_lifecycle_evidence
+        # Optional on purpose. Every caller written before the three-level linkage existed keeps
+        # its exact behaviour when this is absent, including the callers in this package's own
+        # tests; supplying it turns recipient resolution from copying a frozen row into verifying
+        # the live hierarchy. It is never used to WRITE linkage, only to read it.
+        self.linkage = linkage
+
+    # -------------------------------------------------------- relation resolution
+
+    def resolve_recipient(self, relationship, kind):
+        """Who this delivery goes to, read from the linkage rather than from the frozen row.
+
+        The relationship row records the parent it was registered under, so a completion that
+        arrives after the project changed hands is addressed to the owner that stepped down. The
+        linkage knows who owns the scope NOW, and this asks it.
+
+        It verifies rather than overrides. A recipient that disagrees with
+        assert_assignment_delivery is not quietly substituted: the disagreement IS the finding,
+        and it is refused so that a late report is never filed as the new owner's result.
+
+        The reader's three answers stay three answers. An unreadable store is not "nothing
+        found", nothing found is not "complete", and neither becomes a resolved recipient.
+        """
+        frozen = (relationship["child"]["taskId"] if kind == REVISION
+                  else relationship["parent"]["taskId"])
+        if self.linkage is None:
+            return frozen, {"source": "relationship_row", "verified": False}
+        rid = relationship["relationshipId"]
+        reading = self.linkage.up(relationship_id=rid)
+        if not reading.get("readable", False):
+            raise DeliveryRefused(
+                RefusalReason.RELATION_UNREADABLE,
+                f"the linkage could not be read for relationship {rid!r}, so who owns its scope "
+                "is unknown; the relationship row is not used as a fallback because an "
+                "unreadable store has said nothing about the owner",
+            )
+        if reading.get("state") == "ambiguous":
+            raise DeliveryRefused(
+                RefusalReason.DUPLICATE_SCOPE_OWNER,
+                f"the linkage reports more than one candidate for relationship {rid!r}; this "
+                f"reader will not choose between them: {reading.get('contention')!r}",
+            )
+        # A revision travels down to the issue's own child, and a completion up to the project
+        # that owns the issue. Named explicitly, because a kind that fell through to one of them
+        # would resolve a recipient for a direction this contract does not define.
+        if kind == REVISION:
+            wanted = ISSUE_SCOPE
+        elif kind == COMPLETION:
+            wanted = PROJECT_SCOPE
+        else:
+            raise DeliveryRefused(
+                RefusalReason.NOT_CLAIMABLE,
+                f"{kind!r} is not a delivery direction, so it has no resolvable recipient",
+            )
+        level = next(
+            (lv for lv in reading.get("levels") or [] if lv.get("scopeKind") == wanted), None
+        )
+        if level is None or level.get("owner") is None:
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                f"the linkage records no live {wanted} owner for relationship {rid!r}; "
+                f"gaps {reading.get('gaps')!r}. Nothing found is reported as nothing found, "
+                "never as a delivery that may proceed",
+            )
+        current = level["owner"]["taskId"] if isinstance(level["owner"], dict) else level["owner"]
+        if current != frozen:
+            raise DeliveryRefused(
+                RefusalReason.RELATION_OWNER_DRIFT,
+                f"relationship {rid!r} names {frozen!r} but the linkage says {wanted} "
+                f"{level.get('scopeKey')!r} is owned by {current!r}. A report that arrived after "
+                "the relationship changed is held rather than credited to either task; "
+                "re-register the assignment under the current owner and deliver that",
+            )
+        return current, {
+            "source": "linkage",
+            "verified": True,
+            "scopeKind": wanted,
+            "scopeKey": level.get("scopeKey"),
+            "revision": level["owner"].get("revision") if isinstance(level["owner"], dict)
+            else None,
+        }
 
     # ---------------------------------------------------------------- queue
 
@@ -108,11 +195,11 @@ class DeliveryService:
                 f"event {event_id!r} is {event['stage']!r}; only a final event may be delivered",
             )
         relationship = self.registry.require_active(event["relationship_id"])
+        resolution = None
         if recipient_task_id is None:
-            recipient_task_id = (
-                relationship["child"]["taskId"] if kind == REVISION
-                else relationship["parent"]["taskId"]
-            )
+            # Resolved through the linkage when one is wired, which verifies the live owner
+            # instead of copying the parent the relationship froze at registration.
+            recipient_task_id, resolution = self.resolve_recipient(relationship, kind)
         # Refused before any transport call, and re-checked inside attempt(). Checked BEFORE
         # the idempotent early return, so re-enqueueing cannot smuggle a cross delivery past
         # a row that already exists.
@@ -139,6 +226,12 @@ class DeliveryService:
             # either - the queries that would find it filter on having no delivery - so they
             # accumulate for as long as the store lives.
             db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
+        if resolution is not None and resolution.get("verified"):
+            # Recorded after the row exists, as a journal fact rather than a delivery column, so
+            # the resolution is auditable without widening a table the frozen contract pins.
+            self.store.journal(
+                "delivery_recipient_resolved", event_id, resolution, at=self.clock.iso()
+            )
         return dict(self.get(event_id))
 
     def enqueue_in(self, db, event_id, *, relationship_id, kind, recipient_task_id) -> None:
