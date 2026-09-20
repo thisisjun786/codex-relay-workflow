@@ -323,10 +323,15 @@ def declared_policy(root, name=None):
         # internal error instead of the refusal it had already accumulated.
         return None, (str(manifest_path) + " is a manifest object, found "
                       + type(manifest).__name__)
+    if "mcpServers" not in manifest:
+        # Read, and it declares no MCP document at all. Established absence, not a failure.
+        return {}, None
     named = manifest.get("mcpServers")
     if not (isinstance(named, str) and named.strip()):
-        # Read, and it says there is no MCP document. Established absence, not a failure to read.
-        return {}, None
+        # Present and unusable is not absent. A blank path or a number is a declaration this
+        # cannot follow, so the policy is not established and must not read as none.
+        return None, (str(manifest_path) + " declares an mcpServers path that is not a nonempty"
+                      " string, it is " + type(named).__name__)
     path = Path(root) / _relative(named)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -339,10 +344,14 @@ def declared_policy(root, name=None):
     servers = (document or {}).get("mcpServers")
     if not isinstance(servers, dict):
         return None, str(path) + " holds no mcpServers object"
-    entry = servers.get(name)
-    if not isinstance(entry, dict):
-        # Same: the document was read and it does not declare this server.
+    if name not in servers:
+        # Read, and it does not declare this server. Established absence.
         return {}, None
+    entry = servers[name]
+    if not isinstance(entry, dict):
+        # Declared, and not a server. Present and unusable, so again not absent.
+        return None, (str(path) + " declares " + repr(str(name)) + " as a "
+                      + type(entry).__name__ + ", not an object")
     declared = entry.get(inventory.POLICY_FIELD, {})
     if not isinstance(declared, dict):
         return None, (str(path) + " declares a " + inventory.POLICY_FIELD + " that is not an"

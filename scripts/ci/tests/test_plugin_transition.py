@@ -4407,3 +4407,58 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(answer["policyInEffect"]["state"], "ABSENT")
         self.assertEqual(answer["policyInEffect"]["tools"], {})
         self.assertIsNone(answer["policyInEffect"]["detail"])
+
+    def declares(self, host, mutate):
+        """Rewrite the installed declaration or manifest, then ask inspect what it reads."""
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        mutate(cache)
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0)
+        return answer["policyInEffect"]
+
+    @needs_reader
+    def test_a_manifest_declaring_an_unusable_mcp_path_is_unreadable_not_absent(self):
+        """Devin finding: present and unusable is not the same answer as not declared."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+
+        def bad_path(cache):
+            path = cache / ".codex-plugin" / "plugin.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["mcpServers"] = 7
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+        found = self.declares(host, bad_path)
+        self.assertEqual(found["state"], "UNREADABLE")
+        self.assertIsNotNone(found["detail"])
+
+    @needs_reader
+    def test_a_server_entry_that_is_not_an_object_is_unreadable_not_absent(self):
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+
+        def bad_entry(cache):
+            path = cache / "wiring" / "mcp.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["mcpServers"]["codex-thread-bridge"] = "not an object"
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+        found = self.declares(host, bad_entry)
+        self.assertEqual(found["state"], "UNREADABLE")
+        self.assertIsNotNone(found["detail"])
+
+    @needs_reader
+    def test_a_manifest_that_declares_no_mcp_document_at_all_is_absent(self):
+        """The other side of the same split, so neither direction is traded for the other."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+
+        def no_servers(cache):
+            path = cache / ".codex-plugin" / "plugin.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document.pop("mcpServers")
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+        found = self.declares(host, no_servers)
+        self.assertEqual(found["state"], "ABSENT")
+        self.assertIsNone(found["detail"])
