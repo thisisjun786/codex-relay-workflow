@@ -440,6 +440,32 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         self.assertEqual(len(self.adapter.sends), 1)
 
 
+    def test_a_legacy_record_citing_an_unauthorized_exception_is_withheld_not_crashed(self):
+        """The send-time gate exists to revalidate records an earlier writer admitted.
+
+        Formatting every finding as though it were a stale record read fields a citation finding
+        does not carry, raised out of the gate, and left the delivery queued instead of withheld
+        -- a revalidation path failing open on exactly the records it exists to catch.
+        """
+        from pathlib import Path
+
+        settings = task_settings(
+            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            citedException="not-written",
+        )
+        _relationship, event_id = self.queued_event(settings=settings)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        detail = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]["detail"]
+        self.assertIn("not-written", detail)
+        self.assertIn(RefusalReason.ROLE_BINDING_MISMATCH.value, detail)
+
+
+
 class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
     """A role-scoped exception replaces the role-pair comparison by design.
 

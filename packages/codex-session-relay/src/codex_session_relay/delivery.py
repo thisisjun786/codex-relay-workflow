@@ -876,20 +876,17 @@ class DeliveryService:
             raise rolepolicy.refuse_unresolved(policy, role, task_id)
         finding = rolepolicy.check_record(settings, role, policy)
         if finding is not None:
-            if finding.get("undeclared"):
-                raise DeliveryRefused(
-                    RefusalReason.ROLE_POLICY_UNCONFIGURED,
-                    f"{task_id!r} is bound as {role!r} and this host's execution policy declares "
-                    f"no such role (policy {finding['digest']}), so its authorization cannot be "
-                    "checked. Nothing was sent and no turn was started. "
-                    + finding["recovery"],
-                )
+            # Dispatched on the code the finding carries rather than on the assumption that a
+            # finding which is not the undeclared one must be a stale record. That assumption
+            # read `recorded` and `expected` off a citation finding which has neither and raised
+            # a KeyError out of the gate, leaving the delivery queued instead of withheld --
+            # a revalidation path failing open on exactly the legacy records it exists to catch.
             raise DeliveryRefused(
-                RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE,
-                f"{task_id!r} is bound as {role!r} and its recorded authorization is "
-                f"{finding['recorded']} while the policy for that role is {finding['expected']} "
-                f"(policy {finding['digest']}). Nothing was sent and no turn was started. "
-                + rolepolicy.RECOVERY,
+                RefusalReason(finding["code"]),
+                f"{task_id!r} is bound as {role!r}: "
+                + rolepolicy.describe(finding)
+                + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
+                + finding.get("recovery", rolepolicy.RECOVERY),
             )
         # The bridge applies this rule on its own tool path, and a relay delivery does not take
         # that path: it resumes through its own transport. Applied here too, or a send reaches a

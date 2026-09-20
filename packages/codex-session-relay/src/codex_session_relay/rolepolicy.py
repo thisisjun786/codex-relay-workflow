@@ -212,6 +212,28 @@ def recorded_pair(settings):
     return _pair(settings)
 
 
+def describe(finding) -> str:
+    """One sentence a refusal can carry, built from the keys the finding actually has.
+
+    Findings of different kinds carry different evidence, and a caller that formats them all as
+    though they were one kind raises on the first one that is not.
+    """
+    if finding.get("undeclared"):
+        return "this host's execution policy declares no such role, so its authorization "\
+               "cannot be checked"
+    if finding.get("citedException") is not None and "recorded" not in finding:
+        return (
+            f"its record cites exception {finding['citedException']!r}, which this policy does "
+            "not authorize for that role with this pair and directory"
+        )
+    if "recorded" in finding:
+        return (
+            f"its recorded authorization is {finding['recorded']} while the policy for that "
+            f"role is {finding['expected']}"
+        )
+    return finding.get("detail", "its recorded authorization does not match this policy")
+
+
 def _unverified_citation(settings, role, policy):
     """A cited exception that this policy does not actually authorize.
 
