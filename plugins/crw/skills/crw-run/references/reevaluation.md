@@ -63,7 +63,7 @@ Closed set. A hold names the condition a later pass re-reads, and the row it res
 | `defer:capacity_unmeasured` | an observation is actually taken | the recorded `unmeasured` and what prevented measuring |
 | `defer:edit_overlap` | the peer agreement settles, or the region is released | the agreement and its follow-up |
 | `defer:merge_window` | the window's holder releases it, or this candidate is promoted | the merge turn; integration into a shared target stays serial |
-| `defer:ownership_unverified` | a store this process measured answers the question | an unreadable store, a state directory this process cannot use, or `holds` null |
+| `defer:ownership_unverified` | the read that answers ownership in this execution mode answers it | whichever read failed: an unreadable store, a state directory this process cannot use or `holds` null under a relay; an unreadable coordination record or uninspectable task under a direct assignment |
 | `defer:disposition_unreadable` | the store becomes readable | the refused read and its detail |
 | `defer:disposition_contested` | a fresh execution generation | every contested candidate, with no winner chosen |
 | `defer:authority_pending` | the authority case that produced it is answered | the [Start policy](start-policy.md#cases-this-policy-is-accepted-against) case recorded at the start adjudication |
@@ -93,9 +93,16 @@ a state directory this process cannot use: both are `defer:ownership_unverified`
 
 **Where the assignment is explicitly direct**, there is no store to ask and no relay answer to
 wait for. Ownership comes from the coordination record and the existing task, as everywhere else
-in this skill. `defer:ownership_unverified` does not apply: a direct run holding every candidate
+in this skill. The absence of a relay is not a hold: a direct run that deferred every candidate
 because a relay it never used cannot answer would dispatch nothing at all, which is the opposite
 of what this pass is for.
+
+A failed **read** is a hold in either mode. Direct mode removes the relay lookup, not the
+obligation to establish an owner, and an inaccessible record is not evidence that no writer
+exists. Where the coordination record or the responsible task cannot be read, the candidate is
+`defer:ownership_unverified` naming which read failed, and it clears when that read answers.
+Dispatching past an unreadable owner is how a second writer is opened for work somebody already
+has.
 
 The pass asks nothing further here, because what it needs at this point is issue-child ownership
 and that read has just answered it. Which project parent owns a scope is a different axis with
