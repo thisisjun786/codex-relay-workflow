@@ -6,8 +6,10 @@ description: "Report where work actually stands: the goal, the current position,
 # CRW Status
 
 Report what is true right now and how it is known. Jun asks for this as 중간점검, as
-'현재 어디까지 됐어?', or as '전체 프로젝트 어떻게 돼가?', and what he wants back is a short
-grounded report rather than a plan, an audit, or a recommendation he did not ask for.
+'현재 어디까지 됐어?', or as '전체 프로젝트 어떻게 돼가?'. Standing on its own, that asks for a
+short grounded report rather than a plan, an audit, or a recommendation he did not ask for. Asked
+of a task already executing an initiative he approved, it asks for that report and for the approved
+work to keep moving. Which one it is decides what this call may do, so classify it first.
 
 ## Keep the four read operations apart
 
@@ -15,9 +17,9 @@ Status reports the current situation. [crw-next](../crw-next/SKILL.md) chooses o
 [crw-check](../crw-check/SKILL.md) compares delivery against accepted criteria obligation by
 obligation. [crw-logic](../crw-logic/SKILL.md) investigates a suspected contradiction. Where a
 report surfaces a question one of those owns, name the owner and the question; do not attach a
-full requirement audit, a contradiction hunt, or an execution to a user who asked how things are
-going. A next action belongs in the report when the user asked for one, and is not a required
-section otherwise.
+full requirement audit or a contradiction hunt to a user who asked how things are going, and never
+start work the standing approval does not already cover. A next action belongs in the report when
+the user asked for one, and is not a required section otherwise.
 
 ## Connect the workflow
 
@@ -97,23 +99,61 @@ not a status. Then one short status per project, including its schedule verdict.
 waiting, split between what an internal coordinator will settle and what genuinely needs a new
 decision from Jun. Then the evidence you checked and the items still unverified.
 
+Where this call acted, the actions it actually took come before what is waiting, and what is
+waiting separates a normal dependency wait from a decision somebody owes. Failed and unverified
+deliveries go with the other unverified items rather than among the actions.
+
 Write it in Korean, short, and in the order above. Keep each project's line to its state, its
 blocker and its evidence pointer. Never write that something was handled, fixed or completed unless
-this check produced a new fact that it was; a report is not an action, and describing it as one is
-the failure this skill exists to prevent.
+this call produced a new fact that it was. Something sent is not something done, and reporting a
+request as progress is the failure this skill exists to prevent.
 
-## Status reads, and returns control
+## Classify the request before deciding what this call may do
 
-An independent status call is read-only. It does not write Linear, create or resume a task, send a
-message, wake a parent or a child, install anything, or change a schedule. Reporting that a project
-is behind does not authorize starting work on it.
+Two requests use the same words and do not have the same answer. Decide between them from the
+records, in this order, stopping at the first step that decides.
+
+1. An explicit status-only, report-only, read-only, plan-only, pause or no-contact limit in force
+   for this request settles it: read the records, write nothing, wake nobody. No later step
+   overrides a limit the user stated.
+2. Otherwise this is a checkpoint only if all four hold: this task holds a current supervisor
+   designation for the same stable initiative ID, its approved project set is not yet complete,
+   the execution approval is still in force, and obligations remain inside it. A designation and a
+   binding are different things, and an initiative link is neither
+   ([Initiative supervision](../crw-run/references/initiative-supervision.md)).
+3. Anything else reads. A bare initiative link, a past assignment, a finished execution, or
+   authority you cannot establish from the records is the reading branch. Ambiguity resolves toward
+   reading, because a wake that should not have happened cannot be taken back and a report that
+   should have acted can be followed up in the next message.
+
+On the reading branch this call writes no Linear, creates or resumes no task, sends no message,
+wakes no parent or child, installs nothing and changes no schedule. Reporting that a project is
+behind does not authorize starting it.
+
+On the checkpoint branch, Jun is not asking whether to continue. That was settled when he approved
+the execution, so the call reads the responsible parents, moves the work that approval already
+covers and that is already waiting on somebody, and reports what it did. Asking 다시 진행할까요 on
+every checkpoint is the habit this replaces: it hands back a decision he already made.
+
+What moves is only what the existing approval covers. A checkpoint starts no new project execution,
+widens no scope, and creates no installation, restart or wake authority the assignment did not
+already carry. Existing permissions, model, effort, ownership and task records are preserved
+exactly. Where a limit blocks a step, report that plainly and carry on with the follow-ups the limit
+does not touch. [Midpoint check](references/midpoint-check.md) owns what the checkpoint may then do,
+including the rule that it is one reconciliation pass and not a scheduler.
+
+[crw-check](../crw-check/SKILL.md) resolves execution authority from the same full assignment and
+prior approvals. On one input the two must classify it the same way; if your reading differs from
+check's, one of you is wrong and it is worth settling before acting on it.
+
+## Return control, and report what was done
 
 A status question that arrives during an authorized run is a question, not a cancellation. Answer
 it and return control to the task that owns the execution, which keeps every obligation it already
 had; a supervisor or parent does not shed its continuing duties because someone asked for a
-progress report. Where the user asks for action as well as a report, hand the scoped request to the
-existing owner: [crw-run](../crw-run/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
-for verification, [crw-plan](../crw-plan/SKILL.md) for a schedule or scope change. Status itself
-creates no authority those owners do not already hold.
+progress report, and a checkpoint that moved work returns control the same way. Where the user asks
+for action beyond what the standing approval covers, hand the scoped request to the owner that
+already has it: [crw-run](../crw-run/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
+for verification, [crw-plan](../crw-plan/SKILL.md) for a schedule or scope change.
 
-Do not set up recurring or background reporting. Each check is asked for and answered once.
+Do not set up recurring or background reporting. Each call is asked for and answered once.

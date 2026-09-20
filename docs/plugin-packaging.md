@@ -13,7 +13,7 @@ and the launchers only point at what that installer left behind.
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
-| `plugins/crw/skills/` | The eight skills, one of the two declared components |
+| `plugins/crw/skills/` | The registered skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
@@ -159,7 +159,7 @@ Create the directory under `plugins/crw/skills/` with its `SKILL.md` and
 `agents/openai.yaml`. The manifest lists no skills: the package ships whatever the
 declared path holds at the release revision, and `scripts/ci/plugin.py` derives the
 namespaced names from that revision, so a skill developed in parallel is included
-once its commit is part of that revision. The installer test pins the current eight
+once its commit is part of that revision. The installer test pins the registered
 names as a positive control, so a new skill belongs in that list too. Keep relative
 links between skills pointing at siblings under the same parent; the cache preserves
 that layout.

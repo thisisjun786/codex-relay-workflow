@@ -1,12 +1,16 @@
 # Midpoint check
 
 One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in a task that supervises an
-initiative, and the answer is a short report covering everything that supervision holds. This file
+initiative. The answer is a short report covering everything that supervision holds and, where the
+execution approval is still in force, the approved work moved along. This file
 is that entry. The roles it walks are the shared
 [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
 and the binding it reads is the one
-[Initiative supervision](../../crw-run/references/initiative-supervision.md) established, which
-already records that a how-is-it-going request reads existing records and wakes nothing.
+[Initiative supervision](../../crw-run/references/initiative-supervision.md) established. Its
+existing row classifying a how-is-it-going request as a read that wakes nothing describes the
+reading branch in [the classification](../SKILL.md#classify-the-request-before-deciding-what-this-call-may-do),
+which is still the default; a checkpoint inside an execution approval that is still in force is the
+other branch, and that branch is what this file is mostly about.
 
 ## Find the scope without being given a link
 
@@ -85,24 +89,79 @@ reading was taken, mark anything read only in part, and mark any head that moved
 A report assembled from readings taken minutes apart is a mixture, and saying so is cheaper than
 being wrong about which revision it describes.
 
-## The check reads and hands back
+## What the checkpoint may do
 
-An independent check queries and nothing else: no Linear write, no task created or resumed, no
-message, no wake, no installation, no schedule change.
+On the reading branch this call queries and nothing else: no Linear write, no task created or
+resumed, no message, no wake, no installation, no schedule change. On the checkpoint branch it acts
+inside the approval that already exists. Either way it cancels nothing, and the supervisor and the
+parents keep every obligation they had before the question arrived.
 
-A check requested during an authorized run cancels nothing. The supervisor and the parents keep
-every continuing obligation they had before the question arrived, and control returns to whoever
-was executing. Where Jun asks for follow-up action as well, hand the scoped request to the owner
-that already has it, [crw-run](../../crw-run/SKILL.md) or [crw-check](../../crw-check/SKILL.md),
-rather than acting from the check. Being able to see that a project is stalled is not authority to
-start it, to wake its parent, or to create anything.
+The initiative level coordinates and does not descend. It hands work to parents and performs
+neither a child's implementation, CI or review nor a parent's technical judgement, acceptance or
+merge. The progress rules Run owns and the handoff shapes in
+[Coordination message](../../crw-run/references/task-packet.md#coordination-message) and the
+[restoration block](../../crw-run/references/task-packet.md#restoration-block) are consumed as they
+stand.
+
+One reconciliation pass, and that is the whole budget. Read the parents, deliver at most one new
+coordination fact or one restoration handoff per parent that needs it, read the resulting state
+again, and report. Do not select issues, judge readiness, create or recreate a child, judge CI or
+review, accept a delivery, merge anything, or open a polling loop or a retry queue. A second pass is
+a checkpoint Jun asks for, not a loop this one starts. That boundary is what keeps a scheduler from
+growing inside Status where Run already owns one.
+
+| Observed on a responsible parent | What the checkpoint does |
+|---|---|
+| `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
+| `idle` holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared | resume it through the existing supported path, carrying the restoration block |
+| `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
+| paused, cancelled or archived, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take ([OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)) |
+| `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
+
+Nothing here recreates a child, duplicates a resume, or nudges a parent that is already moving.
+
+### The idle row needs more than the word idle
+
+`idle` on its own decides nothing, because it is the normal state under event-driven handoff
+([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)). Before
+sending anything, establish from the records the stable parent relationship, the active turn if
+there is one, the last processed cursor or result, the outstanding items in the coordination record,
+the evidence that a dependency actually released, the verified resume path, and the message identity
+that makes a resend detectable. Send only on a confirmed unprocessed result, an unanswered decision
+the parent was asked for, or a blocker observed cleared.
+
+Read again immediately before sending, because the state you classified from may be minutes old.
+Where a send's outcome is uncertain, reconcile by reading rather than by sending again. Where the
+active turn moved between the read and the send, reclassify instead of retrying blind.
+
+### Five facts, recorded as five
+
+A checkpoint that reports 진행시켰다 when it only sent something has reported the wrong thing. These
+are five separate facts and they are written separately: the action this call requested; the
+transport accepting or refusing it; the parent observed active or resumed afterwards; the parent
+assigning its child the follow-up; and that child's work observed moving. A receipt establishes the
+second and says nothing about the other four.
+
+Existing IDs, owners, model, effort, permissions and task records are preserved exactly as they
+are. Nothing in a checkpoint creates installation or restart authority, and nothing in it starts a
+project that was not already approved.
+
+Where Jun asks for follow-up beyond what the standing approval covers, hand that scoped request to
+the owner that already has it, [crw-run](../../crw-run/SKILL.md) or
+[crw-check](../../crw-check/SKILL.md), rather than acting on it here. Seeing that a project is
+stalled is not authority to start one nobody approved.
 
 ## Report
 
 Core conclusion, then one short line per project including its
-[schedule verdict](schedule-progress.md), then what is waiting split between internal coordination
-and Jun's decision, then the evidence checked and the items left unverified. Korean, short, in that
-order. Nothing is described as handled unless this check performed it, which it did not.
+[schedule verdict](schedule-progress.md), then what this checkpoint actually did, then what is
+waiting, split between a normal dependency wait, internal coordination, and the decisions that need
+Jun. Then the evidence checked, the items left unverified, and any delivery that failed or could
+not be confirmed. Korean, short, in that order.
+
+On the reading branch the actions section says so and is empty. On the checkpoint branch it names
+each parent contacted, what was sent, and what was observed afterwards. Nothing is described as
+handled unless this call performed it, and a request that was accepted is not a result.
 
 ## Cases
 
@@ -115,7 +174,9 @@ path first and call it a blocker only where that path is missing or the task is 
 `notLoaded` is neither running nor finished, so read that task again once before
 reporting it, as the bridge contract requires; a task that was merely not loaded a second ago may
 read `active`. Where it stays `notLoaded`, keep that exact value rather than translating it into
-idle or stopped, and report its last turn as unverified. Do not message or wake any of them.
+idle or stopped, and report its last turn as unverified. On the reading branch, message and wake
+nobody. On the checkpoint branch, the idle parent is a candidate only under the idle row's
+observation fields, and the `notLoaded` one is never a send target until a second read resolves it.
 
 ### M2 CI is green and the review is not finished
 
@@ -152,3 +213,57 @@ between two readings.
 Action: mark the reading time, report the later reading, and let the parent continue. The check
 does not steer, interrupt or pause it, and its own turn ending is not something this check waits
 for.
+
+### M7 A child result arrived and the parent went idle
+
+Observed: the execution approval is still in force, a child returned its delivery, and its parent
+has been idle since before that result landed, with the result unprocessed in the coordination
+record.
+Action: on the checkpoint branch, resume that parent through the existing supported path with the
+restoration block, then read its state again and report both what was sent and what was observed
+after. On the reading branch, report the unprocessed result and send nothing.
+Preserved: the parent, its binding and its child, and the difference between a send and a result.
+
+### M8 The parent is already active
+
+Observed: the parent that would receive the handoff is `active` with a turn id, and it is already
+working on the thing the checkpoint would have told it about.
+Action: send no resume and no duplicate start. Where the checkpoint holds information that turn
+genuinely does not have, steer only that into the exact turn id; where it holds none, send nothing
+and record why. A transport that refuses a message to an active task is protecting that turn.
+Preserved: one writer per scope, and the running turn intact.
+
+### M9 A normal dependency wait
+
+Observed: a parent is idle with nothing outstanding, waiting on a prerequisite another project is
+still delivering.
+Action: record the dependency, where its release will show, and send nothing. Do not read the
+quiet as a stall, do not nudge, and do not resume it to ask how it is going.
+Preserved: the dependency as the reason, rather than the parent as the problem.
+
+### M10 An explicit limit is in force
+
+Observed: the request carries report-only, read-only, pause or no-contact, or a parent is paused,
+cancelled or archived.
+Action: contact nobody. Report the state, what would release it, and the exact resume action its
+owner has to take. A stated limit outranks a standing approval, and resuming work somebody
+deliberately stopped is the one thing a checkpoint must not do.
+Preserved: the user's decision, exactly as given.
+
+### M11 The read or the send does not land
+
+Observed: a parent reads `notLoaded` or `systemError` after a second read, a coordination record
+cannot be read, or the transport refuses the send.
+Action: report unverified for a read that failed and failed for a send that was refused, and never
+either as success. Name what could not be established and what would establish it, and deliver the
+rest of the report. An unreadable level is unknown, not empty.
+Preserved: the honest gap, and the parts of the checkpoint that did resolve.
+
+### M12 Accepted is not applied
+
+Observed: the transport returned a receipt for the handoff, and the parent has not been observed
+acting on it yet.
+Action: record the receipt as the transport accepting the input, and the parent's state as not yet
+observed to have resumed. Two rows, not one. Do not resend to make the second row appear, and do
+not report the project as progressing on the strength of a receipt.
+Preserved: the five facts as five, which is the whole point of writing them separately.
