@@ -23,10 +23,9 @@ asymmetry: every other role's pair is derived from policy, and a derived pair ca
 safely where a chosen one cannot.
 """
 
-# The three levels, spelled exactly as the relay's own scope bindings spell them. A conformance
-# test in the relay asserts the two sets are equal, because the packages cannot import each
-# other's vocabulary in both directions and a silent divergence here would mean a role that is
-# enforced on one side and unknown on the other.
+# The three levels, spelled exactly as the relay's own scope bindings spell them. The two sets
+# have to stay equal: the packages cannot import each other's vocabulary in both directions, and
+# a silent divergence would mean a role that is enforced on one side and unknown on the other.
 SUPERVISOR = "supervisor"
 PARENT = "parent"
 CHILD = "child"
@@ -101,9 +100,26 @@ def parse(declared, error) -> dict:
             raise error(
                 f"role {role!r} has unknown keys {unknown}; supported are {sorted(_ENTRY_KEYS)}"
             )
-        expectation = entry.get("expectation", PAIR)
+        expectation = entry.get("expectation", RECORD if role == SUPERVISOR else PAIR)
         if expectation not in (PAIR, RECORD):
             raise error(f"role {role!r} expectation must be {PAIR!r} or {RECORD!r}")
+        # Neither direction is negotiable, and both were reachable before this check existed.
+        # A parent or child declaring `record` would opt itself out of the role question
+        # entirely -- on a host with no allowlist that authorizes any pair at all, which is the
+        # failure this whole file exists to prevent. And a supervisor declaring `pair` would be
+        # an operator asking to pin the one model that is the user's own choice, so it is
+        # refused rather than quietly rewritten into the thing they did not ask for.
+        if role == SUPERVISOR and expectation != RECORD:
+            raise error(
+                f"role {SUPERVISOR!r} expectation must be {RECORD!r}: its model and effort are "
+                "the user's own selection, not something the policy pins"
+            )
+        if role != SUPERVISOR and expectation != PAIR:
+            raise error(
+                f"role {role!r} expectation must be {PAIR!r}: only {SUPERVISOR!r} defers to the "
+                "recorded authorization, and letting another role do so would exempt it from "
+                "the role check"
+            )
         if role == SUPERVISOR:
             # Refused rather than ignored. A file that pins the supervisor's model was written by
             # someone who believes it will take effect, and loading it while discarding that
@@ -114,9 +130,6 @@ def parse(declared, error) -> dict:
                     f"role {SUPERVISOR!r} cannot declare {named}: its model and effort are the "
                     "user's own selection, so its expectation is the recorded authorization"
                 )
-            parsed[role] = RoleExpectation(role, expectation=RECORD)
-            continue
-        if expectation == RECORD:
             parsed[role] = RoleExpectation(role, expectation=RECORD)
             continue
         absent = sorted({"model", "reasoningEffort"} - set(entry))

@@ -450,12 +450,21 @@ class ExecutionPolicy:
                 "mode": self.mode,
                 "digest": self._digest,
                 "exception": exception,
+                # Recorded beside "exception" and read the same way: None means the question was
+                # not asked. roleExpectation is present only when a role WAS cited, because an
+                # expectation for a role nobody named would be a field describing nothing.
                 "role": role,
-                "roleExpectation": (
-                    {**expectation.receipt(), "overriddenBy": None} if expectation is not None
-                    else ({"role": role, "expectation": None, "model": None,
-                           "reasoningEffort": None, "overriddenBy": overridden_by}
-                          if role is not None else None)
+                **(
+                    {
+                        "roleExpectation": (
+                            {**expectation.receipt(), "overriddenBy": None}
+                            if expectation is not None
+                            else {"role": role, "expectation": None, "model": None,
+                                  "reasoningEffort": None, "overriddenBy": overridden_by}
+                        )
+                    }
+                    if role is not None
+                    else {}
                 ),
                 "model": stated_model,
                 "reasoningEffort": stated_effort,

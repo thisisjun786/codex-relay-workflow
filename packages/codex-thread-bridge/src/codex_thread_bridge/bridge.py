@@ -8,7 +8,7 @@ from pathlib import Path
 from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import RETRYABLE_STATUSES, Ledger
-from .roles import ROLE_MAXIMUM
+from .roles import ROLE_MAXIMUM, SUPERVISOR
 from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import (
     APPROVAL_LIMITS,
@@ -928,6 +928,27 @@ class Bridge:
             status_before = state["thread"].get("status", {}).get("type")
             receipt["statusBeforeResume"] = status_before
             if status_before == "notLoaded":
+                if role == SUPERVISOR:
+                    # The one case where transmitting the authorized pair can DESTROY the thing
+                    # it is meant to preserve. Every other role's pair is derived from policy, so
+                    # a host that applies what it was sent lands the thread on the pair policy
+                    # says it belongs on. A supervisor's pair is the user's own selection, and
+                    # the pair being transmitted is whatever was recorded -- which is exactly
+                    # what goes stale when the user changes it. So a resume here could quietly
+                    # put the supervisor back on the model the user moved it off.
+                    raise RpcError(
+                        "thread/read",
+                        {
+                            "code": "supervisor_not_loaded",
+                            "message": "Supervisor thread is not loaded; message withheld and "
+                            "no turn was started. Resuming it would transmit the recorded pair "
+                            "to a thread the host has to materialize, and this host's behaviour "
+                            "in that case is not established: if it applies what it is sent, a "
+                            "recorded pair that has since been changed by the user would be "
+                            "silently restored. Read the thread's current settings, re-record "
+                            "the authorization from that reading, and send again.",
+                        },
+                    )
                 # A resume that transmits a pair to a thread the host has to materialize cannot
                 # be read back as evidence: if the host applies what it was sent, the echo
                 # repeats the request and agreement proves nothing about what the thread was on

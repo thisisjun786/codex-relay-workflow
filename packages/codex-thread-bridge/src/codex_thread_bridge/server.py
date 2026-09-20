@@ -198,9 +198,14 @@ def make_server(bridge: Bridge):
         operator-declared exception by id; because such an exception is bound to directories,
         expected_settings must also carry cwd whenever policy_exception is supplied, or the
         request is refused before the thread is read. The resume carries the settings and is read
-        as an
-        observation: this host reports a thread's real state rather than adopting an override, so
-        a match confirms the thread is already in the requested state. An unrecognised key is
+        as an observation. On a thread this host already had loaded it reports the thread's real
+        state rather than adopting an override, so a match confirms the thread is already in the
+        requested state. On one it has to load first, that is NOT established, and the receipt
+        says so: statusBeforeResume records what the host reported, and a notLoaded thread also
+        carries echoIndependence "not_established", because an agreeing echo there cannot be told
+        apart from the host repeating what it was sent. A notLoaded supervisor is refused outright
+        rather than resumed, since its pair is the user's own selection and restoring a recorded
+        one could undo a change they made. An unrecognised key is
         rejected rather than ignored, because a discarded key is indistinguishable from a setting
         that was never requested. Any difference, or a
         setting the host does not report, withholds the message and names its own cause. The turn

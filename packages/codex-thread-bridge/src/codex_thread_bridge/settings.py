@@ -19,10 +19,16 @@ reasoningEffort, runtimeWorkspaceRoots and activePermissionProfile. TurnStartRes
 could be reported as applied when it was ignored. It transmits at start or resume, reads the
 answer, and withholds when the answer disagrees.
 
-Resume is a detector, not a setter. A resume that explicitly carried sandbox "read-only" for a
-workspaceWrite thread came back reporting workspaceWrite: the host accepts the parameter and
-reports the thread's real state. That is precisely what verifying preservation needs, and it is
-the reason a clean resume is followed by a plain turn/start with no overrides.
+Resume is a detector, not a setter -- measured on a thread the host already had loaded. A resume
+that explicitly carried sandbox "read-only" for a workspaceWrite thread came back reporting
+workspaceWrite: the host accepts the parameter and reports the thread's real state. That is
+precisely what verifying preservation needs, and it is the reason a clean resume is followed by a
+plain turn/start with no overrides. What that measurement does NOT cover is a thread the host has
+to materialize first. Three project parents asked to resume on a new pair answered differently
+depending on whether the host still had them loaded, and residency was not recorded at the time,
+so whether a not-loaded thread ADOPTS a transmitted setting is not established here. Callers
+therefore record the runtime status they saw before the resume, and an agreeing echo from a
+thread that was not loaded is recorded as agreement rather than as preservation.
 
 An echo proves recording, not honouring. A start carrying
 config.model_reasoning_effort "totally-not-a-real-effort" echoed that string back as

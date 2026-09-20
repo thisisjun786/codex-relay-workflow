@@ -651,7 +651,6 @@ async def test_an_approved_pair_records_the_mode_it_was_approved_under(
         "digest": "test-digest",
         "exception": None,
         "role": None,
-        "roleExpectation": None,
         "model": MODEL,
         "reasoningEffort": EFFORT,
         "limits": receipt["executionPolicy"]["limits"],
@@ -939,3 +938,123 @@ async def test_an_unloaded_thread_never_lets_an_echo_stand_as_proof_of_preservat
         assert delivered["status"] == "failed"
         assert delivered["settings"]["findings"][0]["code"] == "settings_not_preserved"
         assert fake.count("turn/start") == 0
+
+
+# The three mutating paths each have to ask the role question for themselves. Without a case per
+# path, deleting the role argument from two of them leaves the suite green.
+
+
+async def test_a_resume_for_the_wrong_role_never_reads_or_resumes_the_thread(
+    configured_bridge, fake_server, tmp_path
+):
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    created = await bridge.create_thread(
+        "send-role-setup", str(tmp_path), role="child", **EXECUTION
+    )
+    before = len(fake.calls)
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.send_message_to_thread(
+            "send-wrong-role", created["threadId"], "work",
+            {"model": MODEL, "reasoning_effort": EFFORT}, None, "parent",
+        )
+    assert raised.value.code == "execution_role_mismatch"
+    assert fake.calls[before:] == [], "a refused send reached the host"
+    assert fake.count("turn/start") == 0
+    with pytest.raises(ValueError, match="Unknown request_id"):
+        bridge.ledger.get("send-wrong-role")
+
+
+async def test_a_worktree_launch_for_the_wrong_role_creates_nothing(
+    configured_bridge, fake_server, tmp_path
+):
+    """Authorization runs before Worktree.validate, so no checkout exists to clean up."""
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy())
+    destination = tmp_path / "never-created"
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.create_worktree_thread(
+            "worktree-wrong-role",
+            str(tmp_path),
+            "0" * 40,
+            str(destination),
+            "bridge-managed-retained",
+            "workspace-write",
+            {
+                "type": "workspaceWrite",
+                "networkAccess": False,
+                "writableRoots": [],
+                "excludeTmpdirEnvVar": False,
+                "excludeSlashTmp": False,
+            },
+            model=MODEL,
+            reasoning_effort=EFFORT,
+            role="parent",
+        )
+    assert raised.value.code == "execution_role_mismatch"
+    assert not destination.exists()
+    assert fake.calls == []
+    with pytest.raises(ValueError, match="Unknown request_id"):
+        bridge.ledger.get("worktree-wrong-role")
+
+
+async def test_a_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
+    configured_bridge, fake_server, tmp_path
+):
+    """Every other role's pair is derived from policy; a supervisor's is the user's choice.
+
+    So a resume that transmits the RECORDED pair is safe for a parent or a child even where the
+    host applies it, and is exactly the mutation to avoid for a supervisor whose recorded pair may
+    have gone stale against a change the user made.
+    """
+    fake, _ = fake_server
+    bridge = configured_bridge(roles_policy(allowed=False))
+    created = await bridge.create_thread(
+        "supervisor", str(tmp_path), model="gpt-6-astra", reasoning_effort="high",
+        role="supervisor",
+    )
+    thread_id = created["threadId"]
+    fake.resident = set()
+    fake.resume_adopts = True
+    delivered = await bridge.send_message_to_thread(
+        "supervisor-send", thread_id, "work",
+        {"model": "gpt-6-astra", "reasoning_effort": "high"}, None, "supervisor",
+    )
+    assert delivered["status"] == "failed"
+    assert delivered["rpcError"]["code"] == "supervisor_not_loaded"
+    assert fake.count("thread/resume") == 0
+    assert fake.count("turn/start") == 0
+
+
+def test_a_role_that_is_not_the_supervisor_cannot_opt_out_of_its_own_pair():
+    """Declaring `record` elsewhere would exempt that role from the only check that names it."""
+    with pytest.raises(ExecutionPolicyError) as raised:
+        declared(roles={"parent": {"expectation": "record"}})
+    assert "parent" in str(raised.value)
+
+
+def test_the_supervisor_cannot_be_given_a_pinned_pair_through_the_expectation_key():
+    with pytest.raises(ExecutionPolicyError):
+        declared(roles={"supervisor": {"expectation": "pair", "model": MODEL,
+                                       "reasoningEffort": EFFORT}})
+
+
+def test_naming_no_role_produces_the_same_request_fingerprint_as_before_roles_existed():
+    """The compatibility claim is about the REQUEST identity, which is what replay keys on.
+
+    A receipt retained before this argument existed replays only while the parameters hash to the
+    same value, so the argument is appended when supplied and omitted otherwise. Asserted against
+    the ledger's own fingerprint rather than by observing a replay, because a replay observed
+    through this implementation would pass either way.
+    """
+    from codex_thread_bridge.ledger import Ledger
+
+    mark = Ledger._fingerprint
+    base = {"cwd": "/w", "sandbox": "read-only", "model": MODEL, "reasoning_effort": EFFORT}
+    assert mark("id", "create_thread", base) == mark("id", "create_thread", dict(base))
+    # An always-present role would change every legacy fingerprint, which is why it is appended
+    # only when supplied. Both of these must differ from the omitted form.
+    assert mark("id", "create_thread", base) != mark("id", "create_thread", {**base, "role": None})
+    assert mark("id", "create_thread", base) != mark(
+        "id", "create_thread", {**base, "role": "parent"}
+    )
