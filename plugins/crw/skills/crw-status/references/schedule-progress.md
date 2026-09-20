@@ -28,10 +28,14 @@ reason so it does not read as missing work. A `Target nature` of `undetermined` 
 authority` is 판단 불가 for the same reason: there is no agreed date to be early or late against.
 
 Postponement history comes from `Change source`, which carries the time, the decider, the reason,
-the scope and the before and after dates. A subject whose date never moved has none by design, and
-its `Schedule baseline` and `Current target` agreeing is what says so, so it is judged normally.
-Look for that history only where the two differ, or where another record says a replan happened.
-Where they differ and the change record is there, a date that was missed and then moved forward is
+the scope and the before and after dates. Read it wherever it exists, including where
+`Schedule baseline` and `Current target` agree: equal dates fix the comparison point and say
+nothing about what happened in between, so a target that moved away and came back reads as
+unchanged unless the record is opened. A subject whose date genuinely never moved has no such
+record by design and is judged normally against the matching dates, without claiming it never
+moved, which is a thing the absence of a record cannot establish.
+
+Where the two differ and the change record is there, a date that was missed and then moved forward is
 visible as exactly that and the replan rules below apply. Where they differ and no change record
 explains it, the earlier date is not observable and 지연 cannot be carried on a date nobody can
 see: report both dates, say the change record is missing, and leave that subject 판단 불가 rather
