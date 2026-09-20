@@ -244,15 +244,14 @@ brief for one project and it stops there: it carries no issue plan, no child ass
 review of anything below that parent. The supervisor's own procedure is
 [Initiative supervision](initiative-supervision.md).
 
-Two carriers, chosen by whether the parent exists. A project with no parent yet receives this as
-the first prompt of the new task, prefixed with its project designation so that task runs its own
-[Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
-existing parent receives it inside a [Coordination message](#coordination-message) of kind project
-handoff, carrying the [restoration block](#restoration-block). That block travels whether the
-parent is running or idle: a task idle since its last result has usually lost as much context as
-one that has been working for ten turns, and a handoff it cannot place is answered from whatever
-it happens to remember.
-Write it in English, like every instruction that travels between tasks.
+Which carrier it travels on, the first prompt of a new parent or a
+[Coordination message](#coordination-message) of kind project handoff to an existing one, is chosen
+in [Initiative supervision](initiative-supervision.md#hand-a-project-to-its-parent) and not
+repeated here. Either way it carries the [restoration block](#restoration-block), and that block
+travels whether the parent is running or idle: a task idle since its last result has usually lost
+as much context as one that has been working for ten turns, and a handoff it cannot place is
+answered from whatever it happens to remember. Write it in English, like every instruction that
+travels between tasks.
 
 Keep it short and point at what the existing records already hold.
 

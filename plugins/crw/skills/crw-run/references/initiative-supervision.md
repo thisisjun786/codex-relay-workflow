@@ -14,7 +14,7 @@ relay holds no supervisor relationship, so every sentence below about a recorded
 conditional on an installation that has one, and an instruction a reader follows is not a store
 that enforces it.
 
-## One request in four starts a supervision
+## Four requests name an initiative, and one starts a supervision
 
 An initiative turns up in requests that want quite different things, and the difference is in the
 request rather than in the link.
@@ -67,33 +67,46 @@ for the same reason a project link does not approve future backlog additions one
 Executing an initiative is therefore never a standing claim on whatever the initiative later
 accumulates, and it reaches no work outside it.
 
+### Projects supervised elsewhere
+
 Where a project in the set already answers to a different initiative's execution supervisor, it
 keeps that one: this initiative references its outcome instead of issuing it work, and the
-reference is recorded as a reference so nobody later reads it as an instruction. The supervisor
-role carries no project's issues and no issue's implementation: it holds no checkout and it merges
-nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). That describes
-the role rather than converting whatever task the designation arrives in, so read this task's own
-current binding before binding anything. A task that already supervises this same initiative is the
-one that continues, and that is reuse rather than a new binding. A task bound to a different scope
-does not become the supervisor by being handed a designation, and that holds for any such binding
-rather than a project's alone: a parent would leave its project without one and its children without an owner, and an
-issue-bound task would abandon or blur the implementation it owns. Each task is bound to one Linear
-level, so what decides this is whether the task is free, not which level happens to hold it. The supervision belongs in a task of its own, or in the existing supervisor
-where there is one, and the designation is routed there: to an existing supervisor by the delivery
-in the reuse order below, and otherwise to a task created for it the way this workflow creates any
-independent task, under
-[Independent implementation tasks](../SKILL.md#independent-implementation-tasks) for creation
-authority and capability, carrying the designation itself as its first prompt. Creating that task is itself
-contact and is gated like every other outward step above. Where creation is not authorized, a limit
-forbids it, or no creation path is available, say exactly that and bind nothing: a designation
-reported unbound is better than a parent quietly repurposed. A user who does want that task to stop
-being a parent is making an ownership change, recorded and completed first rather than produced as
-a side effect of binding. Where an
-installation records these relationships, one live scope per task per role is the rule it enforces,
-so a second same-role binding is refused rather than silently replacing the first. Where nothing
-records them, and the bundled relay records none, the reuse below is a read and not a lock: two
-designations issued at once can both find no supervisor, and the initiative's own record is what
-reconciles that afterwards rather than what prevents it.
+reference is recorded as a reference so nobody later reads it as an instruction.
+
+### Which task may hold the binding
+
+The supervisor role carries no project's issues and no issue's implementation: it holds no checkout
+and it merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)).
+That describes the role rather than converting whatever task the designation arrives in, so read
+this task's own current binding before binding anything.
+
+A task that already supervises this same initiative is the one that continues, and that is reuse
+rather than a new binding. A task bound to a different scope does not become the supervisor by
+being handed a designation, and that holds for any such binding rather than a project's alone: a
+parent would leave its project without one and its children without an owner, and an issue-bound
+task would abandon or blur the implementation it owns. Each task is bound to one Linear level, so
+what decides this is whether the task is free, not which level happens to hold it. A user who does
+want that task to stop being a parent is making an ownership change, recorded and completed first
+rather than produced as a side effect of binding.
+
+The supervision then belongs in a task of its own, or in the existing supervisor where there is
+one, and the designation is routed there: to an existing supervisor by the delivery in the reuse
+order below, and otherwise to a task created for it the way this workflow creates any independent
+task, under [Independent implementation tasks](../SKILL.md#independent-implementation-tasks) for
+creation authority and capability, carrying the designation itself as its first prompt. Creating
+that task is itself contact and is gated like every other outward step above. Where creation is not
+authorized, a limit forbids it, or no creation path is available, say exactly that and bind
+nothing: a designation reported unbound is better than a parent quietly repurposed.
+
+### What a recorded relationship settles, and what it does not
+
+Where an installation records these relationships, one live scope per task per role is the rule it
+enforces, so a second same-role binding is refused rather than silently replacing the first. Where
+nothing records them, and the bundled relay records none, the reuse below is a read and not a lock:
+two designations issued at once can both find no supervisor, and the initiative's own record is
+what reconciles that afterwards rather than what prevents it.
+
+### Where the record lives
 
 The record is the initiative's own, written by the supervisor under the
 [initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard) and
@@ -127,11 +140,16 @@ assumes the earlier one was checked:
 
 Repeating the designation, and resuming after an interruption, run this same order and converge on
 the same tasks wherever this order can observe them. Reuse is the first move and creation only what
-remains after it. Where nothing records these relationships that convergence is a read rather than
-a guarantee, so a task that had to create the supervision reads the initiative record once more
-before its first handoff. If another supervisor recorded itself for the same initiative, the
-earlier recorded binding stands, and the later one stops there: it sends nothing, preserves its own
-record and hands over the briefs it has not sent.
+remains after it. A busy parent, an unreachable record or an uncertain read is not evidence that a
+level is missing; it is a level that has not been read yet.
+
+## Reconcile concurrent supervision claims
+
+Where nothing records these relationships that convergence is a read rather than a guarantee, so a
+task that had to create the supervision reads the initiative record once more before its first
+handoff. If another supervisor recorded itself for the same initiative, the earlier recorded
+binding stands, and the later one stops there: it sends nothing, preserves its own record and hands
+over the briefs it has not sent.
 
 That reread narrows the window without closing it. Two tasks can still interleave a write, a read
 and a first handoff so that each sees only itself, because none of this is an atomic claim: an
@@ -151,34 +169,37 @@ last. And the initiative record is read again before each handoff and at each re
 only before the first, so a second supervisor is found within a step or two rather than at the end.
 On finding one, the later binding stops there: it sends no further handoffs, tells the parents it
 already handed projects to that its handoff is withdrawn and names the owner, and hands its record
-over. A parent settles that change the way it settled the first handoff, from the record rather
-than from the message: finding the initiative record now naming a supervisor other than the one its
-own record holds, it reads that owner's scope before it writes anything, because two designations
+over. A withdrawal, or a replacement handoff from the other side, is what prompts the receiving
+parent to read; neither is what settles it, which is also why forging either achieves nothing.
+
+A parent settles that change the way it settled the first handoff, from the record rather than from
+the message. Finding the initiative record now naming a supervisor other than the one its own
+record holds, it reads that owner's scope before it writes anything, because two designations
 need not describe the same execution and the new owner's approved set may not contain this project
 at all. Where it does contain it, the parent compares the rest of what that record says about this
 project, its contribution, the completion boundary, the limits, the prerequisites and any
 shared-target order, against what its work was actually started under, reading the contribution
 from whichever record owns it exactly as an arriving handoff is checked rather than assuming the
-initiative carries it. It takes the owner, updates
-its own record and carries on untouched only where those agree, since the supervision changed and
-the project's work did not. Where the winning set excludes this project, the parent records no
-supervisor it is not in fact supervised by: it preserves the work already done, stops it and raises
-both, because a recorded ownership nobody authorized would route every later message to the wrong
-owner. Where the project is included but any of those values differs, the work is being delivered
-against criteria nobody now holds, so the parent takes the owner, records the difference, holds the
-affected work and raises it rather than finishing against a designation that lost. A withdrawal, or a replacement handoff from the other side, is what prompts that
-read; neither is what settles it, which is also why forging either achieves nothing.
+initiative carries it. It takes the owner, updates its own record and carries on untouched only
+where those agree, since the supervision changed and the project's work did not.
+
+Where the winning set excludes this project, the parent records no supervisor it is not in fact
+supervised by: it preserves the work already done, stops it and raises both, because a recorded
+ownership nobody authorized would route every later message to the wrong owner. Where the project
+is included but any of those values differs, the work is being delivered against criteria nobody
+now holds, so the parent takes the owner, records the difference, holds the affected work and
+raises it rather than finishing against a designation that lost.
 
 A withdrawal also cannot always be delivered, since a parent that is paused, cancelled or archived
 does not receive one, so the transfer cannot rest on the message arriving. A parent validates its
 recorded supervisor against the initiative record when it resumes, before it continues or
 integrates anything, and applies the same rule there. It reads that record whether or not its own
 names a supervisor, because a project whose first handoff was held while it was paused has none
-recorded and would otherwise resume on a scope that has since been superseded. The losing supervisor keeps the undelivered
-transfer on its own record as owed, so whoever resumes that parent can find it rather than
-inferring it. That does not prevent an overlap; it bounds one to the work already started, which can be
-reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
-uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
+recorded and would otherwise resume on a scope that has since been superseded. The losing
+supervisor keeps the undelivered transfer on its own record as owed, so whoever resumes that parent
+can find it rather than inferring it. That does not prevent an overlap; it bounds one to the work
+already started, which can be reconciled, instead of letting an initiative run to completion under
+two owners.
 
 ## Hand a project to its parent
 
@@ -193,15 +214,15 @@ first prompt of the new task, prefixed with the project designation so that task
 [Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
 existing parent gets it as a [Coordination message](task-packet.md#coordination-message) of kind
 project handoff, carrying the [restoration block](task-packet.md#restoration-block) whether that
-parent is running or idle.
+parent is running or idle, for the reason that section gives.
 
 Both carriers contact another task, so both fall under the gate above: where the designation
 forbids contact, or forbids the creation a project without a parent would need, that brief is
 prepared and returned unsent rather than delivered quietly.
 
-A handoff sent is not a parent bound. The transport accepting it, the parent binding the project,
-and the parent returning a result are three facts recorded separately, and the first does not
-establish the second.
+A handoff sent is not a parent bound, and one accepted is not a project delivered.
+[Project handoff](task-packet.md#project-handoff) names those facts and says what each does and
+does not establish; they are not restated here.
 
 From there the project is the parent's. It decides the issues, their dependencies and order, which
 children exist, and how each delivery is verified and integrated. The supervisor does not repeat
@@ -350,9 +371,10 @@ Each supervisor reads the initiative record again before its next handoff and at
 result, so the second is found within a step or two. The later one then sends no further handoffs,
 withdraws the ones it made and names the owner. Each parent re-reads the initiative record itself
 and applies the transfer rule above in full, including its comparison of the rest of that owner's
-scope for this project. This case deliberately does not restate those outcomes: a summary here
-drifted from the rule twice while the rule was being sharpened, and one of the two had to be the
-only statement of it.
+scope for this project. This case deliberately does not restate those outcomes; the rule above is
+their only statement.
+<!-- Do not re-summarise the transfer outcomes here: a summary in this case drifted from the rule
+twice while the rule was being sharpened. -->
 Preserved: one owner per initiative once it is found, the work already started by either side, and
 an honest account of the window, which closes properly only when a store records the relationship
 and refuses the second.
