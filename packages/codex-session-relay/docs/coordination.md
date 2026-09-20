@@ -118,4 +118,3 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   `tests/test_merge_turn.py`, `tests/test_capacity.py`, `tests/test_edit_regions.py`,
   `tests/test_coordination_contract.py` and `tests/test_coordination_cli.py`. Whether an
   installed relay on a real host records any of this is separate evidence.
-

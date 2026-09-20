@@ -352,6 +352,47 @@ class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
             record["agreementId"], actor=self.beta.task_id, disposition="accepted")
         return record
 
+    def test_a_stranger_cannot_propose_an_agreement_between_two_other_projects(self):
+        """A proposal pre-accepts its own side, so a forged one blocks an overlapping region."""
+        with self.assertRaises(CoordinationError) as caught:
+            self.propose("src/a.py", task=self.zeta.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_key_belongs_to_a_symbol_or_data_region_and_to_nothing_else(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.propose("src/a.py", kind="file", key="parse")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_TOO_BROAD)
+        with self.assertRaises(CoordinationError) as caught:
+            self.propose("src/a.py", kind="symbol")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_TOO_BROAD)
+
+    def test_a_place_is_classified_once(self):
+        self.propose(
+            "scripts/components.json", region_class="generated", regenerate_from="derive")
+        with self.assertRaises(CoordinationError) as caught:
+            self.propose("scripts/components.json", right="PRJ-Z", link=self.other)
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+
+    def test_a_stranger_cannot_append_work_to_an_agreement(self):
+        record = self.propose("src/a.py")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.followup(
+                record["agreementId"], trigger_text="t", acceptance_text="a",
+                recorded_by=self.zeta.task_id)
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_terminal_follow_up_does_not_change_its_disposition(self):
+        record = self.propose("src/a.py")
+        item = self.regions.followup(
+            record["agreementId"], trigger_text="t", acceptance_text="a",
+            recorded_by=self.alpha.task_id)
+        self.regions.settle_followup(
+            item["followupId"], actor=self.alpha.task_id, disposition="dropped")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle_followup(
+                item["followupId"], actor=self.alpha.task_id, disposition="done")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
+
     def test_a_stranger_cannot_restate_a_repositorys_revision(self):
         """Restating reopens every agreement on that revision, so it is not anybody's call."""
         self.agreed("src/a.py")

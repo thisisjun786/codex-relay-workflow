@@ -382,6 +382,20 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         kinds = {e["evidenceKind"] for e in self.turns.ledger(held["turnId"])}
         self.assertIn("candidate_head_changed", kinds)
 
+    def test_an_unready_holder_cannot_begin_merging(self):
+        """Holding a free target is not saying the candidate is ready.
+
+        A request on a free target becomes holding whatever its ready argument said, and a
+        head rewrite deliberately resets readiness, so without this the reset could be walked
+        straight past.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a", ready=False)
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"), review=dict(GREEN))
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CANDIDATE_MOVED)
+
     def test_a_task_that_does_not_hold_the_turn_cannot_begin_a_merge(self):
         held = self.held()
         with self.assertRaises(CoordinationError) as caught:

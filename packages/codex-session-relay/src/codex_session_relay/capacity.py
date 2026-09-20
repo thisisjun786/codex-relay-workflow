@@ -191,6 +191,22 @@ class Capacity:
             parameters = (HELD, scope_key)
         return reader.execute(statement, parameters).fetchone()["tally"]
 
+    def _supervisor_of(self, project_key):
+        """The initiative supervisor above a project, or None when the walk cannot say."""
+        owners = [
+            record["taskId"] for record in self.linkage.owners(PROJECT, project_key)
+            if record["role"] == PARENT
+        ]
+        if len(owners) != 1:
+            return None
+        walk = self.linkage.up(task_id=owners[0], scope_key=project_key)
+        if not walk.get("readable") or walk.get("state") == "ambiguous":
+            return None
+        for level in walk.get("levels", []):
+            if level.get("scopeKind") == INITIATIVE:
+                return (level.get("owner") or {}).get("taskId")
+        return None
+
     def _initiative_of(self, project_key):
         """The initiative above a project, or None when the walk cannot say.
 
@@ -310,6 +326,21 @@ class Capacity:
                     "  WHERE subject_kind = ? AND subject_key = ? AND state = ?",
                     (subject_kind, subject_key, HELD),
                 ).fetchone()
+                if existing is not None and (
+                        existing["parent_task_id"] != parent_task_id
+                        or existing["project_key"] != project_key):
+                    # A globally held subject is not this caller's replay. Answering
+                    # alreadyHeld handed another project's slot back as if it were theirs, so
+                    # neither their ownership nor their ceiling was ever consulted.
+                    refusal = Refusal(
+                        RefusalReason.DISPOSITION_CONFLICT,
+                        repr(subject_key) + " is already held by "
+                        + repr(existing["parent_task_id"]) + " for project "
+                        + repr(existing["project_key"]) + ", not by " + repr(parent_task_id)
+                        + " for " + repr(project_key),
+                        domain=DOMAIN_EXECUTION, subject=subject_key,
+                        incumbent=existing["parent_task_id"], challenger=parent_task_id)
+                    existing = None
             if refusal is None and existing is None:
                 refusal = self._ceiling_refusal(
                     db, project_key, initiative, parent_task_id, subject_key)
@@ -412,6 +443,15 @@ class Capacity:
                 raise CoordinationError(
                     RefusalReason.SLOT_UNKNOWN,
                     "no slot was ever reserved for " + subject_kind + " " + repr(subject_key))
+            if row["parent_task_id"] != released_by \
+                    and released_by != self._supervisor_of(row["project_key"]):
+                # Freeing somebody else's slot admits work past the owner's own reservation,
+                # which is the ceiling failing open through the release door.
+                raise CoordinationError(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "slot " + repr(row["slot_id"]) + " is held by "
+                    + repr(row["parent_task_id"]) + ", so " + repr(released_by)
+                    + " cannot release it")
             if row["state"] == RELEASED:
                 if row["release_reason"] != reason:
                     refusal = Refusal(

@@ -289,6 +289,21 @@ class EditRegions:
         if low == high:
             raise CoordinationError(
                 RefusalReason.SCOPE_CYCLE, "a project is not its own peer")
+        if (region_kind in KEYED) != bool(region_key):
+            # A key belongs to a symbol or a data region and to nothing else. A keyed file
+            # minted a second identity for one place, and an unkeyed symbol collapsed every
+            # symbol in the file into one.
+            raise CoordinationError(
+                RefusalReason.REGION_TOO_BROAD,
+                "a " + region_kind + " region "
+                + ("names the symbol or data key it covers" if region_kind in KEYED
+                   else "covers the whole path and takes no key"))
+        if self._owned_side(low, high, proposer_task_id) is None:
+            raise CoordinationError(
+                RefusalReason.SCOPE_ROLE_MISMATCH,
+                "task " + repr(proposer_task_id) + " is the registered parent of neither "
+                + repr(low) + " nor " + repr(high) + ", and a proposal pre-accepts its own"
+                " side, so a stranger could forge one and block an overlapping region")
         now = self.clock.iso()
         refusal, agreement, replay = None, None, None
         with self.store.transaction() as db:
@@ -305,6 +320,17 @@ class EditRegions:
             # the stale-settlement check reads that column.
             region = db.execute(
                 "SELECT * FROM edit_regions WHERE region_id = ?", (identifier,)).fetchone()
+            if region["region_class"] != region_class or (
+                    region["regenerate_from"] or "") != (regenerate_from or ""):
+                # The insert above is ON CONFLICT DO NOTHING, so a later proposal naming a
+                # different classification silently inherited the first one - and
+                # classification decides whether the region contests at all.
+                raise CoordinationError(
+                    RefusalReason.REGION_OVERLAP,
+                    "region " + repr(identifier) + " is already recorded as "
+                    + repr(region["region_class"]) + " derived from "
+                    + repr(region["regenerate_from"]) + "; a place is classified once, and a"
+                    " different classification is a different claim about it")
             previous = db.execute(
                 "SELECT * FROM edit_agreements"
                 "  WHERE region_id = ? AND left_project = ? AND right_project = ?"
@@ -526,6 +552,17 @@ class EditRegions:
             (closed, reason, now, now, identifier))
         self.store.journal("edit_region_closed", identifier, {"state": closed}, at=now)
 
+    def _owned_side(self, low, high, actor):
+        """Which of the two projects the actor is the registered parent of, or None."""
+        for project in (low, high):
+            owners = [
+                record["taskId"] for record in self.linkage.owners(PROJECT, project)
+                if record["role"] == PARENT
+            ]
+            if owners == [actor]:
+                return project
+        return None
+
     def _chain_from(self, db, repository, revision):
         """Every revision reachable by following successor marks, bounded by the marks read.
 
@@ -741,6 +778,16 @@ class EditRegions:
         """
         exact(trigger_text, "a follow-up trigger")
         exact(acceptance_text, "a follow-up acceptance criterion")
+        agreement_row = self.store.one(
+            "SELECT left_project, right_project FROM edit_agreements"
+            "  WHERE agreement_id = ?", (agreement,))
+        if agreement_row is not None and self._owned_side(
+                agreement_row["left_project"], agreement_row["right_project"],
+                recorded_by) is None:
+            raise CoordinationError(
+                RefusalReason.SCOPE_ROLE_MISMATCH,
+                "task " + repr(recorded_by) + " owns neither side of agreement "
+                + repr(agreement) + ", so it cannot append work to it")
         if assignee_task_id and assignee_task_id != recorded_by:
             # Recording a follow-up is not accepting one on another task's behalf. Trusting
             # the field attributed accepted work to a task that never agreed to it, which is
@@ -837,6 +884,16 @@ class EditRegions:
                 (row["agreement_id"],)).fetchone()
             _side, refusal = self._acting_side(
                 db, agreement, actor, agreement["repository"])
+            if refusal is None and row["state"] in (DONE, DROPPED) \
+                    and row["state"] != disposition:
+                # A terminal settlement is a decision. Rewriting done to dropped left the
+                # history saying something nobody decided.
+                refusal = Refusal(
+                    RefusalReason.AGREEMENT_NOT_OPEN,
+                    "follow-up " + repr(identifier) + " was already settled as "
+                    + row["state"] + "; that decision stands",
+                    domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
+                    incumbent=row["state"], challenger=disposition)
             if refusal is None and disposition == DONE and not row["assignee_task_id"]:
                 refusal = Refusal(
                     RefusalReason.FOLLOWUP_UNASSIGNED,

@@ -605,6 +605,17 @@ class MergeTurn:
                 refusal = self._not_holder(row, actor, "begin a merge on")
             elif row["state"] != HOLDING:
                 refusal = self._wrong_state(row, actor, "beginning a merge")
+            elif row["declared_ready"] != 1:
+                # Holding a free target is not the same as saying the candidate is ready, and
+                # a head rewrite deliberately resets readiness. Without this the reset could
+                # be walked straight past.
+                refusal = Refusal(
+                    RefusalReason.MERGE_CANDIDATE_MOVED,
+                    "turn " + repr(turn) + " has not declared its candidate ready, so there"
+                    " is nothing saying " + repr(row["candidate_head"]) + " is the head it"
+                    " means to merge",
+                    domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                    incumbent=row["candidate_head"], challenger=actor)
             if refusal is None and head_sha != row["candidate_head"]:
                 refusal = Refusal(
                     RefusalReason.MERGE_CANDIDATE_MOVED,

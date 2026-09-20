@@ -127,4 +127,3 @@ class Conflicts:
                 (domain, subject),
             )
         ]
-

@@ -116,6 +116,31 @@ class ASlotNeitherLeaksNorReturnsTwice(CapacityTestCase):
             [(row["tenure"], row["state"]) for row in rows], [(1, "released"), (2, "held")])
         self.assertEqual(self.capacity.report()["total"], 1)
 
+    def test_a_second_project_cannot_inherit_another_projects_slot_as_a_replay(self):
+        """alreadyHeld handed another project's slot back as if it were theirs.
+
+        Neither the second caller's ownership nor its ceiling was ever consulted, because the
+        replay branch answers before either is read.
+        """
+        self.take("REL-1")
+        with self.assertRaises(CoordinationError) as caught:
+            self.take("REL-1", endpoint=self.beta, project=PROJECT_B)
+        self.assertEqual(caught.exception.reason, RefusalReason.DISPOSITION_CONFLICT)
+
+    def test_a_foreign_caller_cannot_release_another_parents_slot(self):
+        self.take("REL-1")
+        with self.assertRaises(CoordinationError) as caught:
+            self.give_back("REL-1", endpoint=self.beta)
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.capacity.report()["total"], 1)
+
+    def test_the_supervisor_may_release_a_slot_its_parent_left_held(self):
+        self.take("REL-1")
+        released = self.capacity.release(
+            subject_kind=ASSIGNMENT, subject_key="REL-1",
+            released_by=self.supervisor.task_id, reason="parent stopped answering")
+        self.assertEqual(released["state"], "released")
+
     def test_a_task_that_does_not_own_the_project_cannot_reserve_for_it(self):
         with self.assertRaises(CoordinationError) as caught:
             self.take("REL-1", endpoint=self.beta, project=PROJECT_A)
