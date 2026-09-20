@@ -44,9 +44,13 @@ recent records of the same class of work at the same stage of the same product, 
 assignment through the pull request and its review to the merge or acceptance that finished it,
 under the review and host conditions this subject will meet. Recent means those records newest
 first, matched by class, stage and conditions, and never a lookback window, because a window is
-the fixed period this section exists to refuse. Where several records match equally well and
-disagree, the target follows the slower of them and the roadmap names the spread, because a
-target read from the single fastest run is a best case rather than a target.
+the fixed period this section exists to refuse. Read back to the last change in the conditions
+those records describe and stop there: a record from before that change describes work under
+conditions this subject will not meet, so the boundary is that change rather than a count of
+records or a number of days, and two runs reading the same history read the same set. Where
+several records match equally well and disagree, the target follows the slower of them and the
+roadmap names the spread, because a target read from the single fastest run is a best case rather
+than a target.
 
 Reading a record is evidence, not an estimate. Nothing here estimates duration: no cycle length,
 sprint, working day, working week, default period, per-issue day count or model-produced remaining
@@ -175,11 +179,13 @@ so a result that is late against the schedule baseline still reads as late after
 A checkpoint compares each subject with both datums, the schedule baseline and the current target,
 and names which one it measured. What it does next follows the evidence rather than the calendar.
 
-Where a result was confirmed earlier than its target, every successor whose earliest day moves is
-pulled in during that same turn, inside the schedule-change scope the request already carries,
-with an entry whose reason opens `pulled in` and names the confirmed result, its before and after
-dates, and the schedule baseline it still measures against. Nothing waits for its own date once
-the work it depended on has landed.
+Where a result was confirmed earlier than its target, every successor whose earliest day moves and
+whose target this plan may move is pulled in during that same turn, inside the schedule-change
+scope the request already carries, with an entry whose reason opens `pulled in` and names the
+confirmed result, its before and after dates, and the schedule baseline it still measures against.
+A successor carrying a `confirmed` target keeps that date, because it is one this plan does not
+move, and its earlier readiness is reported instead so the authority that set the date can decide.
+Nothing waits for its own date once the work it depended on has landed.
 
 Where a result is unfinished, nothing moves. A checkpoint having run, work still being in
 progress, and a target approaching or passing are not reasons, and a target that rolls forward on
@@ -188,9 +194,9 @@ carries its real wait cause instead. A later target is written only when the acc
 actually changed, a real blocker actually appeared, or a predecessor's own recorded move actually
 shifted the critical path; the entry opens with `scope changed`, `blocked` or `critical path`,
 names the scope, the blocker or the predecessor's entry, and leaves both baselines readable. A date
-the deciding authority itself sets is the fourth case and opens with `authority`: it records that
-authority's own decision, such as an agreed deadline they moved, and is never a reason this plan
-supplies for itself.
+the deciding authority itself sets is the fourth case and opens with `authority`, whichever
+direction it moves: it records that authority's own decision, such as an agreed deadline they
+moved, and is never a reason this plan supplies for itself.
 `critical path` carries only a predecessor's own recorded move: a predecessor that is merely late
 leaves its successors' targets where they are, and they read late in turn, because the alternative
 launders every extension through the first delay.
@@ -294,3 +300,5 @@ rule here states a period.
 | 20 | A project of eight issues under an authorized project plan write, where seven are independent and the eighth follows one of them, and the records show the follower fitting inside the same window as the issue it follows. | The project target equals the follower's target, which is the latest on its critical path; 0 targets derived from the issue count, 0 counts multiplied by a sample, 0 speed claims recorded. | No multiplier. |
 | 21 | An authority moves issue I's target later under an authorized plan write, and nobody reads the delivery records again. | 1 move with 1 entry opening `authority` and naming that decision; the delivery evidence stays the reading it already was, neither rewritten nor set to `no sample`, and that entry is what produced the date I now carries; the schedule baseline unchanged. | A move that reads no records. |
 | 22 | Issue J's target was set with delivery evidence `no sample`; added scope makes the plan read two comparable records, which put J's earliest day past its current target. | 1 move with 1 entry opening `scope changed` that names the two records it read; the delivery evidence becomes that reading and is no longer `no sample`; the schedule baseline unchanged, and a later reader can reproduce the new date from the entry. | A move that reads the records again. |
+| 23 | Prerequisite A is confirmed on the morning of D0 under an authorized checkpoint; successor B carries a `confirmed` target of D5 and successor C a `provisional` one of D5. | C moves to D0 with 1 entry opening `pulled in`; B: 0 moves and 0 entries, its D5 kept and its earlier readiness reported to the authority that set it. | A confirmed successor is not pulled in. |
+| 24 | An authority brings issue K's agreed deadline forward from D9 to D4 with no predecessor result behind it. | 1 move with 1 entry opening `authority` naming that decision; 0 `pulled in` entries and 0 confirmed results named; the schedule baseline unchanged. | `authority` moves in either direction. |

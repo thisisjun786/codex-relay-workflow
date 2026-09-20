@@ -264,7 +264,10 @@ subject waiting on a result that is itself in review carries `prerequisite` whil
 carries `review`; where two words still fit, the cause that must resolve first wins and a tie
 breaks in the order listed here.
 
-The change reason words are fixed in the same way. A move to an earlier date is `pulled in`. Among
+The change reason words are fixed in the same way. A move to an earlier date the plan makes after a
+confirmed result is `pulled in`, while a date the deciding authority itself sets is `authority`
+whichever direction it moves, because an authority can bring a deadline forward with no predecessor
+result behind it. Among
 later moves the first that applies wins, in the order `scope changed`, `blocked`, `critical path`,
 `authority`, so scope an authority approved reads as `scope changed` and a blocker reads as
 `blocked` on the subject it blocks and as `critical path` on the successors its recorded move
@@ -328,7 +331,8 @@ adds no milestone and no second record; a Done or Canceled subject's dates are u
 target date that moved still shows the schedule baseline it moved from together with the change
 source that moved it. Every in-scope subject also carries a wait cause; a target that moved later
 carries one of the extension words with the scope, blocker or predecessor entry it names; a target
-that moved earlier carries `pulled in` with the confirmed result it followed; and a schedule whose
+the plan moved earlier carries `pulled in` with the confirmed result it followed, while one the
+authority itself moved carries `authority` in either direction; and a schedule whose
 targets were all rewritten from one current date fails whatever the request that produced it was
 called.
 
