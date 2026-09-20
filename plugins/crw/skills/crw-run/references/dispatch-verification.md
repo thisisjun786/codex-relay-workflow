@@ -50,7 +50,7 @@ the contrast cases below.
 
 | Class | What happened | Distinguishing evidence |
 |---|---|---|
-| L0 | The invocation was never in the assignment | The child's first user message, read from that task, carries no installed-skill invocation |
+| L0 | The invocation was never in the assignment | The assignment message for this dispatch, selected by its marker or receipt and read from that task, carries no installed-skill invocation and no agreed alternative |
 | L1 | The invocation was sent, the skill was never loaded or never invoked | Assignment carries it; no session binding, no orchestration entry, no goalplan |
 | L2 | It was invoked, but own-session binding or goalplan/FSM initialization failed | Binding or orchestration attempted and refused, or bound to the wrong session; the refusal itself is the evidence |
 | L3 | A native goal is active and no CXC Loop exists | Host goal present; no bound goalplan and no persisted phase transitions |
@@ -151,10 +151,11 @@ the absence of a keyword.
 
 **N1 — the assignment never carried it. Create. L0.** A child is created with the issue
 scope and the settings, and the prompt names no installed-skill invocation and no agreed
-alternative workflow. Evidence: the child's own first user message. Instruction existence
-fails while the settings request and the settings observed on the task both pass, which is
-why a receipt check alone reports this dispatch as clean. Failing case: recording the
-dispatch as sound because the model and effort came back correct.
+alternative workflow. Evidence: this dispatch's own assignment message, selected by its
+marker or receipt rather than by position. Instruction existence fails while the settings
+request and the settings observed on the task both pass, which is why a receipt check
+alone reports this dispatch as clean. Failing case: recording the dispatch as sound
+because the model and effort came back correct.
 
 **N2 — carried and never acted on. Create. L1.** The invocation is in the dispatched
 prompt and the child never loads or invokes the skill: no session binding, no
