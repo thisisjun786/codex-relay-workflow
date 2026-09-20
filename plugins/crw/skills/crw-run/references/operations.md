@@ -772,10 +772,14 @@ evidence and has none here.
 ### OPS-8.1 Parent continuation and waiting
 
 Select the waiting mode from the parent's requested workflow and observed host capability.
-A plain Run executes the agreed project scope, including successors, without a parent
-goal. An explicitly requested [crw-loop](../../crw-loop/SKILL.md) adds the native parent
-goal and automatic host continuation to the same execution scope; a CXC parent follows
-its installed lifecycle.
+A project parent executes the agreed project scope, including successors, under its own native
+goal, which the role policy makes the default. [crw-loop](../../crw-loop/SKILL.md) owns that
+goal's lifecycle and any supported host-continuation path on the same execution scope, so an
+ordinary project execution request establishes the goal there; establishing it settles nothing
+about whether a continuation was observed. A CXC parent follows its installed lifecycle. A run
+proceeds without a goal only where an explicit no-goal or read-only limit says so, or where goal
+support is unavailable and the request already authorizes that mode; absent either, the mode is
+blocked.
 Goal/Stop hook compatibility must pass the Loop's preflight before activation. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
 ready work within that operation. Neither Run nor Loop stops just because the first

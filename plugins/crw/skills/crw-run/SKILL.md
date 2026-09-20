@@ -18,8 +18,9 @@ checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
 Run owns project execution, including newly ready successors within the agreed scope.
-[crw-loop](../crw-loop/SKILL.md) adds a separately requested parent goal and host-driven
-continuation to that same execution; it does not enlarge Run's project scope.
+[crw-loop](../crw-loop/SKILL.md) owns the parent goal's lifecycle and the host-driven
+continuation on that same execution, and the role policy makes that goal the default rather than
+a separate request; it does not enlarge Run's project scope.
 Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
 and review work. A child whose effective workflow is CXC Loop loads the installed
 `codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
