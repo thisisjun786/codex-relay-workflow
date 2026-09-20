@@ -785,8 +785,8 @@ gate is not asked, because this replaces nothing: the directory can only be at t
 was built from these sources, and the record already selects it, so the runtime a host reaches
 afterwards is the one it was already running. And where a pointer exists naming a different
 recorded environment, aiming it at the selected one is the documented repair for a selection and
-a pointer that disagree — the same repair a resume performs, and with the same limit, which is
-that neither re-runs the gate conditions.
+a pointer that disagree — the same repair a resume performs, and under the same gate, which both
+re-run rather than inherit.
 
 A directory taken over with `rmdir` first has this command's own two files cleared from it, and
 only those two. A run whose claim write failed used to leave its lock file behind, and `rmdir`
@@ -799,6 +799,33 @@ promotion does. It cannot ask for agreement, because a resume necessarily finds 
 disagreeing with the selection — that IS the interruption it repairs. It asks instead whether the
 link still names a runtime this host record accounts for, and refuses one repointed by hand while
 the run was dead.
+
+It also asks OPS-4.4 again, and not the reading the interrupted run took. What a resume takes
+over is durable — a selection on disk and a claim beside it, sitting there for however long it
+took somebody to notice — while all three gate cells read state outside the process and all
+three move in the meantime: a supervisor can be started, attempts open and close, the store’s
+schema is whatever the selected runtime has since migrated it to. None of them is reusable, and
+the daemon is the strongest case, where a prior `ALLOWED` cannot cross a process boundary at all.
+
+There is nothing to reuse in any case, which states the point more exactly. The interrupted run
+died before recording a verdict, so the durable state holds no gate reading: the resume was not
+carrying a stale `ALLOWED`, it was moving a host’s runtime having never asked. The candidate’s own
+declared schema is the one input that cannot have changed, being derived from bytes already
+built, but it is read only as half of a comparison against a store that can.
+
+The gate is asked where something is REPLACED, which is not every caller of this path. A resume
+finds a link naming the predecessor and moves a host from it to this environment. An installation
+older than claims has no link at all, and writing the first one changes which path reaches a
+runtime the record already selects rather than which runtime is reached — so it is not gated, for
+the same reason its result says its bytes were not re-measured. The test is the link and not the
+caller: a link that already names this environment, or no link, replaces nothing.
+
+A verdict that is not `ALLOWED` refuses by name, carrying the verdict and the cells that blocked
+or could not answer, because "the gate said no" sends an operator to this command’s source while
+the cell sends them to the daemon, the attempts or the store. It refuses before the ownership
+entry, which is this call’s first write, so nothing is written and nothing removed: the selection
+is left as found, the pointer still names what it named, and the destination can be retried as it
+stands once the named condition is cleared.
 
 "Accounts for" is equality against a recorded environment or install location, and containment in
 neither direction. A target that CONTAINS a recorded path is not a recorded runtime: the
