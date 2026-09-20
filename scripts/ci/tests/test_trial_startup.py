@@ -3233,6 +3233,27 @@ class LinkedWorktreesAreOneRepository(TrialCase):
         self.assertEqual(cells["repositoryIdentity:C"]["value"], VERIFIED,
                          "the boundary between them is a separate repository and stays one")
 
+    def test_the_procedure_names_every_stand_in_the_checker_publishes(self):
+        # docs/live-trial.md is what another project reads to reuse this procedure, so a stand-in
+        # the checker publishes and the document does not name is a reader told the readings
+        # prove more than they do. The set is taken from a real document rather than listed here,
+        # so a stand-in added later has to be written down before this passes.
+        named = {
+            "capturedLifecycle": "captured lifecycle",
+            "capturedReceipt": "captured creation receipt",
+            "supervisorWitness": "supervisor's witness",
+            "peerAttribution": "peer's captured doctor",
+            "hostRecord": "runtime host record",
+            "storeSnapshot": "the gate's reads, taken in sequence",
+        }
+        published = set(self.world.preflight()["standIns"])
+        self.assertEqual(published, set(named),
+                         "this case and the checker disagree about what the stand-ins are")
+        procedure = (ROOT / "docs" / "live-trial.md").read_text(encoding="utf-8")
+        for key in sorted(published):
+            self.assertIn(named[key], procedure,
+                          "the procedure does not name the " + key + " stand-in")
+
 
 class TwentyNinthHostedRound(TrialCase):
     """A gate graded from an answer taken before the delay, and absences graded as disagreements.
