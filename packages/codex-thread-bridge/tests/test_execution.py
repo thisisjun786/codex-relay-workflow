@@ -998,7 +998,7 @@ async def test_a_worktree_launch_for_the_wrong_role_creates_nothing(
         bridge.ledger.get("worktree-wrong-role")
 
 
-async def test_a_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
+async def test_a_named_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(
     configured_bridge, fake_server, tmp_path
 ):
     """Every other role's pair is derived from policy; a supervisor's is the user's choice.
