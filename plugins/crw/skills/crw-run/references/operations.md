@@ -972,8 +972,9 @@ and rechecking.
 | Pull request open and ready for review | child |
 | Review requested, hosted review runs | child |
 | Findings triaged, fixed, replied and rechecked until the applicable gates are met | child |
+| Merge-readiness handoff recorded: the head, the verified base, the check runs, the review coverage and a judged disposition per thread | child |
 | Report to the parent | child |
-| Linear criteria plus the current diff, base, head, checks and review resolution verified | parent |
+| Linear criteria checked, and the child's handoff restated against the current diff, base and head | parent |
 | Merge, without asking the user again | parent |
 | Release or deployment | user |
 
@@ -997,6 +998,23 @@ A missing mandatory review or a required check that has not passed is BLOCKED, a
 reported as blocked. It is never reported as completion with a note, because the note is what gets
 skimmed past.
 
+Saying so is not enough on its own, because the failure this rule exists to prevent is silence
+rather than a false claim. A child reported an issue complete with fourteen unresolved review
+threads and nothing objected: the completion path established that the turn had ended and that the
+deliverable hashed, and never asked what the review said. So a completion that names a pull request
+carries a handoff record, and recording one is refused when the review coverage is unstated, when
+pagination has not reached the end, when identifiers are blank, repeated or disagree with the count,
+when any thread remains unresolved, when a thread that was seen has no judged disposition, when a
+declared required check is absent or not successful at its highest attempt on this exact head, when
+a check reports a different head, or when the pull request is still a draft. An unstated field is
+refused as unstated rather than read as zero, because absence used to read as satisfied and a record
+that said nothing passed every check.
+
+Which checks the branch requires is declared rather than assumed. An empty declaration means the
+branch requires none; not having looked is a different fact and is refused as one, because treating
+ignorance as "nothing required" accepts a failing required check sitting beside a passing optional
+one.
+
 Evidence is reused when it still applies, meaning the same revision, the same criteria and the same
 environment, and it is re-run when any of those three moved. Reusing a result across a changed
 revision is the mistake OPS-9.4 exists to prevent; re-running everything on every push is the waste
@@ -1008,6 +1026,15 @@ After the child reports, the parent checks the Linear criteria and the pull requ
 base, head, checks and review resolution. If those hold, the parent merges without asking the user
 again, because that authority was already granted for this workflow, and then verifies the landing
 rather than trusting an accepted merge request.
+
+It RESTATES the child's handoff rather than rebuilding it. The child already read the review to the
+end and enumerated the check runs; a parent that paginates them again is repeating work the contract
+just assigned to somebody else, and a parent that re-triages findings is running a second review
+round the child already owns. What the parent adds is currency, which only it can add: it re-reads
+the head and the base immediately before merging and compares the counts it sees against the record.
+That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
+record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
+reviews on the child's behalf.
 
 Release and deployment are separate and still require the user. A merge that is known to trigger a
 release or a deployment needs that approval before the merge, since the branch name alone does not
@@ -1026,6 +1053,11 @@ authority any more than a merge does.
 A new head or a newly arrived finding invalidates the review evidence it supersedes, and only that
 evidence. Re-run what the change actually touched rather than repeating the whole review, and never
 carry a green result forward across a head it never saw.
+
+A handoff record is invalidated the same way, and a review thread that appears on the SAME head
+counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
+describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
+returns to the child that produced it, through the correction path the assignment already uses.
 
 ## OPS-10 Which system owns which record
 

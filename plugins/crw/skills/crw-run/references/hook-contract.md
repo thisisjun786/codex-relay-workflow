@@ -394,7 +394,7 @@ Every turn of a claimed managed session ends with a disposition recorded for tha
 | Disposition | Meaning | Completion obligation |
 | -- | -- | -- |
 | `in_progress` | Work continues in this assignment | None |
-| `ready_for_review` | This generation's work is finished | A receipt at the current head revision naming this session, this turn and this assignment's relationship is required |
+| `ready_for_review` | This generation's work is finished | A receipt at the current head revision naming this session, this turn and this assignment's relationship is required. Where the work is a pull request, the report that accompanies it also carries the merge-readiness handoff, because a finished generation whose review is still open is not finished |
 | `blocked_needs_input` | Waiting on a person | None, and the turn is never held |
 | `interrupted` | The user stopped it | None, and the turn is never held |
 | `failed` | The attempt failed, with a reason | None. A failure is reported, not retried by a hook |
