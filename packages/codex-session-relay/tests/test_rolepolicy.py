@@ -366,9 +366,11 @@ class WhatTheseChecksRefuseToGuessThrough(DeliveryTestCase):
             )["settings"]
         )
         self.assertEqual(stored["citedRole"], "parent")
-        with self.assertRaises(Exception) as raised:
+        from codex_session_relay.errors import LinkageError
+
+        with self.assertRaises(LinkageError) as raised:
             self._bind("supervisor", "INIT-1", PARENT)
-        self.assertIn(RefusalReason.ROLE_BINDING_MISMATCH.value, str(raised.exception))
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
 
     def test_doctor_reports_its_own_digest_and_does_not_claim_a_comparison_it_cannot_make(self):
         """get_capabilities is an MCP tool of the bridge, not an App Server method.
@@ -494,12 +496,12 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
     def test_an_exception_written_for_another_role_exempts_nothing(self):
         """Verified against the same file, not believed because the record says so."""
         self._bind_parent()
-        with self.assertRaises(Exception) as raised:
+        with self.assertRaises(RegistrationError) as raised:
             record_settings(
                 self.store, self.clock, PARENT, self._excepted(),
                 source="creation_result", role="parent", exception="not-written-by-anyone",
             )
-        self.assertIn(RefusalReason.ROLE_BINDING_MISMATCH.value, str(raised.exception))
+        self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
 
     def test_a_re_record_that_names_no_exception_keeps_the_one_already_recorded(self):
         self._bind_parent()
@@ -516,3 +518,52 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             )["settings"]
         )
         self.assertEqual(stored["citedException"], "one-task")
+
+
+class TakingOwnershipAwayIsNeverBlockedByThePolicy(DeliveryTestCase):
+    """Archiving and cancelling are how a wrong owner gets removed, so refusing them is backwards.
+
+    Running the reactivation check on every status write left a relationship and its binding both
+    live with no way to close or repair them: a check meant to prevent a wrong owner became one
+    that prevented removing it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import os
+        from pathlib import Path
+
+        self._previous = os.environ.get(rolepolicy.ENVIRONMENT_VARIABLE)
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
+        self.addCleanup(self._restore_environment)
+
+    def _restore_environment(self):
+        import os
+
+        if self._previous is None:
+            os.environ.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
+        else:
+            os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
+
+    def test_a_relationship_whose_child_record_disagrees_can_still_be_archived(self):
+        from codex_session_relay.models import Endpoint
+
+        self.registry.linkage.bind_scope(
+            role="parent", scope_key="PROJ-1",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
+        )
+        # settings=None so the fixture records none; the child's record is then staged raw, the
+        # way one written before this policy existed would look.
+        relationship = self.register(project_key="PROJ-1", settings=None)
+        self.store.db.execute(
+            "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
+            " VALUES (?,?,?,?)",
+            (CHILD, json.dumps(task_settings("/child", citedRole="supervisor")),
+             "test-raw", self.clock.iso()),
+        )
+        self.registry.set_status(relationship["relationshipId"], "archived", actor="test")
+        row = self.store.one(
+            "SELECT status FROM relationships WHERE relationship_id = ?",
+            (relationship["relationshipId"],),
+        )
+        self.assertEqual(row["status"], "archived")

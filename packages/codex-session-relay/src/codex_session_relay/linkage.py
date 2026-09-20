@@ -1188,17 +1188,23 @@ class Linkage:
                     scope_kind=ISSUE, scope_key=row["issue_key"],
                     incumbent=blocked["scope_key"], challenger=row["child_task_id"],
                 )
-        # A reactivation is a binding decision too, and this path writes one with a direct
+        # A REACTIVATION is a binding decision too, and this path writes one with a direct
         # UPDATE rather than through binding_plan. Without the same check, archiving a child
         # binding, recording the task as something else and then resuming the relationship
         # restored it as a child whose creation cited another role -- measured, not supposed.
-        conflict = self._role_policy_finding(db, CHILD, row["child_task_id"])
-        if conflict is not None:
-            raise self._refusing(
-                RefusalReason(conflict["code"]), conflict["detail"],
-                scope_kind=ISSUE, scope_key=row["issue_key"],
-                incumbent=conflict.get("citedRole") or "", challenger=row["child_task_id"],
-            )
+        #
+        # Only a reactivation. Archiving or cancelling takes ownership AWAY, and a policy
+        # disagreement is never a reason to refuse that: blocking it left the relationship and
+        # its binding both live with no way to close or repair them, which turned a check meant
+        # to prevent a wrong owner into one that prevented removing it.
+        if lower in LIVE:
+            conflict = self._role_policy_finding(db, CHILD, row["child_task_id"])
+            if conflict is not None:
+                raise self._refusing(
+                    RefusalReason(conflict["code"]), conflict["detail"],
+                    scope_kind=ISSUE, scope_key=row["issue_key"],
+                    incumbent=conflict.get("citedRole") or "", challenger=row["child_task_id"],
+                )
         db.execute(
             "UPDATE scope_bindings SET status = ?, updated_at = ?"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?",

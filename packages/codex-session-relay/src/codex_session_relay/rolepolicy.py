@@ -23,7 +23,10 @@ drift into two readings of one document. It is read from THIS process's environm
 daemon, the CLI and the hook are different processes: two of them reading two different files
 would be a second policy source by deployment rather than by code, which no amount of care inside
 either package would catch. That is why every finding here carries the digest it was decided
-under, and why `doctor` compares its digest with the bridge's.
+under, and why `doctor` reports the one this process resolved. It does not fetch the bridge's:
+that digest is reported by `get_capabilities`, an MCP tool of the bridge server, and the relay's
+adapter transport speaks App Server RPC, so the comparison is named and delegated rather than
+performed here.
 """
 
 import os

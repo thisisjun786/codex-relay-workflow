@@ -355,13 +355,30 @@ def cmd_settings_show(services, args) -> dict:
     # together: a record is stale relative to the policy for the role its task actually holds,
     # and reading one without the other is how a correct record and a wrong one look alike.
     from . import rolepolicy
+    from .errors import RefusalReason
 
     bound = rolepolicy.bound_role(services.store, args.task)
     policy = rolepolicy.declared()
-    finding = rolepolicy.check_record(settings, bound, policy) if (bound and policy) else None
+    # Contested is not a role, and handing it to check_record produced a recovery telling an
+    # operator to declare a role named after a Python object's memory address. A store that
+    # says this task holds two roles at once is its own finding.
+    contested = isinstance(bound, rolepolicy.Contested)
+    finding = None
+    if contested:
+        finding = {
+            "code": RefusalReason.ROLE_BINDING_MISMATCH.value,
+            "boundRoles": bound.roles,
+            "recovery": "one task holds one role; resolve these bindings before this task can "
+                        "be checked against either of them",
+        }
+    elif bound and policy:
+        finding = rolepolicy.check_record(settings, bound, policy)
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
-            "citedRole": rolepolicy.cited_role(settings), "boundRole": bound,
+            "citedRole": rolepolicy.cited_role(settings),
+            "citedException": rolepolicy.cited_exception(settings),
+            "boundRole": None if contested else bound,
+            "boundRoles": bound.roles if contested else None,
             "rolePolicyDigest": policy.digest if policy else None,
             "rolePolicy": "declared" if policy else "unresolved",
             "roleFinding": finding}
@@ -1631,8 +1648,10 @@ def cmd_doctor(services, args) -> dict:
     # ------------------------------------------------------------------ role policy
     # Two processes reading two different policy files is a second source of truth by
     # deployment rather than by code, and nothing inside either package can see it: each one
-    # reads its own environment and finds a perfectly valid file. So the digests are compared
-    # here, where a parent, a child and a daemon receipt are already read side by side.
+    # reads its own environment and finds a perfectly valid file. So this process's digest is
+    # reported here, where a parent, a child and a daemon receipt are already read side by
+    # side and can be laid against each other. The bridge's own digest is not fetched; the
+    # report names where to read it.
     report["rolePolicy"] = _role_policy_report(services)
 
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
