@@ -205,7 +205,7 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
-    "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+    "parent": {"model": "xai/grok-4.6", "reasoningEffort": "xhigh"},
     "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
   },
   "exceptions": {

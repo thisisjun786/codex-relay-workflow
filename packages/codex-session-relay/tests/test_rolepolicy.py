@@ -20,10 +20,19 @@ from codex_session_relay.transport import WITHHELD_PRE_SEND
 
 from .support import CHILD, PARENT, DeliveryTestCase, task_settings
 
+# The pair the project parent runs on. It moved from devin/swe-2 at max to xai/grok-4.6 at
+# xhigh on 2026-09-21, and moving it was an edit to the policy file and a restart: no pair is
+# written in code, so nothing here had to change except the fixture that names one.
+PARENT_MODEL = "xai/grok-4.6"
+PARENT_EFFORT = "xhigh"
+# What it ran on before. Kept as a fixture proving a superseded pair is refused for its role
+# like any other wrong pair, not carried as a second answer the checks still accept.
+SUPERSEDED_PARENT = ("devin/swe-2", "max")
+
 POLICY = {
     "roles": {
         "supervisor": {"expectation": "record"},
-        "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+        "parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT},
         "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
     }
 }
@@ -70,7 +79,7 @@ class PolicyResolution(unittest.TestCase):
         self.assertFalse(resolved)
         self.assertIn("declares no roles", resolved.detail)
 
-    def test_the_declared_pairs_keep_max_and_xhigh_apart(self):
+    def test_each_roles_effort_is_read_as_its_own_catalog_value(self):
         import tempfile
         from pathlib import Path
 
@@ -78,10 +87,16 @@ class PolicyResolution(unittest.TestCase):
             path = write_policy(Path(directory))
             resolved = rolepolicy.declared({rolepolicy.ENVIRONMENT_VARIABLE: path})
         self.assertTrue(resolved)
-        self.assertEqual(resolved.expectation("parent").reasoning_effort, "max")
+        self.assertEqual(resolved.expectation("parent").model, PARENT_MODEL)
+        self.assertEqual(resolved.expectation("parent").reasoning_effort, PARENT_EFFORT)
         self.assertEqual(resolved.expectation("child").reasoning_effort, "xhigh")
         self.assertIsNone(resolved.expectation("supervisor").model)
         self.assertIsNotNone(resolved.digest)
+        # The two roles happen to share an effort NAME under different models, which is not what
+        # makes the comparison work: the superseded parent pair is the case where they differ.
+        self.assertNotEqual(resolved.expectation("parent").model,
+                            resolved.expectation("child").model)
+        self.assertNotEqual(SUPERSEDED_PARENT[1], PARENT_EFFORT)
 
 
 class DeliveryUnderARolePolicy(DeliveryTestCase):
@@ -134,7 +149,7 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
             ("delivery_withheld",),
         )[0]
         self.assertIn(RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value, entry["detail"])
-        self.assertIn("devin/swe-2", entry["detail"])
+        self.assertIn(PARENT_MODEL, entry["detail"])
         self.assertIn("user_transition", entry["detail"])
 
     def test_re_recording_the_transition_lets_the_same_delivery_through(self):
@@ -143,7 +158,7 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         self.assertIsNone(self.attempt(event_id))
         record_settings(
             self.store, self.clock, PARENT,
-            task_settings("/parent", model="devin/swe-2", reasoningEffort="max"),
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
             source="user_transition", role="parent",
         )
         row = self.delivery_row(event_id)
@@ -166,7 +181,47 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         )[0]
         self.assertIn(RefusalReason.ROLE_POLICY_UNCONFIGURED.value, entry["detail"])
 
+    def test_the_pair_this_role_used_to_run_on_is_recognised_as_superseded(self):
+        """A pair change costs a file edit, and the old pair stops being an answer.
+
+        The parent moved from devin/swe-2 at max to xai/grok-4.6 at xhigh. A record still
+        carrying the former is stale for its role in exactly the way any other wrong pair is,
+        and it is kept here as a fixture rather than as an alternative that still passes.
+        """
+        from pathlib import Path
+
+        superseded = task_settings(
+            str(Path(self.tmp).resolve()),
+            model=SUPERSEDED_PARENT[0], reasoningEffort=SUPERSEDED_PARENT[1],
+        )
+        policy = rolepolicy.declared()
+        finding = rolepolicy.check_record(superseded, "parent", policy)
+        self.assertIsNotNone(finding, "the superseded pair must not read as current")
+        self.assertEqual(
+            finding["code"], RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value
+        )
+        self.assertEqual(finding["expected"]["model"], PARENT_MODEL)
+        self.assertEqual(finding["recorded"]["model"], SUPERSEDED_PARENT[0])
+        # And the current pair is clean, so the fixture is testing the change rather than a
+        # policy that refuses everything.
+        current = task_settings(
+            str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
+        )
+        self.assertIsNone(rolepolicy.check_record(current, "parent", policy))
+
     def test_a_task_bound_to_no_scope_is_outside_this_policy_entirely(self):
+        """Declaring roles must not reach work that has nothing to do with these levels."""
+        # CHILD is bound to nothing in this fixture, so it is the unbound case, and its record
+        # carries a pair no role declares. The gate returns it untouched rather than measuring
+        # it against a role it does not hold.
+        record_settings(
+            self.store, self.clock, CHILD, task_settings("/child"), source="creation_result",
+        )
+        self.assertIsNone(rolepolicy.bound_role(self.store, CHILD))
+        settings = self.delivery._settings_for(CHILD, "idle")
+        self.assertEqual(settings.data["model"], "anthropic/claude-opus-5")
+        self.assertFalse(settings.refuse_when_unloaded)
+
         """Declaring roles must not reach work that has nothing to do with these levels."""
         self.store.db.execute("DELETE FROM scope_bindings WHERE task_id = ?", (PARENT,))
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
@@ -221,7 +276,7 @@ class TheRoleATaskWasCreatedAsAndTheOneItIsBoundTo(DeliveryTestCase):
         """Whichever of the two arrives second performs the comparison, so neither order slips."""
         record_settings(
             self.store, self.clock, CHILD,
-            task_settings("/parent", model="devin/swe-2", reasoningEffort="max"),
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
             source="creation_result", role="parent",
         )
         from codex_session_relay.errors import LinkageError
@@ -251,7 +306,7 @@ class TheRoleATaskWasCreatedAsAndTheOneItIsBoundTo(DeliveryTestCase):
         self._bind("parent", "PROJ-1", PARENT)
         recorded = record_settings(
             self.store, self.clock, PARENT,
-            task_settings("/parent", model="devin/swe-2", reasoningEffort="max"),
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
             source="creation_result", role="parent",
         )
         self.assertEqual(recorded["settings"]["citedRole"], "parent")
@@ -308,7 +363,7 @@ class WhatTheseChecksRefuseToGuessThrough(DeliveryTestCase):
         Missing is not "nothing to check". The bridge refuses a cited role it has no entry for,
         and a partial policy that quietly passes here is the same hole on the other side.
         """
-        self._use({"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"}}})
+        self._use({"roles": {"parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}}})
         self._bind("child", "ISSUE-9", PARENT)
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
         detail = self._withheld_detail(event_id)
@@ -359,12 +414,12 @@ class WhatTheseChecksRefuseToGuessThrough(DeliveryTestCase):
         """
         record_settings(
             self.store, self.clock, PARENT,
-            task_settings("/parent", model="devin/swe-2", reasoningEffort="max"),
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
             source="creation_result", role="parent",
         )
         record_settings(
             self.store, self.clock, PARENT,
-            task_settings("/parent", model="devin/swe-2", reasoningEffort="max"),
+            task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT),
             source="user_transition",
         )
         stored = json.loads(
@@ -492,7 +547,7 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         from pathlib import Path
 
         settings = task_settings(
-            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
             citedException="not-written",
         )
         _relationship, event_id = self.queued_event(settings=settings)
@@ -602,7 +657,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
 
         self._bind_parent()
         declared = task_settings(
-            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
         )
         with self.assertRaises(RegistrationError) as raised:
             record_settings(
@@ -632,15 +687,15 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             **POLICY,
             "exceptions": {
                 "same-pair": {
-                    "model": "devin/swe-2",
-                    "reasoningEffort": "max",
+                    "model": PARENT_MODEL,
+                    "reasoningEffort": PARENT_EFFORT,
                     "cwd": [str(Path(self.tmp).resolve())],
                     "role": "parent",
                 }
             },
         })
         settings = task_settings(
-            str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+            str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
             citedException="same-pair",
         )
         policy = rolepolicy.declared()
@@ -662,7 +717,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         record_settings(
             self.store, self.clock, PARENT,
             task_settings(
-                str(Path(self.tmp).resolve()), model="devin/swe-2", reasoningEffort="max",
+                str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
             ),
             source="user_transition",
         )
@@ -764,7 +819,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         from pathlib import Path
 
         os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
-            "roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"}},
+            "roles": {"parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}},
             "exceptions": {
                 "for-a-child": {
                     "model": "gpt-6-astra",
@@ -832,7 +887,7 @@ class TakingOwnershipAwayIsNeverBlockedByThePolicy(DeliveryTestCase):
             "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
             " VALUES (?,?,?,?)",
             (CHILD, json.dumps(task_settings("/child", citedRole="supervisor")),
-             "test-raw", self.clock.iso()),
+                "test-raw", self.clock.iso()),
         )
         self.registry.set_status(relationship["relationshipId"], "archived", actor="test")
         row = self.store.one(

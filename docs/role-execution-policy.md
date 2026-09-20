@@ -23,12 +23,19 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | Role | Model | Reasoning effort | Who decides |
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
-| `parent` | `devin/swe-2` | `max` | this policy |
+| `parent` | `xai/grok-4.6` | `xhigh` | this policy |
 | `child` | `anthropic/claude-opus-5` | `xhigh` | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
 itself is Linear CRW-127; the values that are actually enforced are the ones in the host's policy
 file. If the two disagree, the file is what runs and the disagreement is the bug.
+
+That separation is what a change of pair costs. The parent ran on `devin/swe-2` at `max` until
+2026-09-21 and now runs on `xai/grok-4.6` at `xhigh`; moving it was an edit to the policy file
+and a restart, with no line of code changed, because no pair is written in code to go stale. A
+superseded pair is not a second valid answer: once the file declares the new one, the old one is
+refused for that role like any other wrong pair, and the tests keep it as a fixture proving
+exactly that rather than as an alternative the checks still accept.
 
 The supervisor row is deliberately not a pair. Its model is Jun's selection, so the policy
 declares `{"expectation": "record"}` for it and the supervisor's authorization is whatever its own
@@ -36,13 +43,18 @@ recorded settings say. A `supervisor` entry that tries to carry a `model` or a `
 not load: the server refuses it at startup. That is how "the parent policy is never propagated to
 the supervisor" is a mechanism rather than a sentence someone has to remember.
 
-## `max` and `xhigh` are two values
+## An effort name belongs to its model
 
-The host's model catalog reports SWE-2 at medium, high, max and ultra, and the parent's requested
-value is exactly `max`. Opus 5 runs the child at `xhigh`. These are different strings naming
-different levels in different catalogs, and nothing maps one to the other. There is no alias
-table, no normalisation step, and every comparison in both packages is exact string equality. A
-request that states `xhigh` for a parent is refused, and so is one that states `max` for a child.
+Reasoning-effort names are catalog values, and two models that both offer a name do not thereby
+offer the same thing. Nothing maps one onto another: there is no alias table, no normalisation
+step, and every comparison in both packages is exact string equality.
+
+The clearest case is the pair this policy just left behind. The host's catalog reports SWE-2 at
+medium, high, max and ultra, and the parent's requested value under that model was exactly
+`max`, while Opus 5 runs the child at `xhigh`. A request stating `xhigh` for that parent was
+refused, and so was one stating `max` for a child. The parent and the child now happen to share
+the name `xhigh` under different models, which changes nothing about the rule and is why the
+superseded pair is kept as a regression fixture: it is the case where the two names differ.
 
 This is worth stating because the failure it prevents already happened in prose rather than in
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
@@ -61,7 +73,7 @@ show the shape. Do not copy it as a default.
     {
       "roles": {
         "supervisor": {"expectation": "record"},
-        "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+        "parent": {"model": "xai/grok-4.6", "reasoningEffort": "xhigh"},
         "child":  {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
       }
     }

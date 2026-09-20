@@ -81,8 +81,12 @@ def policy_for(directory):
 # cases assert the same thing the rest of this file does: not that an error was raised, but that
 # nothing was dispatched.
 
-PARENT_MODEL = "devin/swe-2"
-PARENT_EFFORT = "max"
+PARENT_MODEL = "xai/grok-4.6"
+PARENT_EFFORT = "xhigh"
+# What the parent ran on before 2026-09-21. Kept because a superseded pair is not a second
+# valid answer, and because it is the case where the two roles' effort NAMES differ: the parent
+# and the child now happen to share one, which must not be what makes the check work.
+SUPERSEDED_PARENT = ("devin/swe-2", "max")
 
 
 def roles_policy(directory=None, *, roles=None, allowed=True):
@@ -132,8 +136,11 @@ def test_a_word_that_is_not_a_role_is_refused_like_one_that_was_never_declared()
         # A parent on the child's pair: the exact shape of the observed failure, where both the
         # presence and the allowlist questions answer yes.
         ("parent", MODEL, EFFORT, "model"),
-        ("parent", PARENT_MODEL, EFFORT, "reasoning_effort"),
-        ("child", MODEL, PARENT_EFFORT, "reasoning_effort"),
+        # The effort the parent ran on before 2026-09-21. The two roles now share the name
+        # xhigh, so a wrong-effort case has to use a name that really differs or it proves
+        # nothing about the comparison.
+        ("parent", PARENT_MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
+        ("child", MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
         ("child", PARENT_MODEL, PARENT_EFFORT, "model"),
     ],
 )
@@ -144,19 +151,40 @@ def test_a_pair_that_is_not_this_roles_pair_is_refused(role, model, effort, fiel
     assert raised.value.field == field
 
 
-def test_max_and_xhigh_are_two_values_and_neither_stands_in_for_the_other():
+def test_an_effort_name_belongs_to_its_model_and_never_stands_in_for_another():
     """No alias table exists, and this is the case that would have caught the retry that failed.
 
-    A coordinator whose send was withheld changed the model to the parent's and kept the child's
-    effort. Both spellings load as themselves, and each is refused for the other's role.
+    A coordinator whose send was withheld changed the model to the parent's and kept the previous
+    effort. Both spellings load as themselves, and each is refused for the other's role. The pair
+    the parent ran on before 2026-09-21 is the one where the two names actually differ, so it is
+    the fixture this rule is checked against rather than an alternative still accepted.
+    """
+    superseded_model, superseded_effort = SUPERSEDED_PARENT
+    policy = declared(roles={
+        "parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT},
+        "child": {"model": superseded_model, "reasoningEffort": superseded_effort},
+    }, allowed=False)
+    assert policy.summary()["roles"]["parent"]["reasoningEffort"] == PARENT_EFFORT
+    assert policy.summary()["roles"]["child"]["reasoningEffort"] == superseded_effort
+    assert PARENT_EFFORT != superseded_effort
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "xhigh"
+    with pytest.raises(ExecutionRefused):
+        policy.authorize(PARENT_MODEL, superseded_effort, role="parent")
+    with pytest.raises(ExecutionRefused):
+        policy.authorize(superseded_model, PARENT_EFFORT, role="child")
+
+
+def test_the_pair_a_role_used_to_run_on_is_refused_like_any_other_wrong_pair():
+    """A superseded pair is not a second valid answer for its role.
+
+    Once the file declares the new one, the old one is what a request citing that role must not
+    carry -- which is the whole reason a pair change costs a file edit and not a code change.
     """
     policy = declared()
-    assert policy.summary()["roles"]["parent"]["reasoningEffort"] == PARENT_EFFORT
-    assert policy.summary()["roles"]["child"]["reasoningEffort"] == EFFORT
-    assert PARENT_EFFORT != EFFORT
-    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "max"
-    with pytest.raises(ExecutionRefused):
-        policy.authorize(PARENT_MODEL, EFFORT, role="parent")
+    with pytest.raises(ExecutionRefused) as raised:
+        policy.authorize(*SUPERSEDED_PARENT, role="parent")
+    assert raised.value.code == "execution_role_mismatch"
+    assert raised.value.allowed == [PARENT_MODEL]
 
 
 @pytest.mark.parametrize("missing", [None, "", "   "])
@@ -501,7 +529,7 @@ async def test_a_refusal_leaves_the_request_id_usable(bridge, fake_server, tmp_p
     ("role", "pair", "code"),
     [
         ("parent", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_mismatch"),
-        ("parent", {"model": PARENT_MODEL, "reasoning_effort": EFFORT},
+        ("parent", {"model": PARENT_MODEL, "reasoning_effort": SUPERSEDED_PARENT[1]},
          "execution_role_mismatch"),
         ("reviewer", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_unknown"),
     ],
