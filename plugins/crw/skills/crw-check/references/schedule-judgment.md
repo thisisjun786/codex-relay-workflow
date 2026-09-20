@@ -170,9 +170,11 @@ paused time is not subtracted from elapsed time.
 
 ## Trace the impact
 
-Walk forward along required-predecessor edges only, starting only from a subject whose
-verdict is late, at risk or undecidable. A subject that is on plan blocks nothing yet,
-so work waiting on it is not reported as blocked merely because it has not finished.
+Walk forward along required-predecessor edges only, starting only from a subject that is
+unachieved and whose verdict is late, at risk or undecidable. Both halves matter: a
+subject that is on plan blocks nothing yet, so work waiting on it is not reported as
+blocked merely because it has not finished, and a subject that landed after its target
+keeps a late verdict while blocking nothing at all, because it is done.
 For each starting subject, name the successors it reaches through at least one path
 made entirely of required edges,
 and the nearest unachieved successor milestone or project. Another path that is not
@@ -407,7 +409,10 @@ current one worth discussing.
     assumed clear. Not an impact asserted over inputs nobody could read. Where I-15 is instead on plan against
     a 2026-09-28 target and simply unfinished, no walk starts from it and M3 is not
     reported blocked, because a subject that is on plan blocks nothing yet. Not every
-    unfinished predecessor turned into a blocked successor.
+    unfinished predecessor turned into a blocked successor. Where I-15 instead completed
+    2026-09-16 against its 2026-09-15 target, it is late by +1 day and M3 is still not
+    blocked by it, because a subject that has landed blocks nothing however late it was.
+    Not a historical delay read as a current block.
 
 14. **A Target nature that carries no date.** I-18 carries only an Actual start and
     a Target nature of `undetermined`; I-19's Target nature is `awaiting authority`.
