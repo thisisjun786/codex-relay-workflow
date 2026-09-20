@@ -259,49 +259,57 @@ class AssignmentView:
             # A null is an answer. A row borrowed from another generation is not.
             record["detail"] = "this generation has no such event"
             return record
-        staged = self.store.one("SELECT stage FROM events WHERE event_id = ?", (event_id,))
-        record["event"] = {"stage": staged["stage"]} if staged is not None else None
-        delivery = self.store.one(
-            "SELECT state, attempt_count, hold_reason FROM deliveries WHERE event_id = ?",
+        # ONE statement, so ONE snapshot. SQLite gives every autocommit SELECT its own, and
+        # reading the event, the delivery, the attempt and the acknowledgement separately lets
+        # a delivery worker commit in between: the answer would then pair a delivery state with
+        # an acknowledgement that never coexisted with it, which is exactly the combination
+        # this projection exists to make impossible. The attempt joins on attempt_count so the
+        # request id is the CURRENT attempt's, not whichever row sorted first after a retry.
+        row = self.store.one(
+            "SELECT e.stage AS stage,"
+            "       d.event_id AS delivered, d.state AS delivery_state,"
+            "       d.hold_reason AS hold_reason,"
+            "       a.request_id AS request_id, a.attempt_no AS attempt_no,"
+            "       k.event_id AS acked, k.verified AS ack_verified,"
+            "       k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection,"
+            "       v.tier AS ack_tier,"
+            "       (SELECT reason FROM refusals WHERE event_id = e.event_id"
+            "         ORDER BY id DESC LIMIT 1) AS refusal_reason"
+            "  FROM events e"
+            "  LEFT JOIN deliveries d ON d.event_id = e.event_id"
+            "  LEFT JOIN attempts a ON a.event_id = e.event_id"
+            "                      AND a.attempt_no = d.attempt_count"
+            "  LEFT JOIN acks k ON k.event_id = e.event_id"
+            "  LEFT JOIN ack_evidence v ON v.event_id = e.event_id"
+            " WHERE e.event_id = ?",
             (event_id,),
         )
-        if delivery is not None:
-            # The CURRENT attempt, the one deliveries.attempt_count names. An event can carry
-            # several, and "the request id" with no rule is whichever row sorted first, which
-            # after a retry is the wrong one.
-            attempt = self.store.one(
-                "SELECT request_id, attempt_no FROM attempts"
-                " WHERE event_id = ? AND attempt_no = ?",
-                (event_id, delivery["attempt_count"]),
-            )
+        if row is None:
+            record["detail"] = "the store holds no such event"
+            return record
+        record["event"] = {"stage": row["stage"]}
+        if row["delivered"] is not None:
             record["delivery"] = {
-                "state": delivery["state"],
-                "requestId": attempt["request_id"] if attempt is not None else None,
-                "attemptNo": attempt["attempt_no"] if attempt is not None else None,
+                "state": row["delivery_state"],
+                "requestId": row["request_id"],
+                "attemptNo": row["attempt_no"],
             }
-        settled = self.store.one(
-            "SELECT verified, accepted, rejection_reason FROM acks WHERE event_id = ?",
-            (event_id,),
-        )
-        tier = self.store.one(
-            "SELECT tier FROM ack_evidence WHERE event_id = ?", (event_id,)
-        )
         record["ack"] = {
-            # The parent's DISPOSITION, which is independent of whether the acknowledging turn
-            # could be verified. A verified rejection and a verified acceptance settle
-            # identically on the axis below, so reading only that one reports them alike.
-            "accepted": bool(settled["accepted"]) if settled is not None else None,
-            "rejectionReason": settled["rejection_reason"] if settled is not None else None,
-            "settlement": settled["verified"] if settled is not None else None,
+            # The parent's DISPOSITION, independent of whether the acknowledging turn could be
+            # verified. A verified rejection and a verified acceptance settle identically on
+            # the axis below, so reading only that one reports them alike.
+            "accepted": bool(row["ack_accepted"]) if row["acked"] is not None else None,
+            "rejectionReason": row["ack_rejection"] if row["acked"] is not None else None,
+            "settlement": row["ack_verified"] if row["acked"] is not None else None,
             # A second axis, not a rewording of the first: settlement says whether the
             # acknowledgement closed, the tier says what it closed on, and no row at all is
             # unrecorded rather than unverified.
-            "evidenceTier": tier["tier"] if tier is not None else "unrecorded",
+            "evidenceTier": row["ack_tier"] if row["ack_tier"] is not None else "unrecorded",
         }
-        record["undeliveredReason"] = self._undelivered_reason(event_id, delivery)
+        record["undeliveredReason"] = self._undelivered_reason(row)
         return record
 
-    def _undelivered_reason(self, event_id, delivery):
+    def _undelivered_reason(self, row):
         """Copied verbatim from the row that recorded it, saying which row that was.
 
         Two tables can explain one event's delivery and they answer different questions, so the
@@ -309,21 +317,20 @@ class AssignmentView:
         first: a hold is about THIS delivery, a refusal is about a write that was rejected.
         failed_operations is deliberately not in this chain - it is keyed by scope rather than
         by event, so attributing one to a particular delivery would be an inference, not a copy.
+
+        Reads only what the single projection statement already returned, so the reason cannot
+        come from a later snapshot than the delivery it is explaining.
         """
-        if delivery is not None and delivery["hold_reason"]:
-            return {"source": "deliveries.hold_reason", "value": delivery["hold_reason"]}
-        if delivery is not None:
+        if row["delivered"] is not None and row["hold_reason"]:
+            return {"source": "deliveries.hold_reason", "value": row["hold_reason"]}
+        if row["delivered"] is not None:
             # A refusal is durable audit history and the same deterministic event can be
             # accepted later once its cause is corrected. Once a delivery row exists, the
             # refusal that preceded it is no longer why anything is undelivered, and reporting
             # it here would contradict a delivery that has since dispatched.
             return None
-        refusal = self.store.one(
-            "SELECT reason FROM refusals WHERE event_id = ? ORDER BY id DESC LIMIT 1",
-            (event_id,),
-        )
-        if refusal is not None:
-            return {"source": "refusals.reason", "value": refusal["reason"]}
+        if row["refusal_reason"] is not None:
+            return {"source": "refusals.reason", "value": row["refusal_reason"]}
         return None
 
     def _resolve(self, row, head, verdict, relationship_id, generation, current_mark,

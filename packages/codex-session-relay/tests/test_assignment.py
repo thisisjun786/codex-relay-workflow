@@ -597,3 +597,37 @@ class TheAxesStayApart(AssignmentTestCase):
         self.assertTrue(relay["store"]["identified"])
         self.assertIsNone(relay["store"]["detail"])
         self.assertEqual(relay["store"]["storeId"], self.store.identity)
+
+    def test_one_anchor_reads_its_whole_lifecycle_in_a_single_statement(self):
+        """Five statements are five snapshots, and a delivery worker commits between them.
+
+        SQLite gives every autocommit SELECT its own snapshot, so reading the event, the
+        delivery, the attempt and the acknowledgement separately can pair a delivery state
+        with an acknowledgement that never coexisted with it - the combination this whole
+        projection exists to make impossible. Counting the reads is how that stays true.
+        """
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        head = {"eventId": event_id}
+
+        calls = []
+        original = self.assignments.store.one
+
+        def counting(sql, params=()):
+            calls.append(sql)
+            return original(sql, params)
+
+        self.assignments.store.one = counting
+        try:
+            anchored = self.assignments._anchored(event_id, 1)
+        finally:
+            self.assignments.store.one = original
+
+        self.assertEqual(
+            len(calls), 1,
+            f"the lifecycle came from {len(calls)} snapshots, not one: {calls}",
+        )
+        # And it really did read all of it, rather than reading one thing cheaply.
+        self.assertEqual(anchored["delivery"]["state"], "dispatched")
+        self.assertEqual(anchored["event"]["stage"], "final")
+        self.assertIsNotNone(anchored["ack"])
