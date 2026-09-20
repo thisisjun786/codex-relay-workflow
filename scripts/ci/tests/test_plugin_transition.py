@@ -4390,3 +4390,20 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(code, 0)
         self.assertEqual(answer["policyInEffect"]["state"], "UNREADABLE")
         self.assertEqual(answer["policyInEffect"]["tools"], {})
+
+    @needs_reader
+    def test_a_package_that_plainly_declares_another_server_reads_as_absent_not_unreadable(self):
+        """Devin finding: an established absence is not a failure to read, and must not say it is."""
+        host = self.granted(self.ready())
+        self.assertEqual(host.transition("--apply")[0], 0)
+        cache = host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        path = cache / "wiring" / "mcp.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["mcpServers"] = {"something-else":
+                                  document["mcpServers"]["codex-thread-bridge"]}
+        path.write_text(json.dumps(document), encoding="utf-8")
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["policyInEffect"]["state"], "ABSENT")
+        self.assertEqual(answer["policyInEffect"]["tools"], {})
+        self.assertIsNone(answer["policyInEffect"]["detail"])

@@ -295,7 +295,16 @@ def mcp_refusals(mcp):
 
 
 def declared_policy(root, name=None):
-    """The per-tool approval policy the package at this root declares, or why it could not be read.
+    """The per-tool approval policy the package at this root declares.
+
+    Returns (mapping, None) when the package was read, including the readable answer that it
+    declares nothing for this server -- an empty mapping. Returns (None, detail) ONLY when
+    something could not be read.
+
+    The two used to share one answer, and a caller cannot tell them apart from None: a package
+    that plainly declares some other server was reported as a policy nobody could read, which is
+    the same confusion between unknown and absent this whole change exists to remove -- just
+    pointed the other way.
 
     Follows the manifest the way _declared does, because Codex loads the document the manifest
     names and ignores every other file in the package. Reading a fixed path instead would compare
@@ -316,7 +325,8 @@ def declared_policy(root, name=None):
                       + type(manifest).__name__)
     named = manifest.get("mcpServers")
     if not (isinstance(named, str) and named.strip()):
-        return None, str(manifest_path) + " declares no MCP document"
+        # Read, and it says there is no MCP document. Established absence, not a failure to read.
+        return {}, None
     path = Path(root) / _relative(named)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
@@ -331,7 +341,8 @@ def declared_policy(root, name=None):
         return None, str(path) + " holds no mcpServers object"
     entry = servers.get(name)
     if not isinstance(entry, dict):
-        return None, str(path) + " declares no " + str(name) + " server"
+        # Same: the document was read and it does not declare this server.
+        return {}, None
     declared = entry.get(inventory.POLICY_FIELD, {})
     if not isinstance(declared, dict):
         return None, (str(path) + " declares a " + inventory.POLICY_FIELD + " that is not an"
