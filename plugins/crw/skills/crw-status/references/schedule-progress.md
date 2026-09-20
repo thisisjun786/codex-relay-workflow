@@ -21,11 +21,13 @@ variant here would break the agreement check depends on.
 Without it, two of the five verdicts are unavailable and saying so is the verdict. 계획대로 and
 앞섬 both assert that a date was met as originally agreed, and neither can be established while
 nothing distinguishes an original baseline from a date that was moved to wherever the work had
-reached. So until the contract lands, the only verdicts available are 지연, where an approved date
-has visibly passed and the result it names does not exist, and 판단 불가 for everything else,
-reported as 판단 불가, 공유 일정 기준 계약 미도입 so the reason is the missing contract rather than
-missing work. Whatever dates the project and its milestones carry are reported as the unstructured
-dates they are, as context beside the verdict and never as the baseline that produced it.
+reached. The other three survive, because none of them claims that: 지연 needs only an approved
+date that has visibly passed and the result it names missing, which a later postponement does not
+undo; 지연 위험 warns about a date still ahead and promises nothing; and 판단 불가 covers
+everything else, reported as 판단 불가, 공유 일정 기준 계약 미도입 so the reason reads as the
+missing contract rather than missing work. Whatever dates the project and its milestones carry are
+reported as the unstructured dates they are, as context beside the verdict and never as the
+baseline that produced it.
 
 ## Read these, and not the issue count
 
@@ -87,10 +89,12 @@ decision is actually needed.
 
 ## Report
 
-Five short parts: the current verdict; the baseline target against where the work actually is; why
-it is early or late; which next step is affected; and what needs Jun's decision. One project's
-schedule line in a portfolio report is the verdict plus the one reason, with the rest available if
-he asks.
+Five short parts, and only the ones that apply: the current verdict; the baseline target against
+where the work actually is; why it is early or late; which next step is affected; and what needs
+Jun's decision. A 판단 불가 has no early or late to explain, so it carries what was missing and
+what would make a verdict possible instead, rather than empty headings or a guess filling them.
+One project's schedule line in a portfolio report is the verdict plus the one reason, with the rest
+available if he asks.
 
 ## Agreement with check, and the route to it
 
