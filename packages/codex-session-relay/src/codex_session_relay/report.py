@@ -19,8 +19,9 @@ everywhere else.
 """
 
 import json
+from datetime import datetime
 
-from . import cxc, restoration
+from . import cxc, mergeevidence, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
 from .identity import request_id as derive_request_id
 from .transport import (
@@ -31,6 +32,7 @@ NEWLINE = chr(10)
 VERSION = "relay-report/1"
 LEGACY = "relay-message/legacy"
 REVISION_OUTCOME = "revision_request"
+READY_OUTCOME = "ready_for_review"
 
 # UTF-8 BYTES, not characters. A transport limit is a byte limit, and a report written in
 # Korean costs roughly three bytes per character, so measuring characters would let exactly
@@ -78,7 +80,7 @@ def show_command(event_id: str) -> str:
 def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summary, next_action,
            pr_number=None, pr_url=None, pr_state=None, base_ref=None, base_sha=None,
            head_sha=None, criteria_digest=None, evidence=None, unresolved=None, review=None,
-           restore=None, submission_no=1) -> dict:
+           restore=None, submission_no=1, handoff=None) -> dict:
     """Store one report, validated, bound to the revision it describes.
 
     Identity is READ from the stored event, never accepted from the caller. Taking the
@@ -186,6 +188,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     unresolved = _check_unresolved(unresolved)
     restore = _check_restore(restore)
     submission_no = _submission(submission_no)
+    handoff = _check_handoff(handoff, pr_number, head_sha, base_sha, outcome)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -267,6 +270,37 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
              "headSha": head_sha, "submissionNo": row["submissionNo"]},
             at=now,
         )
+        # Unconditional, for the same reason the work_reports delete is: a resubmission that
+        # carries no handoff must not inherit the previous one. Leaving the old row behind
+        # would let a report that says nothing about its review be read back as though it had
+        # said what the earlier one did.
+        db.execute(
+            "DELETE FROM work_report_handoffs WHERE event_id = ? AND submission_no = ?",
+            (event_id, row["submissionNo"]),
+        )
+        if handoff is not None:
+            db.execute(
+                "INSERT INTO work_report_handoffs (event_id, submission_no, is_draft,"
+                " base_verified_at, required_declared, checks, review_coverage,"
+                " thread_dispositions, criterion_evidence, limitations, recorded_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id, row["submissionNo"], 1 if handoff["isDraft"] else 0,
+                    handoff["baseVerifiedAt"], json.dumps(handoff["requiredDeclared"]),
+                    json.dumps(handoff["checks"]), json.dumps(handoff["reviewCoverage"]),
+                    json.dumps(handoff["threadDispositions"]),
+                    json.dumps(handoff["criterionEvidence"]),
+                    json.dumps(handoff["limitations"]), now,
+                ),
+            )
+            row["handoff"] = handoff
+            store.journal(
+                "handoff_recorded", event_id,
+                {"headSha": head_sha, "prNumber": pr_number,
+                 "threadsSeen": handoff["reviewCoverage"]["totalCount"],
+                 "submissionNo": row["submissionNo"]},
+                at=now,
+            )
         if projection is not None:
             store.journal("restoration_rendered", event_id, projection, at=now)
     row["recordedAt"] = now
@@ -425,7 +459,7 @@ def read(store, event_id: str):
     )
     if row is None:
         return None
-    return _row(row)
+    return _with_handoff(store, _row(row))[0]
 
 
 def read_all(store, event_id: str) -> list:
@@ -438,7 +472,43 @@ def read_all(store, event_id: str) -> list:
     rows = store.all(
         "SELECT * FROM work_reports WHERE event_id = ? ORDER BY submission_no", (event_id,)
     )
-    return [_row(row) for row in rows]
+    return _with_handoff(store, *[_row(row) for row in rows])
+
+
+def _with_handoff(store, *records: dict) -> list:
+    """Attach the merge-readiness evidence, when this submission recorded any.
+
+    Written and never read is a record nobody can act on, and the parent is the reader this
+    exists for: it restates these exact vectors to the merge turn rather than going back to
+    the forge to rebuild them. Absent stays absent rather than becoming an empty shape,
+    because a report with no handoff and a handoff with nothing in it are different facts.
+
+    Every submission is fetched in one read. A history is read whole by `show`, and a query
+    per row turns one read into as many as the event has submissions.
+    """
+    if not records:
+        return []
+    by_submission = {
+        row["submission_no"]: {
+            "isDraft": bool(row["is_draft"]),
+            "baseVerifiedAt": row["base_verified_at"],
+            "requiredDeclared": json.loads(row["required_declared"]),
+            "checks": json.loads(row["checks"]),
+            "reviewCoverage": json.loads(row["review_coverage"]),
+            "threadDispositions": json.loads(row["thread_dispositions"]),
+            "criterionEvidence": json.loads(row["criterion_evidence"] or "[]"),
+            "limitations": json.loads(row["limitations"] or "[]"),
+        }
+        for row in store.all(
+            "SELECT * FROM work_report_handoffs WHERE event_id = ?",
+            (records[0]["eventId"],),
+        )
+    }
+    for record in records:
+        found = by_submission.get(record["submissionNo"])
+        if found is not None:
+            record["handoff"] = found
+    return list(records)
 
 
 def _row(row) -> dict:
@@ -1178,6 +1248,7 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
         # keep counts from the top of the block, and these blocks open with a blank line, so
         # a floor of two is what keeps the heading attached to whatever survives under it.
         _Section("pull request", _pr_lines(report), rank=1, essential=True, keep=2),
+        _Section("merge readiness", _handoff_lines(report), rank=1, essential=True, keep=2),
         _Section("verification", _evidence_lines(report), rank=4),
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
@@ -1563,3 +1634,239 @@ def _ack_lines(event_id):
         "contain that turn id, which is what distinguishes acknowledging from echoing.",
         f"Full record: {show_command(event_id)}",
     ]
+
+
+# ------------------------------------------------------------------- merge readiness
+
+def _handoff_lines(report) -> list:
+    """What the parent restates, said in the message rather than left in the store.
+
+    A record written and never rendered is the silent loss the omission notice exists to
+    prevent: the recipient reads a completion, sees nothing about the review, and has no reason
+    to suspect there is a row it never fetched. These lines are that pointer, and they carry
+    the two numbers worth comparing on sight.
+    """
+    handoff = report.get("handoff")
+    if not handoff:
+        return []
+    coverage = handoff.get("reviewCoverage") or {}
+    required = handoff.get("requiredDeclared") or []
+    checks = handoff.get("checks") or []
+    return [
+        "",
+        "merge readiness (restate these; do not collect them again):",
+        f"  head {report.get('headSha')} on base {report.get('baseSha')}"
+        f" verified {handoff.get('baseVerifiedAt')}",
+        f"  required: {', '.join(required) if required else 'none declared by the branch'}"
+        f" - {len(checks)} run(s) restated",
+        f"  review: {coverage.get('totalCount')} thread(s) seen over"
+        f" {coverage.get('pagesRead')} page(s), {coverage.get('unresolved')} unresolved",
+    ]
+
+#: Which refusal a problem code becomes. The next action genuinely differs for each, which is
+#: why the predicate returns codes rather than prose: an undeclared required set is something
+#: the child must go and read, a stale check is something it must wait for or re-run, and an
+#: unenumerated review is something it must finish. Folding them into one reason would tell a
+#: producer that something is wrong without telling it which thing to do.
+_HANDOFF_REASONS = {
+    mergeevidence.MALFORMED: RefusalReason.MALFORMED_RECEIPT,
+    mergeevidence.REVIEW_UNSTATED: RefusalReason.MERGE_REVIEW_INCOMPLETE,
+    mergeevidence.REVIEW_INCOMPLETE: RefusalReason.MERGE_REVIEW_INCOMPLETE,
+    mergeevidence.CHECKS_STALE: RefusalReason.MERGE_CURRENCY_STALE,
+    mergeevidence.REQUIRED_UNDECLARED: RefusalReason.MERGE_EVIDENCE_REQUIRED,
+}
+
+DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
+
+
+def _verified_at(value):
+    """A timestamp, or None for the caller to refuse.
+
+    Presence is not a time. A non-empty string passed, so a handoff could say the base was
+    verified "not-a-date" and the delivered message would print exactly that, leaving the
+    parent with a field that looks like evidence and answers nothing. An offset is required
+    for the same reason: the parent compares this against its own reading, and a naive stamp
+    does not say which clock it came from.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.isoformat()
+
+
+def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
+    """The child's merge-readiness evidence, refused at the point it can still be fixed.
+
+    This is the gate CRW-128 exists for. A child reported EQP-29 complete with fourteen
+    unresolved review threads and nothing in the contract objected, because the completion
+    path tested that the turn had ended and never what the review said.
+
+    It applies ONLY to a completion report that names a pull request. A report with no pull
+    request has no merge readiness to state, and a revision request travelling the other way
+    is the parent's judgment rather than the child's evidence; demanding check runs from
+    either would refuse every report this contract is not about.
+    """
+    if outcome == REVISION_OUTCOME:
+        if handoff is None:
+            return None
+        raise ReceiptRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            "a revision request carries no merge-readiness handoff: this event exists because "
+            "the parent ruled needs_changes, and the evidence that a candidate is ready comes "
+            "from the child on the completion it is about",
+        )
+    if handoff is None:
+        if pr_number is None or outcome != READY_OUTCOME:
+            return None
+        # The gate has to be compulsory or it is not a gate. An opt-in one is satisfied by
+        # saying nothing, which is exactly what the child in EQP-29 did: it reported the work
+        # complete and never mentioned that fourteen review threads were open. Silence about
+        # the review is the failure, so silence is what this refuses.
+        #
+        # Only a report CLAIMING readiness, though. A blocked, interrupted or failed turn names
+        # its pull request too, and demanding a complete handoff from one would make the honest
+        # outcome the only one a child could not report - which is the opposite of OPS-9.2,
+        # where a missing review is blocked and blocked is reported as blocked.
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "this report names a pull request and states nothing about its checks or its "
+            "review, so nothing here says the candidate is ready to hand over. Record the "
+            "merge-readiness handoff, or report the work blocked if the review is not finished",
+        )
+    if not isinstance(handoff, dict):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a merge-readiness handoff is an object, not a {type(handoff).__name__}",
+        )
+    if pr_number is None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a merge-readiness handoff describes a pull request, but none is named; give the "
+            "pull request number, or leave the handoff out",
+        )
+    review = handoff.get("reviewCoverage")
+    checks = handoff.get("checks", [])
+    required = handoff.get("requiredDeclared", mergeevidence.UNDECLARED)
+    problems = mergeevidence.handoff_problems(head_sha, review, checks, required=required)
+    if problems:
+        raise ReceiptRefused(
+            _HANDOFF_REASONS[problems[0].code],
+            "this candidate is not ready to hand over: "
+            + "; ".join(mergeevidence.details(problems)),
+        )
+    if not isinstance(handoff.get("isDraft"), bool):
+        # Optional and truthy meant a draft could be handed over by not mentioning it, and an
+        # integer 0 read as "not a draft" from a producer that never looked.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "the handoff states isDraft as true or false; it is how a reviewer knows the "
+            "review was actually requested, and leaving it out is not the same as false",
+        )
+    if handoff["isDraft"]:
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "the pull request is still a draft, so the review it reports was never actually "
+            "requested; mark it ready for review before handing it over",
+        )
+    verified_at = _verified_at(handoff.get("baseVerifiedAt"))
+    if verified_at is None:
+        # The parent's one job here is to restate a base and compare it. A handoff that says
+        # which head it is about and not which base, or not when the base was read, hands over
+        # half of the comparison and leaves the other half to be guessed.
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "the handoff states the head it is about but not when its base was verified; the "
+            "parent restates the base immediately before merging, and a base nobody dated "
+            "cannot be compared against the one it reads",
+        )
+    if not base_sha:
+        raise ReceiptRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            "a report carrying a merge-readiness handoff names the base commit it was verified "
+            "against; without one there is nothing for the pre-merge re-read to disagree with",
+        )
+    dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
+    return {
+        "isDraft": False,
+        "baseVerifiedAt": verified_at,
+        "requiredDeclared": sorted(
+            _bounded(_single_line(name, "a required check name"), "a required check name",
+                     LABEL_MAX)
+            for name in required
+        ),
+        "checks": [dict(entry) for entry in checks],
+        "reviewCoverage": dict(review),
+        "threadDispositions": dispositions,
+        "criterionEvidence": _check_evidence(handoff.get("criterionEvidence")),
+        "limitations": [
+            _single_line(_required(item, "a limitation"), "a limitation")
+            for item in _sequence(handoff.get("limitations"), "limitations")
+        ],
+    }
+
+
+def _check_dispositions(entries, review):
+    """Every thread that was seen carries a judged disposition, and a judgment carries evidence.
+
+    A count of unresolved threads says the buttons were pressed. It does not say anybody read
+    the finding, and the criteria this implements are explicit that disputed, duplicate and
+    already-resolved findings are judged with a reason rather than cleared mechanically. So a
+    thread the child saw and did not account for is missing, and 'resolved' is not among the
+    words it may account for it with.
+    """
+    judged = {}
+    for item in _sequence(entries, "threadDispositions"):
+        if not isinstance(item, dict):
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each thread disposition is an object naming its thread, not {item!r}",
+            )
+        identifier = item.get("threadId")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "each thread disposition names the review thread it is about",
+            )
+        identifier = identifier.strip()
+        if identifier in judged:
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"two dispositions name thread {identifier!r}; one thread carries one "
+                "judgment, so the second would silently replace the first",
+            )
+        disposition = item.get("disposition")
+        if disposition not in DISPOSITIONS:
+            raise ReceiptRefused(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                f"thread {identifier!r} is recorded as {disposition!r}, which is not a "
+                f"judgment. Use one of: {', '.join(DISPOSITIONS)}. Resolving a thread is a "
+                "button, not a finding anybody ruled on",
+            )
+        note = _single_line(_required(item.get("evidence"), "a disposition evidence"),
+                            "a disposition evidence")
+        addressed = item.get("addressedBy")
+        if disposition == "fixed" and not (isinstance(addressed, str) and addressed.strip()):
+            raise ReceiptRefused(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                f"thread {identifier!r} is recorded fixed without the commit that fixed it; "
+                "a per-finding trail is the finding, the commit that addressed it, and the "
+                "recheck",
+            )
+        judged[identifier] = {
+            "threadId": identifier, "disposition": disposition, "evidence": note,
+            "addressedBy": addressed.strip() if isinstance(addressed, str) else None,
+        }
+    seen = [str(one) for one in (review.get("threadsSeen") or [])]
+    unaccounted = [one for one in seen if one not in judged]
+    if unaccounted:
+        raise ReceiptRefused(
+            RefusalReason.MERGE_REVIEW_INCOMPLETE,
+            "these review threads were seen and carry no judged disposition: "
+            + repr(unaccounted),
+        )
+    return [judged[one] for one in seen]
