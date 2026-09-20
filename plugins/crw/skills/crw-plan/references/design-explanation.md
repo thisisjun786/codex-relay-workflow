@@ -42,7 +42,7 @@ where the question "where is the database" comes from. Give the state its own re
 | --- | --- |
 | What it is | The fact being kept, not the file format |
 | Where it lives | The store, and whether it is durable, shared or per run |
-| Who writes it | The single process that may write, and who may only read |
+| Who writes it | Every process that may write it, what each of them writes, and who may only read |
 | Who keeps and restores it | Who is responsible after a crash, a reinstall or a wrong write, by name. Where nobody is, say that and say what is lost with it |
 
 Keep three readings of a location apart, because they are routinely collapsed into one sentence and
@@ -168,11 +168,12 @@ cost named as unowned rather than a restorer invented to fill the row.
 The relay's store holds the assignment itself, and it is the piece that survives everything else.
 Every process in the assignment writes it through the relay, all of them passing the same store
 selector. A process reaching its deadline, restarting or failing outright leaves the assignment
-where it was, because recovery continues from the existing store and never from an empty one. The
-store itself is backed up and restored by whoever installed and operates it, under
-[the operations contract](../../crw-run/references/operations.md), which also makes merging two
-stores that already exist in one scope a migration with its own decision and its own backup. The
-relay does not restore itself, and no other component rebuilds it.
+where it was, because recovery continues from the existing store and never from an empty one. Who
+restores it after a lost disk is a different question, and the answer is nobody named: the
+[operations contract](../../crw-run/references/operations.md) requires a copied backup before a
+deliberate migration and defines no routine backup policy and no restore owner. Surviving a
+restart is not surviving a loss, and writing the second because the first is true is the mistake
+this whole page is about.
 
 The adapter's ledger is written by the adapter, and it is where duplicate suppression and delivery
 recovery live. It is selected by a different setting than the store: move one with a command-line
@@ -238,18 +239,17 @@ answers immediately. The queue holds a job and moves nothing by itself. A separa
 claims the job, writes the thumbnail, updates the row, and sends the notification; the web process
 never sends it. The person seeing the thumbnail is the verification.
 
-State. Four pieces with different owners and lifetimes: the upload row, written by the web process
-and restored from the database's own backups by whoever operates it; the job, written and
-redelivered by the queue and lost with it if that queue is not durable; the thumbnail, written by
-the worker into object storage and restored by re-running the job rather than from a backup, which
-a scheduled sweep over rows still marked pending starts, owned by the same team that runs the
-worker; and
-the notification record, written by the worker and rebuilt by nobody, because a notification that
-was never sent cannot be recovered after the fact. The row and the stored object survive a restart
-and the worker's in-memory handle does not. A job lost with a non-durable queue has no restorer
-either; that same scheduled sweep is the only thing that brings it back. No process rebuilds
-a thumbnail whose row no longer says pending, which is the one recovery path deliberately left
-closed.
+State. Four pieces with different owners and lifetimes. The upload row is written by the web
+process and restored from the database's own backups by whoever operates it. The job is written
+and redelivered by the queue, and if that queue is not durable it is gone with it; what brings it
+back is a scheduled sweep over rows still marked pending, run by the team that owns the worker,
+and that sweep is the job's restorer. The thumbnail is written by the worker into object storage
+and restored the same way, by the sweep re-running the job, which means only while the row still
+says pending: a thumbnail lost after its row reached ready is not covered by anything here, and
+nothing brings it back. The notification record is written by the worker and rebuilt by nobody,
+because a notification that was never sent cannot be sent again after the fact.
+
+The row and the stored object survive a restart and the worker's in-memory handle does not.
 
 What refuses. One thing refuses: the unique constraint on the thumbnail's upload key, which makes
 a second insert fail rather than produce a second thumbnail. At-least-once redelivery is recovery,
@@ -270,10 +270,12 @@ How an improvement is judged. Adding a retry answers a counted miss: uploads sti
 ten minutes. The comparison replays one recorded day's workload against the same code with the
 retry as the only switch. The costs counted are duplicate notifications, added delay before a row
 reaches ready, and jobs retried after they had already succeeded. The rule is fixed before the run
-and written down: keep the retry only if that pending count falls and duplicate notifications stay
-at zero, revert it if either fails, and treat an unchanged pending count as a wrong diagnosis
-rather than a reason to retry harder. The expectation and whatever the run returns go in different
-paragraphs.
+and written down, with a bound for every cost that was named: keep the retry only if the pending
+count falls, duplicate notifications stay at zero, the median time to ready grows by no more than
+a second, and fewer than one job in a thousand is retried after it had already succeeded. Revert
+if any of the four fails, and treat an unchanged pending count as a wrong diagnosis rather than a
+reason to retry harder. A cost named without a bound cannot change the decision, which makes
+naming it decoration. The expectation and whatever the run returns go in different paragraphs.
 
 ## Self-check
 
@@ -282,7 +284,7 @@ Before delivering, answer these as the reader, using only what the explanation s
 | Question | Answered by | A missing answer means |
 | --- | --- | --- |
 | Who runs it? | The visible result and the five-step sketch | The explanation named parts without naming actors |
-| Where is the state, and who restores it? | The state reading | A store has no owner, or a default path was written as an observation |
+| Where is the state, and who restores it? | The state reading | A store's recovery was never asked about, or a documented default was written down as an observation |
 | What actually refuses? | The four layers | Guidance or a registration is standing in for enforcement |
 | How far is it built? | The five labels | A claim is carrying no evidence and should read not observed |
 | How would an improvement be judged? | The five-part proposal | Either the comparison measures its own switch, or an expectation is being reported as a result |
