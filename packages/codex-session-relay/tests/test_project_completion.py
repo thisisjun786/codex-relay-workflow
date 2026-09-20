@@ -149,6 +149,33 @@ class OwnerReadFailuresAreClassified(unittest.TestCase):
         self.assertIn("relationships unreadable", reading["basis"])
 
 
+    def test_ambiguity_is_not_masked_by_a_failing_assignment_read(self):
+        """RED: expanding inside the first boundary put it BEFORE the ambiguity branch.
+
+        Two live owners is establishable from owners() alone. Letting an unrelated state() read
+        failure turn that definite answer into unreadable replaces the specific fact with the
+        vaguer one.
+        """
+
+        class _StateRaises(_View):
+            def state(self, relationship_id):
+                raise RuntimeError("relationships unreadable")
+
+        view = _StateRaises(_Reader(["r1"], ["r1"],
+                                    owners=[_owner("parent-a"), _owner("parent-b")]))
+        reading = view.project_state(PROJECT)
+        self.assertEqual(reading["state"], "ambiguous")
+        self.assertEqual(reading["competingOwners"], ["parent-a", "parent-b"])
+
+    def test_an_unattached_project_is_still_unregistered_when_state_would_fail(self):
+        class _StateRaises(_View):
+            def state(self, relationship_id):
+                raise RuntimeError("relationships unreadable")
+
+        view = _StateRaises(_Reader([], ["r1"], owners=[_owner("p")]))
+        self.assertEqual(view.project_state(PROJECT)["state"], "unregistered")
+
+
 class TheReadingHasAReachableConsumer(unittest.TestCase):
     """The earlier round shipped project_state with no caller but its own tests."""
 
