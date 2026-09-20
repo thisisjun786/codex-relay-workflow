@@ -23,6 +23,9 @@ codex-thread-bridge = { workspace = true }
 
 [project.scripts]
 codex-session-relay = "codex_session_relay.cli:main"
+# The Stop hook adapter, so an installed runtime carries it and a plugin installation does not
+# have to reach into somebody's checkout for the program its hook runs.
+crw-completion-hook = "codex_session_relay.stopadapter:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codex_session_relay"]
