@@ -6,8 +6,8 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains eight
-skill instruction sets, a symlink installer, and the two Python packages the
+This is an experimental workflow built from a personal setup. It contains the skill
+instruction sets listed below, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
 runtime, and offline contract checks do not establish live Codex hook or Desktop
