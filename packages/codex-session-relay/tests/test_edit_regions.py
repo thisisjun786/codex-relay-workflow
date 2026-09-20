@@ -182,6 +182,23 @@ class BothSidesAcceptOrTheConditionIsKept(EditRegionTestCase):
                 record["agreementId"], actor=self.beta.task_id, disposition="withdrawn")
         self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
 
+    def test_a_closed_agreement_admits_no_further_settlement(self):
+        record = self.propose("src/a.py")
+        self.regions.settle(
+            record["agreementId"], actor=self.alpha.task_id, disposition="withdrawn")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle(
+                record["agreementId"], actor=self.beta.task_id, disposition="accepted")
+        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
+
+    def test_a_task_owning_neither_project_cannot_settle(self):
+        record = self.propose("src/a.py")
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.settle(
+                record["agreementId"], actor=self.zeta.task_id, disposition="accepted")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+
 class AnAgreementIsAboutAPlaceInASpecificTree(EditRegionTestCase):
     def agreed(self, path="src/a.py"):
         record = self.propose(path)
@@ -351,6 +368,47 @@ class AuthorityOverAgreementsAndTheWorkTheyImply(EditRegionTestCase):
         self.regions.settle(
             record["agreementId"], actor=self.beta.task_id, disposition="accepted")
         return record
+
+    def test_a_refused_proposal_leaves_no_region_behind(self):
+        """An orphan region rejected the corrected proposal it existed to describe."""
+        with self.assertRaises(CoordinationError):
+            self.propose(
+                "scripts/components.json", region_class="generated", task=self.zeta.task_id,
+                regenerate_from="derive")
+        rows = self.store.all("SELECT * FROM edit_regions", ())
+        self.assertEqual(rows, [])
+        corrected = self.propose("scripts/components.json")
+        self.assertEqual(corrected["state"], "proposed")
+
+    def test_a_separator_cannot_enter_a_region_path(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.propose("src/a|b.py")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_TOO_BROAD)
+
+    def test_a_parent_records_its_acceptance_under_its_own_project(self):
+        record = self.propose("src/a.py")
+        item = self.regions.followup(
+            record["agreementId"], trigger_text="t", acceptance_text="a",
+            recorded_by=self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.accept_followup(
+                item["followupId"], actor=self.beta.task_id, assignee_project="PRJ-A")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_failed_reaffirmation_leaves_the_predecessor_live(self):
+        """Retiring first traded two live agreements for none."""
+        record = self.agreed("src/a.py")
+        self.regions.restate_revision(
+            repository=REPO, from_revision=REV, to_revision="rev-2",
+            actor=self.alpha.task_id)
+        self.propose("src/a.py", revision="rev-2", right="PRJ-Z", link=self.other)
+        with self.assertRaises(CoordinationError) as caught:
+            self.regions.reaffirm(
+                record["agreementId"], actor=self.alpha.task_id, base_revision="rev-2")
+        self.assertEqual(caught.exception.reason, RefusalReason.REGION_OVERLAP)
+        self.assertEqual(
+            self.regions.agreement(record["agreementId"])["state"], "reopened",
+            "the predecessor survives a refused carry-forward")
 
     def test_a_stranger_cannot_propose_an_agreement_between_two_other_projects(self):
         """A proposal pre-accepts its own side, so a forged one blocks an overlapping region."""
@@ -523,20 +581,3 @@ class TwoPairsProposingOverlappingRegionsAtOnce(EditRegionTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-    def test_a_closed_agreement_admits_no_further_settlement(self):
-        record = self.propose("src/a.py")
-        self.regions.settle(
-            record["agreementId"], actor=self.alpha.task_id, disposition="withdrawn")
-        with self.assertRaises(CoordinationError) as caught:
-            self.regions.settle(
-                record["agreementId"], actor=self.beta.task_id, disposition="accepted")
-        self.assertEqual(caught.exception.reason, RefusalReason.AGREEMENT_NOT_OPEN)
-
-    def test_a_task_owning_neither_project_cannot_settle(self):
-        record = self.propose("src/a.py")
-        with self.assertRaises(CoordinationError) as caught:
-            self.regions.settle(
-                record["agreementId"], actor=self.zeta.task_id, disposition="accepted")
-        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)

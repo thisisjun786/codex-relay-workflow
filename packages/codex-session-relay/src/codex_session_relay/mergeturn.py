@@ -616,6 +616,17 @@ class MergeTurn:
                     " means to merge",
                     domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
                     incumbent=row["candidate_head"], challenger=actor)
+            if refusal is None:
+                # Ownership again, at the last moment it can still matter. A handover between
+                # the claim and the merge leaves the former parent holding a turn for a
+                # project it no longer owns, and this is the write that lands work.
+                held = [
+                    record["taskId"]
+                    for record in self.linkage.owners(PROJECT, row["project_key"])
+                    if record["role"] == PARENT
+                ]
+                if held != [actor]:
+                    refusal = self._stale_owner(row, held[0] if held else None, actor)
             if refusal is None and head_sha != row["candidate_head"]:
                 refusal = Refusal(
                     RefusalReason.MERGE_CANDIDATE_MOVED,
@@ -693,6 +704,16 @@ class MergeTurn:
 
         if not checks:
             return stale("no check runs were restated, so nothing says this head is green")
+        nameless = [
+            entry for entry in checks
+            if not str(entry.get("runId", "")).strip() or not str(entry.get("name", "")).strip()
+        ]
+        if nameless:
+            # A conclusion with nothing identifying it cannot be checked against anything,
+            # and with no declared required names it was the only evidence there was.
+            return stale(
+                "a restated check carries no runId or no name, so there is nothing to say"
+                " which check it is or to compare against a required set")
         highest = {}
         for entry in checks:
             run = str(entry.get("runId", ""))
@@ -909,9 +930,25 @@ class MergeTurn:
                 # movement. That falsely landed an open pull request and released its target.
                 # With no checked base the observation cannot establish a movement at all, so
                 # only the pull request's own state decides.
+                # The pull request's own state decides. A base that moved says the branch
+                # advanced, which any unrelated commit also does, so reading it as a landing
+                # released an open candidate's target and promoted somebody behind it. It is
+                # kept only as corroboration for an outcome the caller could not read.
                 moved = (row["checked_base_sha"] is not None
                          and observed_base_sha != row["checked_base_sha"])
-                landed = pr_state == "merged" or moved
+                if pr_state == "merged":
+                    landed = True
+                elif pr_state in ("open", "closed"):
+                    landed = False
+                elif moved:
+                    raise CoordinationError(
+                        RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                        "the base moved from " + repr(row["checked_base_sha"]) + " to "
+                        + repr(observed_base_sha) + " and " + repr(pr_state) + " does not say"
+                        " whether THIS candidate is what moved it. Any unrelated commit moves"
+                        " a base; read the pull request's state and resolve again")
+                else:
+                    landed = False
                 self._close_in(
                     db, row, LANDED if landed else RETURNED,
                     "resolved from an observation: pr_state=" + str(pr_state) + "; " + evidence,

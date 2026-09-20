@@ -229,6 +229,21 @@ class Capacity:
 
     # ---------------------------------------------------------------- writing
     @staticmethod
+    def _finite(value, what):
+        """A bound and a measurement are real, finite and not negative.
+
+        A NaN ceiling compares false against everything, so enforcement silently stops; an
+        infinite one never binds; a negative one denies every reservation forever. None of the
+        three is a number somebody meant.
+        """
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")) or number < 0:
+            raise CoordinationError(
+                RefusalReason.LINK_NOT_ACTIVE,
+                what + " is a finite number of zero or more, not " + repr(value))
+        return number
+
+    @staticmethod
     def _check_scope(scope_kind, scope_key):
         """The store scope has exactly one key, because enforcement reads exactly one.
 
@@ -497,6 +512,7 @@ class Capacity:
                 "a limit scope is one of " + ", ".join(SCOPES) + ", not " + repr(scope_kind))
         self._check_scope(scope_kind, scope_key)
         self._check_declarer(scope_kind, scope_key, declared_by)
+        ceiling = self._finite(ceiling, "a ceiling")
         identifier = limit_id(scope_kind, scope_key, dimension)
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -532,6 +548,7 @@ class Capacity:
         exact(method, "a measurement method")
         self._check_scope(scope_kind, scope_key)
         self._check_declarer(scope_kind, scope_key, observed_by)
+        observed = self._finite(observed, "an observation")
         now = self.clock.iso()
         with self.store.transaction() as db:
             db.execute(

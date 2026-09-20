@@ -382,6 +382,32 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         kinds = {e["evidenceKind"] for e in self.turns.ledger(held["turnId"])}
         self.assertIn("candidate_head_changed", kinds)
 
+    def test_a_former_parent_cannot_begin_a_merge_after_a_handover(self):
+        """Ownership again, at the last moment it can still matter.
+
+        A handover between the claim and the merge leaves the former parent holding a turn for
+        a project it no longer owns, and this is the write that lands work.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.store.db.execute(
+            "UPDATE scope_bindings SET status = 'archived'"
+            "  WHERE scope_key = ? AND task_id = ?", (PROJECT_A, self.alpha.task_id))
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"), review=dict(GREEN))
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_check_with_no_identity_is_not_evidence(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        for entry in ({"runId": "", "name": "dev-gate"}, {"runId": "run-1", "name": ""}):
+            check = dict(entry, headSha="head-a", conclusion="success", attempt=1)
+            with self.assertRaises(CoordinationError) as caught:
+                self.turns.begin_merge(
+                    held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                    base_sha="base-0", checks=[check], review=dict(GREEN))
+            self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CURRENCY_STALE)
+
     def test_an_unready_holder_cannot_begin_merging(self):
         """Holding a free target is not saying the candidate is ready.
 
@@ -481,12 +507,27 @@ class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
         self.assertEqual(answer["outcome"], "returned")
         self.assertIsNone(self.turns.turn(held["turnId"])["landedSha"])
 
-    def test_a_moved_base_is_landed_even_when_the_pull_request_reads_open(self):
+    def test_a_moved_base_does_not_land_a_pull_request_that_reads_open(self):
+        """Any unrelated commit moves a base, so movement is not evidence THIS one landed.
+
+        Reading it as one released an open candidate's target and promoted somebody behind an
+        unmerged predecessor, which is the failure the whole module exists to prevent.
+        """
         held = self.unknown_turn()
         answer = self.turns.resolve_unknown(
             held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
-            pr_state="open", evidence="the base moved past the candidate")
-        self.assertEqual(answer["outcome"], "landed")
+            pr_state="open", evidence="somebody else pushed; this one is still open")
+        self.assertEqual(answer["outcome"], "returned")
+        self.assertIsNone(self.turns.turn(held["turnId"])["landedSha"])
+
+    def test_a_moved_base_with_an_unreadable_state_asks_for_a_clearer_observation(self):
+        held = self.unknown_turn()
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.resolve_unknown(
+                held["turnId"], actor=self.supervisor.task_id, observed_base_sha="base-9",
+                pr_state="unknown", evidence="could not read the pull request")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "unknown")
 
     def test_a_merged_pull_request_is_landed_whatever_the_base_reads(self):
         held = self.unknown_turn()

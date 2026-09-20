@@ -78,6 +78,10 @@ def canonical_path(path):
     """
     if not isinstance(path, str) or not path.strip() or "\x00" in path:
         return None
+    if "|" in path:
+        # The field separator. Without this 'a|b' as a path and 'a' with key 'b' derive one
+        # identity, so two distinct places would replay or contest each other.
+        return None
     if path.startswith("/") or path in (".", "..") or path != posixpath.normpath(path):
         return None
     if any(part == ".." for part in path.split("/")):
@@ -307,19 +311,18 @@ class EditRegions:
         now = self.clock.iso()
         refusal, agreement, replay = None, None, None
         with self.store.transaction() as db:
-            db.execute(
-                "INSERT INTO edit_regions (region_id, repository, base_revision, path,"
-                " region_kind, region_key, region_class, regenerate_from, recorded_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (region_id) DO NOTHING",
-                (identifier, repository, base_revision, clean, region_kind, region_key,
-                 region_class, regenerate_from, now),
-            )
-            # Re-read what was PERSISTED and copy from that, never from the arguments. A
-            # replayed proposal that spelt its revision differently would otherwise store an
-            # agreement whose revision disagreed with the one inside its own region id, and
-            # the stale-settlement check reads that column.
+            # Nothing is written until everything is decided. Inserting the region first left
+            # an orphan behind every refusal, and because a region is classified once that
+            # orphan then rejected the corrected proposal it existed to describe.
             region = db.execute(
                 "SELECT * FROM edit_regions WHERE region_id = ?", (identifier,)).fetchone()
+            if region is None:
+                region = {
+                    "region_id": identifier, "repository": repository,
+                    "base_revision": base_revision, "path": clean,
+                    "region_kind": region_kind, "region_key": region_key,
+                    "region_class": region_class, "regenerate_from": regenerate_from,
+                }
             if region["region_class"] != region_class or (
                     region["regenerate_from"] or "") != (regenerate_from or ""):
                 # The insert above is ON CONFLICT DO NOTHING, so a later proposal naming a
@@ -346,6 +349,19 @@ class EditRegions:
                     refusal = self._peer_refusal(
                         db, low, high, peer_link_id, proposer_task_id, identifier)
             if replay is None and refusal is None:
+                db.execute(
+                    "INSERT INTO edit_regions (region_id, repository, base_revision, path,"
+                    " region_kind, region_key, region_class, regenerate_from, recorded_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (region_id) DO NOTHING",
+                    (identifier, repository, base_revision, clean, region_kind, region_key,
+                     region_class, regenerate_from, now),
+                )
+                # Copy from what is PERSISTED, never from the arguments: a replayed proposal
+                # spelling its revision differently would otherwise store an agreement whose
+                # revision disagreed with the one inside its own region id, and the
+                # stale-settlement check reads that column.
+                region = db.execute(
+                    "SELECT * FROM edit_regions WHERE region_id = ?", (identifier,)).fetchone()
                 highest = db.execute(
                     "SELECT MAX(tenure) AS top FROM edit_agreements"
                     "  WHERE region_id = ? AND left_project = ? AND right_project = ?",
@@ -552,6 +568,11 @@ class EditRegions:
             (closed, reason, now, now, identifier))
         self.store.journal("edit_region_closed", identifier, {"state": closed}, at=now)
 
+    @staticmethod
+    def _raise_after(refusal):
+        """Carried out of the transaction so the contest commits before the error is raised."""
+        raise refusal.error()
+
     def _owned_side(self, low, high, actor):
         """Which of the two projects the actor is the registered parent of, or None."""
         for project in (low, high):
@@ -743,6 +764,25 @@ class EditRegions:
             else:
                 error = None
                 carried = dict(row)
+                # Prove the successor is proposable BEFORE destroying the predecessor.
+                # Retiring first traded two live agreements for none: an overlap or peer
+                # refusal in the proposal left the carry-forward with nothing live at all.
+                successor_region = {
+                    "region_id": region_id(
+                        row["repository"], base_revision, row["path"],
+                        row["region_kind"], row["region_key"] or ""),
+                    "repository": row["repository"], "base_revision": base_revision,
+                    "path": row["path"], "region_kind": row["region_kind"],
+                    "region_key": row["region_key"] or "",
+                    "region_class": row["region_class"],
+                }
+                low, high = sorted((row["left_project"], row["right_project"]))
+                blocked = self._overlap_refusal(db, successor_region, low, high, actor) \
+                    or self._peer_refusal(
+                        db, low, high, row["peer_link_id"], actor, row["repository"])
+                if blocked is not None:
+                    self.conflicts.record_in(db, blocked, at=now)
+                    return self._raise_after(blocked)
                 db.execute(
                     "UPDATE edit_agreements SET state = ?, close_reason = ?, closed_at = ?,"
                     " updated_at = ? WHERE agreement_id = ?",
@@ -828,8 +868,18 @@ class EditRegions:
             agreement = db.execute(
                 "SELECT * FROM edit_agreements WHERE agreement_id = ?",
                 (row["agreement_id"],)).fetchone()
-            _side, refusal = self._acting_side(
+            side, refusal = self._acting_side(
                 db, agreement, actor, agreement["repository"])
+            if refusal is None and assignee_project != agreement[side]:
+                # Otherwise a parent could file its accepted work under the peer's project and
+                # the aggregate would credit the wrong side.
+                refusal = Refusal(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "task " + repr(actor) + " owns " + repr(agreement[side])
+                    + ", so its acceptance is recorded under that project, not "
+                    + repr(assignee_project),
+                    domain=DOMAIN_EDIT_REGION, subject=agreement["repository"],
+                    incumbent=agreement[side], challenger=assignee_project)
             if refusal is None and row["state"] in (DONE, DROPPED):
                 # done and dropped are terminal. Accepting over one returned closed work to
                 # the active list while close_reason still explained why it had ended.

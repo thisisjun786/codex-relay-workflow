@@ -89,6 +89,18 @@ re-derives are not disagreeing about it; they are both going to regenerate it, a
 pull request is itself in that situation with `scripts/crw_runtime/components.json`.
 
 ## What this is not
+- **Every identity here is asserted, not authenticated.** `--actor`, `--task` and the forge
+  evidence passed to `merge-turn-check` are all caller-supplied, and this package has no
+  transport authentication to check them against. What the ownership rules buy is that a
+  caller must name an identity the store already records as owning the scope, and that every
+  refusal is retained with both parties - not that the caller is who it says. That is the
+  same trust boundary `linkage-bind --task` and `assignment-mark --actor` already sit on, and
+  closing it needs an authenticated channel, which is a different piece of work. Anything
+  able to invoke the CLI is already inside the boundary.
+- **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
+  the caller restated is internally consistent and current against what this store knows. It
+  cannot see the pull request. An operator who wants proof that required CI was green reads
+  the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
   wider artifact scope. `mergeturn.py` never reads `edit_agreements`, and a test runs the same

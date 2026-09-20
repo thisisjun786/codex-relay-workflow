@@ -242,6 +242,20 @@ class StatingABoundIsNotAnybodysCall(CapacityTestCase):
     """A caller who could raise a ceiling or publish a usage figure could admit execution the
     owner had bounded, so the declarer has to own the scope it speaks for."""
 
+    def test_a_ceiling_is_a_finite_number_of_zero_or_more(self):
+        """NaN compares false against everything, infinity never binds, negative denies all."""
+        for bad in (float("nan"), float("inf"), -1):
+            with self.assertRaises(CoordinationError) as caught:
+                self.ceiling("runs", bad)
+            self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+
+    def test_an_observation_is_a_finite_number_too(self):
+        with self.assertRaises(CoordinationError) as caught:
+            self.capacity.observe(
+                scope_kind="project", scope_key=PROJECT_A, dimension="file_descriptors",
+                observed=float("nan"), observed_by=self.alpha.task_id, method="probe")
+        self.assertEqual(caught.exception.reason, RefusalReason.LINK_NOT_ACTIVE)
+
     def test_a_stranger_cannot_state_a_project_ceiling(self):
         with self.assertRaises(CoordinationError) as caught:
             self.capacity.declare_limit(
