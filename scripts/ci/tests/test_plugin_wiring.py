@@ -1015,6 +1015,9 @@ class TheDeclaredApprovalPolicyIsChecked(unittest.TestCase):
         self.assertEqual(offenders, [])
 
 
+@unittest.skipUnless(TOML_READER, "register-mcp cannot read a configuration without tomllib, so"
+                                  " on the 3.10 floor it refuses every registration for that"
+                                  " reason and none of these cases would be about the guard")
 class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
     """CRW-142, the register-mcp half. Escalated to the operations lane and authorised by it.
 
