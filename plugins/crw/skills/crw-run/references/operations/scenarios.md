@@ -733,3 +733,80 @@ either parent a merge turn.
 
 Preserved: each parent's own children and records, the conditional state of an unapplied agreement,
 the third owner's freedom to decline, and the separation of edit agreement from merge order.
+
+## S33 Five registers behind one vocabulary, and a restart that cannot tell them apart
+
+Observed: a supervision task restarts and reads its approved set. One parent is `idle` with an
+active goal; one is `idle` with no goal at all where the start-policy record says
+`goal-free-run`; one is `idle` with no goal where that record says `loop`; one is recorded
+"blocked" with nothing saying whether that was its goal, its recorded start mode or a dependency;
+one reads `notLoaded` on both reads; and one project is completed with its parent resting.
+
+Clauses: OPS-7.1, OPS-8.1, OPS-8.2; the registers are
+[Which register each state word came from](../initiative-supervision.md), the recorded mode is
+[Record the start adjudication](../../../crw-loop/references/parent-goal.md#record-the-start-adjudication),
+and the idle action matrix and the goal/activation/continuation split belong to
+[the midpoint check](../../../crw-status/references/midpoint-check.md).
+
+Action: name the register of every reading before deciding anything, and restore the recorded start
+policy, re-adjudicating only the fields whose conditions changed. The first three parents are three
+findings and not one: an active goal is not evidence that continuation actually happens,
+`goal-free-run` accounts for an absent goal, and the same absence under a recorded `loop` is a
+finding to resolve. The unlabelled "blocked" is resolved to its register first, because a blocked
+goal, a `blocked` start mode and a recorded dependency have different owners, and until it resolves
+it is unknown. A parent still `notLoaded` after the second read keeps that exact value rather than
+being translated into idle or stopped, and it is that parent's last turn that is reported
+unverified. The completed project is C9's. The restart is evidence about this task's own context
+and about nothing in the set.
+
+Preserved: every parent and child, each register read from its own source, the recorded start
+policy restored rather than decided again, unknown as a usable answer, and a finished project that
+stays finished.
+
+## S34 A restart finds the record missing the line that made the target temporary
+
+Observed: a bound management task answered a one-off request about another project, then restarted.
+In the first variant the record holds the fixed binding and the temporary target as two labelled
+lines. In the second only the other project's target survived in the record. In the third an
+explicit switch has since happened and the record holds its handoff.
+
+Clauses: OPS-7.1, OPS-7.2; S27 already answers what a temporary question does to a binding, and the
+procedures are
+[Resolve the project target](../../../crw-plan/references/integrations.md#resolve-the-project-target)
+and [Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding).
+This entry is only about what the record has to hold for S27's answer to survive a restart.
+
+Action: the first variant needs nothing further, because the labels are the evidence. The second is
+the case this entry exists for: only one target survived, and a surviving target is not evidence of
+a binding, so the fixed project is recovered from its own coordination document and the missing
+label is reported as a record defect rather than reasoned away from the last thing this task
+touched. The third is read from the handoff, which is what leaves the previous binding readable as
+history. No variant decides the binding from what the record happens to mention most recently.
+
+Preserved: the fixed binding across a temporary detour, a record defect reported instead of
+repaired by guessing, the handoff as the evidence of a real switch, and one owner at a time.
+
+## S35 Six records that resemble this run, told apart in one pass
+
+Observed: one recovery turns up all of them. A binding copied from another task's record; a record
+whose host ID is not this host; a task whose goal is paused; a task whose last turn was stopped; a
+record written before the state just read; and an installation with no title or pin tooling.
+
+Clauses: OPS-2.3, OPS-7.1, OPS-7.2, OPS-7.3, OPS-8.2; ownership transfer is settled by
+[Resolve the project target](../../../crw-plan/references/integrations.md#resolve-the-project-target),
+and the management title and its pin by
+[Set the app presentation and record](../../../crw-plan/references/integrations.md#set-the-app-presentation-and-record).
+Each of the six is already answered by its owner. What this entry adds is that recovery meets them
+together and owes six findings rather than one verdict of "stale record".
+
+Action: ask the discriminating question for each, take each answer from the owner above, and report
+which of the six actually applied. Was this record written for another task or for this one? Does
+its host field name this host? Is the state the goal's or the turn's, given that those are two
+facts? Is the record older than the read just taken? Is an absent title a binding that was lost, or
+tooling this installation does not expose? Answering them separately is the whole point: a single
+verdict covering all six discards five answers, and each has a different owner and a different next
+action.
+
+Preserved: the real owner in every case, the previous task's permissions staying with it, the goal
+and the turn as separate states, the current reading's precedence over an older record, and
+authorized work continuing without title control.

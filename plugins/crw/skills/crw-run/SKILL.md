@@ -885,3 +885,93 @@ The inventory is a record and not an enforcement. It says who is answerable and 
 remains; whether anything is actually prevented from being written or deleted is the
 sandbox's and the filesystem's answer, observed separately. A handoff that reports
 the inventory has done that much and not more.
+
+### Restate the run before continuing it
+
+Recovery starts by restating the run in five lines, read from the
+[coordination record](references/task-packet.md#coordination-record), which is already the place
+these live and already forbids a second store:
+
+- **The fixed binding** — the initiative where this task supervises one, the project or standalone
+  issue it executes, and this task's own id, each by its stable identifier, with the host this task
+  runs on where that has been established.
+- **The current temporary target**, where one exists: the other project or issue this task was
+  asked to look at, recorded beside the fixed binding rather than in place of it.
+- **The approved scope** in force, with the limits that arrived with it and the start policy this
+  run recorded, restored under [Start policy and child cap](#start-policy-and-child-cap) and
+  adjudicated again only for the fields whose conditions have changed.
+- **The current owner** of each piece of live work — the child task, its issue, its pull request.
+- **The one next action.**
+
+Those five are what the restatement reports. What it has to establish before reporting them, the
+settings in force and the work that has to survive the restart, is the rest of this subsection. A
+supervisor that restates its projects without the initiative they were approved under has lost the
+boundary rather than a label, which is why the first line carries it.
+
+Each line carries the time it was observed, because three claims are easy to write as one: what
+the record said when it was written, what a read this turn returned, and what an earlier decision
+settled on purpose. A later observation wins only over an earlier observation of the same thing,
+in the same register. It never wins over a decision, and it never crosses registers: a host
+reporting `idle` says that no turn is running, which is not an answer to whether somebody paused
+that task, so a durable pause, a read-only or status-only scope and a no-contact instruction hold
+until their own owner records a supported transition
+([OPS-8.2](references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)). What a
+fresh reading does supersede is a stale note of its own kind: a "not started" or "last seen idle"
+line loses to this turn's reading of that same register and stays as history. A line this turn did
+not refresh is marked unrefreshed with its observation time rather than reported as current.
+
+A record saying completed is a claim rather than a verdict, and it is corroborated against the
+evidence its own delivery shape requires under
+[Implementation Done](../crw-plan/references/integrations.md#implementation-done) and C9 in
+[Initiative supervision](references/initiative-supervision.md): for implementation work that is
+the pull request landed in its intended target together with every accepted criterion still
+outstanding beside it, installation or live verification included where the criteria named them;
+for accepted non-PR work it is the agreed observable result, which has no pull request by design.
+That test runs per subject rather than once, so each scoped issue is corroborated on its own
+delivery and the project is finished only when every obligation in its agreed scope is delivered,
+integrated and reconciled. That is the parent's own completion boundary in
+[Supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+and no single pull request reaches it.
+
+Four states then look alike from outside, and the restatement separates them. A project whose
+evidence holds is finished, and its parent resting is the shape of that rather than a failure to
+recover from. A project labelled completed while some subject still lacks the evidence its shape
+requires is unfinished: that gap is what gets reported and the project stays in the active set,
+because a status nobody corroborated is the one thing that can hide undelivered work behind a
+quiet parent. A project still in progress whose returned result was never judged, or whose
+recorded blocker has since cleared, continues inside the approved scope and through the task that
+already owns it. And a run somebody stopped stays stopped: the finding is recorded with what would
+release it, and nothing is sent.
+
+Two requests are answered from the restatement. A status-only request is answered with the current
+position first — what is done, what is in progress, what is waiting, and the next observation that
+would settle what is still open — and the history after it; the report's form belongs to
+[crw-status](../crw-status/SKILL.md), and this task supplies the position rather than a second
+format. A request to carry on re-reads the current owner and its delivery state before anything is
+sent, then continues through the task that already owns the work, inside the approved scope.
+
+The settings to restate are not all established the same way. Model, effort, profile and
+permissions are compared against what the current host reports and what this task is authorized to
+use now, under
+[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution)
+and [Model and settings verification](references/bridge.md#model-and-settings-verification). The
+effective workflow is not among them, for the reason the
+[restoration block](references/task-packet.md#restoration-block) already gives, so a resume that
+omits it has dropped it.
+
+Ownership is settled on the stable identifiers the assignment binds
+([OPS-7.1](references/operations.md#ops-71-what-an-assignment-binds)) and never on a title, a pull
+request, a branch or a working directory
+([OPS-7.2](references/operations.md#ops-72-never-route-on-a-display-name-or-a-working-directory)),
+which is why an installation whose title or pin tooling this task cannot reach has a reporting gap
+and not a lost binding. Whether a request touches the binding at all belongs to
+[Resolve the project target](../crw-plan/references/integrations.md#resolve-the-project-target),
+and changing it to
+[Project parent binding](../crw-plan/references/integrations.md#project-parent-binding).
+
+What the restatement must not lose is the work already in progress: dirty working trees and
+branches, a native goal and its phase state, receipts that were never delivered, and pull requests
+still bound to their issues. None of them is replaced by something this task creates because it
+could not read an owner. Where management genuinely moves, the handoff is recorded — which task
+handed over, which took it, what moved and what did not — so the next restatement reads one owner
+instead of inferring two.
