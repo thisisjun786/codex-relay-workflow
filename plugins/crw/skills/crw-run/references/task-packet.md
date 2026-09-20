@@ -104,6 +104,25 @@ Authorized execution:
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
 - Runtime/test data access: [agreed sources and operational limits]
 
+Workspace ownership:
+- Existing resources at dispatch: [the worktrees, branches and current writers that already
+  exist for this repository, with their dirty/untracked state. What is not yours is named
+  here so you do not adopt it by name: a convention path matching your task's name is not
+  evidence that it is your path]
+- Your resources: [the checkout, branch and evidence root this assignment owns, with the
+  OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
+  cleanup authorization, `none automatic` where no cleanup is authorized]
+- Write capability as measured: [whether the checkout, its resolved git metadata
+  (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the
+  evidence root are writable under the effective profile, and the recorded OPS-5.3 fallback
+  where they are not. A refused write is answered on this same checkout, by clearing a
+  refusal a supported route can clear or by that recorded fallback where the refusal is this
+  task's own profile, never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or
+  reset/stash]
+- Capacity and large artifacts: [the destination volume to check before a large clone,
+  install, build or download, and the permitted shared read-only originals, per-task
+  temporary paths and other volumes to use instead of copying a large original in here]
+
 Outcome and scope:
 [User-visible behavior, acceptance criteria, intended edit surfaces]
 [Shared contracts, coordination boundaries, and necessary exclusions]
@@ -217,6 +236,14 @@ Return:
 Stop after this assigned result; do not auto-start another issue.
 ```
 
+The workspace-ownership fields are dispatch observations rather than a grant: what constrains
+a write is the sandbox, the permission profile and the filesystem, so a field naming a path
+the child cannot write is a mismatch to reconcile on that task before the work starts, not
+something for the child to work around. The check that produces them is
+[Check who already owns the workspace](../SKILL.md#check-who-already-owns-the-workspace),
+and what the run leaves behind is accounted for by
+[Account for the resources this run leaves behind](../SKILL.md#account-for-the-resources-this-run-leaves-behind).
+
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.
@@ -290,6 +317,11 @@ Authority: [the designation and its date, the limits in force, child-creation au
   designation carries them]
 Current state: [locators only: the project's coordination record, its live children, its open
   pull requests, and any outcome already verified]
+Retained resources: [locators and ownership for the checkouts, branches, evidence roots,
+  temporary artifacts and running processes this project's work is keeping, each with its owner,
+  the reason it is retained and the next action. Locators only, as above: the coordination record
+  holds the detail. A resource whose owner this supervisor could not establish is named as
+  unknown rather than assigned to this parent]
 Report back: [a result or blocked coordination message carrying the outcome, the evidence per
   criterion, the unresolved problems and the decisions needed. Detailed logs stay where they are]
 Workflow: [the parent's effective workflow, restated because no transport carries it]
