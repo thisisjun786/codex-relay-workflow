@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Status"
+  short_description: "현재 상황을 근거와 함께 보고하고 질문 범위에 맞춰 조사 깊이 조절"
+  default_prompt: "$crw-status 중간점검. 지금 어디까지 됐는지, 진행 중인 일과 막힌 이유, 내 결정이 필요한 부분과 아직 확인 못한 것을 근거와 함께 짧게 알려줘."
+policy:
+  allow_implicit_invocation: true

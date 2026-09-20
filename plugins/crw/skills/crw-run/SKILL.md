@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors under the project parent's own native goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -18,8 +18,9 @@ checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
 Run owns project execution, including newly ready successors within the agreed scope.
-[crw-loop](../crw-loop/SKILL.md) adds a separately requested parent goal and host-driven
-continuation to that same execution; it does not enlarge Run's project scope.
+[crw-loop](../crw-loop/SKILL.md) owns the parent goal's lifecycle and the host-driven
+continuation on that same execution, and the role policy makes that goal the default rather than
+a separate request; it does not enlarge Run's project scope.
 Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
 and review work. A child whose effective workflow is CXC Loop loads the installed
 `codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
@@ -45,11 +46,12 @@ their results, and admit newly ready in-scope issues as capacity opens. The firs
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
 future backlog additions, another project's work or replacing another parent.
 
-An explicit request for a parent goal or unattended host continuation routes to
-`crw-loop`. Ordinary requests to finish the project or continue its next issue remain
-Run execution; they do not themselves create a goal. Inside an authorized Loop, Run
-returns progress and pending obligations to the same Loop owner without creating
-another goal. Existing scope and authorization survive skill routing.
+The parent goal's lifecycle and unattended host continuation belong to `crw-loop`, and the role
+policy makes that goal the project parent's default rather than an opt-in, so an ordinary project
+execution request establishes it through that lifecycle instead of running goal-free. Inside an
+authorized Loop, Run returns progress and pending obligations to the same Loop owner without
+creating another goal. An explicit no-goal or read-only limit still wins, and existing scope and
+authorization survive skill routing.
 
 An initiative link by itself is not a target. Where a request merely cites one, resolve the
 project actually being executed under the shared target rules: the link is context and it rebinds
@@ -77,7 +79,8 @@ still govern each action, including task creation and goal activation.
   prerequisites, then launch only that batch.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
-  Parent goal creation and host-driven continuation belong to an authorized Loop.
+  The parent goal's lifecycle and host-driven continuation belong to `crw-loop`, and the role
+  policy makes that goal the default.
 - **Supervise an initiative:** bind the initiative, fix its approved project set and completion
   boundary, and carry it through those projects' existing parents. Issue planning and issue
   execution stay with each parent.
@@ -136,11 +139,11 @@ already uses, and the evidence that it landed is that child's changed revision r
 acknowledgement. Return the outcome to the peer from here: a child never answers another project's
 parent, and no peer reads this project's child for its answer.
 
-For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
-host goal and automatic continuation across turns. Returning from Run hands
-control back to that same owner. Explicit pause/no-goal limits still win, and existing
+[crw-loop](../crw-loop/SKILL.md) owns the parent host goal and its continuation across turns,
+and the role policy makes that goal the default rather than something a request must ask for.
+Returning from Run hands control back to that same owner. Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
-avoid a guard. The default absence of a Run parent goal does not alter child CXC defaults.
+avoid a guard. A parent holding its own goal does not alter child CXC defaults.
 
 ## Independent implementation tasks
 
@@ -199,7 +202,7 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, under the parent's own native goal per the role policy; host restrictions and an explicit no-goal limit still apply |
 | Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
@@ -288,6 +291,30 @@ and put its verified issue target, remote, integration branch and full baseline
 in the packet. Reuse an existing task's worktree and issue branch on resume;
 classification changes alone never relocate it. Non-PR work can omit those code
 fields with its explicit result and verification instead.
+
+### Determine the execution mode
+
+Managed start and managed resume decide, before dispatch, whether a relay holds this
+assignment or whether this work is explicitly direct, and record which. Everything below
+that reads "where a relay holds the assignment" is that decision, not a guess to be made
+again per paragraph. The rule and what to record are in
+[Whether a relay holds this assignment](../crw-plan/references/integrations.md#whether-a-relay-holds-this-assignment);
+the command and its output are in
+[codex-session-relay](references/relay.md#determine-whether-this-store-holds-the-assignment).
+
+Run it from the process that will do the work, because what a task can reach is a property
+of that task's profile on that host rather than a fact about the relay. One reading answers
+the issue half and the store half together and says whether they agree; act on it only where
+they do. A reading that names a store this process did not measure is refused rather than
+used, and an unreadable store answers null rather than "nothing is assigned", because those
+two are different answers and only one of them is safe to act on.
+
+Record the outcome with the rest of the assignment: the mode, the resolved state directory
+and socket, the store identity the reading reported, the delivery owner, and the measured
+availability. A resume reads that back rather than deciding again from scratch, which is what
+keeps a recovered coordinator from opening a second writer or quietly changing route
+mid-assignment. Where the answer is direct, that is written down with its reason, and the
+direct path is then the one this skill already describes, unchanged.
 
 ## Prepare and dispatch
 
@@ -430,6 +457,142 @@ resulting evidence, not the child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
 
+### Start policy and child cap
+
+Before this run creates its first child or registers an assignment for one, whichever comes first,
+settle the start policy and record it in full: every field [Start policy](references/start-policy.md)
+names, each carrying its source, its scope and the conditions it stands on. A value the precedence
+settles is applied without asking; a value that genuinely needs a new decision is asked before any
+child is created, and only the action waiting on that answer is held while independent authorized
+work continues. Registration is named beside creation because it does not always follow one: a
+reused child already has its task id, so an assignment can become managed with no creation call in
+sight. Counting is the separate question, and there a creation still means a child. On a resume,
+after a compaction or for a later batch, re-read the identities those values stand on, restore what
+has not changed, and adjudicate again only the field whose conditions did. Start policy owns the
+fields, the scope each decision carries, the re-adjudication triggers and the cases this is judged
+by; the standing cap and its precedence are in
+[Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
+
+The first thing settled is the role, because it decides what this task opens: an initiative
+management task runs without a native goal or an automatic loop, a project parent creates or
+reuses its own goal for the approved project scope, and an issue child creates or reuses its own
+goal and keeps its CXC Loop. Record the role beside the goal state with its objective and approved
+scope, the hook compatibility, the observation path, and whether the approval policy in force can
+carry the callback this run depends on.
+
+Editing these instructions does not alter a turn that already loaded them, but where an installation
+links this checkout a later read of them loads the edited text, so a run spanning sessions can
+continue under instructions it did not start with. Report the local change, the pull request, the
+integration, and what is actually installed and running as separate facts.
+
+### Check who already owns the workspace
+
+This runs before the checkout above is assigned and before the creation call, and
+its result is what the packet's workspace-ownership fields carry. It is written
+here because it is one procedure, not because it happens last.
+
+[Operations contract](references/operations.md) OPS-5 owns the workspace-assignment rules
+this procedure applies: placement, the ownership columns, who commits, and where evidence
+lives. What is here is when to read them, what to compare them against and what to refuse.
+Where the two disagree, OPS-5 is the one that changes and this follows it.
+
+Before a checkout is assigned, read what already exists and who is answerable for
+it: the repository's worktrees with their branches and locked state, the dirty and
+untracked files in each, and any current writer. Then split the result in two, the
+resources that existed before this assignment and the ones this assignment will own.
+A path matching the convention for this task's name is not evidence that it belongs
+to this task, because a name is something two tasks can choose: another writer may
+hold it, or it may be what a creation that failed halfway left behind. Where the
+convention name collides, the distinguishing suffix goes on the task segment, so the
+checkout path and its `codex/<task>` branch move together and the existing checkout
+and branch are left as they are; suffixing the path alone leaves the branch collision
+in place, and Git refuses a second worktree on a branch another worktree already has
+checked out. Record the answer in the ownership columns of
+[OPS-5.2](references/operations.md#ops-52-ownership-is-recorded-in-columns-separately-from-the-path),
+which is where created by, editing owner, git metadata owner, retention owner and
+cleanup authorization live, rather than leaving it to be inferred from the path.
+
+A new checkout is created only where the work actually needs one. The same task
+reuses its existing checkout on resume and for follow-up under the same assignment,
+and a reclassification alone never relocates it
+([OPS-5.1](references/operations.md#ops-51-placement)). A temporary clone inside
+another product's directory is not a workspace; where the placement convention
+cannot be satisfied, report that rather than leaving a repository somewhere the next
+reader cannot tell whose it is. Residue from a half-finished creation stays owned
+until it is reconciled, which makes it neither free to adopt nor free to delete.
+
+Before a large clone, dependency install, build or download, check the volume that
+will actually receive the bytes and this assignment's own large artifacts, in the
+scope the work needs rather than as a survey. Keep the kinds apart while recording
+them, because they have different owners and different release conditions: source,
+dependency cache, regenerable build output, original data, and verification evidence
+a finished task is deliberately keeping. Take the permitted locations from the
+operator's working instructions and this repository's exceptions; a fixed path, a
+capacity threshold or a retention rule invented here would be a new global policy
+this assignment has no authority to make. Two children needing the same large
+original share a permitted read-only copy instead of receiving one each. A repeated
+whole-disk scan that stops the work is its own failure, and a report that a disk
+filled up is not a current measurement of it.
+
+What the assignment permits and what the child can actually write are separate
+findings, and for a linked worktree they come apart in one specific place: the
+working tree is under the checkout, while the common directory, the per-worktree
+index and the reference files are under the original repository, which
+`git rev-parse --absolute-git-dir`, `--git-common-dir` and `--git-path index`
+resolve. A successful write in the checkout therefore establishes nothing about
+writing a branch or a commit, which is the measurement
+[OPS-5.5](references/operations.md#ops-55-capability-a-new-child-is-created-with)
+asks for before the task exists. When a write is refused, say which refusal it is:
+an OS permission, the effective sandbox profile, a read-only mount, or another
+writer already holding the path or its lock. One failed command looks the same in
+all four cases and they have different answers. None of this is enforced by a
+packet, a prompt or a hook; those carry the intent, and what constrains a write is
+the sandbox, the permission profile and the filesystem.
+
+A refused Git write is answered on the same child and the same checkout, and which
+answer applies follows from which refusal it was. An environmental restriction, an
+OS permission on the original repository's Git metadata, a read-only mount, or a lock
+whose owning process has already exited, is cleared through its supported route and
+the work continues there; establish that a lock is stale before removing it, because
+a lock file records only that somebody took it. Another task still holding that path
+or that lock is not a restriction to clear but an ownership conflict: leave its work
+as it is, serialize behind it or settle it with its owner, and report the blocker
+rather than displacing a live writer. Where the refusal is the child's own permission
+profile, nothing here widens it: a running task keeps the settings it was created
+with, and the supported answer is the
+[OPS-5.3](references/operations.md#ops-53-who-commits-and-the-fallback-when-a-task-cannot)
+fallback taken deliberately and recorded, with the child still owning the source
+edits in that checkout and returning a frozen diff against the recorded baseline
+while the coordinator writes the Git metadata. What both cases refuse is the
+improvised route: redirecting `GIT_DIR`, cloning the repository somewhere writable,
+or a parent commit taken as a workaround rather than as that recorded fallback, each
+of which settles a permission problem by leaving the recorded ownership instead of
+repairing it, and leaves a delivery the review cannot trace to an owner. `reset`, `clean`,
+`stash` and `rebase` are not repairs either: they make the command succeed by
+discarding the state that explains the failure. Preserve the files, record why, and
+carry a blocker neither route clears to whoever can grant the permission.
+
+Carry the result into the packet's workspace-ownership fields
+([Launch packet](references/task-packet.md#launch-packet)), so the child is told
+what is not its own instead of deriving ownership from the path it was handed.
+
+### Verify what this dispatch established
+
+The first full assignment carries the fields in
+[First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields),
+and they travel in that same first request rather than in a preparation turn.
+
+Then judge the dispatch on four separate facts: the instruction the child actually
+received for this dispatch, the settings the dispatching call requested, the settings the
+receipt returned at the scope it claims them, and whether the child's own goal and
+goalplan state show the effective workflow running. A dispatch can pass the first three
+and fail the fourth, and on a reused task the evidence for the first two is the
+correction or resume itself rather than the original launch.
+[Dispatch verification](references/dispatch-verification.md) holds the four verdicts and
+their admissible evidence, the classes a missing loop falls into and how each is
+recovered on the same task, the recorded regression cases, and the authorized read-only,
+no-goal and non-Loop assignments that are not defects.
+
 ## Observe and verify
 
 Use a compact native `wait_threads` snapshot with each task's actual host and
@@ -463,6 +626,8 @@ Describe evidence separately:
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
+| Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| Parent runs its own goal loop | That task's own active goal and goalplan, read back under its own identity. Parents and children each own one; a parent operating without a goal is an explicitly authorized fallback rather than the default, and is recorded as the choice it is |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
@@ -516,6 +681,13 @@ decides and performs the merge, and the child never merges. Release and deployme
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
 
+Read the child's handoff rather than rebuilding it. It already paginated the review and
+enumerated the check runs, so collecting them again repeats work this contract just assigned
+elsewhere, and re-triaging its findings opens a second review round it already owns. What the
+coordinator adds is currency: re-read the head and base immediately before merging and compare
+the counts against the record. That is a mechanical check, not a review. Where they disagree,
+return the candidate to the same child fail-closed rather than fixing it here.
+
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
 only after its required contracts/revisions are verified and available in its
@@ -540,6 +712,37 @@ before reporting or recording the issue complete. Read back the one delivery PR'
 actual merge, intended repository/branch and landing revision. For legacy multi-PR
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
+
+### Reuse the child's evidence while it still applies
+
+A capable child runs its own checks and carries the review on its own pull
+request, so where that evidence still applies the coordinator reads the result
+instead of producing it again. What still applies is already settled elsewhere
+and is not restated here:
+[OPS-9.2](references/operations.md#ops-92-what-normal-completion-means) reuses a
+result only at the same revision, criteria and environment and re-runs it when
+any of the three moved, and [Merge readiness](references/merge-readiness.md)
+refreshes whatever a new head, a changed base or a changed dependency
+invalidated. Inside that, polling a check run the child is already carrying,
+reading again every finding on a hosted review it has resolved, and re-running a
+suite that passed and is still valid are the coordinator doing a level below
+itself. Read the head it reports, the conclusions on that head and its
+per-finding trail, and accept them as the evidence table above defines them.
+
+Acceptance keeps its own work, which was never the child's. Confirm the reported
+head is the head the pull request has now, the base is current and the merge is
+clean, every accepted criterion maps to evidence that still applies at that head,
+and any finding still open is named. A moved head invalidates the reused result,
+and so does a base or a dependency the child never built against: that the base
+is current now is not evidence that its checks ever saw this one, so re-run what
+that change invalidated rather than read the old conclusion again. Where the
+child's evidence is missing, ambiguous, stale or contradicted, or where
+independent review is required and has not happened, get that evidence directly:
+a shorter report is not a reason to pass a criterion nobody verified.
+
+Reuse changes what the coordinator spends, not what the work cost. Report the
+coordinator's own usage and the assignment's total separately, and claim a saving
+only from a measurement that actually compares them.
 
 ## Return corrections to the existing task
 
@@ -619,3 +822,73 @@ progress, review outcome, and the next actionable dependency. Use the host's
 created-task directive when required. State remaining capability gaps plainly.
 This skill does not install a recurring monitor: use the automation tools only
 when ongoing background monitoring is requested.
+
+### Report delivery reach in the final update
+
+The final update above says what the work is; this says how far it got and
+what the user can use. Write the chain from
+[Delivery reach and current usability](../crw-plan/references/integrations.md#delivery-reach-and-current-usability):
+the stages this delivery has evidence for in chain order, any first stage that
+is missing or unobserved, and the two closing lines. A merged pull request
+completes the remote stage; whether anything was installed from it, and whether
+the changed capability has been run since, are separate observations this task
+either made or did not. A verified non-PR result uses the same shape over its
+input baseline, delivered output and observed verification.
+
+Keep it to the stages this delivery touched. An issue that changed only skill
+instructions has no service to activate, and saying that once is shorter than a
+readiness list nobody asked for. An issue whose criteria named installation or
+live operation keeps that stage in the report even when the answer is unverified.
+
+Do not close a gap in order to report it closed. A question about whether
+something is installed or usable is answered from what this task already
+observed; installing, starting a service, or creating a task to find out are
+separate actions under their own authorization, and
+[OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
+path when one is actually authorized.
+
+### Account for the resources this run leaves behind
+
+A later management read should be able to say which checkout and which branch a
+piece of work used, who was answerable for it, and why anything still on disk is
+still there. So the close of a run states that once, in one place: every checkout,
+branch, temporary artifact, evidence root and background process this run created,
+changed, or is deliberately keeping, each with its owner, the reason it is retained,
+and the next action, including who may release it and on what event. It reuses the
+records that already exist and adds no new store: the project's Linear coordination
+record for the human-readable list, or for a standalone issue the existing linked
+coordination document or this task's owned section in that issue, with the private
+receipts keyed by the issue and the actual task IDs carrying raw detail under
+[OPS-5.4](references/operations.md#ops-54-evidence-location).
+
+Write it against what was found at dispatch rather than against whatever is visible
+now, because the comparison is what separates the entries. Pre-existing resources
+this run never touched, what it added, what it is keeping on purpose together with
+the event that releases it, what a failed creation left behind, and what two
+children share are five different answers. Evidence a finished task is deliberately
+retaining and residue nobody has looked at are both still on disk and are not the
+same entry. A resource whose owner cannot be established is recorded as unknown and
+returned as an open question; it does not become this task's by being found by it.
+
+Cleanup is bounded by that ownership. This run may remove its own disposable
+resources where the cleanup authorization column already covers them and their
+readers have exited. Existing dirty work, another task's cache or evidence, original
+data, active worktrees and shared services stay as they are. `reset`, `clean`,
+`stash`, `rebase` and forced deletion are not cleanup here, and an old modification
+time, a scratch-looking name or a full disk is not proof that anything is
+disposable. Keep the three claims apart when reporting: what is proposed for
+cleanup, what was actually deleted, and what capacity that actually returned.
+Proposing is the default, and anything beyond this run's authorized resources is a
+request rather than an action.
+
+Processes get their own line because they outlive the turn that started them. For
+each one this run started, record its working directory, purpose and execution
+handle, and whether it is still running at handoff; report the ones left running
+with their next action. A busy port, a matching command line or a familiar directory
+does not identify an owner, so a process this run cannot claim is reported rather
+than stopped.
+
+The inventory is a record and not an enforcement. It says who is answerable and what
+remains; whether anything is actually prevented from being written or deleted is the
+sandbox's and the filesystem's answer, observed separately. A handoff that reports
+the inventory has done that much and not more.

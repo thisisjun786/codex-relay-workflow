@@ -13,7 +13,7 @@ and the launchers only point at what that installer left behind.
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
-| `plugins/crw/skills/` | The seven skills, one of the two declared components |
+| `plugins/crw/skills/` | The registered skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
@@ -98,6 +98,24 @@ Installing creates no credential. The marketplace entry sets
 `authentication: ON_USE`, so Linear and repository access are checked when a skill
 needs them, and a skill says so and stops when they are missing.
 
+### Before you add or update, on a host that gates the bridge
+
+A host whose `config.toml` gates `create_thread` or `send_message_to_thread` keeps that gate only
+because the package declares the same one. Check the package you are about to install, not the one
+already there:
+
+```sh
+python3 scripts/plugin_transition.py check-declaration --package <candidate>   # exits 1 if it would not preserve
+codex plugin add crw@crw
+python3 scripts/plugin_transition.py check-declaration --package "$CODEX_HOME/plugins/cache/crw/crw/<version>"
+```
+
+Both receipts carry `payloadDigest`. Equal digests are what tie the first verdict to the bytes that
+landed; a mismatch says the package changed between the check and the add. The same two steps apply
+to `codex plugin update`, which is otherwise checked by nothing at the moment it replaces the
+declaration. This is a gate you run: nothing in this repository invokes `codex plugin add`,
+`update` or `remove`. See [approval policy](plugin-transition.md#approval-policy).
+
 ## Turning the wired surfaces on
 
 Installing the package installs the skills, and registers nothing else that works on
@@ -159,7 +177,7 @@ Create the directory under `plugins/crw/skills/` with its `SKILL.md` and
 `agents/openai.yaml`. The manifest lists no skills: the package ships whatever the
 declared path holds at the release revision, and `scripts/ci/plugin.py` derives the
 namespaced names from that revision, so a skill developed in parallel is included
-once its commit is part of that revision. The installer test pins the current seven
+once its commit is part of that revision. The installer test pins the registered
 names as a positive control, so a new skill belongs in that list too. Keep relative
 links between skills pointing at siblings under the same parent; the cache preserves
 that layout.
@@ -203,3 +221,22 @@ A passing check is evidence about this source. It is not evidence that a plugin
 installed, that a skill loaded on any host, or that a running workflow changed.
 Those need their own observation of `codex plugin list`, `codex debug prompt-input`
 and the behavior itself.
+
+### Declared approval policy
+
+`wiring/mcp.json` may gate individual tools of a declared server:
+
+    "tools": { "create_thread": { "approval_mode": "approve" } }
+
+`scripts/ci/plugin.py` checks it, and it is the only signal a mistake here ever produces. Measured:
+an invalid `approval_mode` in a plugin declaration makes `codex plugin add` exit 0 and
+`codex mcp list` exit 0 with **zero** entries. The server disappears and no `disabled_reason` is
+recorded, because there is no entry left to carry one. The same mistake in a user configuration is
+a loud error naming the valid set.
+
+So the check fails closed: the accepted values are `auto`, `prompt`, `writes` and `approve`,
+measured from the host's own rejection text; `approval_mode` is the only key allowed inside a tool
+gate; an empty `tools` object is refused because nothing measured says what a host does with one;
+and `codex-thread-bridge` must keep gating `create_thread` and `send_message_to_thread` with
+`approve`, because that gate is what the user configuration hands over when the transition removes
+its table. See [approval policy](plugin-transition.md#approval-policy).

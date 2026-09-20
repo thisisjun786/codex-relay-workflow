@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-status`, `crw-check`, `crw-logic`, and `crw-tidy`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Skill names under each installation
 
@@ -131,11 +131,12 @@ Load the existing owner for the requested operation:
 | Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
-| Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
+| Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
+| Create/restore the project parent's native goal, which the role policy makes the default | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+| Find records that fall short of the agreed authoring rules and supplement the clear gaps | [crw-tidy](../../crw-tidy/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
@@ -216,6 +217,130 @@ through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
 do not silently split, close, or reassign live issues. Editing these instructions
 does not migrate existing work or alter the relay's runtime contracts.
 
+### Schedule baseline contract
+
+A recorded schedule creates facts that later operations read back: what a result was first
+expected by, what it is expected by now, what actually happened, and what it waits on. Those
+facts already live on Linear items and in the records around them, so this section fixes their
+names, their sources and the checks over them rather than adding a second place to keep them.
+Nothing here computes a date: there is no schedule database and no scheduler in this model.
+`crw-plan` records these fields when a plan write is authorized, and any operation that later
+compares progress with the plan, including [crw-check](../../crw-check/SKILL.md) and the
+interim status reporting that consumes the same comparison, reads them under these names. A
+record uses the field names as written here, and the value words below are fixed, because two
+operations that paraphrase them stop agreeing about the same item.
+
+| Field | What it holds, and where it is read from |
+| --- | --- |
+| Subject | The stable Linear ID and URL of one project, milestone or issue. A title, a branch or a checkout is not a subject. |
+| Schedule baseline | The target date that the earliest record established for this subject, including the record a plan write creates at the moment it sets that subject's first target. It is `unconfirmed` only where a target already exists and no record establishing it can be found, and it is never filled in from the item's current date field or its creation time. |
+| Baseline record | The record that set the schedule baseline, with its own timestamp: the identified project or initiative update, the planning record, or a dated decision comment. For a first target it is the dated record written alongside that target; for an older target whose establishing record cannot be found, its absence is what makes the schedule baseline `unconfirmed`. |
+| Planned start | The date the subject is scheduled to begin, where the item carries one, which today is the project's own start date. It is a plan rather than an observation, so it never stands in for an actual start, and moving it follows the same change rule as a target. |
+| Current target | The date the item carries now: the project's own target date, the milestone's target date, or the issue's due date. |
+| Timezone | The IANA zone the dates were read and written in, stated rather than assumed. These targets are calendar dates, so a target means the end of that day in this zone and an evidence timestamp is compared in it. |
+| Target nature | One of `confirmed`, `provisional`, `undetermined` or `awaiting authority`, recorded in the subject's own description because no Linear field carries it. |
+| Actual start and finish | The real dates the work began and ended, each with the evidence that establishes it, and empty where no evidence does. |
+| Change source | For the most recent change: its time, whose decision it was, the reason, the scope it covered including the stable IDs added and canceled with it, and the before and after dates, written into the record's own text. |
+| Prerequisites | The subjects this one requires, each with the level it is recorded at, issue, milestone or project, and the relation or record line that carries it. |
+| Delivery evidence | The same-class delivery records the item's target was last read from: their stable IDs and the times bounding each one, from assignment to the result that finished it, through the pull request and its review where that work had one and to the acceptance of its agreed artifact where it did not. It is `no sample` where no comparable record existed at that reading, and it holds those records rather than any figure derived from them. A change that reads the records again names them in its own entry and becomes the reading this field carries. A change that moves the date without reading them leaves the earlier reading here, and the change source is then what produced the date the item carries now. Records are never rewritten to claim a date they did not set, and `no sample` never stands for a date another source moved. |
+| Wait cause | What the subject waits on now, one of `none`, `prerequisite`, `shared surface`, `review`, `decision` or `host`, named together with the subject, region, pull request, decision or stated constraint it waits on and the observable event that ends it. |
+| Change reason | The word the most recent change's reason opens with, one of `pulled in`, `scope changed`, `blocked`, `critical path` or `authority`. It classifies the change the change source already records and replaces none of its text. |
+
+`confirmed` is a delivery date an authority agreed to. `provisional` is a planning target the plan
+proposed and may move. `undetermined` is an in-scope subject with no target yet. `awaiting authority`
+is a subject whose date needs a decision nobody has made. An actual start date is none of these:
+it is an observed fact about work that began, it never becomes a target, and a subject that has
+started still carries a target nature of its own.
+
+The wait cause words divide the same way. `none` means nothing holds the subject back now, and
+whether it has begun is read from its execution state rather than from this word, so the
+immediately startable batch is the subjects carrying `none` that are not already reported started.
+`prerequisite` names a result this subject cannot finish without, including a whole project an
+authority placed behind another. `shared surface` names a region another subject must change
+first. `review` covers the subject's own delivery waiting on its review, on the checks required of
+it, or on the merge that has not happened. `decision` covers an approval nobody has given, an
+installation sign-off and the user's own stop. `host` covers a stated constraint or a slot the
+plan cannot create. A wait cause describes the subject carrying it and never its predecessor, so a
+subject waiting on a result that is itself in review carries `prerequisite` while that predecessor
+carries `review`; where two words still fit, the cause that must resolve first wins and a tie
+breaks in the order listed here.
+
+The change reason words are fixed in the same way, and each names the cause rather than the
+direction, because the same cause can move a date either way. `scope changed` is a move the
+accepted scope's own change produced, including scope canceled from it, which can bring a date
+forward. `blocked` names a real blocker on the subject itself, and `critical path` a predecessor's
+own recorded move that shifted it. `pulled in` is the earlier move the plan makes after a confirmed
+result. `authority` is a date the deciding authority itself set, in either direction, because an
+authority can bring a deadline forward with no predecessor result behind it. Where more than one
+fits, the first that applies wins, in the order `scope changed`, `blocked`, `critical path`,
+`pulled in`, `authority`, so scope an authority approved reads as `scope changed` and a blocker
+reads as `blocked` on the subject it blocks and as `critical path` on the successors its recorded
+move shifted. Three facts are not change reasons at all: that a checkpoint ran, that the work is
+still unfinished, and that the target is approaching or has passed. A target that moves on one of
+those records a delay it is hiding.
+
+Records disagree, so their precedence is fixed. The item's own date fields are the planned start and
+the current target.
+The most recent record carrying a date change is the change source. The earliest record that
+established a target is the schedule baseline. The subject's description carries its target nature
+and timezone note and nothing that competes with those fields. Each record states its before and
+after dates in its own text, so an operation that cannot see a rendered diff still reads them.
+Where the current target disagrees with the latest change record's after value, the comparison is
+unverified until the two are reconciled; neither side is silently preferred.
+
+A start and a finish take different evidence. An actual finish is evidenced by the landing of the
+delivering pull request under [Implementation Done](#implementation-done), by an explicit user
+statement, or by a dated decision record. An actual start is evidenced only by a record of the work
+beginning: the subject's own start record, an explicit user statement, or a dated decision saying
+when it began. A landing dates the finish and says nothing about the beginning, so it never fills an
+actual start, and an actual start nothing evidences stays empty rather than borrowing the finish. A
+status timestamp that a status correction or a bulk edit produced evidences neither, because it
+records when someone fixed the register rather than when the work happened; where two admissible
+dates disagree the earlier evidenced one stands. A subject already Done or Canceled keeps the dates it
+has and is not given a new target.
+
+A prerequisite is recorded at the level that is actually true. A project-level prerequisite means
+the whole project must finish first. When a result needs only particular outputs, the prerequisite
+belongs on the issues that produce them or on the milestone that groups them, so the remaining
+work in both projects keeps running in parallel. Cross-project prerequisites travel by relation
+under [supervisor, parent and child scope](#supervisor-parent-and-child-scope); one project does
+not absorb another's issues to express a date, and no finish-to-start relation is invented to make
+a chart read better.
+
+Four defects are checked over the resulting graph, and each check reports what it found including
+when it found nothing: a cycle among prerequisites; a prerequisite whose target falls after the
+target of the result that needs it; an issue carrying a milestone's target while sitting outside
+that milestone; and a required prerequisite absent from the graph entirely.
+
+A comparison built on these fields names which datum it measured against, the schedule baseline or
+the current target, and reports both where a reader needs both; measuring against one and
+presenting it as the other is what makes a moved date look like progress. Naming the verdicts that
+comparison reaches belongs to the operation performing it rather than to this contract, so the same
+fields never acquire two meanings.
+
+Two report states are named, because an operation reading the result must classify the same fact
+the same way. `recorded in the data` means the dates, links and relations were written and read
+back. `not applied in the view` means a scale, an ordering or a connection line the connector does
+not expose was left alone. Neither stands for the other.
+
+Reading this contract grants nothing. Recording a schedule stays inside the plan write authority
+the request already carries; a check-only or draft-only request returns these fields as a proposal
+and writes none of them; and a registered date is not an assignment, an execution start, an
+installation or a restart. The Plan-side procedure that builds, checks and records these fields is
+[Schedule and dependency roadmap](scheduling.md).
+
+A consumer judges the result rather than its wording: every in-scope subject has a row or an
+explicit `undetermined`; what was read back equals what was written; running the same request again
+adds no milestone and no second record; a Done or Canceled subject's dates are unchanged; and a
+target date that moved still shows the schedule baseline it moved from together with the change
+source that moved it. Every in-scope subject also carries a wait cause; a target that moved later
+carries one of the extension words with the scope, blocker or predecessor entry it names; a target
+that moved at all carries the word for what moved it, whichever direction it went, naming the scope
+change, the blocker, the predecessor's entry, the confirmed result behind a `pulled in`, or the
+authority's own decision; and a schedule whose
+targets were all rewritten from one current date fails whatever the request that produced it was
+called.
+
 ### Supervisor, parent and child scope
 
 Execution runs at three levels, and each level is one Codex task bound to one Linear level by
@@ -258,6 +383,9 @@ the revision it read, the reason, the smallest sufficient change and its evidenc
 which decides and writes. A supervisor's authority to write that record comes from its own
 assignment exactly as a parent's does; the binding identifies the scope and grants nothing.
 Accepted design text is preserved rather than rewritten.
+The same boundary holds for every other sub-task an owner opens and for every route a write could
+take; what a returned proposal carries, and what the owner does with it, are in
+[record writes and returned proposals](#record-writes-and-returned-proposals).
 
 Bind a supervisor by stable initiative ID, the parent by stable project ID and each child by its
 issue ID. An initiative spanning projects may have one execution supervisor; it never becomes a
@@ -291,6 +419,47 @@ completion boundary and the reuse of the parents already running are in
 Start policy, creation authority and the limits that survive them stay where they
 already are in [crw-run](../../crw-run/SKILL.md#independent-implementation-tasks), and this section
 references them rather than keeping a second copy.
+
+### Record writes and returned proposals
+
+A Linear write belongs to the task whose own record it is, under
+[supervisor, parent and child scope](#supervisor-parent-and-child-scope), and that holds for every
+sub-task an owner opens rather than for a registered child alone. A planning sub-task drafting a
+specification, an implementation child, a review or audit helper and an internal helper agent all
+reach the same boundary: they read what their assignment allows, and they create, edit and delete
+nothing there, no document, no issue field, no comment, no relation and no status. Whether a relay
+holds the assignment decides where a receipt goes, not who writes.
+
+What a sub-task returns instead is the document or issue ID, the revision or updated-at it read,
+why the change is needed, the smallest change that would do, and links to the evidence and
+artifacts behind it. A local draft of the proposed wording is useful and is still a draft: it is
+reported as a proposal waiting on its owner, never as applied in Linear, and a file, a branch or a
+message holding that text somewhere else is the same draft.
+
+Exposure is not authorization. Linear write tools appearing in a sub-task's profile, a broad
+permission profile, and an assignment naming the very document it is about are none of them a
+grant, and an owner's authority over its own record does not travel to a sub-task with the work:
+authority comes from the assignment, never from the reachable surface. Nor is there a route around
+it, since another connector, a script, a CLI, a scheduled job or the sub-task's own helper agent
+writing on its behalf is the same write. An explicit later instruction from the user is decided on
+its own terms, for the records it names.
+
+The owner that receives a proposal reads the record as it stands now before applying anything. The
+proposal names the revision it was built on, so a record that moved since is reconciled against
+the evidence rather than overwritten: the parts that still hold are applied, and a part another
+actor has already changed or contradicted is raised instead of being reverted. Apply only what
+this assignment's own authority covers, preserve unrelated fields, history and other people's
+edits under [Linear holds canonical documents](#linear-holds-canonical-documents), and read the
+result back before reporting it, as
+[Use the available Linear capability](#use-the-available-linear-capability) requires. A write the
+assignment already authorizes is simply made, not sent back to the user for an approval already
+given.
+
+A write that fails or returns an ambiguous result stays with that owner: read the current state,
+record what happened, and retry the write itself. It is never a reason to re-run the sub-task's
+completed implementation or verification, which is finished work at a revision the failed write
+never touched. Until a readback confirms it, the record is reported as unwritten with its proposal
+still open.
 
 ### Direct coordination between parents
 
@@ -468,14 +637,15 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations at the level the task is bound to, including initiative supervision through project parents, `crw-loop` owns the project parent's native goal and automatic repetition, `crw-status` reports the current situation and its schedule verdict without choosing an action or auditing criteria, `crw-check` compares delivery with intent, `crw-logic` investigates contradictions, and `crw-tidy` supplements records that fall short of the rules already agreed. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
 is a scheduling unit; only an explicit narrower request limits delivery to that batch.
 [crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
 and automatic host continuation to the same Run execution and scope. Run alone does
-not create a parent goal or promise future wake-ups. Run inside Loop returns to the
+not establish the parent goal or promise future wake-ups; the goal is the role default and
+`crw-loop` establishes it. Run inside Loop returns to the
 existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
 implementation phases are not completion conditions. Children keep their own CXC
@@ -520,6 +690,20 @@ The coordinator applies the effective settings through the creation tool's real 
 - A user correction to model, effort, or workflow adjusts the same task where the transport supports it, and is reported otherwise, keeping stable IDs, unchanged permissions, and preserved progress, reconciled before any resend.
 - The effective workflow is restated in every later send to that task, not only in the first one. A transport carries model and effort as settings it can check and has no field for the workflow, so a correction or a resume that omits it drops the one setting nothing else restores. Long work, a compaction, and a mid-work instruction each put distance between the original prompt and the task acting on it, and the restatement is what closes that distance. [Task packet](../../crw-run/references/task-packet.md#restoration-block) holds what travels with it.
 
+The first full assignment is checked against [First full assignment required fields](../../crw-run/references/task-packet.md#first-full-assignment-required-fields) before it is sent: the effective workflow with the skills to apply, the issue scope, the verification boundary, the handoff and completion boundary, and the model and effort. They travel in that first request and add no preparation turn before the work. Where a workflow with its own goal and state is effective, the child's first execution also leaves and reports its activation evidence, rather than that evidence appearing only in the final return.
+
+Judge a dispatch on four separate facts rather than one: the instruction the child actually received for this dispatch, the settings the dispatching call requested, the settings the receipt returned at the scope it claims them, and whether the child's own goal and goalplan state show the effective workflow running. Each can hold while the next fails. The served model being the defaulted one, an active native goal, or the skill named in the prompt is not evidence of the last, and a single reading of a child still inside its first turn is not evidence against it. [Dispatch verification](../../crw-run/references/dispatch-verification.md) holds the judgment cases, the classes a missing loop falls into, and the authorized exceptions that are not defects.
+
+### Default parent start policy
+
+A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars the goal without authorizing goal-free Run and leaves unresolved activation `blocked`, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
+
+That number is the value chosen in one 2026-09-18 run and carried forward as the standing default. It is not a measurement of what this or any host supports, and [OPS-8.4](../../crw-run/references/operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs what may be claimed about scale, so a run that needs a different number states its own and records why. The default binds this parent's own children and is not a host-global limit: several parents share one operating scope under [OPS-3.1](../../crw-run/references/operations.md#ops-31-the-operating-scope-is-the-sharing-unit), each counts only its own children while what the others are running informs the observation that can lower the number, and nothing interlocks them.
+
+The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent creates or reuses its own goal for the approved project scope, without a CXC goalplan or FSM, its continuation being a bounded Stop nudge rather than a durable loop; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default replaced the earlier arrangement in which a parent ran goal-free unless a Loop was separately requested; an explicit user no-goal limit is separate and still wins. [Start policy](../../crw-run/references/start-policy.md) owns the role table, what the start adjudication records, and the compatibility and evidence rules.
+
+A value this precedence settles is applied without asking. A value it does not settle is a new decision, asked before anything is created rather than after. [Start policy](../../crw-run/references/start-policy.md) owns the recorded fields, the scope each decision carries, when a recorded decision is re-read instead of re-decided, and what bounds the number actually dispatched.
+
 ### Publish for review when the work is reviewable
 
 This applies where the assignment's scope expressly covers publication. Where it does not, the delivery is local commits or a frozen diff and the question of draft never arises; lacking publication authorization is a reason not to publish, not a reason to publish as a draft.
@@ -545,6 +729,24 @@ Jun authorizes a pull request workflow in which the implementation child carries
 The coordinator then checks the Linear criteria and the pull request's latest diff, base, head, checks, and review resolution, and merges without another confirmation round when those hold. This is standing user authorization for this workflow, not permission inferred from passing checks, and it supersedes the earlier recommendation that the coordinator avoid merging. Use [Merge readiness](../../crw-run/references/merge-readiness.md) for the gate detail, preserve unrelated work and branch protections, resolve routine in-scope failures and recheck, then verify the actual landing rather than an accepted merge request. An explicit diff-only, no-merge, or narrower instruction still overrides this default, and the child never merges.
 
 Release and deployment are not covered and still require the user. Where merging a branch is known to trigger a release or a deployment, obtain that approval before merging, since the branch name alone does not carry it. A repository requirement that genuinely needs a new decision remains a blocker for that action.
+
+### Whether a relay holds this assignment
+
+Every relay rule in this workflow is written as a condition — "where a relay holds the assignment" — and for a long time nothing said how that is decided. An undecided condition does not read as false; it reads as nothing, so the question was never asked and execution stayed on direct send and steer by default. There are two answers here and no third. Managed start and managed resume decide which one applies, and record the decision.
+
+A relay holds this assignment when all three hold together: the packet's relay block names a shared state directory this process actually resolved; the issue lookup in that directory returns a responsible relationship; and the reading came from the store this process measured rather than some other file at the same path. One command answers all three, because the order between them used to be the hazard rather than the answer: `codex-session-relay --state "$RELAY_STATE" doctor --issue <the exact issue identity>` reports `issue.holds`, the responsible child and relationship, and `issue.storeAgreement`. Act on it only where that agreement reads `same`. Before registration has landed the assignment is still relay-managed if the state directory is agreed and the declared intent names that store; `assignment-find --issue` carries the same provenance under `relay.store` for the same comparison.
+
+Treat a lookup that cannot name its own store as no answer at all. Run the lookup first against a mistyped state directory and it creates an empty store, then truthfully reports that nothing is assigned — and a coordinator that believes it opens a second writer for an issue that already has an owner. That is why the answer carries the store it came from and why a disagreeing store is refused rather than reported beside a usable result.
+
+Where the determination says no relay holds it, that is a decision and it is recorded with its reason: the state directory is not writable, no socket is configured or reachable, or this assignment is deliberately direct. Record it in the same coordination record that holds the rest of the assignment, with the mode, the resolved state directory and socket, the store identity the reading reported, the delivery owner, and what availability was actually measured rather than assumed. A resume reads that record back before acting, so the mode survives the coordinator's own context loss.
+
+Three things this must never become. An unavailable relay is never recorded as deliverable, because a receipt nobody can deliver is not progress that a parent may claim. An unavailable relay is never a silent fallback either: direct is chosen and written down, never arrived at by a command that failed quietly. And direct send and steer remain a transport and nothing more — a delivered instruction is not a receipt, an acknowledgement or a verdict, so a direct send is never counted as relay completion evidence, and the same logical instruction never travels both routes at once.
+
+Ordinary conversation is not managed transport. What the relay carries is the assignment's own traffic: the completion receipt, the acknowledgement, the verdict, and the revision request a needs-changes verdict queues. A question to a peer parent, a status answer, a clarification are peer conversation and stay on the ordinary path; forcing them through an assignment event would file conversation as delivery and make the record useless for the thing it exists to prove.
+
+Relay resume and native-goal continuation are different mechanisms and take different proof, and the word "resume" covers both, which is how they get confused. A relay resume is about an assignment: undelivered messages, an unsettled attempt, a generation waiting on its anchor, all recovered from the store. A native goal continuing is about a task deciding to keep working across turns. Neither establishes the other. A recovered assignment says nothing about whether the coordinator's goal is still active, and an active goal is not evidence that a queued correction ever reached the child. Record and prove them separately, and name which one a report is about.
+
+Existing work is not migrated by this. A project already running direct keeps its records, its owners and its pull requests, and switches only at a boundary where switching is safe and explicit. Reporting that current execution is still direct is part of the record, not something the determination hides.
 
 ### Durable cross-task delivery
 
@@ -598,3 +800,17 @@ Pass Linear IDs/links, embedded criteria, repository/revision identity, accepted
 Keep raw launch receipts and sensitive test evidence in established private locations; put only the necessary coordination summary in the canonical Linear document. If record-writing is outside the request or access is unavailable, return an unsynced update for the owner. Installed skills hold procedures, never project state or credentials.
 
 In final reports, mention checks that changed the conclusion and meaningful unavailable evidence. Avoid a ceremonial list of every skill.
+
+### Delivery reach and current usability
+
+A delivery report answers two questions no status word answers: how far this change actually got, and what the reader can use right now. Report the reach as an ordered chain — the source revision, the local commit, the remote branch, the installed link or version, and an observed run of the changed capability — and carry only the links this delivery actually involves. A delivery with no repository target uses the same shape over its own artifacts: the input baseline, the delivered output revision or digest, and the verification actually observed. Where one report covers several independently delivered artifacts or repositories, each gets its own chain, because one artifact's gap says nothing about another's.
+
+Choose the stages from what happened rather than from the chain's full length. Walk the chain in order, naming each stage this delivery has evidence for and, where one exists, the first stage that is missing or was never observed, saying which of the two it is. A delivery with no gap has no such stage to name. The stages are independent: never infer a later one from an earlier one, and never drop an observed later stage because an earlier one is absent, since a commit that was never pushed can still be live through a link resolving to that checkout. A stage this change cannot have, such as an installation surface it never touches, is left out rather than reported as passing, and a stage the issue's own criteria require is always named, as unverified when nothing was observed. A report that lists every stage every time trains its reader to skip the one that matters.
+
+Changing source, installing it, and refreshing an already-loaded conversation are three events, and the installation method decides what the third one costs. A linked installation resolves each skill through a symlink, so an edit is visible to the next read of that file, no reinstall is involved, and a conversation that already read the old text keeps it until the file is read again or a new task starts. A versioned plugin installation resolves a cached copy of a published version, so an edit reaches nobody until the version is bumped and installed again, and a session already running keeps the package it started with. Report the method actually observed and what the reader must do under it; where it was not checked, say so instead of assuming a linked installation. Reading a link's own target is what establishes which checkout an installed skill resolves to.
+
+Usable now is a claim about a representative user path, run through the installed entry point, with the time and environment of the most recent such run attached. Passing checks, a listed hook, an accepted delivery and a completed issue each establish only themselves. [OPS-6.1](../../crw-run/references/operations.md#ops-61-six-states-that-never-imply-one-another) already records which states never imply one another, and [OPS-11.3](../../crw-run/references/operations.md#ops-113-four-stages-that-are-not-one-event) separates a landed source change from what a host installs and executes. Use those meanings rather than restating them here.
+
+Where the run happened in a test store or a scratch path, or where an always-on process is currently stopped, the demonstration and the operating state are separate lines: what was demonstrated, in which environment, at what time; and whether the real path is serving now. Report readiness from what was observed, since a service seen stopped is not ready and that is a result rather than a gap, and reserve unverified for the part nobody read, naming the observation that would settle it. That unverified is this report's own conclusion about evidence it lacks, not the field value an installation check carries; [OPS-6.2](../../crw-run/references/operations.md#ops-62-record-shape) owns those values and the rule for a measurement time nobody made.
+
+Close with two short lines — whether the reader has to do anything, and the shortest next step to use or verify the change — and answer any question about installation, activation or availability from evidence already held rather than by going to get it, because a reinstall, a service start and a new task each keep their own authorization.

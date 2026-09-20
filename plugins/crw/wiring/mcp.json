@@ -6,7 +6,11 @@
         "./wiring/crw_bridge_mcp.py"
       ],
       "cwd": ".",
-      "required": false
+      "required": false,
+      "tools": {
+        "create_thread": { "approval_mode": "approve" },
+        "send_message_to_thread": { "approval_mode": "approve" }
+      }
     }
   }
 }

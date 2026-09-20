@@ -85,6 +85,13 @@ Context:
   generation only where the assignment is already registered, since a newly created
   child's registration needs the task id creation has not returned yet and resolves its
   own relationship by issue lookup]
+- Determined execution mode: [relay-managed or explicitly direct, with the reason where it is
+  direct; the resolved state directory and socket; the store identity the determination's own
+  reading reported; the delivery owner; and what availability was measured rather than assumed.
+  Determined at managed start or resume per
+  [Determine the execution mode](../SKILL.md#determine-the-execution-mode). Carried here because
+  a child that is told only the state directory cannot tell an agreed direct assignment from a
+  relay one nobody decided about, and those two call for different behaviour on completion]
 - Canonical criteria, when registered: [criterion ids and the document they came from]
 - Canonical Linear documents: [IDs/URLs and observed revision/date]
 
@@ -95,7 +102,48 @@ Authorized execution:
   a frozen diff. Publication is never inferred from the delivery line alone]
 - External actions: [actions covered by the assignment and shared defaults, with any narrower user limits]
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
+- Operations clauses carried to this child: [OPS-5.5 and OPS-9 from
+  [Operations contract](operations.md), cited by id where this child can read this
+  repository and quoted in full where it cannot. Carry the clause text rather than a
+  summary of it: a quotation can be diffed against its source and regenerated when the
+  clause moves, and it is the paraphrase that drifts unnoticed. A packet carrying neither
+  sends the child the previous workflow]
 - Runtime/test data access: [agreed sources and operational limits]
+
+Workspace ownership:
+- Existing resources at dispatch: [everything already present, each entry labelled as already
+  owned by this assignment or owned elsewhere, since predating the run and belonging to it are
+  separate facts and a resume already owns some of what it finds: the worktrees, branches and
+  current writers for this repository with their dirty/untracked state, and the temporary
+  artifacts, evidence roots, shared originals and running processes already present at the
+  locations you are assigned. Do not adopt what is labelled owned elsewhere; a convention path
+  matching your task's name is not evidence that it is your path. This is the baseline the
+  close delta below is measured against, so anything missing from it reads afterwards as
+  something this run created]
+- Your resources: [the checkout, branch and evidence root this assignment owns, with the
+  OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
+  cleanup authorization, `none automatic` where no cleanup is authorized. For a child this
+  call is creating, name the editing owner by the management marker this launch was issued
+  under, since the native task id does not exist until creation returns it; the coordinator
+  binds that marker to the id from the creation receipt and reads the record back, and
+  ownership is established there rather than by this line]
+- Write capability: [first what the coordinator measured on the paths themselves, which does
+  not depend on this task existing yet: the checkout, its resolved git metadata
+  (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the evidence
+  root, with any OS permission, read-only mount or live writer found on them. Then the profile
+  this task is being created with and the paths it is meant to reach, which its creation receipt
+  confirms rather than this packet, and the recorded OPS-5.3 fallback where it will not reach
+  them. A refused write is answered on this same checkout, by clearing a refusal a supported
+  route can clear or by that recorded fallback where the refusal is this task's own profile,
+  never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or reset/stash]
+- Capacity and large artifacts: [the destination volume to check before a large clone,
+  install, build or download, and the permitted shared read-only originals, per-task
+  temporary paths and other volumes to use instead of copying a large original in here]
+- Resource delta to report at close: [measured against the baseline above, what this task
+  created, changed, retained, shared or cleaned, each with its owner, release condition and
+  next action; the working directory, purpose, handle and running state of any process it
+  started; and any capacity actually reclaimed, kept apart from what was only proposed.
+  Only this task can see the temporary paths and processes it makes during execution]
 
 Outcome and scope:
 [User-visible behavior, acceptance criteria, intended edit surfaces]
@@ -124,6 +172,17 @@ Execution:
   invalidated by the change. Apply the [disabled reviewer policy](merge-readiness.md#disabled-reviewer-policy)
   before requesting or waiting for a review. Ready is review entry, not merge permission. See
   [Publish for review when the work is reviewable](../../crw-plan/references/integrations.md#publish-for-review-when-the-work-is-reviewable).
+- Finishing the review is part of finishing the work. Read every applicable review to the
+  end of its pagination on the CURRENT head, judge each finding against the code, fix what
+  needs fixing, reply where a finding does not apply and say why, and recheck. Then state
+  that result rather than summarising it: a handoff record naming the pull request, the head
+  it is about, the base you verified, the check runs by id and attempt, the review coverage
+  you actually read, and a judged disposition for every thread you saw. Resolving a thread is
+  a button; `fixed`, `not_applicable`, `duplicate`, `already_resolved` and `disputed` are
+  judgments, and `fixed` names the commit that did it. If a required check has not passed or
+  a mandatory review has not finished, that is BLOCKED and is reported as blocked. Do not
+  report completion with a note about what is still open, because the note is what gets
+  skimmed past.
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
@@ -204,11 +263,65 @@ Return:
 - For a pull request: URL, base and head SHAs, `isDraft`, the review receipts for the
   current head, and any unresolved finding. Record the relay receipt's own outcome
   separately; `ready_for_review` there is not `isDraft=false` here.
+- Merge-readiness handoff, for a pull request you are handing over: the repository and pull
+  request number, the head all of this evidence is about, the base you verified and when,
+  the check names this branch declares required, the check runs as
+  `{runId, name, headSha, conclusion, attempt}`, the review coverage as
+  `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, a judged disposition with
+  evidence for every thread in `threadsSeen`, your per-criterion evidence, and the
+  limitations that remain. State every field: an absent one used to read as satisfied, so a
+  record that said nothing passed every check. The parent restates these values immediately
+  before merging rather than collecting them again, which is why they are yours to produce.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 - Proposed changes to a Linear record, returned rather than written: the document or issue ID,
   the revision you read, the reason, the smallest sufficient change and its evidence.
 Stop after this assigned result; do not auto-start another issue.
 ```
+
+The workspace-ownership fields are dispatch observations rather than a grant: what constrains
+a write is the sandbox, the permission profile and the filesystem, so a field naming a path
+the child cannot write is a mismatch to reconcile on that task before the work starts, not
+something for the child to work around. The check that produces them is
+[Check who already owns the workspace](../SKILL.md#check-who-already-owns-the-workspace),
+and what the run leaves behind is accounted for by
+[Account for the resources this run leaves behind](../SKILL.md#account-for-the-resources-this-run-leaves-behind).
+
+### First full assignment required fields
+
+The fields below are defined above; this is the check that the first full assignment
+actually carries them, because it is the request that starts the work and a later message
+cannot retroactively be the one the child started from. Each line names where the field
+is already specified rather than restating it, giving the [Non-PR packet](#non-pr-packet)
+field in brackets where that reduced shape names it differently.
+
+- Effective workflow and the skills to apply — the Loop and non-Loop branches under
+  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where CXC Loop is effective the
+  packet carries the literal installed-skill invocation and names the applicable surface
+  skills; naming the skills descriptively is not the invocation. Where an explicit
+  non-Loop or no-goal alternative is effective, that workflow is named in its place.
+- Issue scope — `Issue/PR mapping:` and `Outcome and scope:` [`Scope:` with its
+  `Input baseline:`], including the exclusions.
+- Verification boundary — `Verification:`, covering what this child verifies itself and
+  what it does not.
+- Handoff and completion boundary — the delivery contract under `Authorized execution:`
+  and the `Return:` block [`Scope:` write authority and `Return:`]: what finishing means
+  here, what the coordinator owns after it.
+- Model and effort — `Effective model/effort:` [`Workflow/settings:`], applied through
+  the creation tool's real arguments and read back from the receipt.
+
+One obligation is new rather than a restatement. Where a workflow with its own goal and
+state is effective, the child's first execution leaves its own activation evidence and
+reports it, instead of the goal and goalplan identifiers surfacing only in the final
+`Return:`. A loop that never armed is otherwise discovered when the work is over, or not
+at all, and by then the same reading cannot distinguish a child that never armed from one
+that armed and lost it.
+
+None of this adds a turn. These travel in the same first request as the work and the child
+starts the assigned work from it; a separate turn that collects a readiness report before
+the body is the removed handshake rather than a check, and a capability the creation path
+cannot apply is settled before the task exists instead.
+[Dispatch verification](dispatch-verification.md) holds what each field establishes, what
+it does not, and the classes a missing loop falls into.
 
 ## Non-PR packet
 
@@ -226,6 +339,18 @@ Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
 Workflow/settings: [effective workflow, model/effort and actual permission profile]
 Working location: [permitted cwd/artifact roots; no invented Git repository]
+Workspace ownership: [what is already present at that working location and those artifact
+  roots, each entry labelled as already owned by this assignment or owned elsewhere, since
+  predating the run and belonging to it are separate facts: the temporary artifacts, evidence
+  roots, shared originals and running processes there. Do not adopt what is owned elsewhere.
+  Then this task's own working directory and artifact roots, each with the owners OPS-5.1
+  requires on this path: creator, editing owner, retention owner and cleanup authorization,
+  `none automatic` where no cleanup is authorized. Git metadata ownership is inapplicable
+  here, and so are checkout and branch ownership]
+Resource delta to report at close: [measured against that baseline, what this task created,
+  changed, retained, shared or cleaned, each with its owner, release condition and next action;
+  the working directory, purpose, handle and running state of any process it started; and any
+  capacity actually reclaimed, kept apart from what was only proposed]
 Verification: [observable acceptance criteria and independent evidence needed]
 Return: [actual task ID, result link plus delivered revision/updated-at evidence,
   or durable artifact locator plus digest; verified output snapshot if needed;
@@ -283,6 +408,11 @@ Authority: [the designation and its date, the limits in force, child-creation au
   designation carries them]
 Current state: [locators only: the project's coordination record, its live children, its open
   pull requests, and any outcome already verified]
+Retained resources: [locators and ownership for the checkouts, branches, evidence roots,
+  temporary artifacts and running processes this project's work is keeping, each with its owner,
+  the reason it is retained and the next action. Locators only, as above: the coordination record
+  holds the detail. A resource whose owner this supervisor could not establish is named as
+  unknown rather than assigned to this parent]
 Report back: [a result or blocked coordination message carrying the outcome, the evidence per
   criterion, the unresolved problems and the decisions needed. Detailed logs stay where they are]
 Workflow: [the parent's effective workflow, restated because no transport carries it]
@@ -462,6 +592,41 @@ Next: A, to report its landing. Until then this is conditional and is not applie
 The record of what happened next belongs in the coordination record below, not in another message:
 B's parent instructing its own child, that child's change, and the verification are three further
 facts, and none of them follows from this reply.
+
+### What a result returns
+
+A `result` says what now holds and where to check it, and it stays short because the receiver
+reads the records itself. Five values are what the next decision needs, and the template above
+already has a place for each. The **result**, a line or two of what is true now that was not
+before, and the **artifacts** at the revision they are at, a pull request with its head or a
+locator with its digest, go in `Scope` and `Asking`. The **per-criterion verification** goes in
+`Because` as the disposition each accepted criterion already carries and the record holding it,
+named as a claim the receiver corroborates against that record rather than as a verdict this
+message issues. The **unresolved problems**, a failure, a missing observation or a conflict with
+another scope, go in `Asking` beside the result. The **decisions the receiver owns** go in `Next`,
+and a proposed Linear record change is one of them: it travels under
+[record writes and returned proposals](../../crw-plan/references/integrations.md#record-writes-and-returned-proposals)
+and the sender has not applied it.
+
+The detail behind those values stays where it already is. A child returns its issue-level delivery
+in the launch packet's return list above, and this shape is what its parent condenses when the
+result travels a level up. A receiver accepting a result reads the records it names rather than
+repeating the investigation or verification behind them at the same revision and criteria set, and
+reads further exactly where a criterion is unmet, an artifact has moved, or the evidence it needs
+is not there. Condensing never costs an accepted criterion or the independent review behind one: a
+result short enough to hide an unmet criterion is raised rather than accepted.
+
+```text
+Request: shared-surface-1-r2
+Reply to: shared-surface-1
+Kind: result
+From / To: parent of project A, task 01a0...a1; to parent of project B, task 01a0...b7
+Scope: A's CRW-127 landed in dev at 3f9a1c2; same two issues and the same shared surface
+Asking: nothing to decide. OPS-8 is untouched as agreed, and one criterion is unverified because
+  installation was never observed
+Because: CRW-127's per-criterion record, and PR #142's checks on the head that landed
+Next: B, whose condition is now met, to open its own review
+```
 
 ## Restoration block
 

@@ -42,6 +42,78 @@ state directory under the user state home and could not connect to the App Serve
 which is why the split below existed there. Reuse that as a recorded observation, not as a rule
 that holds everywhere.
 
+## Determine whether this store holds the assignment
+
+    codex-session-relay --state "$RELAY_STATE" doctor --issue <the exact issue identity>
+
+Adds an `issue` block to the doctor report: `holds`, `responsibleChild`,
+`responsibleRelationship`, the `storeId` the rows actually came from, and `storeAgreement`.
+
+It exists because the proof was a conjunction split across two commands with nothing ordering
+them. `doctor` said which store this process reached; `assignment-find` said who owns the issue;
+and running the second one first against a mistyped state directory CREATES an empty store, which
+then answers "no assignment" perfectly honestly. A coordinator that believes that answer opens a
+second writer for an issue that already has one. Asking both halves of one read-only connection is
+what removes the gap, because a single read cannot disagree with itself about which file it read.
+
+`storeAgreement` compares the store id returned by that read, and the device and inode the read
+itself measured, against what the probe measured. `same` is the only value to act on. `changed`
+means the rows came from a file this process did not measure, and it returns `holds: null` and
+exits 2 rather than reporting a relationship you would then adopt out of an unverified store.
+`unknown` means one side could not be established. None of this is proof of store identity on its
+own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
+`--expect-nonce` still exist and still refuse anything short of `proven`.
+
+`unknown` is refused the same way `changed` is, whenever the database WAS readable: a caller that
+asked whether these rows came from its store and got no proof must not read exit 0 as yes, which
+is the rule the `--expect-*` comparison already applies one level up. An unreadable database is a
+different answer rather than a weaker one — there is no relay here to agree with — so it keeps
+exit 0, and determining before anything exists is not an error.
+
+`holds: false` before registration is the expected reading, not a verdict that this assignment is
+direct. Registration needs the task id creation returns, so at managed start there is genuinely
+no relationship yet. What establishes relay-managed mode at that point is the agreed state
+directory plus the declared intent naming that store, which `intent-show` reads back; `holds`
+becomes true at step 6, once registration has landed. Treating step 1's `false` as "no relay" is
+the misreading that keeps execution on the direct path, and it is why the determination is
+recorded rather than re-derived from a single lookup.
+
+An unreadable database answers `readable: false` and `holds: null`, never `holds: false`. Those
+are different answers and only one of them is safe to act on. Like the rest of `doctor`, this
+constructs no store: it reads through the probe's own read-only connection, so a diagnosis cannot
+create the database it was asked to look at, and a rename during the read returns no rows rather
+than rows attributed to the wrong file.
+
+`assignment-find --issue` carries the same provenance under `relay`: `holds`, and a `store`
+block with `storeId`, `dbPath`, `realPath`, `device`, `inode` and `recordedSocket`.
+`recordedSocket` is the socket the store recorded when it was created, first write wins, and
+deliberately not the socket this process resolved — so a participant pointing somewhere else can
+see the two disagree instead of the later one quietly winning.
+
+### The managed start sequence
+
+Run in this order. The determination comes FIRST, before anything exists, because that is the
+step whose absence left the question unasked; running the lookup first against the wrong path is
+what creates an empty store and reports a real assignment as absent.
+
+1. `doctor --issue <issue>` — determine. Expect `holds` false or null here.
+2. `intent-declare --dispatch-request-id <id> --issue <issue>` — the management marker, published
+   BEFORE the child exists. `dbPath` is recorded from the resolved `--state`; there is no
+   `--db-path` on this command, only `--no-db-path` to suppress it.
+3. create the child, then `register` with both endpoints and both allowed recipients.
+4. `intent-register --assignment <id> --relationship <rel> --dispatch-request-id <id> --db-path <store>`
+   — join the marker to the relationship registration actually produced.
+5. `criteria-register` — the canonical set, so a later verdict rules on agreed obligations.
+6. `doctor --issue <issue>` again — expect `holds` true, the responsible child, and
+   `storeAgreement` `same`.
+
+`tests/test_managed_execution.py` in the relay package runs exactly this sequence against a real
+store and asserts the chain, so an instruction that stopped producing it fails there. It covers
+managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
+`deliver` needs the socket, so the delivery and correction legs are asserted against a real store
+through the fake host instead. Note that the doc and the test are not yet compared automatically —
+keep them in step by hand when either changes.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
@@ -177,6 +249,17 @@ evidence under an authorized artifact root, including any source and delivered
 document identities. A linked document alone has no manifest and cannot produce
 a `ready_for_review` receipt. Keep the snapshot private when its source is private.
 
+Where the work is a pull request, the work report recorded against that event also carries the
+merge-readiness handoff: the head this evidence is about, the base you verified, the declared
+required check names, the runs as `{runId, name, headSha, conclusion, attempt}`, the review
+coverage as `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, and a judged
+disposition with evidence for every thread in `threadsSeen`. Recording it is refused while the
+review is unenumerated, while anything is unresolved, while a thread seen has no disposition,
+while a declared required check is not successful at its highest attempt on that head, or while
+the pull request is a draft. State every field; an unstated one is refused rather than read as
+zero. If the review is not finished, the turn ends `blocked_needs_input` and says so, which is
+not a lesser outcome than pretending it did.
+
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery
 and a report must not call it one.
@@ -213,6 +296,64 @@ Until one of those runs, a staged receipt is real progress that the parent canno
 child has not failed. This is the split described above: the child emits from the store, a
 host-capable process owns delivery.
 
+## Which children stopped, and whether anyone was told
+
+    codex-session-relay --state "$RELAY_STATE" dispositions-show --project <the project key>
+    codex-session-relay --state "$RELAY_STATE" dispositions-show --relationship <the id>
+
+Read-only, offline, and it constructs no store: a mistyped state directory answers `readable`
+false instead of creating an empty database that then honestly reports nothing. One selector is
+required and the two are exclusive. `--project` answers about live work, so an archived or
+superseded assignment is absent from it. `--relationship` answers about the assignment it names
+whatever its status, and carries that status.
+
+It exists because `assignment-find` and the verification reads answer about `ready_for_review` and
+nothing else. A child that records `blocked_needs_input` is invisible to them, so a coordinator
+reading only those concludes nothing is wrong while a child waits for a person. Use this before
+deciding that a quiet project is a healthy one.
+
+Per child it reports `turnDisposition` over the execution-only outcomes — `blocked_needs_input`,
+`failed`, `interrupted` — with `basis` saying how that was decided: `sole`,
+`latest_of_same_outcome` when several events agree, `contested` when two final dispositions
+disagree, and `none` when this generation holds no execution-only disposition at all. `none` is
+not "the child is fine": read `reviewable` beside it, which counts and lists the reviewable events
+and says `head: not_derived_here`, because which revision a generation stands on is answered by
+`assignment-show` and `revision-head`, not here. `contested` names no winner on purpose.
+
+Per event it reports the `workReport` that separates `BLOCKED` from `UNSAFE` from `NEEDS_HUMAN`.
+All three collapse onto `blocked_needs_input` in the frozen outcome enum, so when
+`workReport.recorded` is false those three cannot be told apart for that event, and nothing infers
+one of them from the outcome.
+
+Delivery is two questions, reported separately, beside the store's own `state`.
+
+| `delivery.observation` | What the records say |
+| --- | --- |
+| `unmeasured` | a final event with no delivery row and no delivery intent. Nothing establishes whether a delivery was ever attempted or even wanted; absence also covers `--no-enqueue` and an event stranded by an old generation, so it is never read as "not delivered" |
+| `refused_pre_queue` | delivery was wanted and refused for a reason that may not last, with its attempts and last error |
+| `not_sent` | the delivery exists and nothing has been sent |
+| `send_uncertain` | a send is in flight or answered unusably, which is not evidence of non-delivery |
+| `stored_not_woken` | left where the recipient reads it with no turn woken |
+| `dispatched` | the transport accepted a send and there is a turn id for it |
+| `superseded` | no longer what the assignment stands on; the state is left alone so reconciliation can still settle it |
+| `not_deliverable:<stage>` | a staged claim, which is real progress and never delivery |
+| `suppressed` | the claim was invalidated, so there is no delivery obligation to measure |
+| `state_unrecognised` / `records_disagree` | the store holds a state this reader has no word for, or rows that cannot coexist. Read it with `status` |
+
+`delivery.recipientObservation` is the other question, and the one to check before concluding a
+parent knows: `observed_host_read` when an acknowledgement rests on an App Server read of the
+recipient's own turn list, `observed_claimed` when an acknowledgement is recorded without that
+read, and `unmeasured` when neither an acknowledgement nor its evidence exists — including behind a
+`dispatched` send, because a dispatch proves the send was accepted and never that anybody read it.
+
+Exit codes differ from `doctor` deliberately. `doctor` keeps exit 0 for an unreadable database
+because determining before anything exists is not an error. This command exits 2 and prints the
+whole payload, because a coordinator asking which children are blocked and checking only the exit
+code must not read an unreadable store as "nobody". A readable store with no matching children
+exits 0 with an empty list, which is a different answer.
+
+For the per-delivery phase of a delivery that exists, and for pending intents across the whole
+store, `status` remains the reader; this command does not restate its vocabulary.
 ## When the assignment is not in the store yet
 
 Registration needs the task id that creation returns, so a child which finishes quickly can reach
@@ -271,6 +412,12 @@ conclude from a Stop event, are decided in
 text afterwards invalidates the review rather than passing it. That review is not lost: see
 [Re-reviewing after the criteria change](#re-reviewing-after-the-criteria-change) for claiming it
 again against the set now in force.
+
+Read the handoff the report carries rather than collecting its contents again. The child has
+already paginated the review and enumerated the check runs, and the values are the ones the merge
+turn expects to be restated. What this side adds is currency: re-read the head and the base
+immediately before merging and compare the counts to the record. A disagreement is a fail-closed
+return to the same child, through the needs-changes verdict below, not a repair made here.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot

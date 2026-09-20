@@ -486,12 +486,24 @@ print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
 # The candidate's schema comes from its own DDL applied to an in-memory database, so nothing is
 # created anywhere and the answer is the schema that relay would actually install. It asks the
 # same question the store side asks, from the same value.
+#
+# The script alone is NOT that schema. Store.__init__ runs it and THEN applies GUARD_INDEXES one
+# at a time, so a store any runtime has opened read-write holds those as well, and a candidate
+# that stopped at the script declared six objects fewer than the runtime installs. Once a host
+# had opened its store even once, storeSchema read NARROWS and the gate refused every promotion
+# after it -- permanently, because the refusal correctly left the store alone, so the next
+# attempt met the same difference. Applied here FROM THE SAME TUPLE rather than from a copy of
+# their SQL, so revising an index cannot drift the declaration and the installation apart again.
+# The in-memory database is fresh, so the rows that can make one of these fail on a live store
+# do not exist here and a failure would be a real defect rather than the tolerated case.
 _CANDIDATE_TABLES_PROGRAM = """
 import json, sqlite3
 from codex_session_relay import store
 
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
+for _name, _statement in store.GUARD_INDEXES:
+    database.execute(_statement)
 rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
 print(json.dumps({"readable": True, "objects": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
@@ -4585,7 +4597,69 @@ def _other_bridge_tables(configuration, name, wanted):
                                                            (wanted or {}).get("bridgeExecutable")))
 
 
-def _mcp_ownership(record_path, owner, configuration, name, wanted):
+def _plugin_declared_servers(codex_home):
+    """The servers an installed plugin package declares here, or None when that is unreadable.
+
+    None is not "none declared". It is the question going unanswered, and this refuses on it the
+    way every other reading in this command does, because registering on an unanswered question is
+    how a second bridge arrives.
+
+    An absent cache directory is a real answer: nothing is installed, so nothing is declared, and
+    the ordinary manual install this command exists for goes on working untouched.
+    """
+    cache = Path(codex_home) / "plugins" / "cache"
+    if not cache.is_dir():
+        return set()
+    declared, unreadable = set(), False
+
+    def _children(directory):
+        # os.scandir rather than glob or iterdir. Those answer a directory they cannot read by
+        # leaving it out, and a package silently skipped here would read as a host where nothing
+        # declares this server -- the one answer that must never be guessed, because guessing it
+        # is what lets the shadowing table land. scandir raises, and the caller turns that into
+        # "not established" rather than into "none".
+        with os.scandir(directory) as entries:
+            return [Path(entry.path) for entry in entries if entry.is_dir()]
+
+    try:
+        versions = sorted(version
+                          for marketplace in _children(cache)
+                          for package in _children(marketplace)
+                          for version in _children(package))
+    except OSError:
+        return None
+    for version in versions:
+        manifest_path = version / ".codex-plugin" / "plugin.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                # Valid JSON is not a manifest. A root that is a list answers .get with an
+                # AttributeError, which the handler below does not catch, so register-mcp
+                # answered internal_error instead of the ownership refusal it promises. A
+                # package this cannot read is unreadable, which refuses, not absent.
+                unreadable = True
+                continue
+            named = manifest.get("mcpServers")
+            if not (isinstance(named, str) and named.strip()):
+                continue
+            relative = named[2:] if text_prefix(named, "./", at="start") else named
+            document = json.loads((version / relative).read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                unreadable = True
+                continue
+            servers = document.get("mcpServers")
+            if not isinstance(servers, dict):
+                unreadable = True
+                continue
+            declared.update(str(server) for server in servers)
+        except (OSError, ValueError):
+            unreadable = True
+    return None if unreadable else declared
+
+
+def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=None):
     """Why this owner may not register the bridge, given what this host already holds.
 
     Two registrations of one server is the failure this prevents, and it is prevented in both
@@ -4623,6 +4697,31 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted):
                     " package already declares it; a configuration entry beside it would run a"
                     " second bridge. Register with --owner " + bridgerecord.OWNER_PLUGIN
                     + ", or remove that record first")
+        # The gap the ownership record alone does not close. That record is what says the plugin
+        # owns this server, and remove --apply retires it while deliberately leaving the plugin
+        # cache and its config entry alone, because codex plugin remove owns those. A run after
+        # that finds no record and a package that still declares the server, and the table this
+        # would append WINS over that declaration -- measured -- so it shadows a gated server
+        # with an ungated one and nothing reports it.
+        #
+        # Refused, not carried. Copying the package's approval fields into a user table would
+        # duplicate a declaration the package owns and leave two writers for one policy; refusing
+        # keeps one writer, which is what the rest of this function is for.
+        if found is None or bridgerecord.owner_of(found) != bridgerecord.OWNER_USER:
+            declared = _plugin_declared_servers(codex_home) if codex_home else set()
+            if declared is None:
+                return ("an installed plugin package under "
+                        + str(Path(codex_home) / "plugins" / "cache") + " could not be read, so"
+                        " whether a package already declares " + repr(name) + " was not"
+                        " established. A table appended beside a declaration wins over it, so"
+                        " this is refused rather than decided on an unanswered question")
+            if name in declared:
+                return ("an installed plugin package already declares " + repr(name) + ", and a "
+                        + bridgerecord.OWNER_USER + "-owned table wins over a plugin declaration,"
+                        " so registering one now would shadow the declared server -- including"
+                        " any per-tool approval policy the package declares for it -- and nothing"
+                        " would report it. Register with --owner " + bridgerecord.OWNER_PLUGIN
+                        + ", or remove that package first")
         if found is not None and not bridgerecord.same_registration(found, wanted):
             # Compared against the whole document, the same comparison the write makes, so this
             # check and that write cannot disagree about what counts as the same record. A
@@ -4740,7 +4839,8 @@ def _register_mcp_owned(args, codex_home):
               "note": "nothing was written: this run could not say what record would name the"
                       " owner of the registration it was about to make"})
         return EXIT_USAGE
-    conflict = _mcp_ownership(record_path, owner, before_text, args.name, wanted)
+    conflict = _mcp_ownership(record_path, owner, before_text, args.name, wanted,
+                              codex_home=codex_home)
     if conflict:
         emit({"command": "register-mcp", "owner": owner, "path": str(path),
               "record": str(record_path), "outcome": codexconfig.CONFLICT,
