@@ -109,13 +109,17 @@ class AssignmentView:
         try:
             attached = list(self.linkage.attached(project_key))
             outstanding = list(self.linkage.outstanding(project_key))
+            # Inside the boundary, not after it. Owner enumeration reads the same store and is
+            # required to CLASSIFY the answer, so a failure here has to produce the documented
+            # unreadable shape rather than propagate a database error to a caller that asked a
+            # question about completion.
+            owners = self.linkage.owners(PROJECT_SCOPE_KIND, project_key)
         except Exception as error:  # noqa: BLE001 - an unreadable store is an answer, not a crash
             return {"state": "unreadable", "readable": False, "projectKey": project_key,
                     "attached": [], "outstanding": [],
                     "basis": f"the project's assignments could not be read: "
                              f"{type(error).__name__}: {error}",
                     "limits": PROJECT_READING_LIMITS}
-        owners = self.linkage.owners(PROJECT_SCOPE_KIND, project_key)
         if len(owners) > 1:
             return {"state": "ambiguous", "readable": True, "projectKey": project_key,
                     "attached": attached, "outstanding": outstanding,

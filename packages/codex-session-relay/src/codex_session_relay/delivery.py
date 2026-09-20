@@ -129,6 +129,25 @@ class DeliveryService:
                 f"the linkage reports more than one candidate for relationship {rid!r}; this "
                 f"reader will not choose between them: {reading.get('contention')!r}",
             )
+        # state becomes ambiguous only for competing owners, so every OTHER inconsistency the
+        # walk reports arrives here with a resolved state and would otherwise be delivered
+        # through. owner_drift is the one that matters most: the linkage doc says it is reported
+        # at both ends and that the handover sequence passes through it on purpose, because each
+        # assignment is moved to the incoming parent before the scope is. During that window the
+        # project binding can still name the outgoing parent, which is exactly the frozen value
+        # this method is trying not to trust - so an owner check alone would agree with the row
+        # and deliver to the parent that is stepping down.
+        contention = reading.get("contention") or []
+        if contention:
+            drifting = any(item.get("contention") == "owner_drift" for item in contention)
+            raise DeliveryRefused(
+                RefusalReason.RELATION_OWNER_DRIFT if drifting
+                else RefusalReason.LINK_CONFLICT,
+                f"the linkage reports the hierarchy of relationship {rid!r} as inconsistent, so "
+                f"who owns its scope is not settled: {contention!r}. A resolved state with "
+                "contention is not a resolved owner, and delivery waits for the hierarchy to "
+                "settle rather than picking the side that happens to match the frozen row",
+            )
         # A revision travels down to the issue's own child, and a completion up to the project
         # that owns the issue. Named explicitly, because a kind that fell through to one of them
         # would resolve a recipient for a direction this contract does not define.

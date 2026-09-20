@@ -184,7 +184,10 @@ class Services:
     def assignments(self):
         if self._assignments is None:
             self._assignments = AssignmentView(
-                self.store, self.registry, self.clock, criteria=self.criteria
+                self.store, self.registry, self.clock, criteria=self.criteria,
+                # Without this every production project_state() answered "unreadable" without
+                # looking at a single assignment, so the reading existed only in its own tests.
+                linkage=self.linkage,
             )
         return self._assignments
 

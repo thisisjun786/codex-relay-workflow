@@ -120,5 +120,20 @@ class CompletionNeedsEveryChild(unittest.TestCase):
         self.assertIn("goal status is never consulted", reading["limits"])
 
 
+class OwnerReadFailuresAreClassified(unittest.TestCase):
+    def test_a_failure_reading_owners_is_unreadable_not_an_exception(self):
+        """RED against the first pass: owners() sat outside the error boundary."""
+
+        class _OwnersRaise(_Reader):
+            def owners(self, scope_kind, scope_key):
+                raise RuntimeError("scope_bindings unreadable")
+
+        view = _View(_OwnersRaise(["r1"], []))
+        reading = view.project_state(PROJECT)
+        self.assertEqual(reading["state"], "unreadable")
+        self.assertFalse(reading["readable"])
+        self.assertIn("scope_bindings unreadable", reading["basis"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -161,6 +161,44 @@ class TheLinkageDecidesWhoReceives(LinkageTestCase):
         self.assertEqual(raised.exception.reason, RefusalReason.DUPLICATE_SCOPE_OWNER)
         self.assertIn("competing_owners", str(raised.exception))
 
+
+    def test_owner_drift_with_a_resolved_state_is_still_refused(self):
+        """RED against the first Phase 2 pass: state is ambiguous only for competing owners.
+
+        During a handover the issue-to-project edge can already name the incoming parent while
+        the project binding still names the outgoing one. The owner then MATCHES the frozen row,
+        so an equality check alone agrees with it and delivers to the parent stepping down.
+        """
+        service = self.service({
+            "state": "registered", "readable": True, "gaps": [],
+            "contention": [{"contention": "owner_drift", "scopeKind": PROJECT_SCOPE,
+                            "scopeKey": "PRJ-1"}],
+            "levels": [
+                {"scopeKind": PROJECT_SCOPE, "scopeKey": "PRJ-1",
+                 "owner": {"taskId": "parent-task", "revision": 3}, "depth": 1},
+            ],
+        })
+        with self.assertRaises(DeliveryRefused) as raised:
+            service.resolve_recipient(_relationship(), COMPLETION)
+        self.assertEqual(raised.exception.reason, RefusalReason.RELATION_OWNER_DRIFT)
+        self.assertIn("owner_drift", str(raised.exception))
+
+    def test_any_other_reported_inconsistency_also_stops_delivery(self):
+        """A resolved state carrying contention is not a resolved owner."""
+        service = self.service({
+            "state": "registered", "readable": True, "gaps": [],
+            "contention": [{"contention": "instruction_conflict", "scopeKind": PROJECT_SCOPE,
+                            "scopeKey": "PRJ-1", "digest": "d0"}],
+            "levels": [
+                {"scopeKind": PROJECT_SCOPE, "scopeKey": "PRJ-1",
+                 "owner": {"taskId": "parent-task", "revision": 3}, "depth": 1},
+            ],
+        })
+        with self.assertRaises(DeliveryRefused) as raised:
+            service.resolve_recipient(_relationship(), COMPLETION)
+        self.assertEqual(raised.exception.reason, RefusalReason.LINK_CONFLICT)
+        self.assertIn("instruction_conflict", str(raised.exception))
+
     def test_an_undefined_direction_resolves_no_recipient(self):
         service = self.service({"state": "registered", "readable": True, "levels": [],
                                 "gaps": [], "contention": []})
