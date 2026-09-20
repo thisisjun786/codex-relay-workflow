@@ -34,6 +34,14 @@ start never becomes one. A `provisional` target that has passed is still late, w
 its nature on the report line so a moved planning target is not read as a missed
 commitment. Read Target nature; never invent a target for a subject that has none.
 
+A subject the records show was cancelled by an accepted change also leaves the current
+judged set. The contract keeps a cancelled subject's dates and gives it no new target,
+so a preserved date is not an outstanding delivery, and its Change source already
+carries the cancelled IDs that distinguish an accepted removal from a failure to
+deliver. Report it as removed, with that change source, rather than judging it. It
+still belongs to the baseline axis as something the earlier plan carried, so the scope
+change stays visible on both sides rather than quietly shrinking the past.
+
 Name the checked and the unchecked scope for the whole request, not only for the
 results that happened to be decidable. A result left unchecked is a gap in
 coverage and is reported as one.
@@ -133,10 +141,13 @@ other observation is a note in the report and changes no verdict.
 
 Aggregate over every result with a decidable verdict that is due at or before the
 observation, or achieved, or carrying a risk observation. The overall verdict is the
-most severe in that set: late, then at risk, then on plan, then ahead. The severity
-order decides alone, so the scope is ahead only when every member is ahead: one
-early result beside an on-time one leaves the scope on plan, because the scope as a
-whole was not delivered early.
+most severe in that set: late, then at risk, then on plan, then ahead. Ahead carries
+one condition the severity order cannot express, because the set deliberately omits
+subjects that are not due yet: the scope is ahead only when every decidable subject in
+it is achieved and at least one of them landed early. A scope that still owes
+unfinished work is on plan at best, however early its finished parts arrived, and one
+early subject beside an on-time one is on plan for the same reason. The early landing
+does not disappear: it is reported as that subject's own lead under the report order.
 
 Where the set is empty, decide in this order. Where no result in the requested scope
 has a decidable verdict at all, the overall result is undecidable and the scope is
