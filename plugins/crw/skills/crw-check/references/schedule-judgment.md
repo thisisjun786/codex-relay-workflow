@@ -2,14 +2,11 @@
 
 Use when a check covers a project, an initiative, or an issue that carries agreed
 dates. It consumes the [Schedule baseline contract](../../crw-plan/references/integrations.md#schedule-baseline-contract),
-which [crw-plan](../../crw-plan/SKILL.md) owns and which CRW-143 adds to that
-reference, together with the delivery evidence this skill already pins. Until that
-section lands, the fields have no shipped source: read whatever schedule the request
-itself supplies, report the schedule as unchecked where it does not, and do not
-reconstruct the contract here. The list below names the fields this procedure reads
-and is not their definition. It decides
-whether each result is ahead of, on, or behind its agreed date, and which later
-result a slip actually blocks. It does not write a schedule, define a contract
+which [crw-plan](../../crw-plan/SKILL.md) owns, together with the delivery evidence
+this skill already pins. Where a subject's fields are absent, report that part of the
+schedule as unchecked rather than reconstructing them here. It decides whether each
+subject is ahead of, on, or behind its agreed date, and which later result a slip
+actually blocks. It does not write a schedule, define a contract
 field, keep a second copy of any date, or replace the criterion comparison it runs
 beside. Read [Merge readiness](../../crw-run/references/merge-readiness.md) for the
 CI and review evidence a delivery claim rests on; this procedure consumes that
@@ -17,21 +14,24 @@ evidence and does not restate it.
 
 ## Pin the schedule
 
-Read, per result, the contract's stable ID, baseline target date, current target
-date, baseline time, timezone, target kind, actual achievement evidence, change
-source, and required predecessors. Add what this skill already pins: the delivery
-level that result's own criteria require, the evidence at that level with both its
-instant and the time it was observed, the observation instant, and the judgment
-time. The observation instant is the query time, because the evidence is only as
+Read, per subject, the contract's Subject, Schedule baseline, Baseline record,
+Planned start, Current target, Timezone, Target nature, Actual start and finish,
+Change source and Prerequisites, under those names and with its value words as
+written, because two operations that paraphrase them stop agreeing about the same
+item. Add what this skill already pins: the delivery level that subject's own criteria
+require, the evidence at that level with both its instant and the time it was
+observed, the observation instant, and the judgment time. The observation instant is the query time, because the evidence is only as
 current as that read. Report both times; when their calendar dates differ in the
 schedule timezone, query again before ruling or state that the verdict stands as
 of the query date.
 
-A result is judged only when its kind carries a commitment date. A kind the
-contract records as carrying none is kept as evidence, listed under unchecked
-scope, and never judged or aggregated. The contract owns which kinds carry a
-commitment; read that property rather than restating the vocabulary, and never
-invent a target for a kind that has none.
+A subject is judged only where its Target nature is `confirmed` or `provisional`,
+the two the contract gives a date. `undetermined` and `awaiting authority` carry none:
+they are kept as evidence, listed under unchecked scope, and never judged or
+aggregated. A Planned start and an Actual start are not targets either, and an actual
+start never becomes one. A `provisional` target that has passed is still late, with
+its nature on the report line so a moved planning target is not read as a missed
+commitment. Read Target nature; never invent a target for a subject that has none.
 
 Name the checked and the unchecked scope for the whole request, not only for the
 results that happened to be decidable. A result left unchecked is a gap in
@@ -63,7 +63,10 @@ not achieve a result whose criteria require installation, and the report keeps b
 facts, the early merge and the unproven installation.
 
 Issue counts, Done ratios, milestone percentages, a finished agent turn, a
-merge-ready flag, and a green check establish neither achievement nor speed. The
+merge-ready flag, and a green check establish neither achievement nor speed. Neither
+does a status timestamp produced by a status correction or a bulk edit, which records
+when someone fixed the register rather than when the work happened; where two
+admissible dates disagree, the earlier evidenced one stands. The
 achievement instant is the instant of the required-level evidence, never the time
 the check read it.
 
@@ -73,7 +76,7 @@ Judge each result once per axis, first match wins.
 
 | Row | Condition | Verdict |
 |---|---|---|
-| 1 | This axis has no date for this result, or no timezone, or the evidence needed to decide is stale | Undecidable, with the reason |
+| 1 | This axis has no date for this subject, or no Timezone, or the Current target disagrees with the latest Change source's after value, or the evidence needed to decide is stale | Undecidable, with the reason |
 | 2 | Achieved earlier than the target: an earlier calendar day for a day target, an earlier instant for a timed one | Ahead |
 | 3 | Achieved on the target day, or at or before the target instant | On plan |
 | 4 | Achieved after the deadline | Late, reporting actual minus target |
@@ -152,9 +155,11 @@ hide a late one and a late one cannot hide missing coverage.
 
 ## Judge both axes
 
-Judge every result against the baseline target and against the current one, by the
-same rules. A result belongs to an axis when the contract records that axis's date
-for it. A result with no baseline date whose change source records that it entered
+Judge every subject against the Schedule baseline and against the Current target, by
+the same rules. A subject belongs to an axis when the contract records that axis's
+date for it, and a Schedule baseline recorded `unconfirmed`, meaning a target exists
+but no Baseline record establishing it can be found, makes the baseline axis
+undecidable for exactly that reason. A result with no baseline date whose change source records that it entered
 scope after the baseline time is labelled added after baseline: no baseline verdict,
 excluded from the baseline aggregate, judged on the current axis only, and never
 reported as undecidable, since it is a deliberate scope decision rather than a gap
@@ -384,14 +389,14 @@ worth discussing.
     read, its contribution to M3 is unverified rather than assumed blocking or
     assumed clear. Not an impact asserted over inputs nobody could read.
 
-14. **A kind that carries no commitment.** The contract records I-18's kind as
-    carrying no commitment date because it records when work actually began, and
-    I-19's as carrying none because authority is still pending; I-19 is a required
-    predecessor of S, whose current target is 2026-09-25, which is unachieved and
-    whose criteria need that pending decision. Observed 2026-09-21. I-18 and I-19 both outside the judged set, kept as evidence and listed
+14. **A Target nature that carries no date.** I-18 carries only an Actual start and
+    a Target nature of `undetermined`; I-19's Target nature is `awaiting authority`.
+    I-19 is a Prerequisite of S, whose Current target is 2026-09-25, which is
+    unachieved and whose criteria need the decision I-19 waits on. Observed
+    2026-09-21. I-18 and I-19 both outside the judged set, kept as evidence and listed
     under unchecked scope; S at risk, cause an approval the criteria require and the
-    user has not given, wait class user decision wait. Not a start record read as a
-    deadline, and not a target invented for a kind that carries none.
+    user has not given, wait class user decision wait. Not an Actual start read as a
+    deadline, and not a target invented for a subject whose Target nature gives none.
 
 15. **Reusing a recorded judgment.** I-20's criteria require installation. A judgment
     recorded 2026-09-21T09:00 observed the merge landed 2026-09-18T10:00 and
