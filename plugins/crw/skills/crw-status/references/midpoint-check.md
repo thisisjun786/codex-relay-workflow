@@ -327,11 +327,13 @@ Preserved: the five facts as five, which is the whole point of writing them sepa
 
 Observed: a parent has no running turn. In one variant its goal is active with continuation
 working; in another it has no goal, or a paused one, or one that cannot activate.
-Action: report the turn and the goal as two readings. The first variant is a parent between turns
-and needs nothing. The second will stay quiet whatever arrives for it, and that is the fact the
-report leads with rather than calling it idle. Distinguish a goal that exists, a goal that
-activated, and continuation observed actually happening; say which you saw.
-Preserved: the difference between quiet and stopped.
+Action: report the turn and the goal as two readings. The first variant is a parent between turns,
+and it needs nothing only while nothing is outstanding for it; where something is outstanding, the
+item decides under the precedence above and a working goal is not a reason for silence. The second
+variant will stay quiet whatever arrives for it, and that is the fact the report leads with rather
+than calling it idle. Distinguish a goal that exists, a goal that activated, and continuation
+observed actually happening; say which you saw.
+Preserved: the difference between quiet and stopped, and between a healthy goal and a delivered item.
 
 ### M14 A parent needs a goal it does not have
 
