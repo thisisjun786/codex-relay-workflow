@@ -76,11 +76,16 @@ three things first: the scope agreed when it was assigned, including its history
 criteria still open, measured against what its linked PRs actually merged; and its
 current owner and status. Then write one of these four outcomes before any reassignment.
 
-- Its delivery PR has not merged and its owner is active. Reconcile with that owner
-  before changing anything. The remainder stays in that same PR unless it is a separate
-  deliverable by the boundary rule above; where it is, agree the new boundary with the
-  owner first, then narrow this issue and make the new one blocked by it. A live
-  assignment is never narrowed or split before its owner has seen the change.
+- Its delivery PR has not merged. Reconcile with its owner before changing anything, and
+  read the PR's usability and its ownership as two separate facts. Where the PR is open and
+  its owner active, the remainder stays in it unless the remainder is a separate deliverable
+  by the boundary rule above; where it is, agree the new boundary with the owner first, then
+  narrow this issue and make the new one blocked by it. Where the PR was closed without
+  merging or can no longer deliver, designate one replacement delivery PR and keep the
+  superseded link ([issue-to-PR rule](integrations.md#issue-to-pr-mapping)). Where the owner
+  is no longer active, recover ownership or obtain an authorized reassignment before any
+  scope change or dispatch. A live assignment is never narrowed or split before its owner
+  has seen the change.
 - Its delivery PR merged and criteria are still open. Move the open criteria to a new
   issue with the merged one as its prerequisite, narrow this issue to what actually
   merged, record the narrowing on the issue, and only then may it be Done. A PR that
@@ -119,8 +124,11 @@ changes what the next one sees.
    onto it, and drop nothing that was promised. This runs before relations are checked
    because consolidating a duplicate moves relations.
 3. Relations. Every prerequisite stated in prose exists as a real blocking relation, and
-   walking the edges finds no cycle. A cycle means the boundary is wrong: find the part
-   both sides need and make it its own first issue rather than dropping an edge. Where two
+   walking the edges finds no cycle. A cycle means the boundary is wrong, so reapply the
+   boundary test to the issues in it rather than dropping an edge: make the part both sides
+   need its own first issue only where that part has an observable result and can be
+   verified alone, and otherwise consolidate the coupled issues into one merge, preserving
+   every criterion and relation. Where two
    issues change the same surface, exactly one ordering exists and it is a relation, not a
    note. Two issues may hold the same file; two issues holding the same region at once is
    a collision.
@@ -167,5 +175,8 @@ wrong row, and both are fixed here.
 | 13 | A bare "PR 단위로 정리해줘" on a milestone with no prior plan. | Every issue written carries the full issue fields, each boundary decided by the rule above, the closing check run; issue count is whatever the boundary rule yields, standard unchanged by the request's length, scope unwidened. | Default output standard. |
 | 14 | A milestone outcome has no issue that delivers it, and the request authorizes the full plan. | 1 new issue created now for that outcome, relations recomputed after it, 0 promised outcomes left unplanned. | Closing check: coverage. |
 | 15 | Two planned issues name the same deliverable in the same repository under different titles, and one of them holds a relation. | 1 issue kept, the other's relation moved onto it before relations are checked, 0 duplicate deliverables, 0 promised work dropped. | Closing check: duplication. |
-| 16 | A contract was split across two issues, and each now blocks the other. | The shared part becomes 1 new first issue, both former issues blocked by it, 0 edges dropped to break the cycle. | Closing check: relations. |
+| 16 | A contract was split across two issues, each now blocks the other, and the shared part can merge and be verified alone. | The shared part becomes 1 new first issue, both former issues blocked by it, 0 edges dropped to break the cycle. | Closing check: relations. |
 | 17 | The connector writes relations but cannot read them back. | Relations reported written, unverified; 0 relations claimed to exist; the intended list still reported with IDs. | Closing check: read-back unavailable. |
+| 18 | Two issues block each other, neither passes its checks without the other, and no smaller shared part can be verified alone. | The two consolidate into 1 issue with every criterion and relation preserved, 0 invented prerequisites, 0 edges dropped. | Closing check: relations, coupled parts. |
+| 19 | The delivery PR was closed without merging and its branch is gone; the owner is active and the accepted scope is unchanged. | 1 replacement delivery PR designated with the superseded link kept, 0 new issues, scope unchanged. | Align a delivered issue: PR no longer usable. |
+| 20 | An unmerged delivery issue's owner is no longer active. | Ownership recovered or reassignment authorized first; 0 scope changes and 0 dispatch before that. | Align a delivered issue: owner inactive. |
