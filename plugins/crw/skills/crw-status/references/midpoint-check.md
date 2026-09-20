@@ -63,12 +63,16 @@ Read both and report both.
 
 Neither reading decides a contact on its own, and this is where the two rows would otherwise
 disagree. The goal says whether the parent returns; the outstanding item says whether there is
-anything for it to do when it does. Contact only where both point the same way: something is
-outstanding AND nothing will carry it to the parent. Compare the times rather than the labels. Where
-continuation has been observed working SINCE the outstanding item landed, that item is already on
-its way and the checkpoint sends nothing. Where continuation was last observed BEFORE it landed,
-that observation does not cover this item: read once more, and resume only if it still has not been
-taken up. An active goal is not evidence that a specific result was delivered.
+anything for it to do when it does. Read the item last and let it decide, because continuation
+observed working is evidence about the mechanism and not about this item. An item still recorded
+unprocessed at the read you are acting on has not been carried, whatever continuation did earlier,
+and an active goal is not evidence that a particular result was delivered.
+
+So send nothing while the item is no longer outstanding, or while the parent is inside a turn that
+would consume it. Resume where the parent is idle at the current read and the item is still
+unprocessed, even where continuation ran after that item landed: a continuation that has already
+run and left it outstanding has had its chance, and waiting for a second one is how approved work
+sits. The timing of an earlier observation is context for the report, never the reason for silence.
 
 Three readings get confused with each other and are kept apart. A goal that exists is not a goal
 that activated. A goal that activated is not continuation observed actually happening. And a parent
@@ -152,7 +156,7 @@ growing inside Status where Run already owns one.
 | Observed on a responsible parent | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with nothing observed carrying it | resume it through the existing supported path, carrying the restoration block. Where continuation has been observed working since that item landed, it is already on its way: send nothing |
+| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
 | paused, cancelled or archived, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take ([OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)) |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
@@ -258,11 +262,13 @@ for.
 Observed: the execution approval is still in force, a child returned its delivery, and its parent
 has been idle since before that result landed, with the result unprocessed in the coordination
 record.
-Action: on the checkpoint branch, first ask whether anything is already carrying it. If the
-parent's continuation has been observed working since that result landed, send nothing and say so.
-Otherwise resume that parent through the existing supported path with the restoration block, then
-read its state again and report both what was sent and what was observed after. On the reading
-branch, report the unprocessed result and send nothing.
+Action: on the checkpoint branch, re-read the result's state and the parent's. Send nothing where
+that read shows the result is no longer outstanding, or where the parent has entered a turn that
+will consume it. Otherwise resume that parent through the existing supported path with the
+restoration block, then read its state again and report both what was sent and what was observed
+after. A parent that is idle now with the result still unprocessed is resumed whether or not its
+continuation was seen working at some point after the result landed. On the reading branch, report
+the unprocessed result and send nothing.
 Preserved: the parent, its binding and its child, and the difference between a send and a result.
 
 ### M8 The parent is already active
