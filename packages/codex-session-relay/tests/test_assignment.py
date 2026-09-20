@@ -1,5 +1,6 @@
 """The assignment ledger: one issue, one responsible child, and where that assignment stands."""
 
+import os
 import threading
 
 from codex_session_relay import identity
@@ -405,3 +406,228 @@ class AssignmentLookup(AssignmentTestCase):
         return self.store.one(
             "SELECT relationship_id FROM relationships WHERE issue_key = ?", (issue_key,)
         )["relationship_id"]
+
+
+class TheAnswerNamesTheStoreItCameFrom(AssignmentTestCase):
+    """A lookup that cannot say which store it read cannot be compared with the packet.
+
+    OPS-3.4 makes the proof a conjunction: doctor reporting the packet's state directory AND
+    this lookup naming the expected relationship. A mistyped state directory creates an empty
+    store, and an empty store answers "nothing is assigned" perfectly honestly - after which a
+    coordinator opens a duplicate writer. These tests pin the provenance that lets the caller
+    notice it asked the wrong file.
+    """
+
+    def test_holds_is_false_before_registration_and_true_after(self):
+        self.assertFalse(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+        self.register()
+        self.assertTrue(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+
+    def test_holds_agrees_with_the_responsible_relationship_it_is_derived_from(self):
+        for issue in (ISSUE, "NOT-AN-ISSUE"):
+            found = self.assignments.for_issue(issue)
+            self.assertEqual(
+                found["relay"]["holds"], found["responsibleRelationship"] is not None
+            )
+
+    def test_a_paused_owner_still_holds_the_issue(self):
+        self.register()
+        rid = self.store.one(
+            "SELECT relationship_id FROM relationships WHERE issue_key = ?", (ISSUE,)
+        )["relationship_id"]
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        self.assertTrue(self.assignments.for_issue(ISSUE)["relay"]["holds"])
+
+    def test_the_empty_store_answers_with_its_own_identity_not_silence(self):
+        """The dangerous answer is an honest 'no assignment' from the wrong file."""
+        found = self.assignments.for_issue("NOT-AN-ISSUE")
+        self.assertFalse(found["relay"]["holds"])
+        self.assertEqual(found["relay"]["store"]["storeId"], self.store.identity)
+        self.assertEqual(found["relay"]["store"]["dbPath"], str(self.store.path))
+
+    def test_two_stores_are_distinguishable_by_the_reading_alone(self):
+        other = Store(os.path.join(self.tmp, "elsewhere", "relay.sqlite3"))
+        self.addCleanup(other.close)
+        mine = self.assignments.for_issue(ISSUE)["relay"]["store"]
+        theirs = AssignmentView(
+            other, Registry(other, self.clock), self.clock
+        ).for_issue(ISSUE)["relay"]["store"]
+        self.assertNotEqual(mine["storeId"], theirs["storeId"])
+        self.assertNotEqual(mine["inode"], theirs["inode"])
+
+    def test_the_recorded_socket_is_provenance_and_does_not_follow_a_later_process(self):
+        """schema_meta records the socket that CREATED the store, first write wins.
+
+        That is the point: a participant pointing at a different socket still reads this
+        value, so the two can be seen to disagree instead of the later one quietly winning.
+        """
+        path = os.path.join(self.tmp, "socketed", "relay.sqlite3")
+        first = Store(path, socket_path="/tmp/crw125-first.sock")
+        self.addCleanup(first.close)
+        view = AssignmentView(first, Registry(first, self.clock), self.clock)
+        recorded = view.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        self.assertTrue(recorded.endswith("crw125-first.sock"))
+
+        second = Store(path, socket_path="/tmp/crw125-second.sock")
+        self.addCleanup(second.close)
+        again = AssignmentView(
+            second, Registry(second, self.clock), self.clock
+        ).for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        self.assertEqual(again, recorded)
+
+    def test_a_store_opened_without_a_socket_records_none(self):
+        self.assertIsNone(
+            self.assignments.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
+        )
+
+
+class TheAxesStayApart(AssignmentTestCase):
+    """Five vocabularies answer five different questions and none of them substitutes.
+
+    The status names CRW-125 asks to be told apart come from different tables: staged is an
+    EVENT stage, queued and dispatched and acknowledged are DELIVERY states, and an
+    acknowledgement settles on one axis while carrying its evidence on another. Reporting any
+    of them as another would let a bridge receipt read as receipt, application or verification.
+    """
+
+    def projection(self):
+        return self.assignments.state(self._rid)["projection"]
+
+    def test_a_staged_event_has_no_delivery_at_all(self):
+        """Staged is real recorded progress and it is NOT a delivery state."""
+        relationship = self.register(recipients=[PARENT, CHILD])
+        self._rid = relationship["relationshipId"]
+        payload = self.ready_payload(
+            relationship, [self.artifact("out.txt", "staged work")],
+            turn=self.assigned_turn(status="inProgress"),
+        )
+        self.accept(payload, observation=self.assigned_turn(status="inProgress"))
+        completion = self.projection()["completion"]
+        self.assertEqual(completion["event"]["stage"], "staged")
+        self.assertIsNone(
+            completion["delivery"],
+            "a staged receipt has no delivery row, so it cannot carry a delivery state",
+        )
+
+    def test_the_axes_keep_their_own_vocabulary_through_the_lifecycle(self):
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        queued = self.projection()["completion"]
+        self.assertEqual(queued["event"]["stage"], "final")
+        self.assertEqual(queued["delivery"]["state"], "queued")
+        self.assertIsNone(queued["ack"]["settlement"])
+        self.assertEqual(queued["ack"]["evidenceTier"], "unrecorded")
+
+        self.attempt(event_id)
+        dispatched = self.projection()["completion"]
+        self.assertEqual(dispatched["delivery"]["state"], "dispatched")
+        # The event stage did not move because delivery is a different question.
+        self.assertEqual(dispatched["event"]["stage"], "final")
+
+    def test_the_request_id_names_the_current_attempt_not_the_first(self):
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        delivery = self.projection()["completion"]["delivery"]
+        rows = self.attempts_for(event_id)
+        current = self.store.one(
+            "SELECT attempt_count FROM deliveries WHERE event_id = ?", (event_id,)
+        )["attempt_count"]
+        self.assertEqual(delivery["attemptNo"], current)
+        self.assertEqual(delivery["requestId"], rows[-1]["request_id"])
+
+    def test_a_generation_with_no_correction_answers_null_not_a_borrowed_row(self):
+        self.queued_event(recipients=[PARENT, CHILD])
+        correction = self.projection()["correction"]
+        self.assertIsNone(correction["eventId"])
+        self.assertIsNone(correction["delivery"])
+        self.assertIn("no such event", correction["detail"])
+
+    def test_the_verdict_and_state_are_referenced_rather_than_recomputed(self):
+        """A second derivation of a fact state() already derived is a second source of truth."""
+        self.queued_event(recipients=[PARENT, CHILD])
+        record = self.assignments.state(self._rid)
+        self.assertIs(record["projection"]["verdict"], record["lastVerdict"])
+        self.assertEqual(record["projection"]["assignment"]["state"], record["state"])
+
+    def test_a_verified_rejection_does_not_read_like_a_verified_acceptance(self):
+        """acks records the disposition and the turn verification independently.
+
+        Both settle as verified. Reading only that axis reports a parent who REFUSED the
+        completion exactly like one who accepted it, which is the collapse this whole
+        projection exists to prevent.
+        """
+        from codex_session_relay import identity
+
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id),
+            accepted=False, rejection_reason="revision_mismatch", adapter=self.adapter,
+        )
+        ack = self.projection()["completion"]["ack"]
+        self.assertFalse(ack["accepted"])
+        self.assertEqual(ack["rejectionReason"], "revision_mismatch")
+        # The verification axis is unchanged by the refusal, which is exactly why it cannot
+        # stand in for the disposition.
+        self.assertEqual(ack["settlement"], "verified")
+
+    def test_a_refusal_stops_being_the_reason_once_a_delivery_exists(self):
+        """Refusals are durable history; the same event can be accepted after its cause is fixed.
+
+        Returning the old refusal once a delivery has dispatched would have the projection
+        contradict itself.
+        """
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.intake.record_refusal(
+            "unassigned_turn", relationship_id=self._rid, event=event_id,
+            detail="the earlier attempt named a turn it did not own",
+        )
+        self.attempt(event_id)
+        completion = self.projection()["completion"]
+        self.assertEqual(completion["delivery"]["state"], "dispatched")
+        self.assertIsNone(
+            completion["undeliveredReason"],
+            "a dispatched delivery was reported with a historical refusal as its reason",
+        )
+
+    def test_provenance_says_whether_it_identified_one_file(self):
+        relay = self.assignments.for_issue(ISSUE)["relay"]
+        self.assertTrue(relay["store"]["identified"])
+        self.assertIsNone(relay["store"]["detail"])
+        self.assertEqual(relay["store"]["storeId"], self.store.identity)
+
+    def test_one_anchor_reads_its_whole_lifecycle_in_a_single_statement(self):
+        """Five statements are five snapshots, and a delivery worker commits between them.
+
+        SQLite gives every autocommit SELECT its own snapshot, so reading the event, the
+        delivery, the attempt and the acknowledgement separately can pair a delivery state
+        with an acknowledgement that never coexisted with it - the combination this whole
+        projection exists to make impossible. Counting the reads is how that stays true.
+        """
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        head = {"eventId": event_id}
+
+        calls = []
+        original = self.assignments.store.one
+
+        def counting(sql, params=()):
+            calls.append(sql)
+            return original(sql, params)
+
+        self.assignments.store.one = counting
+        try:
+            anchored = self.assignments._anchored(event_id, 1)
+        finally:
+            self.assignments.store.one = original
+
+        self.assertEqual(
+            len(calls), 1,
+            f"the lifecycle came from {len(calls)} snapshots, not one: {calls}",
+        )
+        # And it really did read all of it, rather than reading one thing cheaply.
+        self.assertEqual(anchored["delivery"]["state"], "dispatched")
+        self.assertEqual(anchored["event"]["stage"], "final")
+        self.assertIsNotNone(anchored["ack"])
