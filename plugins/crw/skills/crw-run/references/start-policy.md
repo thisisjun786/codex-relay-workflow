@@ -116,18 +116,24 @@ because one of them passing says nothing about the other two.
    task is actually on. This has already failed in practice: a supervisor on
    `approvalPolicy: on-request` had its idle callback refused with
    `unsupported_approval_policy`, and automatic reporting and resume stopped. Read that refusal
-   precisely. It is a declaration mismatch and not an unsupported policy: the bridge declares
-   this value and never transmits it, defaults an omitted declaration to `never`, and naming the
-   policy the task is on is the supported way to reach it.
+   against the transport that produced it, because the two answer differently and the record
+   says which one applies. The thread bridge declares this value and never transmits it,
+   defaulting an omitted declaration to `never`, so there the refusal is a declaration mismatch
+   and naming the policy the task is actually on is what reaches it. The session relay instead
+   transmits the recorded policy and admits only `never`, treating a returned `on-request` as a
+   push channel that is closed rather than one that is mismatched, so declaring correctly does
+   not open it and automatic delivery is unavailable on that path.
 
 Each result lands in its own recorded field: goal support in `host_compatibility`, the delivery
 path in `observation_path`, and approval-policy compatibility in `approval_policy`. Three results,
 three fields, so a later reader can tell which one failed.
 
-Record the third as its own fact. The repair is to declare the policy actually observed, never to
-lower the policy: lowering one repairs nothing here and gives away a protection the task was
-running with. Because the bridge declares rather than sets this value, a mismatch is something
-to observe, declare correctly and report, never to write over.
+Record the third as its own fact, with the transport beside it, because a caller that reads a
+relay refusal as a bridge one will wait for a delivery that is not coming. Neither answer is a
+reason to lower the policy: on the bridge path declaring correctly is the repair, on the relay
+path there is none to make, and lowering one gives away a protection the task was running with
+while repairing nothing. A mismatch is observed, declared correctly where that helps, and
+otherwise reported as a closed channel rather than written over.
 
 Also record what the adjudication did not change. A start policy settles a run mode, a cap and the
 compatibility facts; it does not alter worktrees, project scope, permissions or child count, and
