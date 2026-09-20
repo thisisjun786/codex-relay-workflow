@@ -122,7 +122,11 @@ Workspace ownership:
   something this run created]
 - Your resources: [the checkout, branch and evidence root this assignment owns, with the
   OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
-  cleanup authorization, `none automatic` where no cleanup is authorized]
+  cleanup authorization, `none automatic` where no cleanup is authorized. For a child this
+  call is creating, name the editing owner by the management marker this launch was issued
+  under, since the native task id does not exist until creation returns it; the coordinator
+  binds that marker to the id from the creation receipt and reads the record back, and
+  ownership is established there rather than by this line]
 - Write capability: [first what the coordinator measured on the paths themselves, which does
   not depend on this task existing yet: the checkout, its resolved git metadata
   (`git rev-parse --absolute-git-dir`, `--git-common-dir`, `--git-path index`) and the evidence

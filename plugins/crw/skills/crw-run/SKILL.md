@@ -484,6 +484,11 @@ This runs before the checkout above is assigned and before the creation call, an
 its result is what the packet's workspace-ownership fields carry. It is written
 here because it is one procedure, not because it happens last.
 
+[Operations contract](references/operations.md) OPS-5 owns the workspace-assignment rules
+this procedure applies: placement, the ownership columns, who commits, and where evidence
+lives. What is here is when to read them, what to compare them against and what to refuse.
+Where the two disagree, OPS-5 is the one that changes and this follows it.
+
 Before a checkout is assigned, read what already exists and who is answerable for
 it: the repository's worktrees with their branches and locked state, the dirty and
 untracked files in each, and any current writer. Then split the result in two, the
