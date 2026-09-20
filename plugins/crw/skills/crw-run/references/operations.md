@@ -777,9 +777,10 @@ goal, which the role policy makes the default. [crw-loop](../../crw-loop/SKILL.m
 goal's lifecycle and any supported host-continuation path on the same execution scope, so an
 ordinary project execution request establishes the goal there; establishing it settles nothing
 about whether a continuation was observed. A CXC parent follows its installed lifecycle. A run
-proceeds without a goal only where an explicit no-goal or read-only limit says so, or where goal
-support is unavailable and the request already authorizes that mode; absent either, the mode is
-blocked.
+proceeds without a goal only where the start policy records `goal-free-run`, and that record
+needs the request to authorize the mode. An explicit no-goal or read-only limit bars the goal
+without supplying that authorization, exactly as unavailable goal support does; absent it the
+mode is `blocked`.
 Goal/Stop hook compatibility must pass the Loop's preflight before activation. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
 ready work within that operation. Neither Run nor Loop stops just because the first
