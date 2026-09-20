@@ -286,6 +286,28 @@ class ExecutionPolicy:
             if model in allowed:
                 raise ExecutionPolicyError(f"model {model!r} is listed twice")
             allowed[model] = _efforts(entry["efforts"], f"efforts for {model!r}")
+        # The two sections have to agree, and the only place they can be compared is here.
+        # A declared role pair is still asked the allowlist question -- only an exception skips
+        # that, because an exception IS the operator writing a pair down -- so a file declaring
+        # a role pair its own allowlist does not approve describes a role nobody can ever create:
+        # the request matches its role, then fails execution_not_allowed. That loaded cleanly and
+        # surfaced at the first creation attempt, as a refusal naming the allowlist rather than
+        # the contradiction. Refused here instead, and refused rather than resolved: letting the
+        # roles section authorize its own pair would make editing it a way to widen the
+        # allowlist, and letting the allowlist win would silently unmake a role.
+        if allowed is not None:
+            for role in roles.ROLES:
+                expectation = declared_roles.get(role)
+                if expectation is None or expectation.expectation != roles.PAIR:
+                    continue
+                efforts = allowed.get(expectation.model)
+                if efforts is None or expectation.reasoning_effort not in efforts:
+                    raise ExecutionPolicyError(
+                        f"role {role!r} is declared to run {expectation.model!r} at "
+                        f"{expectation.reasoning_effort!r}, which this file's allowed list does "
+                        "not approve; no such task could be created, so the two sections "
+                        "disagree rather than one narrowing the other"
+                    )
         exceptions: dict = {}
         declared = _object(data.get("exceptions", {}), "exceptions must be an object")
         for name, entry in declared.items():

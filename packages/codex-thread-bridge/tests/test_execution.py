@@ -239,9 +239,72 @@ def test_a_role_cannot_declare_a_value_longer_than_a_request_may_state():
 
     assert roles.SETTING_MAXIMUM == MAXIMUM
     longest = "m" * MAXIMUM
-    assert declared(roles={"parent": {"model": longest, "reasoningEffort": "max"}})
+    # No allowlist, so the only rule under test is the ceiling. With one present these
+    # fixtures would be refused for naming a pair the allowlist omits, and the length case
+    # would pass for the wrong reason.
+    assert declared(
+        roles={"parent": {"model": longest, "reasoningEffort": "max"}}, allowed=False
+    )
     with pytest.raises(ExecutionPolicyError):
-        declared(roles={"parent": {"model": longest + "m", "reasoningEffort": "max"}})
+        declared(
+            roles={"parent": {"model": longest + "m", "reasoningEffort": "max"}}, allowed=False
+        )
+
+
+def test_a_role_pair_the_allowlist_omits_is_refused_at_startup_not_at_creation():
+    """Two sections of one file disagreeing, caught where both are readable.
+
+    A declared role pair is still asked the allowlist question -- only an exception skips it --
+    so this file describes a parent nobody can create: the request matches its role and then
+    fails execution_not_allowed. It used to load cleanly and surface at the first creation
+    attempt, as a refusal naming the allowlist rather than the contradiction that caused it.
+    """
+    with pytest.raises(ExecutionPolicyError) as raised:
+        ExecutionPolicy.from_mapping({
+            "allowed": [{"model": MODEL, "efforts": [EFFORT]}],
+            "roles": {"parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}},
+        })
+    # It names the role and the pair, because those are what the operator has to change.
+    assert "'parent'" in str(raised.value)
+    assert PARENT_MODEL in str(raised.value)
+    assert PARENT_EFFORT in str(raised.value)
+
+
+def test_an_allowed_model_at_an_effort_the_role_needs_is_still_a_disagreement():
+    """Efforts are scoped to their model everywhere else, so a model-only match is not one.
+
+    The superseded parent pair is the fixture: its model may be listed while the effort the
+    role declares is not, and reading only the model key would approve a file whose parent
+    still cannot be created.
+    """
+    superseded_model, superseded_effort = SUPERSEDED_PARENT
+    with pytest.raises(ExecutionPolicyError) as raised:
+        ExecutionPolicy.from_mapping({
+            "allowed": [{"model": superseded_model, "efforts": ["high"]}],
+            "roles": {"parent": {"model": superseded_model,
+                                 "reasoningEffort": superseded_effort}},
+        })
+    assert superseded_effort in str(raised.value)
+
+
+def test_a_supervisor_is_not_held_to_the_allowlist_at_load_because_it_declares_no_pair():
+    """It has nothing to compare. Its authorization is its own recorded settings, and a check
+    that invented a pair for it would be the pinning the roles section refuses outright."""
+    policy = ExecutionPolicy.from_mapping({
+        "allowed": [{"model": MODEL, "efforts": [EFFORT]}],
+        "roles": {"supervisor": {"expectation": "record"},
+                  "child": {"model": MODEL, "reasoningEffort": EFFORT}},
+    })
+    assert policy.summary()["mode"] == "allowlist"
+
+
+def test_roles_may_still_be_declared_with_no_allowlist_at_all():
+    """The check reads the allowlist, so it cannot become a reason to require one. An
+    allowlist constrains every task on the host, which is why declaring roles never forces
+    one into existence."""
+    policy = declared(allowed=False)
+    assert policy.summary()["mode"] == "presence_only"
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").model == PARENT_MODEL
 
 
 def test_an_exception_answers_the_role_question_and_the_receipt_names_it():

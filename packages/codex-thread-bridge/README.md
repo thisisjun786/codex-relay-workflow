@@ -201,7 +201,8 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 {
   "allowed": [
     {"model": "anthropic/claude-opus-5", "efforts": ["xhigh"]},
-    {"model": "openai/gpt-5.6-sol", "efforts": ["high"]}
+    {"model": "openai/gpt-5.6-sol", "efforts": ["high"]},
+    {"model": "xai/grok-4.6", "efforts": ["xhigh"]}
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
@@ -226,6 +227,13 @@ process's environment; a file that is configured and cannot be used stops the se
 rather than degrading to presence-only. Directories are compared by exact string
 equality, so an entry that is absolute but not canonical is refused at startup rather
 than loading cleanly and then matching nothing.
+
+A declared role pair is still asked the allowlist question — only an exception skips that — so
+where both sections are present, `allowed` has to approve every pair `roles` declares. A file
+that declares `parent` on a model its own allowlist omits describes a role nobody could create,
+and it is refused at startup rather than at the first creation attempt. Neither section is made
+to win: letting `roles` authorize its own pair would make editing it a way to widen the
+allowlist, and letting `allowed` win would silently unmake a role.
 
 An exception is a **name, not a value**. The operator writes the id, its one model, its
 one effort and the directories it covers; a caller may cite that id through

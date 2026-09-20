@@ -84,6 +84,14 @@ on the host, so forcing one in order to declare roles would block other legitima
 neither `allowed` nor `roles` is an error, because a policy that declares nothing is a mistake and
 not an empty policy.
 
+Where both are present they have to agree. A declared role pair is still asked the allowlist
+question — only an exception skips it, because an exception is the operator writing a pair down —
+so a file declaring `parent` on a pair its own `allowed` omits describes a role nobody could
+create: the request matches its role and then fails `execution_not_allowed`. That is refused when
+the policy is read rather than at the first creation attempt, and neither section is made to win:
+letting `roles` authorize its own pair would turn editing it into a way to widen the allowlist,
+and letting `allowed` win would silently unmake a role.
+
 An exception may now carry a `role`. A request that cites a role may cite only an exception
 declaring that same role, and an exception with no `role` key may be cited only by a request that
 cites none. A directory is not a task identity, and without this an exception written for one task

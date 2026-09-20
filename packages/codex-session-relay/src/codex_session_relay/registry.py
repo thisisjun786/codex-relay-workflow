@@ -1085,16 +1085,37 @@ def project_key(record: dict) -> str:
 # is what makes the documented transition reachable for a supervisor.
 USER_TRANSITION = "user_transition"
 
-# An explicit instruction to drop a citation, told apart from simply not restating one. Inferring
-# it from the pair cannot work: an exception can stop applying without the pair moving at all --
-# the operator removes it and the user confirms the task stays where it is -- and with no way to
-# say so the recorder restored a citation this policy no longer authorizes and then refused its
-# own write, leaving the task undeliverable with no command able to release it.
-CLEAR_EXCEPTION = "__clear__"
+
+class _ClearException:
+    """An explicit instruction to drop a citation, as a value no receipt can contain.
+
+    Told apart from simply not restating one, because inferring it from the pair cannot work: an
+    exception can stop applying without the pair moving at all -- the operator removes it and the
+    user confirms the task stays where it is -- and with no way to say so the recorder restored a
+    citation this policy no longer authorizes and then refused its own write, leaving the task
+    undeliverable with no command able to release it.
+
+    An object rather than a reserved string, because there is no reserved string available. Any
+    non-empty identifier is a legal exception id, so an operator may declare one named
+    "__clear__", and a creation receipt citing it would have been indistinguishable from the CLI
+    asking to remove a citation -- registration would pass prevalidation, drop the citation it
+    just wrote, and then refuse the exception-authorized pair against the role's declared one.
+    A private object has no spelling a policy file can reach, so every string arriving here stays
+    an identifier.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "CLEAR_EXCEPTION"
+
+
+CLEAR_EXCEPTION = _ClearException()
 
 
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
-                    role: str | None = None, exception: str | None = None) -> dict:
+                    role: str | None = None,
+                    exception: "str | _ClearException | None" = None) -> dict:
     """Record the execution settings a task was actually created with.
 
     This is the interface JUN-92 populates from the creation result Run already receives. It
@@ -1114,7 +1135,7 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
     settings = dict(settings)
     if role is not None:
         settings["citedRole"] = role
-    if exception == CLEAR_EXCEPTION:
+    if exception is CLEAR_EXCEPTION:
         # Said, not inferred. Nothing is carried forward and nothing is recorded.
         exception = None
         settings.pop("citedException", None)

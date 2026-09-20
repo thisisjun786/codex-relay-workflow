@@ -380,6 +380,13 @@ def cmd_settings_record(services, args) -> dict:
     sandbox (the full SandboxPolicy object), approvalPolicy, cwd, runtimeWorkspaceRoots, model,
     reasoningEffort and environments. Anything missing is refused here rather than at send time.
     """
+    if args.clear_exception and args.exception is not None:
+        # Asking to cite one and to drop it are two different writes. Letting either win
+        # silently would record the opposite of half of what was asked for.
+        raise SystemExit2(
+            "--clear-exception drops the citation and --exception records one; state one",
+            EXIT_USAGE,
+        )
     return record_settings(
         services.store, services.clock, args.task, _settings_json(args.settings),
         source=args.source, role=args.role,

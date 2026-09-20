@@ -841,6 +841,56 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         self.assertEqual(stored["citedRole"], "supervisor")
 
 
+    def test_an_exception_actually_named_the_sentinel_is_still_an_identifier(self):
+        """Any non-empty string is a legal exception id, so the sentinel cannot be one.
+
+        An operator may declare an exception named "__clear__", and a creation receipt citing
+        it used to be indistinguishable from the CLI asking to remove a citation: the recorder
+        dropped the citation it was in the middle of writing and then refused the
+        exception-authorized pair against the role's declared one. Reaching the end of this
+        test at all is the proof, because gpt-6-astra/high is not the parent pair and only the
+        surviving citation authorizes it.
+        """
+        from pathlib import Path
+        import os
+
+        from codex_session_relay.registry import CLEAR_EXCEPTION
+
+        # Not a string, so no policy file can spell it. This is the invariant the rest rests on.
+        self.assertNotIsInstance(CLEAR_EXCEPTION, str)
+        self._bind_parent()
+        here = str(Path(self.tmp).resolve())
+        os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp), {
+            **POLICY,
+            "exceptions": {
+                "__clear__": {
+                    "model": "gpt-6-astra", "reasoningEffort": "high",
+                    "cwd": [here], "role": "parent",
+                }
+            },
+        })
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(),
+            source="creation_result", role="parent", exception="__clear__",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertEqual(stored["citedException"], "__clear__")
+        # And an ordinary re-record carries it forward rather than reading it as a command.
+        record_settings(
+            self.store, self.clock, PARENT, self._excepted(), source="user_transition",
+        )
+        stored = json.loads(
+            self.store.one(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?", (PARENT,)
+            )["settings"]
+        )
+        self.assertEqual(stored["citedException"], "__clear__")
+
+
     def test_an_ordinary_re_record_still_keeps_a_citation_that_is_still_doing_work(self):
         """Clearing is the user-attributed transition's privilege, not every write's."""
         from pathlib import Path
