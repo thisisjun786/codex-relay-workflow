@@ -213,7 +213,104 @@ class AssignmentView:
             "reviewedSetDigest": verdict["setDigest"] if verdict else None,
             "current": criteria_current,
         }
+        record["projection"] = self._projection(
+            relationship_id, generation, head, verdict, state
+        )
         return record
+
+    def _projection(self, relationship_id, generation, head, verdict, state) -> dict:
+        """Five vocabularies, kept apart, each anchored to the event it was read under.
+
+        They are not interchangeable and collapsing any two loses the distinction a caller
+        needs. `staged` is an EVENT stage and never a delivery state; `acknowledged` IS a
+        delivery state; and an acknowledgement settles on one axis while carrying its evidence
+        on another, so a bridge receipt saying an attempt was accepted still says nothing about
+        receipt, application or verification.
+
+        Anchored, because an unanchored read pairs whatever each table happens to hold. After a
+        needs_changes verdict the assignment has a completion in the previous generation and a
+        queued correction in the current one; reporting the old acknowledgement beside the new
+        delivery would describe a state that never existed. The two get separate anchors rather
+        than one, because head_revision only ever names a ready_for_review event - so while the
+        correction is the thing everyone is waiting for, it would otherwise be invisible here.
+        """
+        correction = self.store.one(
+            "SELECT event_id FROM events"
+            " WHERE relationship_id = ? AND execution_generation = ?"
+            "   AND outcome = 'revision_request' AND suppressed_reason IS NULL"
+            " ORDER BY event_id LIMIT 1",
+            (relationship_id, generation),
+        )
+        return {
+            "completion": self._anchored(head["eventId"], generation),
+            "correction": self._anchored(
+                correction["event_id"] if correction else None, generation
+            ),
+            # Referenced, never recomputed. state() derived both of these above and a second
+            # derivation here would be a second source of truth for one fact.
+            "verdict": verdict,
+            "assignment": {"state": state},
+        }
+
+    def _anchored(self, event_id, generation) -> dict:
+        record = {"eventId": event_id, "executionGeneration": generation,
+                  "event": None, "delivery": None, "ack": None, "undeliveredReason": None}
+        if event_id is None:
+            # A null is an answer. A row borrowed from another generation is not.
+            record["detail"] = "this generation has no such event"
+            return record
+        staged = self.store.one("SELECT stage FROM events WHERE event_id = ?", (event_id,))
+        record["event"] = {"stage": staged["stage"]} if staged is not None else None
+        delivery = self.store.one(
+            "SELECT state, attempt_count, hold_reason FROM deliveries WHERE event_id = ?",
+            (event_id,),
+        )
+        if delivery is not None:
+            # The CURRENT attempt, the one deliveries.attempt_count names. An event can carry
+            # several, and "the request id" with no rule is whichever row sorted first, which
+            # after a retry is the wrong one.
+            attempt = self.store.one(
+                "SELECT request_id, attempt_no FROM attempts"
+                " WHERE event_id = ? AND attempt_no = ?",
+                (event_id, delivery["attempt_count"]),
+            )
+            record["delivery"] = {
+                "state": delivery["state"],
+                "requestId": attempt["request_id"] if attempt is not None else None,
+                "attemptNo": attempt["attempt_no"] if attempt is not None else None,
+            }
+        settled = self.store.one("SELECT verified FROM acks WHERE event_id = ?", (event_id,))
+        tier = self.store.one(
+            "SELECT tier FROM ack_evidence WHERE event_id = ?", (event_id,)
+        )
+        record["ack"] = {
+            "settlement": settled["verified"] if settled is not None else None,
+            # A second axis, not a rewording of the first: settlement says whether the
+            # acknowledgement closed, the tier says what it closed on, and no row at all is
+            # unrecorded rather than unverified.
+            "evidenceTier": tier["tier"] if tier is not None else "unrecorded",
+        }
+        record["undeliveredReason"] = self._undelivered_reason(event_id, delivery)
+        return record
+
+    def _undelivered_reason(self, event_id, delivery):
+        """Copied verbatim from the row that recorded it, saying which row that was.
+
+        Two tables can explain one event's delivery and they answer different questions, so the
+        source travels with the value instead of being guessed from its shape. Most specific
+        first: a hold is about THIS delivery, a refusal is about a write that was rejected.
+        failed_operations is deliberately not in this chain - it is keyed by scope rather than
+        by event, so attributing one to a particular delivery would be an inference, not a copy.
+        """
+        if delivery is not None and delivery["hold_reason"]:
+            return {"source": "deliveries.hold_reason", "value": delivery["hold_reason"]}
+        refusal = self.store.one(
+            "SELECT reason FROM refusals WHERE event_id = ? ORDER BY id DESC LIMIT 1",
+            (event_id,),
+        )
+        if refusal is not None:
+            return {"source": "refusals.reason", "value": refusal["reason"]}
+        return None
 
     def _resolve(self, row, head, verdict, relationship_id, generation, current_mark,
                  criteria_current=True) -> str:

@@ -479,3 +479,71 @@ class TheAnswerNamesTheStoreItCameFrom(AssignmentTestCase):
         self.assertIsNone(
             self.assignments.for_issue(ISSUE)["relay"]["store"]["recordedSocket"]
         )
+
+
+class TheAxesStayApart(AssignmentTestCase):
+    """Five vocabularies answer five different questions and none of them substitutes.
+
+    The status names CRW-125 asks to be told apart come from different tables: staged is an
+    EVENT stage, queued and dispatched and acknowledged are DELIVERY states, and an
+    acknowledgement settles on one axis while carrying its evidence on another. Reporting any
+    of them as another would let a bridge receipt read as receipt, application or verification.
+    """
+
+    def projection(self):
+        return self.assignments.state(self._rid)["projection"]
+
+    def test_a_staged_event_has_no_delivery_at_all(self):
+        """Staged is real recorded progress and it is NOT a delivery state."""
+        relationship = self.register(recipients=[PARENT, CHILD])
+        self._rid = relationship["relationshipId"]
+        payload = self.ready_payload(
+            relationship, [self.artifact("out.txt", "staged work")],
+            turn=self.assigned_turn(status="inProgress"),
+        )
+        self.accept(payload, observation=self.assigned_turn(status="inProgress"))
+        completion = self.projection()["completion"]
+        self.assertEqual(completion["event"]["stage"], "staged")
+        self.assertIsNone(
+            completion["delivery"],
+            "a staged receipt has no delivery row, so it cannot carry a delivery state",
+        )
+
+    def test_the_axes_keep_their_own_vocabulary_through_the_lifecycle(self):
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        queued = self.projection()["completion"]
+        self.assertEqual(queued["event"]["stage"], "final")
+        self.assertEqual(queued["delivery"]["state"], "queued")
+        self.assertIsNone(queued["ack"]["settlement"])
+        self.assertEqual(queued["ack"]["evidenceTier"], "unrecorded")
+
+        self.attempt(event_id)
+        dispatched = self.projection()["completion"]
+        self.assertEqual(dispatched["delivery"]["state"], "dispatched")
+        # The event stage did not move because delivery is a different question.
+        self.assertEqual(dispatched["event"]["stage"], "final")
+
+    def test_the_request_id_names_the_current_attempt_not_the_first(self):
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        delivery = self.projection()["completion"]["delivery"]
+        rows = self.attempts_for(event_id)
+        current = self.store.one(
+            "SELECT attempt_count FROM deliveries WHERE event_id = ?", (event_id,)
+        )["attempt_count"]
+        self.assertEqual(delivery["attemptNo"], current)
+        self.assertEqual(delivery["requestId"], rows[-1]["request_id"])
+
+    def test_a_generation_with_no_correction_answers_null_not_a_borrowed_row(self):
+        self.queued_event(recipients=[PARENT, CHILD])
+        correction = self.projection()["correction"]
+        self.assertIsNone(correction["eventId"])
+        self.assertIsNone(correction["delivery"])
+        self.assertIn("no such event", correction["detail"])
+
+    def test_the_verdict_and_state_are_referenced_rather_than_recomputed(self):
+        """A second derivation of a fact state() already derived is a second source of truth."""
+        self.queued_event(recipients=[PARENT, CHILD])
+        record = self.assignments.state(self._rid)
+        self.assertIs(record["projection"]["verdict"], record["lastVerdict"])
+        self.assertEqual(record["projection"]["assignment"]["state"], record["state"])
