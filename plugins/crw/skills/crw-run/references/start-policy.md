@@ -122,7 +122,8 @@ because one of them passing says nothing about the other two.
    and naming the policy the task is actually on is what reaches it. The session relay instead
    transmits the recorded policy and admits only `never`, treating a returned `on-request` as a
    push channel that is closed rather than one that is mismatched, so declaring correctly does
-   not open it and automatic delivery is unavailable on that path.
+   not open it: that recipient is `inbox_only`, which is a terminal delivery state no retry
+   revisits.
 
 Each result lands in its own recorded field: goal support in `host_compatibility`, the delivery
 path in `observation_path`, and approval-policy compatibility in `approval_policy`. Three results,
