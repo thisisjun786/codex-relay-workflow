@@ -23,6 +23,8 @@ at the moment a refusal is decided nothing has been written, so the contest is r
 same transaction and the exception is raised after it closes.
 """
 
+import json
+
 from .errors import LinkageError, RefusalReason
 from .identity import sha256_hex
 
@@ -304,6 +306,13 @@ class Linkage:
         """
         scope_kind = ROLE_SCOPE[role]
         bid = binding_id(role, scope_kind, scope_key, endpoint.task_id)
+        # ------------------------------------------------------------------ role policy
+        # The other half of the comparison record_settings makes. Whichever of the two facts
+        # arrives second performs it, so neither order gets past it; and it is decided here,
+        # where a refusal is still a returned value, rather than after a row has been written.
+        refusal = self._role_policy_refusal(db, role, endpoint.task_id, scope_kind, scope_key)
+        if refusal is not None:
+            return None, refusal
         current = db.execute(
             "SELECT * FROM scope_bindings WHERE binding_id = ?", (bid,)
         ).fetchone()
@@ -344,6 +353,35 @@ class Linkage:
         if refusal is not None:
             return None, refusal
         return (bid, "insert", role, scope_kind, scope_key, endpoint), None
+
+    def _role_policy_refusal(self, db, role, task_id, scope_kind, scope_key):
+        """Refuse a binding that contradicts what the task was created as, or its pair.
+
+        Reported apart from a stale record on purpose. A stale record is re-recorded; this is a
+        contradiction between how a task was created and how it is being bound, and re-recording
+        it would write one side's answer over the other and call the disagreement settled.
+        """
+        from . import rolepolicy
+
+        row = db.execute(
+            "SELECT settings FROM authorized_settings WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        settings = json.loads(row["settings"])
+        policy = rolepolicy.declared()
+        finding = rolepolicy.check_binding(
+            rolepolicy.cited_role(settings), role, settings, policy if policy else None
+        )
+        if finding is None:
+            return None
+        return _Refusal(
+            RefusalReason.ROLE_BINDING_MISMATCH,
+            finding["detail"],
+            scope_kind=scope_kind, scope_key=scope_key,
+            incumbent=finding.get("citedRole"), challenger=task_id,
+        )
+
 
     def apply_binding_plan(self, db, plan, *, status=ACTIVE, at):
         """Perform a decision taken earlier. Every refusal is already behind us."""

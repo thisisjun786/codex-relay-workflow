@@ -64,6 +64,14 @@ class RefusalReason(str, Enum):
     # this refusal and a delivery journal recording it read alike.
     UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
+    # Role policy. Separate from the settings group above because these are questions about the
+    # role a task HOLDS rather than about the settings a send is preserving, and the two have
+    # different recoveries: one is re-recorded, one is a contradiction between how a task was
+    # created and how it is being bound, and one is about this process rather than the task.
+    ROLE_POLICY_UNCONFIGURED = "role_policy_unconfigured"
+    ROLE_BINDING_MISMATCH = "role_binding_mismatch"
+    SETTINGS_RECORD_STALE_FOR_ROLE = "settings_record_stale_for_role"
+
     # Verification currency and canonical criteria. A verdict is a claim about a specific
     # revision judged against a specific set of obligations, so both have to still hold at the
     # moment it is written, not at the moment the caller started reading.

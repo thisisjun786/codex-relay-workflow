@@ -32,7 +32,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from . import restoration
+from . import restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
 )
@@ -862,6 +862,25 @@ class DeliveryService:
                 " creation result before a send can preserve them",
             )
         settings.require_usable()
+        # ------------------------------------------------------------------ role policy
+        # The record is still the thing a send verifies against; this only asks whether it has
+        # fallen behind the policy for the role this task actually holds. A task bound to no
+        # scope is outside the policy and nothing about it changes.
+        role = rolepolicy.bound_role(self.store, task_id)
+        if role is None:
+            return settings
+        policy = rolepolicy.declared()
+        if not policy:
+            raise rolepolicy.refuse_unresolved(policy, role, task_id)
+        finding = rolepolicy.check_record(settings, role, policy)
+        if finding is not None:
+            raise DeliveryRefused(
+                RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE,
+                f"{task_id!r} is bound as {role!r} and its recorded authorization is "
+                f"{finding['recorded']} while the policy for that role is {finding['expected']} "
+                f"(policy {finding['digest']}). Nothing was sent and no turn was started. "
+                + rolepolicy.RECOVERY,
+            )
         return settings
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,

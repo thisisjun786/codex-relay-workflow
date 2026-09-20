@@ -273,11 +273,13 @@ def cmd_register(services, args) -> dict:
     # Execution settings come from the creation result the caller already holds. Recording them
     # here is what lets a later send preserve them instead of inheriting a host default.
     recorded = {}
-    for task, raw in ((args.parent_task, args.parent_settings),
-                      (args.child_task, args.child_settings)):
+    for task, raw, role in ((args.parent_task, args.parent_settings, args.parent_role),
+                            (args.child_task, args.child_settings, args.child_role)):
         if raw:
+            # The role the CREATION cited, from the receipt's executionPolicy. Recorded beside
+            # the settings so a later binding can be checked against what the task was made as.
             record_settings(services.store, services.clock, task, _settings_json(raw),
-                            source="creation_result")
+                            source="creation_result", role=role)
             recorded[task] = "recorded"
     payload["authorizedSettings"] = recorded or None
     return payload
@@ -300,7 +302,7 @@ def cmd_settings_record(services, args) -> dict:
     """
     return record_settings(
         services.store, services.clock, args.task, _settings_json(args.settings),
-        source=args.source,
+        source=args.source, role=args.role,
     )
 
 
@@ -311,8 +313,20 @@ def cmd_settings_show(services, args) -> dict:
     if settings is None:
         return {"task": args.task, "settings": None, "usable": False,
                 "missing": list(REQUIRED_SETTINGS)}
+    # The role side is reported beside the settings because the two are only meaningful
+    # together: a record is stale relative to the policy for the role its task actually holds,
+    # and reading one without the other is how a correct record and a wrong one look alike.
+    from . import rolepolicy
+
+    bound = rolepolicy.bound_role(services.store, args.task)
+    policy = rolepolicy.declared()
+    finding = rolepolicy.check_record(settings, bound, policy) if (bound and policy) else None
     return {"task": args.task, "settings": settings.data,
-            "usable": not settings.missing(), "missing": settings.missing()}
+            "usable": not settings.missing(), "missing": settings.missing(),
+            "citedRole": rolepolicy.cited_role(settings), "boundRole": bound,
+            "rolePolicyDigest": policy.digest if policy else None,
+            "rolePolicy": "declared" if policy else "unresolved",
+            "roleFinding": finding}
 
 
 def cmd_generation_open(services, args) -> dict:
@@ -1331,6 +1345,46 @@ def _sibling_stores(services) -> dict:
             "ambiguous": len(claiming) > 1}
 
 
+def _role_policy_report(services) -> dict:
+    """What this process resolves as a role policy, and whether the bridge agrees.
+
+    "unresolved" is a finding, not a blank. It means role-bound deliveries are withheld here
+    until the variable is set, which is deliberate: a role check that silently does nothing
+    when its policy is missing is the failure it exists to prevent, wearing a green suite.
+    """
+    from . import rolepolicy
+
+    policy = rolepolicy.declared()
+    report = {
+        "state": "declared" if policy else "unresolved",
+        "digest": policy.digest if policy else None,
+        "detail": None if policy else policy.detail,
+        "bridgeDigest": None,
+        "agreement": "unchecked",
+    }
+    if not services.adapter_requested:
+        # No socket, so there is no second reader to compare against from here. Saying nothing
+        # is the honest answer; claiming agreement would be inventing the comparison.
+        return report
+    try:
+        capabilities = services.adapter._call("get_capabilities", {})
+    except Exception as error:  # noqa: BLE001 - reported, never raised out of a diagnostic
+        report["agreement"] = "unreachable"
+        report["bridgeDetail"] = f"{type(error).__name__}: {error}"
+        return report
+    bridge = ((capabilities or {}).get("executionPolicy") or {}).get("digest")
+    report["bridgeDigest"] = bridge
+    if report["digest"] is None or bridge is None:
+        # One side has no policy. That is exactly the split worth naming: the guard is active
+        # on one process and absent on the other, and each looks healthy read on its own.
+        report["agreement"] = "one_sided"
+    elif bridge == report["digest"]:
+        report["agreement"] = "same_file"
+    else:
+        report["agreement"] = "different_files"
+    return report
+
+
 def cmd_doctor(services, args) -> dict:
     """What THIS process can actually do here, measured rather than assumed.
 
@@ -1352,6 +1406,12 @@ def cmd_doctor(services, args) -> dict:
     # Emitted by every participant, so parent, child and daemon receipts can be compared
     # against each other rather than each being read as healthy on its own.
     report["accessReceipt"] = _access_receipt(services, report)
+    # ------------------------------------------------------------------ role policy
+    # Two processes reading two different policy files is a second source of truth by
+    # deployment rather than by code, and nothing inside either package can see it: each one
+    # reads its own environment and finds a perfectly valid file. So the digests are compared
+    # here, where a parent, a child and a daemon receipt are already read side by side.
+    report["rolePolicy"] = _role_policy_report(services)
 
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
     report["nonce"] = nonce
@@ -1879,6 +1939,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="authorized execution settings as JSON, or @path to a JSON file")
     register.add_argument("--child-settings",
                           help="authorized execution settings as JSON, or @path to a JSON file")
+    register.add_argument("--parent-role", choices=("supervisor", "parent", "child"),
+                          help="the role the parent's CREATION cited, from its receipt's"
+                               " executionPolicy.role. Recorded with the settings so a binding"
+                               " that disagrees with it is refused rather than discovered later")
+    register.add_argument("--child-role", choices=("supervisor", "parent", "child"),
+                          help="the role the child's CREATION cited, read the same way")
     register.set_defaults(handler=cmd_register)
 
     settings_record = subparsers.add_parser("settings-record")
@@ -1886,6 +1952,8 @@ def build_parser() -> argparse.ArgumentParser:
     settings_record.add_argument("--settings", required=True,
                                  help="JSON object, or @path to a JSON file")
     settings_record.add_argument("--source", default="creation_result")
+    settings_record.add_argument("--role", choices=("supervisor", "parent", "child"),
+                                 help="the role this task's creation cited")
     settings_record.set_defaults(handler=cmd_settings_record)
 
     settings_show = subparsers.add_parser("settings-show")

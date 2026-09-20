@@ -1080,18 +1080,40 @@ def project_key(record: dict) -> str:
     return f"host:{parent.get('hostId')}"
 
 
-def record_settings(store, clock, task_id: str, settings: dict, *, source: str) -> dict:
+def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
+                    role: str | None = None) -> dict:
     """Record the execution settings a task was actually created with.
 
     This is the interface JUN-92 populates from the creation result Run already receives. It
     reuses creation evidence and asks nothing new of the host; it is not a first-turn handshake.
     Recording is validated up front so an unusable record is refused at registration rather than
     discovered at send time.
+
+    `role` is the role the CREATION cited, taken from the receipt's executionPolicy. It travels
+    inside the recorded settings under a reserved key rather than in a column of its own, because
+    CREATE TABLE IF NOT EXISTS never adds a column to a store that already exists and this
+    package must keep working against one. It is compared against the role the task is actually
+    bound to, in whichever order those two facts arrive: here when the binding already exists,
+    and in binding_plan when the settings do.
     """
     from .settings import TaskSettings
 
+    settings = dict(settings)
+    if role is not None:
+        settings["citedRole"] = role
     candidate = TaskSettings(settings)
     candidate.require_usable()
+    # ------------------------------------------------------------------ role policy
+    from . import rolepolicy
+
+    bound = rolepolicy.bound_role(store, task_id)
+    if bound is not None:
+        policy = rolepolicy.declared()
+        finding = rolepolicy.check_binding(
+            rolepolicy.cited_role(settings), bound, settings, policy if policy else None
+        )
+        if finding is not None:
+            raise RegistrationError(RefusalReason.ROLE_BINDING_MISMATCH, finding["detail"])
     payload = json.dumps(settings, sort_keys=True)
     with store.transaction() as db:
         db.execute(
