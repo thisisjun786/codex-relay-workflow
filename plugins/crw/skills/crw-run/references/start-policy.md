@@ -130,12 +130,13 @@ creates anything before the adjudication: that count is zero in every row.
 | 3 | The same project resumed or compacted | none | D | the restored values | restored from the record, not re-decided |
 | 4 | A different project on the same host | none for the cap | D | standing cap; case 5 does not reach here | host facts carry, project decisions do not |
 | 5 | The user states a limit of four | none | D with the cap in force at four | source is the explicit limit, scope `this-run` | restored while the run lasts, never promoted |
-| 6 | no-goal or no-create in force | none | 0 | goal-free run, nothing created | the limit recorded as the precedence that applied |
+| 6a | `no-create` in force | none | 0 | the mode as adjudicated, nothing created | the limit recorded as the precedence that applied |
+| 6b | `no-goal` in force and the request separately covers goal-free Run | none | D | `goal-free-run` under the cap in force | the limit restored; it bars the goal, not the work |
 | 7a | The goal is unsupported and no substitute is approved | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
 | 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
 | 8 | An installed version or hook rule changed | only if the re-read forces one | D | the changed field re-adjudicated, the rest restored | the changed identity recorded against the superseded value |
 | 9 | Children of this parent are already live | none | D, which subtracts them | standing cap minus the live children | the existing owners preserved, never replaced |
 
-Recording this policy changes no run already in flight and no installed skill. Local edits, the
-pull request, the integration and what is actually installed are separate facts and are reported
-separately.
+Recording this policy changes no run already in flight. Where an installation links this checkout,
+the edit reaches later reads immediately, so the local edit, the pull request, the integration and
+what is actually installed and running stay separate facts and are reported separately.

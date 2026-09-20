@@ -437,9 +437,9 @@ again. [Start policy](references/start-policy.md) owns the fields, the scope eac
 the re-adjudication triggers and the cases this is judged by; the standing cap and its precedence
 are in [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
-Editing these instructions changes neither an installed skill nor a run already in flight. Report
-the local change, the pull request, the integration, and what is actually installed as separate
-facts.
+Editing these instructions does not change a run already in flight, and where an installation links
+this checkout the edit reaches later reads immediately. Report the local change, the pull request,
+the integration, and what is actually installed and running as separate facts.
 
 ## Observe and verify
 
