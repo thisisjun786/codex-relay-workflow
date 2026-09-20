@@ -51,6 +51,14 @@ name each issue's actual owner/repo and separate reference repositories. Project
 labels do not substitute for that target. Leave a genuinely unresolved code target
 as an explicit planning dependency, not an invented checkout assignment.
 
+## Schedule the plan
+
+An authorized project or initiative plan write carries its schedule as part of the default result: the project's start and target dates, milestones named after the result they finish with their target dates, each issue's milestone link and the target date it actually needs, the prerequisites that really hold, and the areas that can proceed in parallel. Use the field names, sources and value words in the shared [Schedule baseline contract](references/integrations.md#schedule-baseline-contract), and follow [Schedule and dependency roadmap](references/scheduling.md) to build, check and record them.
+
+Dates come from an authority, from evidence, or from a record that already exists, never from an estimate. Where the request states none, propose a short operating target that fits the scope in hand and the schedule already recorded, mark it provisional, and name whose decision set it. A subject with no target stays undetermined or awaiting authority instead of receiving an invented date, and no fixed period becomes every plan's default. Preserve each real start and finish from evidence with its timezone, and leave completed or canceled work out of the new schedule.
+
+Keep the schedule baseline and each change's time, reason, scope and before and after dates in the records Linear already holds, so a later plan stays comparable with the first. Use a project-level prerequisite only when the whole project must finish, and express a wait for particular outputs at issue or milestone level so the remaining work proceeds. Schedule writes happen under the authority in Reconcile and apply below; a check-only or draft-only request returns the schedule as a proposal, and registering a date is not authority to assign, execute, install or restart anything.
+
 ## Reconcile and apply
 
 For an existing plan, compute a compact change set: reuse, create, update, or leave unresolved. Match stable IDs and semantic scope before titles. Re-running the same request converges on the same items because the split follows deliverables derived from accepted criteria rather than a file layout that moves with every commit.
