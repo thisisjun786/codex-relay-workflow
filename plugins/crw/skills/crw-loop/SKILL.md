@@ -19,8 +19,10 @@ same parent, not a request to start another coordinator or recursively invoke sk
 ## Enter or resume
 
 A submitted `$crw-loop <Linear project link>` execution request, where a plugin
-installation exposes this skill as `crw:crw-loop`, explicitly requests
-a parent coordination goal and automatic execution of the agreed scope. Designate or
+installation exposes this skill as `crw:crw-loop`, establishes the project
+parent's native goal and automatic execution of the agreed scope. The role policy makes that goal
+the default rather than an opt-in, so this entry is the supported way to establish it rather than
+the only occasion for it. Designate or
 restore the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding),
 then follow [Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone
 already advances through in-scope successors; Loop adds the goal and automatic host

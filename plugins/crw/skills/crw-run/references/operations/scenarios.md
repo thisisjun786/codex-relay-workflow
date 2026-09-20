@@ -555,28 +555,31 @@ resume requirement; do not reset the FSM, edit phases or report a new loop as ar
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
 and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
 
-## S25 Run and Loop share project scope but differ in parent goal ownership
+## S25 Run and Loop share project scope; the parent goal is the role default
 
-Observed: the user submits Run with a project link and no automatic-continuation
-request. A and B are ready; C depends on A. In another run the user explicitly submits
-Loop for the agreed A/B/C scope and its goal/hook preflight passes.
+Observed: the user submits Run with a project link. A and B are ready; C depends on A. In another
+run the user submits Loop explicitly for the agreed A/B/C scope and its goal/hook preflight passes.
+In a third the request carries an explicit no-goal limit.
 
 Clauses: OPS-8.1, OPS-9.2; operation selection belongs to
-[crw-run](../../../crw-run/SKILL.md) and goal ownership to
-[crw-loop](../../../crw-loop/SKILL.md).
+[crw-run](../../../crw-run/SKILL.md), goal ownership to
+[crw-loop](../../../crw-loop/SKILL.md), and the role default to
+[Start policy](../start-policy.md).
 
-Action: both record A/B/C as the agreed project scope and A/B as the initial ready
-batch. When A's prerequisite delivery is verified and available, both can start C
-without waiting for B if capacity permits. Run creates no parent goal; Loop creates
-or reuses the matching goal and preserves it across host continuations. An explicitly
-limited A/B batch excludes C in either mode. After compaction or a resume request,
-Run recovers the project scope and continues C rather than asking for a new batch
-authorization. If the host ends a Run turn before completion, it preserves the
-unfinished project and resume step without promising a future wake-up. Dispatch-only
-Run may hand off pending children; status-only Run reads without waking them.
+Action: all three record A/B/C as the agreed project scope and A/B as the initial ready batch. When
+A's prerequisite delivery is verified and available, each can start C without waiting for B if
+capacity permits. The first two both hold the project parent's own goal, because the role policy
+makes it the default: what the explicit Loop submission adds is the entry, not the goal. The third
+runs goal-free only because the limit says so, and only where the request separately authorizes the
+work to proceed without one; absent that authorization its mode is blocked and no child is created.
+An explicitly limited A/B batch excludes C in every mode. After compaction or a resume request the
+run recovers the project scope and continues C rather than asking for a new batch authorization,
+restoring the recorded start policy instead of adjudicating it again. A goal's continuation is the
+bounded Stop nudge that start policy records, so no mode promises an unattended wake-up.
+Dispatch-only Run may hand off pending children; status-only Run reads without waking them.
 
-Preserved: one project parent, existing issue children and PRs, requested batch/merge
-limits, child CXC defaults, and the difference between parent and child goal authority.
+Preserved: one project parent, existing issue children and PRs, requested batch/merge limits, child
+CXC defaults, an explicit no-goal limit, and the difference between parent and child goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
 
