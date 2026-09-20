@@ -270,6 +270,42 @@ A child that is alive keeps its issue. Uncertain delivery, an unreadable record 
 is not proof that a writer is gone, and recovery that cannot read a level reports that level as
 unknown rather than treating it as empty. Reconcile before creating, never after.
 
+### Which register each state word came from
+
+The reading itself is the section above. What it returns is not one vocabulary: the words that
+describe a parent — active, idle, notLoaded, systemError, blocked, paused, cancelled, archived,
+completed — come from five registers, and a recovery that acts on the wrong one acts on a fact
+nobody reported.
+
+| Register | Values | Where it is read |
+|---|---|---|
+| The task, right now | `active`, `idle`, `notLoaded`, `systemError` | the host, per [the bridge](bridge.md#reach-a-task-that-is-already-working) |
+| That task's native goal | none, complete, active, paused, blocked, a different unfinished goal, unreadable | its goal tool, under [Parent goal lifecycle](../../crw-loop/references/parent-goal.md) |
+| The task's lifecycle, set by a person | paused, cancelled, archived | [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) |
+| The mode this run recorded when it started | `loop`, `goal-free-run`, `blocked` | the start-policy record, under [Record the start adjudication](../../crw-loop/references/parent-goal.md#record-the-start-adjudication) |
+| The project and the record | completed, and a dependency recorded as blocking | Linear and the supervision record |
+
+Label every reading with its register before anything acts on it. The fourth register is the one a
+restart is most likely to skip, and it is what makes the second readable: a project parent's goal
+is the role default under [Start policy](start-policy.md), so an absent goal is not a resting state
+on its own. Read it against the recorded mode — `goal-free-run` accounts for it, `loop` makes it a
+finding, and `blocked` means no child should exist yet. Where no start-policy record exists, none
+was ever written: that adjudication is owed before dispatch rather than recovered. Where one
+exists, it is restored and re-adjudicated only for the fields whose conditions have changed.
+
+"Blocked" is the word that most needs its register named, because a blocked goal, a recorded
+`blocked` start mode and a dependency the record carries have different owners and different next
+actions. "Paused" divides the same way between a goal and a task lifecycle, and "completed"
+between a goal and a project; OPS-8.2 keeps a paused goal and a stopped turn separate for the same
+reason.
+
+What follows from each reading is not decided here. The idle action matrix, and the rule that a
+goal existing, a goal activating and continuation observed are three readings, belong to
+[the midpoint check](../../crw-status/references/midpoint-check.md); the busy, paused, cancelled
+and archived routing belongs to OPS-8.2; and a finished project belongs to C9 below. This entry
+adds only the register each word came from, which is the thing a restarted supervisor no longer
+remembers.
+
 ## Cases
 
 These are the situations this entry has to get right. Three of them are already worked one level

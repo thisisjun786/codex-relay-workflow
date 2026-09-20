@@ -700,3 +700,59 @@ observed; installing, starting a service, or creating a task to find out are
 separate actions under their own authorization, and
 [OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
 path when one is actually authorized.
+
+### Restate the run before continuing it
+
+Recovery starts by restating the run in five lines, read from the
+[coordination record](references/task-packet.md#coordination-record), which is already the place
+these live and already forbids a second store:
+
+- **The fixed binding** — the project or standalone issue, this task's own id, and the host it
+  runs on, each by its stable identifier.
+- **The current temporary target**, where one exists: the other project or issue this task was
+  asked to look at, recorded beside the fixed binding rather than in place of it.
+- **The approved scope** in force, with the limits that arrived with it and the start policy this
+  run recorded, restored under [Start policy and child cap](#start-policy-and-child-cap) and
+  adjudicated again only for the fields whose conditions have changed.
+- **The current owner** of each piece of live work — the child task, its issue, its pull request.
+- **The one next action.**
+
+Each line carries the time it was observed, because three claims are easy to write as one: what
+the record said when it was written, what a read this turn returned, and what an earlier decision
+settled on purpose. Only the second is the current state. An old "paused" or "not started" note is
+the first of them, so a current reading that contradicts it wins and the note stays as history. A
+line this turn did not refresh is marked unrefreshed with its observation time rather than
+reported as current.
+
+Two requests are answered from the restatement. A status-only request is answered with the current
+position first — what is done, what is in progress, what is waiting, and the next observation that
+would settle what is still open — and the history after it; the report's form belongs to
+[crw-status](../crw-status/SKILL.md), and this task supplies the position rather than a second
+format. A request to carry on re-reads the current owner and its delivery state before anything is
+sent, then continues through the task that already owns the work, inside the approved scope.
+
+The settings to restate are not all established the same way. Model, effort, profile and
+permissions are compared against what the current host reports and what this task is authorized to
+use now, under
+[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution)
+and [Model and settings verification](references/bridge.md#model-and-settings-verification). The
+effective workflow is not among them, for the reason the
+[restoration block](references/task-packet.md#restoration-block) already gives, so a resume that
+omits it has dropped it.
+
+Ownership is settled on the stable identifiers the assignment binds
+([OPS-7.1](references/operations.md#ops-71-what-an-assignment-binds)) and never on a title, a pull
+request, a branch or a working directory
+([OPS-7.2](references/operations.md#ops-72-never-route-on-a-display-name-or-a-working-directory)),
+which is why an installation whose title or pin tooling this task cannot reach has a reporting gap
+and not a lost binding. Whether a request touches the binding at all belongs to
+[Resolve the project target](../crw-plan/references/integrations.md#resolve-the-project-target),
+and changing it to
+[Project parent binding](../crw-plan/references/integrations.md#project-parent-binding).
+
+What the restatement must not lose is the work already in progress: dirty working trees and
+branches, a native goal and its phase state, receipts that were never delivered, and pull requests
+still bound to their issues. None of them is replaced by something this task creates because it
+could not read an owner. Where management genuinely moves, the handoff is recorded — which task
+handed over, which took it, what moved and what did not — so the next restatement reads one owner
+instead of inferring two.

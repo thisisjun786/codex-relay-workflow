@@ -538,6 +538,13 @@ says, so read the level first and the fields second:
   evidence live, with the identifiers and current revisions the coordinator already holds.
   These are pointers to that task's own records rather than copies of them, and they are what
   lets a task that lost its context find its record instead of starting a second one.
+- The host each identifier belongs to, carried beside the ids for routing and audit rather than as
+  part of them.
+- When the sender observed each of these facts. They are observations with a time, so a recipient
+  can tell which lines are current and which were carried forward before it acts on them.
+- The observation each setting was read at, so the recipient compares the values against its own
+  host instead of adopting them, and settles an unsupported one under
+  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution).
 
 What the block carries about those records is their location and identity, never their
 contents. The plan, the ledger, the phase and the goal belong to the task and to its own
@@ -639,6 +646,16 @@ needed to resume:
 - Last observed status/cursor, final commit, acceptance evidence, and next action.
 - For integration: candidate base/head and landed revisions, CI attempt links,
   review sources/coverage, and finding dispositions per [Merge readiness](merge-readiness.md).
+- The current temporary target, where this task was asked to handle another project or issue: its
+  stable ID, the request that asked for it, and the limit that request carried, recorded beside the
+  fixed binding and never in its place. The binding rule is
+  [Resolve the project target](../../crw-plan/references/integrations.md#resolve-the-project-target);
+  what the record owes recovery is the evidence that this target was the temporary one.
+- Per state line, when it was observed, whether this turn refreshed it or carried it forward, and
+  which register it was read from.
+- Where management moved: the outgoing task, the incoming task, what transferred and what did not,
+  and the revision it took effect at. A handoff nobody recorded leaves the next recovery reading two
+  owners for one project.
 
 Do not create a new database, daemon, or competing local planning document to hold
 this table. Each worker writes its own reproducible implementation evidence; the
