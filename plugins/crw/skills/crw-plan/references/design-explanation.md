@@ -6,12 +6,12 @@ where a service ends and its database begins, or whether a proposed change actua
 applies when a planning document has to carry design reasoning somebody will read later without
 the conversation that produced it.
 
-An explanation authorises nothing. Writing one installs, runs, registers, restarts and records
-nothing, and it does not widen the scope the request already gave.
+An explanation authorises nothing; what a request to explain does and does not permit is at the
+end of this page.
 
-A question asked three times is not evidence of a defect in the system. It is usually evidence that
-the previous answer was a list of component names. Five questions decide whether an explanation
-worked, and an independent reader has to be able to answer all five from the explanation alone:
+Treat a question asked three times as a sign that the previous answer was a list of component
+names, rather than as evidence of a defect in the system. Five questions decide whether an
+explanation worked, and an independent reader must answer all five from the explanation alone:
 who runs it, where the state is, what actually refuses, how far it is built, and how an improvement
 would be judged. The sections below are those five in the order a newcomer asks them, and they
 depend on each other in that order: which state exists decides what can be enforced, what is
@@ -79,8 +79,8 @@ for each what it cannot do:
 
 Name the enforcement point: the place where a wrong action is actually refused, and what happens
 when that place is absent. If nothing refuses, say so. "No layer refuses this; the guard is an
-early warning" is a useful answer, and it is the answer most often replaced by a claim that a
-registered hook makes the rule real.
+early warning" is a useful answer, and it is the answer to give instead of pointing at a
+registered hook and calling the rule real.
 
 A hold or a block is also conditional on isolation somebody granted. Where the held process could
 have written the facts the decision read, the decision proves nothing, and the honest design is to
@@ -118,7 +118,9 @@ A proposal is not judged by how reasonable it sounds. Carry five things with it:
 3. **The costs.** What the change can do wrong: refuse something that was fine, deliver twice,
    add delay, or add a new way to fail. Count them in the same run rather than assuming them away.
 4. **The decision rule.** The threshold that would make this a keep or a revert, fixed before the
-   measurement rather than after seeing it.
+   measurement rather than after seeing it. Where a proposal has no such rule yet, say so in those
+   words and treat it as the piece that is missing: the work can proceed, and it cannot be accepted
+   on a measurement nobody agreed how to read.
 5. **Expected and measured, in separate paragraphs.** What the change is expected to do belongs
    before any run; what it did belongs after one, with the run named. A sentence that contains
    both is how an expectation becomes a result nobody produced.
@@ -179,10 +181,11 @@ ledger and recovery reads a ledger that never saw the earlier attempts, so it ca
 or repeat one. Nothing rebuilds it, and nobody is responsible for restoring it, which is why the
 two settings are worth a sentence in any explanation of this system.
 
-The coordination summary is written by the parent into the Linear document, which is the only
-piece here with a durable owner outside the host; raw run records are private receipts written by
-whoever ran the thing, kept outside this repository, and restored from no backup this explanation
-knows of. The defaults and the one-store-per-operating-scope rule belong to
+The coordination summary is written by the parent into the Linear document, and Linear keeps and
+restores it as its own service, which makes it the only piece here whose recovery is somebody
+else's job entirely. Raw run records are private receipts written by whoever ran the thing, kept
+outside this repository, and restored from no backup this explanation knows of. The defaults and
+the one-store-per-operating-scope rule belong to
 [the relay reference](../../crw-run/references/relay.md), named here rather than copied. What a
 given run actually resolved is a receipt value, and this explanation has none.
 
@@ -195,11 +198,13 @@ not have forged the facts the decision read. The rules are in
 appearing in a configuration file has established none of it.
 
 How far it is built. The contract, the comparison harness and the document recording which of its
-six measures were performed are in this checkout, at the revision this explanation was written
-against, which a reader should expect to see named in a real answer; two of the six are recorded
-as not performed. Nobody here
-re-ran it, no run result is committed, and no host is claimed to have this installed, active or
-live. CXC is an existing owner and is left alone: the contract modifies no CXC state, and the
+six measures were performed are in this checkout; two of the six are recorded as not performed. The
+revision is deliberately not written into this page, because a commit named inside the commit that
+contains it is self-referential; an answer written anywhere else names the revision it read, and a
+reader is right to ask for it. Nobody here re-ran it, no run result is committed, and no host is
+claimed to have this installed, active or live.
+
+CXC is an existing owner and is left alone: the contract modifies no CXC state, and the
 comparison deliberately keeps a foreign CXC Stop entry in the same hook file, reads it back after
 the install to prove it was not displaced, and never executes it.
 
@@ -237,11 +242,12 @@ State. Four pieces with different owners and lifetimes: the upload row, written 
 and restored from the database's own backups by whoever operates it; the job, written and
 redelivered by the queue and lost with it if that queue is not durable; the thumbnail, written by
 the worker into object storage and restored by re-running the job rather than from a backup, which
-a sweep over rows still marked pending is what starts; and
+a scheduled sweep over rows still marked pending starts, owned by the same team that runs the
+worker; and
 the notification record, written by the worker and rebuilt by nobody, because a notification that
 was never sent cannot be recovered after the fact. The row and the stored object survive a restart
 and the worker's in-memory handle does not. A job lost with a non-durable queue has no restorer
-either; the same sweep over pending rows is the only thing that brings it back. No process rebuilds
+either; that same scheduled sweep is the only thing that brings it back. No process rebuilds
 a thumbnail whose row no longer says pending, which is the one recovery path deliberately left
 closed.
 
@@ -256,7 +262,9 @@ obliged to call.
 How far it is built. The web process, the row, the queue, the object store and the unique
 constraint all run in production; the worker exists in source and runs only in staging; the
 notification is a drawing. Every piece named above gets one of those labels, because a piece left
-unlabelled is the one a reader will assume is running.
+unlabelled is the one a reader will assume is running. In a real answer each label would cite the
+deploy record or the run that earned it; this one cites nothing, because it describes no real
+system, and an illustration is the only place that excuse works.
 
 How an improvement is judged. Adding a retry answers a counted miss: uploads still pending after
 ten minutes. The comparison replays one recorded day's workload against the same code with the
