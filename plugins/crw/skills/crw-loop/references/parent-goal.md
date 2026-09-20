@@ -18,8 +18,11 @@ this file transfers to initiative scope; the roles themselves are in
 2. Inspect the exposed native goal tools and hooks for create, continuation and
    completion. On hosts exposing `get_goal`, `create_goal` and `update_goal`, use
    those tools in this parent. A bridge's read-only goal API is not goal-write support.
-   A hook that routes any active native goal into CXC implementation phases is a
-   compatibility blocker even for a fresh parent. Record the installed version/path,
+   A hook that prevents a goal from activating at all is a compatibility blocker even
+   for a fresh parent. A hook that lets it activate and then directs an active goal into CXC
+   implementation phases is the measured goal-idle case instead: activation stands, the directive
+   is declined, and [Record the start adjudication](#record-the-start-adjudication) holds that
+   narrowing. Record the installed version/path,
    observed rule and required supported fix. Do not disable the hook, replay hook
    events, create fake CXC evidence or initialize a placeholder implementation cycle.
 3. Verify the observation/continuation path for this run under OPS-8.1 before dispatch.
@@ -73,8 +76,8 @@ ignored, because activation and continuation fail differently: the goal does act
 back active, and what the block degrades is durable continuation, which is recorded as a bounded
 nudge. So this behaviour does not block activation, while a hook that actually prevents a goal from
 activating, or that cannot be declined without violating this contract, remains a blocker under
-that step. Recording this narrowing here does not rewrite the step itself; the two are read
-together and the wording of the step still needs its own coordinated update.
+that step. Step 2 above now carries the same split, so the two are read together rather than
+against each other.
 
 Activation is not continuation. On the measured installation the goal activates, and the
 Stop-continuation that follows is a bounded nudge carrying an unconditional PABCD directive that a
@@ -90,7 +93,7 @@ Read `get_goal` first, then choose the matching case:
 
 | Observed state | Action |
 | --- | --- |
-| No goal, or previous goal actually complete | Create the explicitly requested new goal with `create_goal`, then read it back. |
+| No goal, or previous goal actually complete | Create the project parent's goal with `create_goal`, then read it back. |
 | Matching active goal | Reuse it with the same scope; refresh the coordination record and live child ownership. |
 | Matching blocked/paused goal | Preserve it. Use an exposed, authorized resume action if supported, then verify active status; otherwise report the exact manual resume requirement. |
 | Different unfinished goal | Report the ownership/scope conflict. Never overwrite it, call it complete or create a duplicate to make room. |

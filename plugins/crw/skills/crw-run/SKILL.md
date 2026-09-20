@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors under the project parent's own native goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -45,11 +45,12 @@ their results, and admit newly ready in-scope issues as capacity opens. The firs
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
 future backlog additions, another project's work or replacing another parent.
 
-An explicit request for a parent goal or unattended host continuation routes to
-`crw-loop`. Ordinary requests to finish the project or continue its next issue remain
-Run execution; they do not themselves create a goal. Inside an authorized Loop, Run
-returns progress and pending obligations to the same Loop owner without creating
-another goal. Existing scope and authorization survive skill routing.
+The parent goal's lifecycle and unattended host continuation belong to `crw-loop`, and the role
+policy makes that goal the project parent's default rather than an opt-in, so an ordinary project
+execution request establishes it through that lifecycle instead of running goal-free. Inside an
+authorized Loop, Run returns progress and pending obligations to the same Loop owner without
+creating another goal. An explicit no-goal or read-only limit still wins, and existing scope and
+authorization survive skill routing.
 
 An initiative link by itself is not a target. Where a request merely cites one, resolve the
 project actually being executed under the shared target rules: the link is context and it rebinds
@@ -192,7 +193,7 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, under the parent's own native goal per the role policy; host restrictions and an explicit no-goal limit still apply |
 | Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
