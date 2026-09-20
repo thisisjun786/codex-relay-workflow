@@ -294,6 +294,115 @@ def mcp_refusals(mcp):
     return found
 
 
+def declared_policy(root, name=None):
+    """The per-tool approval policy the package at this root declares, or why it could not be read.
+
+    Follows the manifest the way _declared does, because Codex loads the document the manifest
+    names and ignores every other file in the package. Reading a fixed path instead would compare
+    against bytes nothing ever serves.
+    """
+    name = name or inventory.SERVER_NAME
+    manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return None, (str(manifest_path) + " could not be read (" + type(error).__name__ + ": "
+                      + str(error) + ")")
+    named = manifest.get("mcpServers")
+    if not (isinstance(named, str) and named.strip()):
+        return None, str(manifest_path) + " declares no MCP document"
+    path = Path(root) / _relative(named)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return None, (str(path) + " is declared and could not be read (" + type(error).__name__
+                      + ": " + str(error) + ")")
+    servers = (document or {}).get("mcpServers")
+    if not isinstance(servers, dict):
+        return None, str(path) + " holds no mcpServers object"
+    entry = servers.get(name)
+    if not isinstance(entry, dict):
+        return None, str(path) + " declares no " + str(name) + " server"
+    declared = entry.get(inventory.POLICY_FIELD, {})
+    if not isinstance(declared, dict):
+        return None, (str(path) + " declares a " + inventory.POLICY_FIELD + " that is not an"
+                      " object for " + str(name))
+    found = {}
+    for tool, gate in declared.items():
+        if not isinstance(gate, dict) or not isinstance(gate.get(inventory.APPROVAL_KEY), str):
+            return None, (str(path) + " declares " + repr(str(tool)) + " without a readable "
+                          + inventory.APPROVAL_KEY)
+        found[str(tool)] = gate[inventory.APPROVAL_KEY]
+    return found, None
+
+
+def _approval_modes(repo_root):
+    """The value set the package check owns, or None when it cannot be asked."""
+    try:
+        return tuple(getattr(_plugin_checker(repo_root), "APPROVAL_MODES", None) or ()) or None
+    except Exception:  # noqa: BLE001 - a checker this cannot load decides no values here
+        return None
+
+
+def policy_complaints(host, mcp, plugin=None):
+    """Whether removing this table would keep every per-tool approval the host grants today.
+
+    The question the byte comparison never asked. A table can be provably ours and still be the
+    only thing gating create_thread, and the declaration that replaces it serves whatever it
+    happens to say. Measured: the user table wins while it exists, so the gate is lost at the
+    removal and not at the install -- which is why this is asked before the removal, three times,
+    and never treated as settled by an earlier answer.
+
+    Exact equality, and no ordering over the modes. auto, prompt, writes and approve is a measured
+    set, not a ladder: writes names a category of calls, and prompt against approve was never
+    measured. Ranking them here would be a guess in the one place where guessing wrong quietly
+    loosens a gate. This never rewrites a user's value; it only decides whether removing it is safe.
+    """
+    found = []
+    if mcp.get("table") != reading.PRESENT:
+        # Nothing to lose. A host with no table has nothing this removal could take away, and
+        # disable and remove never touch the table at all.
+        return found
+    policy = mcp.get("policy") or {}
+    if policy.get("state") == reading.UNREADABLE:
+        return ["the approval policy on the " + inventory.SERVER_NAME + " table in "
+                + str(mcp.get("configPath")) + " could not be read, so whether the plugin"
+                " declaration preserves it was not established: " + str(policy.get("detail"))]
+    granted = policy.get("tools") or {}
+    if not granted:
+        return found
+    plugin = plugin if plugin is not None else (host.get("plugin") or {})
+    version = plugin.get("cacheVersion")
+    if not version:
+        # Not a silent pass. With no installed package there is nothing to compare against, and a
+        # comparison against nothing must never read as preservation.
+        return ["the host grants " + ", ".join(sorted(granted)) + " an approval policy and no"
+                " single installed plugin version could be named, so whether the declaration"
+                " preserves that policy was compared with nothing"]
+    declared, why = declared_policy(version, inventory.SERVER_NAME)
+    if declared is None:
+        return ["the host grants " + ", ".join(sorted(granted)) + " an approval policy and the"
+                " installed package's declaration could not be read, so preservation was compared"
+                " with nothing: " + str(why)]
+    modes = _approval_modes(host["repoRoot"])
+    for tool in sorted(granted):
+        mode = granted[tool]
+        if modes and mode not in modes:
+            found.append("the table gates " + tool + " with " + repr(mode) + ", which is not one"
+                         " of " + ", ".join(modes) + ", so this command cannot establish what it"
+                         " grants or carry it into the declaration")
+        elif tool not in declared:
+            found.append("the table gates " + tool + " with " + repr(mode) + " and the installed"
+                         " declaration carries no " + inventory.APPROVAL_KEY + " for it. What the"
+                         " host does for a tool with no declared mode is not measured, so removing"
+                         " the table would drop a gate this command cannot promise back")
+        elif declared[tool] != mode:
+            found.append("the table gates " + tool + " with " + repr(mode) + " and the installed"
+                         " declaration with " + repr(declared[tool]) + ". This command does not"
+                         " choose between them")
+    return found
+
+
 def registered_settings(host):
     """The document the registered hook actually reads, and where it came from.
 
@@ -880,6 +989,9 @@ def preflight(host, options):
                         " whether this host registers " + inventory.SERVER_NAME + " was not"
                         " established")
     refusals.extend(mcp_refusals(mcp))
+    # The approval question, asked before ORDER starts and therefore before any byte moves. A dry
+    # run reaches this too, so an operator can see the verdict without writing anything.
+    refusals.extend(policy_complaints(host, mcp))
 
     flight = host["inFlight"]
     # Reported, never a refusal. A marker entry is created once and outlives the work it recorded,
@@ -1343,12 +1455,22 @@ def mcp_table_standdown(host, options, *, apply=False):
         return _answer("mcp table standdown", WOULD, "would remove the " + inventory.SERVER_NAME
                        + " table from " + str(path))
     with hostrecord.Locked(path):
-        # The span is re-derived inside the lock rather than carried from the snapshot. Authorship
-        # is proved by equality and equality is a property of the WHOLE table: a field appended to
-        # it after the snapshot leaves the old span a substring of the file, so the containment
-        # test below still says ours, and removing the old span deletes the header and leaves the
-        # appended field attached to whatever table precedes it.
-        again = inventory.read_mcp(host["codexHome"])
+        # One read, one proof, one write. The span is re-derived inside the lock rather than
+        # carried from the snapshot, and it is derived from THESE bytes: this used to read the
+        # host once to build the proof and again to get the text it edited, so the bytes it proved
+        # were never quite the bytes it wrote, with only a containment test in between. Authorship
+        # is equality and equality is a property of the WHOLE table, so a field appended after the
+        # first read leaves the old span a substring of the second, the containment test still
+        # says ours, and the removal deletes the header and orphans what was appended. That was
+        # survivable while the only removable thing was a three-line block. It is not now: a
+        # proven span can carry approval tables, and an orphaned [mcp_servers.<name>.tools.<tool>]
+        # is the state in which codex fails to load at all, so every command on the host exits 1.
+        text = reading.read_text(path, "the Codex configuration")
+        if not text.usable:
+            return _answer("mcp table standdown", REFUSED,
+                           "the configuration could not be read inside the lock ("
+                           + str(text.detail) + "), so nothing was removed")
+        again = inventory.read_mcp(host["codexHome"], text_value=text.value)
         if again["table"] != reading.PRESENT:
             return _answer("mcp table standdown", REFUSED,
                            "the " + inventory.SERVER_NAME + " table reads " + str(again["table"])
@@ -1359,9 +1481,14 @@ def mcp_table_standdown(host, options, *, apply=False):
                            "the table changed after it was read and is no longer the block this"
                            " repository renders, so it is left alone"
                            + (": " + str(again["detail"]) if again.get("detail") else ""))
+        # The last place the approval question is asked, on the same bytes about to be edited and
+        # against the package as it stands now. preflight and the lock re-read both ran earlier;
+        # a cache replaced since then would otherwise serve a declaration nobody compared.
+        losing = policy_complaints(host, again, plugin=inventory.read_plugin(host["codexHome"]))
+        if losing:
+            return _answer("mcp table standdown", REFUSED, "; ".join(losing))
         block = (again.get("tableSpan") or again["renderedTable"]).strip()
-        text = reading.read_text(path, "the Codex configuration")
-        if not text.usable or block not in text.value:
+        if block not in text.value:
             return _answer("mcp table standdown", REFUSED,
                            "the configuration changed after it was read, so nothing was removed")
         before = text.value
@@ -1380,6 +1507,16 @@ def mcp_table_standdown(host, options, *, apply=False):
             preserved, why = _preserve_registration(host, again)
             if why:
                 return _answer("mcp table standdown", REFUSED, why)
+        # Immediately before the write, the bytes that were proved have to still be the bytes on
+        # disk. hostrecord.Locked serialises cooperating runs and says plainly that it does not
+        # exclude an editor that ignores it, so this is a narrowing and not a compare-and-swap:
+        # what remains open is the inside of atomic_write, between its temp file and its replace.
+        # Naming that is the point; closing it would mean changing a helper this task does not own.
+        now = reading.read_text(path, "the Codex configuration")
+        if not now.usable or now.value != before:
+            return _answer("mcp table standdown", REFUSED,
+                           "the configuration changed between being proved and being written, so"
+                           " nothing was removed. Rerun to decide against the host as it stands")
         hostrecord.atomic_write(path, stripped)
         back = reading.read_text(path, "the Codex configuration")
     view = codexconfig.scan(back.value) if back.usable else None
@@ -1401,9 +1538,15 @@ def mcp_table_standdown(host, options, *, apply=False):
     if present:
         return _answer("mcp table standdown", REFUSED, "the table is still registered after the"
                        " write", applied=True, wrote=True)
-    return _answer("mcp table standdown", SETTLED, "removed the table and left every other byte",
+    return _answer("mcp table standdown", SETTLED,
+                   "removed the table, and the approval policy it carried, and left every other"
+                   " byte",
                    applied=True, wrote=True, preserved=preserved,
-                   otherTablesPreserved=True)
+                   otherTablesPreserved=True,
+                   # The only durable copy of what was removed. The archive goes through
+                   # bridgerecord.document, which has no field for a policy, so without this the
+                   # receipt would be the sole record and it would not carry it either.
+                   removedPolicy=dict((again.get("policy") or {}).get("tools") or {}))
 
 
 def mcp_record_install(host, options, *, apply=False):
@@ -1871,6 +2014,10 @@ def transition(host, options, *, apply=False):
                 # with no bridge. The decision is made about the state that will be written.
                 host = {**host, "mcp": inventory.read_mcp(host["codexHome"])}
                 changed = mcp_refusals(host["mcp"])
+                # Asked again on the refreshed reading, for the same reason mcp_refusals is: a
+                # policy table added, or a cache replaced, between the snapshot and the lock would
+                # otherwise reach the removal having been judged on a host that no longer exists.
+                changed += policy_complaints(host, host["mcp"])
                 # The executable probe preflight makes, against the refreshed reading. mcp_refusals
                 # judges shape, ownership and agreement; register-mcp writes whatever
                 # --bridge-command it was given without requiring it to exist, so a supported

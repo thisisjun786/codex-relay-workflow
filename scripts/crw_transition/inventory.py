@@ -20,6 +20,15 @@ from crw_runtime import bridgerecord, codexconfig, completion, hooks, pointer, r
 SKILL_PREFIX = "crw-"
 SERVER_NAME = "codex-thread-bridge"
 PLUGIN_NAME = "crw"
+# The per-tool approval policy a server table may carry, and the only key this command reads inside
+# one. The set of values a host accepts is deliberately NOT here: scripts/ci/plugin.py owns it,
+# measured from the host's own rejection text, and two copies of a measured set do not stay in
+# agreement.
+POLICY_FIELD = "tools"
+APPROVAL_KEY = "approval_mode"
+# What a registration may hold and this command can still render back. Anything else is somebody's
+# own setting that the plugin declaration does not reproduce, so removing the table would lose it.
+RENDERABLE_FIELDS = ("command", "args", POLICY_FIELD)
 # The declared hook document, as the manifest names it. A trust key in config.toml carries this
 # relative path, so this is what identifies trust for THIS hook rather than for some other plugin's.
 HOOK_DOCUMENT = "wiring/hooks/stop-recording-completion.json"
@@ -159,6 +168,129 @@ def removal_is_structural(text, span, name):
     if name in theirs or name not in mine:
         return False
     return {key: value for key, value in mine.items() if key != name} == theirs
+
+def policy_of(parsed, name):
+    """The per-tool approval policy a configuration grants this server, read from the parser.
+
+    From tomllib rather than from the table headers, because a header is a spelling and the policy
+    is not. [mcp_servers.\"codex-thread-bridge\".tools.create_thread] grants exactly what the bare
+    spelling grants, and a reader looking for one literal prefix answers \"no policy here\" about a
+    host that has one -- measured, not supposed. A preservation check that cannot see the policy it
+    protects is worse than none: it would report the gate preserved while the gate was dropped.
+
+    Shape only. Whether a value is one the host accepts is decided against the set the package
+    check owns, not here.
+    """
+    entry = (parsed.get("mcp_servers") or {}).get(name)
+    if not isinstance(entry, dict) or POLICY_FIELD not in entry:
+        return {"state": reading.ABSENT, "tools": {}, "detail": None}
+    declared = entry[POLICY_FIELD]
+    where = "[mcp_servers." + codexconfig.key(name) + "." + POLICY_FIELD
+    if not isinstance(declared, dict):
+        return {"state": reading.UNREADABLE, "tools": {},
+                "detail": where + "] is a table of tools, found " + type(declared).__name__}
+    found, complaints = {}, []
+    for tool, gate in sorted(declared.items()):
+        named = where + "." + codexconfig.key(str(tool)) + "]"
+        if not isinstance(gate, dict):
+            complaints.append(named + " is a table, found " + type(gate).__name__)
+        elif sorted(set(gate) - {APPROVAL_KEY}):
+            complaints.append(named + " carries "
+                              + ", ".join(repr(key) for key in sorted(set(gate) - {APPROVAL_KEY}))
+                              + ", and " + APPROVAL_KEY + " is the only key this command can carry"
+                              " into the plugin declaration")
+        elif APPROVAL_KEY not in gate:
+            complaints.append(named + " declares no " + APPROVAL_KEY)
+        elif not isinstance(gate[APPROVAL_KEY], str):
+            complaints.append(named + " has an " + APPROVAL_KEY + " that is not a string, it is "
+                              + type(gate[APPROVAL_KEY]).__name__)
+        else:
+            found[str(tool)] = gate[APPROVAL_KEY]
+    if complaints:
+        return {"state": reading.UNREADABLE, "tools": found, "detail": "; ".join(complaints)}
+    return {"state": reading.PRESENT if found else reading.ABSENT, "tools": found, "detail": None}
+
+
+def foreign_fields(parsed, name):
+    """The keys this registration carries that this command cannot render back, sorted.
+
+    Derived from the parse for the same reason policy_of is: a detached or quoted
+    [mcp_servers.\"codex-thread-bridge\".env] is invisible to a literal header scan and is exactly
+    as much a setting the plugin declaration does not reproduce. Removing the table would lose it,
+    so it blocks the removal and is named in the refusal rather than left to the generic structural
+    sentence a reader cannot act on.
+    """
+    entry = (parsed.get("mcp_servers") or {}).get(name)
+    if not isinstance(entry, dict):
+        return []
+    return sorted(set(entry) - set(RENDERABLE_FIELDS))
+
+
+def render_policy(name, tool, mode):
+    """The policy table this command renders, so it can prove one it is about to remove."""
+    return ("[mcp_servers." + codexconfig.key(name) + "." + POLICY_FIELD + "."
+            + codexconfig.key(str(tool)) + "]\n"
+            + APPROVAL_KEY + " = " + codexconfig.quote(mode) + "\n")
+
+
+def span_blocks(span):
+    """One span split into its table blocks, each starting at its own header."""
+    out, current = [], []
+    for line in (span or "").splitlines():
+        if TABLE.match(line) and current:
+            out.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        out.append("\n".join(current))
+    return [block for block in out if block.strip()]
+
+
+def span_is_ours(span, name, registration, policy, foreign):
+    """Whether every block of this span is one this command renders, and why it is not.
+
+    Authorship used to mean one block equal to one render, with any nested table refusing. That was
+    safe by accident and said so inaccurately: the reason it gave named the command and arguments
+    even when those were exactly right. Here each block is judged on its own, so a policy table this
+    command can render back is provable the same way the parent block already was, and everything
+    else is refused with the reason it actually has.
+    """
+    blocks = span_blocks(span)
+    if not blocks:
+        return False, "there is no table here to prove"
+    parent = codexconfig.render(name, registration.get("command"), registration.get("args") or [])
+    # The foreign keys first, because they are the reason a reader can act on. Judging the bytes
+    # first answered tool_timeout_sec with "holds more or other than the command and arguments",
+    # which is true of the block and says nothing about which setting is in the way.
+    if foreign:
+        return False, ("the registration carries " + ", ".join(repr(key) for key in foreign)
+                       + ", which the plugin declaration does not reproduce, so removing the table"
+                       " would lose it and it is left alone")
+    if blocks[0].strip() != parent.strip():
+        return False, ("the table holds more or other than the command and arguments this"
+                       " repository renders for it")
+    if policy["state"] == reading.UNREADABLE:
+        return False, ("the approval policy on this server could not be read, so it cannot be"
+                       " carried into the plugin declaration: " + str(policy["detail"]))
+    wanted = {tool: render_policy(name, tool, mode).strip()
+              for tool, mode in (policy["tools"] or {}).items()}
+    seen = []
+    for block in blocks[1:]:
+        matched = [tool for tool, rendered in wanted.items() if rendered == block.strip()]
+        if not matched:
+            return False, ("the table carries " + repr(block.splitlines()[0].strip())
+                           + ", which is not the command, the arguments, or an approval policy this"
+                           " repository renders")
+        seen.append(matched[0])
+    missing = sorted(set(wanted) - set(seen))
+    if missing:
+        return False, ("this server grants " + ", ".join(missing) + " an approval policy in a"
+                       " spelling this command cannot render back, so the table is left alone"
+                       " rather than removed with the policy still in it. A policy this command can"
+                       " prove is one table per tool, holding only " + APPROVAL_KEY)
+    return True, None
+
 
 def read_plugin(codex_home, *, name=PLUGIN_NAME):
     """Whether the plugin is installed AND registered, and what its cache actually holds.
@@ -689,22 +821,37 @@ def destination_from(document):
     return path.parent.parent.parent
 
 
-def read_mcp(codex_home, *, name=SERVER_NAME):
-    """The bridge registration on both sides: the configuration table, and the record."""
+def read_mcp(codex_home, *, name=SERVER_NAME, text_value=None):
+    """The bridge registration on both sides: the configuration table, and the record.
+
+    text_value lets a caller hand in the exact bytes it is holding instead of having this read the
+    file again. The standdown needs that: it used to build its proof from one read and apply its
+    edit to a second, so the bytes it proved were never quite the bytes it wrote. That gap was
+    survivable while the only removable thing was a three-line block; it is not survivable now that
+    a proven span can carry approval tables, because removing a parent while a policy table lands
+    beside it leaves that policy orphaned, and an orphaned [mcp_servers.<name>.tools.<tool>] is the
+    state in which codex fails to load at all.
+    """
     path = config_path(codex_home)
     answer = {"configPath": str(path), "table": reading.ABSENT, "tableProven": False,
               "registration": None, "record": None, "recordOutcome": None,
               "recordOwner": None, "recordPath": str(bridgerecord.record_path(codex_home)),
-              "detail": None}
+              "detail": None,
+              "policy": {"state": reading.ABSENT, "tools": {}, "detail": None},
+              "foreignFields": []}
     # None rather than empty: a configuration nobody could read has no server list, and an empty
     # one would report "no alias here" about a file this never saw.
     servers = None
-    text = read_config_text(codex_home)
-    if not text.usable:
-        answer["table"] = text.state
-        answer["detail"] = text.detail
+    if text_value is not None:
+        usable, value, state, why = True, text_value, reading.PRESENT, None
     else:
-        view = codexconfig.scan(text.value)
+        text = read_config_text(codex_home)
+        usable, value, state, why = text.usable, text.value, text.state, text.detail
+    if not usable:
+        answer["table"] = state
+        answer["detail"] = why
+    else:
+        view = codexconfig.scan(value)
         if not view.readable:
             answer["table"] = codexconfig.UNREADABLE
             answer["detail"] = "; ".join(view.unreadable)
@@ -717,27 +864,45 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
             if present:
                 answer["table"] = reading.PRESENT
                 answer["registration"] = registration
-                # Proven when the bytes in the file are exactly what this repository renders for
-                # the registration it finds there. Anything else is somebody's own edit.
+                # Proven block by block: the bytes have to be what this repository renders for the
+                # registration and for each approval policy it finds there. Anything else is
+                # somebody's own edit, and is named rather than lumped under one sentence.
+                #
+                # The parse is repeated here rather than taken from codexconfig, which projects
+                # every server down to command and args on purpose. read_plugin already parses this
+                # same text for its own tables; this is the same trade, one parse of one file.
+                parsed = {}
+                if tomllib is not None:
+                    try:
+                        parsed = tomllib.loads(value)
+                    except Exception:  # noqa: BLE001 - view.readable already said it parses
+                        parsed = {}
+                answer["policy"] = policy_of(parsed, name)
+                answer["foreignFields"] = foreign_fields(parsed, name)
                 rendered = codexconfig.render(name, registration.get("command"),
                                               registration.get("args") or [])
                 header = "[mcp_servers." + codexconfig.key(name) + "]"
-                span = table_span(text.value, header)
+                span = table_span(value, header)
                 # A nested table belongs to the same registration and TOML lets it sit anywhere in
                 # the file, so it is looked for everywhere rather than only after the parent.
                 # Removing the parent while one exists would orphan it under no server at all.
-                nested = [line.strip() for line in text.value.splitlines()
+                nested = [line.strip() for line in value.splitlines()
                           if line.strip().startswith(header[:-1] + ".")]
                 answer["nestedTables"] = nested
                 answer["renderedTable"] = rendered
                 answer["tableSpan"] = span
-                answer["tableProven"] = (span is not None and not nested
-                                         and span.strip() == rendered.strip()
-                                         and removal_is_structural(text.value, span, name))
+                ours, why_not = (span_is_ours(span, name, registration, answer["policy"],
+                                              answer["foreignFields"])
+                                 if span is not None else (False, None))
+                # Both, and in this order. span_is_ours judges the bytes; removal_is_structural asks
+                # a parser whether taking them out actually unregisters this server and leaves every
+                # other one alone. A policy table sitting outside the span passes the first and
+                # fails the second, which is the answer that keeps an orphan from being created.
+                answer["tableProven"] = bool(ours and removal_is_structural(value, span, name))
                 if span is not None and not answer["tableProven"]:
-                    answer["detail"] = ("the table holds more or other than the command and"
-                                        " arguments this repository renders for it"
-                                        + (", including " + ", ".join(nested) if nested else ""))
+                    answer["detail"] = why_not or (
+                        "removing this table would leave " + name + " still registered, or would"
+                        " change another server, so it is left alone")
     document, outcome, detail = bridgerecord.read(Path(answer["recordPath"]))
     answer["record"] = document
     answer["recordOutcome"] = outcome

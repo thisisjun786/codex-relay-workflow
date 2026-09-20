@@ -642,7 +642,12 @@ class TheFindingsFromReview(TransitionCase):
         (host.home / "config.toml").write_text(text, encoding="utf-8")
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1)
-        self.assertIn("more or other than the command", answer["results"][0]["detail"])
+        # The verdict is unchanged -- refused, and the file untouched. What changed with CRW-142
+        # is the reason: the key in the way is named, because "more or other than the command and
+        # arguments" sent a reader looking at a command and arguments that were exactly right.
+        self.assertIn("startup_timeout_sec", answer["results"][0]["detail"])
+        self.assertIn("the plugin declaration does not reproduce",
+                      answer["results"][0]["detail"])
         self.assertEqual(host.config(), text)
 
     def test_a_registration_naming_an_unrelated_file_does_not_retire_it(self):
