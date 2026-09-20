@@ -279,9 +279,9 @@ establish that the procedure agrees with itself. They are not evidence of runtim
 behavior, and they do not establish that a separate status report reaches the same
 verdict. Timezone is Asia/Seoul and Target nature is `confirmed` unless stated. Each case
 lists every input that bears on its verdict, so an observation it does not list did
-not hold, and where it names only a current target the baseline carries the same
-date with no change source, leaving both axes in agreement and only the current one
-worth discussing.
+not hold, and where it names only a Current target the Schedule baseline carries
+the same date with no Change source, leaving both axes in agreement and only the
+current one worth discussing.
 
 1. **Early completion.** M1, current target 2026-09-20, required level installed,
    installation receipt 2026-09-18T14:00, observed 2026-09-21T09:00. Ahead, actual
