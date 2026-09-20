@@ -3530,6 +3530,133 @@ class TheFindingsFromReview(TransitionCase):
         self.assertFalse((host.home / "crw-bridge-mcp.json").exists())
         self.assertIn("did not come apart cleanly",
                       [item for item in results if item["step"] == "hook settings"][0]["detail"])
+        # Both facts survive: the surface stopped, and the cleanup that failed is named.
+        for item in results:
+            self.assertTrue(item.get("lockCleanupFailed"), json.dumps(item)[:300])
+        # And the exit code says so, without moving the stop itself into the refusals.
+        import importlib.util
+        loading = importlib.util.spec_from_file_location("crw_transition_cli", CLI)
+        cli = importlib.util.module_from_spec(loading)
+        loading.loader.exec_module(cli)
+        self.assertEqual(cli.verdict(results), cli.EXIT_REFUSED, json.dumps(results)[:400])
+        self.assertEqual({item["outcome"] for item in results}, {"settled"})
+
+    @needs_reader
+    def test_an_unsearchable_parent_does_not_become_a_retirement(self):
+        """exists() answering false is not proof that this run moved anything."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        code, _ = host.transition("--apply")
+        self.assertEqual(code, 0)
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        original = hostrecord.Locked
+
+        class Failing(original):
+            """The lock cannot even be taken, so nothing this run did moved anything."""
+
+            def __enter__(self):
+                raise OSError(errno.EACCES, "Permission denied")
+
+        # And the parent has lost its execute bit as far as this process can tell, so exists()
+        # answers false about documents that are still there. That inference is what is on trial.
+        settings = host.home / "crw-completion-hook.json"
+        record = host.home / "crw-bridge-mcp.json"
+        real_exists = Path.exists
+
+        def hidden(self, *arguments, **keywords):
+            if self in (settings, record):
+                return False
+            return real_exists(self, *arguments, **keywords)
+
+        Path.exists = hidden
+        self.addCleanup(setattr, Path, "exists", real_exists)
+        hostrecord.Locked = Failing
+        try:
+            results = steps.disable(snapshot, {}, apply=True)
+        finally:
+            hostrecord.Locked = original
+            Path.exists = real_exists
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook settings"], "refused", json.dumps(results)[:700])
+        self.assertEqual(outcomes["bridge record"], "refused", json.dumps(results)[:700])
+        # And the documents really are still there, which is what the refusal says.
+        self.assertTrue(settings.is_file())
+        self.assertTrue(record.is_file())
+
+    @needs_reader
+    def test_a_quoted_relative_token_is_not_an_absolute_interpreter(self):
+        """shlex already removed the shell's quoting, so a quote left in a word is a path char."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        # The reviewer's case, built for real: a relative path whose literal characters include
+        # apostrophes, resolving to a genuine Python from the directory this command runs in.
+        # Stripping the quotes before the absoluteness test turns it into /opt/python, which
+        # looks absolute, while the probe keeps resolving the raw token from here.
+        import shlex as _shlex
+        quoted = Path(host.root) / "'" / "opt"
+        quoted.mkdir(parents=True)
+        (quoted / "python'").symlink_to(sys.executable)
+        words = _shlex.split(entry["command"])
+        entry["command"] = _shlex.join(["'/opt/python'"] + words[1:])
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        here = os.getcwd()
+        os.chdir(str(host.root))
+        self.addCleanup(os.chdir, here)
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        os.chdir(here)
+        self.assertEqual([item["argv"][0] for item in found["entries"]], ["'/opt/python'"],
+                         json.dumps(found["entries"])[:400])
+        self.assertFalse(any(item["proven"] for item in found["entries"]),
+                         json.dumps(found["entries"])[:600])
+
+    @needs_reader
+    def test_a_tilde_spelled_exported_home_is_refused(self):
+        """The launchers build Path(CODEX_HOME) and never expand a ~."""
+        host = self.ready()
+        before = (host.config(), host.hooks_document(), host.settings(), host.record())
+        done = run([CLI, "--codex-home", host.home, "--dest", "dest", "transition", "--apply",
+                    "--accept-hook-trust-gap"], cwd=host.root,
+                   env={**os.environ, "CODEX_HOME": "~/.codex-alt"})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 2, done.stdout[-800:])
+        self.assertIn("CODEX_HOME", answer["error"])
+        self.assertIn("~", answer["error"])
+        self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
+                         before)
+
+    @needs_reader
+    def test_recovery_refuses_when_the_archives_cannot_be_listed(self):
+        """The archives are where a custom bridge and its arguments survive an interruption."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        real_scandir = os.scandir
+
+        def refusing(where, *arguments, **keywords):
+            if str(where) == str(host.home):
+                raise OSError(errno.EACCES, "Permission denied")
+            return real_scandir(where, *arguments, **keywords)
+
+        os.scandir = refusing
+        self.addCleanup(setattr, os, "scandir", real_scandir)
+        with self.assertRaises(OSError):
+            steps._retired_record(snapshot)
+        answer = steps.mcp_record_install(snapshot, {}, apply=True)
+        os.scandir = real_scandir
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
+        self.assertIn("could not be listed", answer["detail"])
 
     @needs_reader
     def test_a_relative_interpreter_is_not_a_registration_this_writer_emits(self):

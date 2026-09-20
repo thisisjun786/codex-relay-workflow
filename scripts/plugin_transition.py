@@ -46,7 +46,7 @@ def emit(document):
 
 def host_of(args):
     exported = os.environ.get("CODEX_HOME")
-    if exported and not Path(exported).expanduser().is_absolute():
+    if exported and not Path(exported).is_absolute():
         # Judged on its own, whether or not --codex-home was passed. A relative CODEX_HOME means
         # something different to every process that reads it, and the launchers this transition
         # hands the surfaces to read that same variable from the installed package's working
@@ -54,12 +54,17 @@ def host_of(args):
         # a launcher, so the flag cannot settle the variable. Letting it excuse the value wrote
         # the records under one home and left a later session's launchers looking under another,
         # with the manual hook and the bridge table already removed and the run reporting success.
+        #
+        # As written, without expanding ~: the packaged launchers build Path(CODEX_HOME) directly
+        # and never expand it, so a tilde-spelled value sends them looking under a directory
+        # literally named "~" while this command would have expanded it to somewhere real.
         raise ValueError("CODEX_HOME is exported as " + repr(exported) + ", which is relative,"
                          " and a relative home resolves against each reader's own working"
                          " directory. The packaged launchers read that same variable from the"
                          " installed package, never this command's --codex-home, so this run"
                          " will not decide what it means. Unset it or make it absolute; passing"
-                         " --codex-home does not settle it")
+                         " --codex-home does not settle it. A ~ spelling counts as relative here,"
+                         " because the launchers do not expand one")
     # Settled for the same reason --dest is, and for one more. Every path in the snapshot is
     # derived from this one, and the settings candidate is ALSO spelled by completion, which
     # resolves what it is given: a relative home left as it was produced two spellings of one
@@ -101,8 +106,15 @@ def options_of(args):
 
 
 def verdict(results):
-    """Zero when every step is settled or already done, nonzero the moment one refused."""
-    if any(item["outcome"] in (steps.REFUSED, steps.BUSY) for item in results):
+    """Zero when every step is settled or already done, nonzero the moment one refused.
+
+    A cleanup that failed after a surface really stopped is nonzero too, without moving the stop
+    itself into the refusals: the surface IS stopped and something was left behind that another
+    cooperating writer will trip over, and an operator who reads only the exit code has to learn
+    that from it.
+    """
+    if any(item["outcome"] in (steps.REFUSED, steps.BUSY) for item in results) \
+            or any(item.get("lockCleanupFailed") for item in results):
         return EXIT_REFUSED
     return EXIT_OK
 

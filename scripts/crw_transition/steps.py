@@ -178,8 +178,10 @@ def _retired_record(host):
     """The most recently retired bridge record that still reads as one, or None."""
     home = Path(host["codexHome"])
     stem = bridgerecord.RECORD_NAME + ".superseded-"
-    found = sorted((p for p in home.glob(stem + "*") if p.is_file()),
-                   key=lambda path: inventory.archive_order(path, stem))
+    # Propagates a listing failure rather than answering "nothing was ever retired": a rerun
+    # after an interrupted legacy transition rebuilds the record from these, and an empty answer
+    # replaces a custom executable and its arguments with the pointer's default.
+    found = inventory.archives(home, stem)
     for candidate in reversed(found):
         document, outcome, _detail = bridgerecord.read(candidate)
         if document is not None:
@@ -1405,11 +1407,20 @@ def mcp_table_standdown(host, options, *, apply=False):
 
 
 def mcp_record_install(host, options, *, apply=False):
-    command = bridge_command(host)
+    try:
+        command = bridge_command(host)
+        retired = _retired_record(host)
+    except OSError as error:
+        # The archives are where a custom executable and its arguments survive an interrupted
+        # run, so a listing this cannot do is not an empty one: writing the pointer default here
+        # would replace them and report success.
+        return _answer("mcp record install", REFUSED,
+                       "the retired records could not be listed (" + type(error).__name__ + ": "
+                       + str(error) + "), and they are where a custom bridge executable and its"
+                       " arguments survive, so nothing was written")
     if not command:
         return _answer("mcp record install", REFUSED, "no bridge executable could be named")
     registration = host["mcp"].get("registration") or {}
-    retired = _retired_record(host)
     # After the table is removed the registration is gone, so an interrupted run would rebuild the
     # record with no arguments. The retired record is where they survive.
     # "args" absent and "args" empty are different answers: falling back on an empty live list
@@ -2043,8 +2054,9 @@ def disable(host, options, *, apply=False):
                                "retired " + str(settings) + ", and the lock around it did not"
                                " come apart cleanly afterwards (" + type(error).__name__ + ": "
                                + str(error) + "), which does not put the document back",
-                               applied=True, wrote=True, retired=moved)
-                       if moved or not settings.exists() else
+                               applied=True, wrote=True, retired=moved,
+                               lockCleanupFailed=type(error).__name__ + ": " + str(error))
+                       if moved else
                        _answer("hook settings", REFUSED,
                                "the settings could not be retired (" + type(error).__name__
                                + ": " + str(error) + "), so new adapter invocations are not"
@@ -2055,6 +2067,7 @@ def disable(host, options, *, apply=False):
         results.append(decide("bridge record", record, host["mcp"]["recordOwner"]))
         return results
     try:
+        taken = None
         with hostrecord.Locked(bridgerecord.ownership_lock_path(home)):
             # Re-read inside the lock, the way register-mcp decides its own write: the owner that
             # authorises this move has to be the owner of the record the move will take.
@@ -2065,7 +2078,9 @@ def disable(host, options, *, apply=False):
                 taken = retire(record)
                 answer = _answer("bridge record", SETTLED, "retired " + str(record), applied=True,
                                  wrote=True, retired=taken)
-            results.append(answer)
+        # Appended outside the lock, so a release that fails answers once rather than leaving
+        # this result and the handler's beside each other in the receipt.
+        results.append(answer)
     except hostrecord.Busy as error:
         results.append(_answer("bridge record", BUSY, str(error)))
     except OSError as error:
@@ -2073,13 +2088,13 @@ def disable(host, options, *, apply=False):
         # receipt has to say so, and whether THIS surface stopped is decided by what happened
         # rather than by where the failure landed. The guarded region includes releasing the
         # lock, and a release that fails after the move leaves the record retired.
-        gone = not Path(host["mcp"]["recordPath"]).exists()
         results.append(_answer("bridge record", SETTLED,
                                "retired " + str(host["mcp"]["recordPath"]) + ", and the lock"
                                " around it did not come apart cleanly afterwards ("
                                + type(error).__name__ + ": " + str(error) + "), which does not"
-                               " put the record back", applied=True, wrote=True)
-                       if gone else
+                               " put the record back", applied=True, wrote=True, retired=taken,
+                               lockCleanupFailed=type(error).__name__ + ": " + str(error))
+                       if taken else
                        _answer("bridge record", REFUSED,
                                "the record could not be retired (" + type(error).__name__ + ": "
                                + str(error) + "), so new bridge starts are not stopped"))

@@ -375,7 +375,7 @@ def canonical_command(argv):
     script = argv[1]
     if Path(script).name != completion.ENTRY_POINT_NAME:
         return None
-    if not all(os.path.isabs(str(word).strip("\"'")) for word in argv):
+    if not all(os.path.isabs(str(word)) for word in argv):
         # The hook fires from each session's own workspace and this command runs somewhere else, so
         # a relative path names one file here and another one there. Unproven rather than resolved.
         #
@@ -383,6 +383,11 @@ def canonical_command(argv):
         # it writes one, so a relative ./python is not what this repository's writer emits -- and
         # probing it would resolve it from THIS command's directory while the hook resolves it
         # from each session's own.
+        #
+        # Tested as parsed, with no quote stripping: registered_argv already removed the shell's
+        # quoting, so a quote still in a word is a literal character of the path. Stripping it
+        # here turned the literal token '/opt/python' -- apostrophes and all -- into something
+        # that looked absolute while naming a relative file in whatever directory this ran from.
         return None
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
 
@@ -565,6 +570,20 @@ def archive_order(path, stem):
         return ("", -1)
 
 
+def archives(home, stem):
+    """Every archive carrying this stem, in order, or an OSError saying why it could not be read.
+
+    scandir rather than glob: 3.13 suppresses the scanning error inside glob, so a directory that
+    is searchable and not listable answered "no archives here". Every reader of these names --
+    the recoveries that carry a marker root, a store and a journal forward -- would then act as
+    though nothing had ever been retired.
+    """
+    with os.scandir(str(home)) as scanning:
+        found = [Path(item.path) for item in scanning
+                 if item.name.startswith(stem) and item.is_file()]
+    return sorted(found, key=lambda path: archive_order(path, stem))
+
+
 def newest_retired(codex_home):
     """The most recently retired settings document, and the file it came from.
 
@@ -574,8 +593,7 @@ def newest_retired(codex_home):
     """
     home = Path(codex_home)
     stem = completion.CONFIG_NAME + ".superseded-"
-    found = sorted((p for p in home.glob(stem + "*") if p.is_file()),
-                   key=lambda path: archive_order(path, stem))
+    found = archives(home, stem)
     for candidate in reversed(found):
         try:
             document = json.loads(candidate.read_text(encoding="utf-8"))
