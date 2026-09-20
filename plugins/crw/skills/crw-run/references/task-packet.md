@@ -533,6 +533,41 @@ The record of what happened next belongs in the coordination record below, not i
 B's parent instructing its own child, that child's change, and the verification are three further
 facts, and none of them follows from this reply.
 
+### What a result returns
+
+A `result` says what now holds and where to check it, and it stays short because the receiver
+reads the records itself. Five values are what the next decision needs, and the template above
+already has a place for each. The **result**, a line or two of what is true now that was not
+before, and the **artifacts** at the revision they are at, a pull request with its head or a
+locator with its digest, go in `Scope` and `Asking`. The **per-criterion verification** goes in
+`Because` as the disposition each accepted criterion already carries and the record holding it,
+named as a claim the receiver corroborates against that record rather than as a verdict this
+message issues. The **unresolved problems**, a failure, a missing observation or a conflict with
+another scope, go in `Asking` beside the result. The **decisions the receiver owns** go in `Next`,
+and a proposed Linear record change is one of them: it travels under
+[record writes and returned proposals](../../crw-plan/references/integrations.md#record-writes-and-returned-proposals)
+and the sender has not applied it.
+
+The detail behind those values stays where it already is. A child returns its issue-level delivery
+in the launch packet's return list above, and this shape is what its parent condenses when the
+result travels a level up. A receiver accepting a result reads the records it names rather than
+repeating the investigation or verification behind them at the same revision and criteria set, and
+reads further exactly where a criterion is unmet, an artifact has moved, or the evidence it needs
+is not there. Condensing never costs an accepted criterion or the independent review behind one: a
+result short enough to hide an unmet criterion is raised rather than accepted.
+
+```text
+Request: shared-surface-1-r2
+Reply to: shared-surface-1
+Kind: result
+From / To: parent of project A, task 01a0...a1; to parent of project B, task 01a0...b7
+Scope: A's CRW-127 landed in dev at 3f9a1c2; same two issues and the same shared surface
+Asking: nothing to decide. OPS-8 is untouched as agreed, and one criterion is unverified because
+  installation was never observed
+Because: CRW-127's per-criterion record, and PR #142's checks on the head that landed
+Next: B, whose condition is now met, to open its own review
+```
+
 ## Restoration block
 
 These messages carry this block: a needs-changes correction, a review fix, a resume the coordinator

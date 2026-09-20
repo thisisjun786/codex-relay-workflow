@@ -13,6 +13,8 @@ Read [Integrations](../crw-plan/references/integrations.md), including its compl
 
 Use `readchk` when the comparison is ambiguous, `ssotize` in audit mode to map conflicting sources, and `mandela` when acceptance evidence confirms the implementation's own assumptions. For an actual contradiction, use [crw-logic](../crw-logic/SKILL.md) as a bounded helper; it returns findings without replacing this requirement audit. Use `shower` when a substantial handoff needs a fresh reader. User-only Paperthin skills require their own explicit invocation as described in Integrations.
 
+A sub-task or bounded helper called from here writes no Linear record itself: it returns the record ID, the revision it read, the reason, the smallest sufficient change and its evidence, and this assignment's own writer applies and reads it back, under [record writes and returned proposals](../crw-plan/references/integrations.md#record-writes-and-returned-proposals).
+
 ## Pin the comparison
 
 Identify the Linear project/milestone/issues, canonical documents, original intent, subsequently accepted changes, and implementation revision. Read full criteria and relevant decisions, not just list summaries. Record exact IDs, source dates/revisions, baseline/final commits or a frozen diff bundle, and the observed delivery environment.

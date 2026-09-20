@@ -18,6 +18,7 @@ Read [Integrations](references/integrations.md) for Linear access, document auth
 - Use `cxc-dev` to assess development scope, repository boundaries, and meaningful verification. Planning does not start a CXC Loop or execution tasks.
 - Use `ssotize` in audit mode if roadmap facts conflict or are duplicated, `mandela` when success criteria could reward their own assumptions, and `re0` to make revised descriptions read as the current plan.
 - Hand executable work to [crw-run](../crw-run/SKILL.md). Use [crw-check](../crw-check/SKILL.md) for intent-versus-implementation uncertainty and [crw-logic](../crw-logic/SKILL.md) for contradictions within the proposed plan.
+- Keep Linear writes with this operation. A delegated sub-task returns the record ID, the revision it read, the reason, the smallest sufficient change and its evidence, under [record writes and returned proposals](references/integrations.md#record-writes-and-returned-proposals).
 
 ## Establish the baseline
 
