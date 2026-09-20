@@ -170,8 +170,10 @@ paused time is not subtracted from elapsed time.
 ## Trace the impact
 
 Walk forward along required-predecessor edges only. For each unachieved result, name
-the successors whose every path from it runs through required edges, and the nearest
-unachieved successor milestone or project. Where a successor has several required
+the successors it reaches through at least one path made entirely of required edges,
+and the nearest unachieved successor milestone or project. Another path that is not
+required does not cancel that dependency, and a successor reachable only through a
+path that is not required is not blocked. Where a successor has several required
 predecessors, it is blocked by the ones actually unachieved and the others are named
 as not blocking. A project or initiative is affected only where the walk reaches its
 own completion condition; waiting on part of a result is never reported as blocking
