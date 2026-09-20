@@ -146,6 +146,16 @@ including the rule that it is one reconciliation pass and not a scheduler.
 prior approvals. On one input the two must classify it the same way; if your reading differs from
 check's, one of you is wrong and it is worth settling before acting on it.
 
+The canonical statement of this classification is the shared bullet in
+[Default independent execution](../crw-plan/references/integrations.md#default-independent-execution),
+and it governs. Several references still carry the older unconditional form, which reads every
+how-is-it-going request as a no-wake read: the row in
+[Initiative supervision](../crw-run/references/initiative-supervision.md) is the one a reader
+following this skill's own links will reach. Where a reference states that unconditional rule,
+apply it to the reading branch and take the checkpoint branch from the shared bullet. Those
+references are being reconciled by the children that own them; until they are, this precedence is
+what a reader needs and this sentence is where it lives.
+
 ## Return control, and report what was done
 
 A status question that arrives during an authorized run is a question, not a cancellation. Answer

@@ -291,8 +291,11 @@ the work actually is. A bare 중간점검 in a supervision task walks the initia
 down to its project parents and issue children, and a portfolio question keeps every
 project's one-line status while only the detail narrows. It separates source, checks,
 an actual merge, installation and observed behavior, judges progress against the agreed
-schedule, and reports what it could not verify. A status call reads and returns control
-to whoever is executing; it writes nothing and wakes nobody.
+schedule, and reports what it could not verify. A standalone status call, and any call carrying an
+explicit report-only, read-only, pause or no-contact limit, writes nothing and wakes nobody. A
+중간점검 inside an initiative execution Jun already approved is the other branch: it checks the
+responsible parents and moves the work that approval already covers, then reports what it actually
+did. Either way it returns control to whoever is executing and starts nothing that was not approved.
 
 During an existing delegated workflow, a completion check sends actionable
 in-scope corrections to the responsible task and verifies the result without

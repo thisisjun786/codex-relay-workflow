@@ -46,6 +46,31 @@ turn id, `idle`, `notLoaded`, or `systemError`, and when its last turn ended and
 a system error are neither running nor finished. A task that has not reported for a day may be
 working; a task that answered an hour ago may have ended waiting for something.
 
+### A turn and a goal are different readings
+
+Three roles carry three different lifecycles, and the policy is `crw-run/references/start-policy.md`,
+which CRW-118 lands. Read it there rather than from a copy here; until that file is on `dev` this
+reference is **pending CRW-118** and is deliberately not a link, and the shape it fixes is that an
+initiative supervision task runs without a native goal of its own, a project parent runs a native
+goal with automatic continuation and no CXC goalplan or FSM, and an issue child runs a native goal
+under CXC Loop.
+
+So a parent has two states worth reading and they answer different questions. The turn says whether
+it is working right now. The goal says whether anything will bring it back when this turn ends.
+A parent between turns with an active goal and working continuation is fine; the same parent with
+no goal, a paused one, or a goal that cannot activate is not, and it will stay quiet either way.
+Read both and report both.
+
+Three readings get confused with each other and are kept apart. A goal that exists is not a goal
+that activated. A goal that activated is not continuation observed actually happening. And a parent
+blocked by a goal compatibility problem is neither idle nor complete: reporting it as either hides
+the one fact that explains why nothing is moving. Say which of the three you observed and when.
+
+A status call creates no goal. Where a parent needs one, that is the existing execution policy's
+decision and its owner's action, routed to them with what you observed rather than performed here.
+The goal-free parent some tasks ran under early on was a temporary state, not the default to copy
+forward.
+
 Per delivery, from GitHub: the current head, the CI attempt that applies to that head, the reviews
 paged to the end, whether the pull request actually merged into its intended target, and whether
 anything was installed or demonstrated afterwards. Use
@@ -72,9 +97,10 @@ where two levels disagree, and three of them recur:
   the pull request moved after it, and the summary everybody is reading is no longer true.
 
 Report those as the main blockers, before the per-project detail. Then split what is waiting into
-two: the questions an internal coordinator resolves inside scope it already has, and the ones that
-genuinely need a new decision from Jun. Sending the first kind up wastes his attention, and holding
-the second kind back stalls the work silently.
+three: a normal dependency wait, which is nobody's failure and needs only its reason; the questions
+an internal coordinator resolves inside scope it already has; and the ones that genuinely need a new
+decision from Jun. Sending the second kind up wastes his attention, and holding the third kind back
+stalls the work silently.
 
 ## Keep one check from becoming an investigation
 
@@ -241,14 +267,22 @@ Action: record the dependency, where its release will show, and send nothing. Do
 quiet as a stall, do not nudge, and do not resume it to ask how it is going.
 Preserved: the dependency as the reason, rather than the parent as the problem.
 
-### M10 An explicit limit is in force
+### M10 The request itself carries a limit
 
-Observed: the request carries report-only, read-only, pause or no-contact, or a parent is paused,
-cancelled or archived.
-Action: contact nobody. Report the state, what would release it, and the exact resume action its
-owner has to take. A stated limit outranks a standing approval, and resuming work somebody
-deliberately stopped is the one thing a checkpoint must not do.
+Observed: this request carries report-only, read-only, pause or no-contact.
+Action: contact nobody, anywhere. A stated limit outranks a standing approval and covers every
+parent in scope. Report each project's state and what would release it.
 Preserved: the user's decision, exactly as given.
+
+### M10b One parent is paused while the others are not
+
+Observed: no limit on the request, but one parent in the approved set is paused, cancelled or
+archived, and the others are ordinary.
+Action: that parent is not contacted and nothing resumes it; report its state and the exact resume
+action its owner has to take. The other parents are handled on their own rows as usual. A pause on
+one task is a decision about that task, not a stop order for the initiative, and holding back
+approved follow-ups elsewhere because of it is its own failure.
+Preserved: the paused task untouched, and the rest of the approved work still moving.
 
 ### M11 The read or the send does not land
 
@@ -267,3 +301,22 @@ Action: record the receipt as the transport accepting the input, and the parent'
 observed to have resumed. Two rows, not one. Do not resend to make the second row appear, and do
 not report the project as progressing on the strength of a receipt.
 Preserved: the five facts as five, which is the whole point of writing them separately.
+
+### M13 The parent is quiet and the reason is its goal
+
+Observed: a parent has no running turn. In one variant its goal is active with continuation
+working; in another it has no goal, or a paused one, or one that cannot activate.
+Action: report the turn and the goal as two readings. The first variant is a parent between turns
+and needs nothing. The second will stay quiet whatever arrives for it, and that is the fact the
+report leads with rather than calling it idle. Distinguish a goal that exists, a goal that
+activated, and continuation observed actually happening; say which you saw.
+Preserved: the difference between quiet and stopped.
+
+### M14 A parent needs a goal it does not have
+
+Observed: the checkpoint establishes that a parent cannot continue because of its goal state.
+Action: report it and route it to the owner the execution policy names. Do not create, activate or
+repair a goal from a status call, and do not treat the temporary goal-free arrangement some parents
+started under as the default to restore. A checkpoint moves approved work; it does not change how a
+task is run.
+Preserved: the execution policy's ownership, and an accurate reason for the stall.

@@ -114,10 +114,16 @@ route is [crw-check](../../crw-check/SKILL.md) rather than a deeper investigatio
 Do not re-audit every CI run, every review, and every long work record on each call. A midpoint
 check is asked for often, and a check that costs as much as an audit stops being asked for.
 
-## Read-only here too
+## A verdict is not a schedule change
 
-Reporting 지연 changes no date, wakes no parent, and starts no execution. A schedule change belongs
-to [crw-plan](../../crw-plan/SKILL.md) and the work to [crw-run](../../crw-run/SKILL.md), and Jun
-asking for one hands the scoped request to that owner. Status sets up no recurring or background
-schedule alert, and a request for one is handed to that owner too rather than built here: a check
-that keeps running on its own is no longer a check somebody asked for.
+Reporting 지연 changes no date and starts no execution, on either branch of
+[the classification](../SKILL.md#classify-the-request-before-deciding-what-this-call-may-do). A
+schedule change belongs to [crw-plan](../../crw-plan/SKILL.md) and new work to
+[crw-run](../../crw-run/SKILL.md), and Jun asking for one hands the scoped request to that owner.
+On the reading branch nothing is contacted at all. On the checkpoint branch, moving the work an
+approval already covers is allowed and moving a date is not, and a late verdict is never the reason
+to widen what was approved.
+
+Status sets up no recurring or background schedule alert on either branch, and a request for one is
+handed to that owner rather than built here: a check that keeps running on its own is no longer a
+check somebody asked for.
