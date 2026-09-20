@@ -30,6 +30,7 @@ import json
 from .coordination import DOMAIN_MERGE_TARGET, Conflicts, Refusal, derive, exact
 from .errors import CoordinationError, RefusalReason
 from .identity import sha256_hex
+from . import mergeevidence
 
 PROJECT = "project"
 PARENT = "parent"
@@ -695,105 +696,32 @@ class MergeTurn:
         The attempt rule matters because a rerun is how a red check becomes green: accepting
         any successful entry would let an older passing attempt stand for a run whose newest
         attempt failed.
-        """
-        def stale(detail, incumbent=""):
-            return Refusal(
-                RefusalReason.MERGE_CURRENCY_STALE, detail,
-                domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
-                incumbent=incumbent, challenger=actor)
 
-        if not checks:
-            return stale("no check runs were restated, so nothing says this head is green")
-        nameless = [
-            entry for entry in checks
-            if not str(entry.get("runId", "")).strip() or not str(entry.get("name", "")).strip()
-        ]
-        if nameless:
-            # A conclusion with nothing identifying it cannot be checked against anything,
-            # and with no declared required names it was the only evidence there was.
-            return stale(
-                "a restated check carries no runId or no name, so there is nothing to say"
-                " which check it is or to compare against a required set")
-        highest = {}
-        for entry in checks:
-            run = str(entry.get("runId", ""))
-            highest[run] = max(highest.get(run, -1), int(entry.get("attempt", 1) or 1))
-        for entry in checks:
-            run = str(entry.get("runId", ""))
-            if int(entry.get("attempt", 1) or 1) != highest[run]:
-                continue
-            # Every entry has to be ABOUT this head, because one that is not is evidence
-            # about another commit and has no business in this set.
-            if entry.get("headSha") != head_sha:
-                return stale(
-                    "check run " + repr(run) + " reports head "
-                    + repr(entry.get("headSha")) + ", not " + repr(head_sha), run)
-            # A conclusion is only binding for a check the caller declared required. An
-            # optional lint failing alongside a green dev-gate is not a reason to refuse a
-            # merge, and refusing it made the declared set mean nothing.
-            if str(entry.get("name", "")) in required \
-                    and entry.get("conclusion") != "success":
-                return stale(
-                    "required check " + repr(entry.get("name")) + " (run " + repr(run)
-                    + ") concluded " + repr(entry.get("conclusion"))
-                    + " on its newest attempt", run)
-        present = {
-            str(entry.get("name", "")) for entry in checks
-            if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
-            and entry.get("conclusion") == "success"
-        }
-        missing = [name for name in required if name not in present]
-        if missing:
-            return stale(
-                "these checks were declared required and are not present and successful in"
-                " the restated set: " + repr(missing), missing[0])
-        if not required and not present:
-            # With nothing declared required, the set still has to contain something green on
-            # this head; otherwise an all-red restatement would pass for want of a rule.
-            return stale(
-                "no check declared required and nothing in the restated set succeeded on "
-                + repr(head_sha) + ", so nothing says this head is green")
-        return None
+        The rules themselves live in mergeevidence, because CRW-128 asks the same question on
+        the child's side of the handoff: the child establishes that its candidate is green
+        before offering it, and this establishes it again before landing. Written twice they
+        drift, and the drift is invisible because each side stays green on its own tests. The
+        wrapper keeps this method's reason, incumbent and short-circuit exactly as they were.
+        """
+        problems = mergeevidence.checks_problems(head_sha, required, checks)
+        if not problems:
+            return None
+        # One problem, by that contract: these rules are sequential and stop at the first.
+        problem = problems[0]
+        return Refusal(
+            RefusalReason.MERGE_CURRENCY_STALE, problem.detail,
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=problem.incumbent, challenger=actor)
 
     @staticmethod
     def _review_refusal(row, actor, review):
         """Every page read, every thread seen, nothing unresolved."""
-        problems = []
-        for field in ("hasNextPage", "pagesRead", "totalCount", "threadsSeen", "unresolved"):
-            if field not in review:
-                # Absent read as satisfied: hasNextPage missing was falsy, totalCount missing
-                # was zero and matched an empty threadsSeen, and unresolved missing was zero.
-                # A record that says nothing passed every check.
-                problems.append("the review record does not state " + field)
-        if problems:
-            return Refusal(
-                RefusalReason.MERGE_REVIEW_INCOMPLETE, "; ".join(problems),
-                domain=DOMAIN_MERGE_TARGET, subject=row["target_key"], challenger=actor)
-        if review.get("hasNextPage"):
-            problems.append("hasNextPage is still true, so the review was not enumerated")
-        if int(review.get("pagesRead", 0) or 0) < 1:
-            problems.append("no review page was read")
-        seen = review.get("threadsSeen") or []
-        total = int(review.get("totalCount", 0) or 0)
-        identifiers = [str(one) for one in seen if str(one or "").strip()]
-        distinct = set(identifiers)
-        if len(identifiers) != len(seen):
-            problems.append("threadsSeen contains a blank identifier")
-        if len(distinct) != len(identifiers):
-            # Counting entries does not establish that each one is a different thread. A
-            # duplicated page substitutes a thread nobody read without changing the length.
-            problems.append("threadsSeen repeats an identifier, so its length is not a count"
-                            " of threads actually seen")
-        if len(distinct) != total:
-            problems.append(
-                "totalCount is " + str(total) + " and " + str(len(seen))
-                + " threads were seen")
-        if int(review.get("unresolved", 0) or 0) != 0:
-            problems.append(str(review.get("unresolved")) + " threads are unresolved")
+        problems = mergeevidence.review_problems(review)
         if not problems:
             return None
         return Refusal(
-            RefusalReason.MERGE_REVIEW_INCOMPLETE, "; ".join(problems),
+            RefusalReason.MERGE_REVIEW_INCOMPLETE,
+            "; ".join(mergeevidence.details(problems)),
             domain=DOMAIN_MERGE_TARGET, subject=row["target_key"], challenger=actor)
 
     def _relationship_refusal(self, db, row, actor, head_sha):
