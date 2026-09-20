@@ -231,12 +231,15 @@ being called here does not turn an approved continuation into an independent
 read-only audit. Route a schedule or evidence mismatch by the level that owns it. A mismatch contained
 in one project returns to that project's parent, which settles within the approval it
 already holds whether the approved successor proceeds. Where the mismatch orders work
-across projects, return it through the supervisor that owns both. Where no single
-supervisor owns both, follow
-[direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents),
-including its escalation to the user or to the respective supervisors. Either route
-holds the same line: a project parent owns sequencing inside its own project and
-never decides whether another project proceeds. A bounded helper returns the finding
+across projects, return it through the supervisor that owns both. Where the two projects share no
+supervisor or answer to different ones, follow
+[direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents):
+the parents settle what they can between themselves, hold only the unsettled part
+while independent work continues, and raise that pair-level decision to the user,
+because neither supervisor acquires authority over the pair and none is invented. A
+requirement confined to one of those projects is raised with that project's own
+supervisor instead. Every route holds the same line: a project parent owns sequencing
+inside its own project and never decides whether another project proceeds. A bounded helper returns the finding
 to its caller rather than contacting an owner itself, as
 [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
 already requires. Do not become the new owner of technical execution or of a merge,
@@ -424,10 +427,12 @@ worth discussing.
     contact. Where instead M5 sits in project A and the approved successor waiting on
     it is in project B, the finding returns through the supervisor owning both
     projects, or, where no single supervisor owns them, through direct coordination
-    between the two parents with any unresolved ordering escalated to the user. Where projects A and B are owned by
-    different supervisors, the unresolved ordering escalates to those two supervisors
-    rather than to the user. Not one supervisor settling an ordering over a project it
-    does not own. Not project A's parent deciding whether project B
+    between the two parents with any unresolved ordering escalated to the user. Where projects A and B answer to
+    different supervisors, the parents settle what they can, hold only the unsettled
+    ordering, and raise that decision to the user, because neither supervisor holds
+    authority over the pair; a requirement confined to project B alone is raised with
+    B's own supervisor instead. Not one supervisor settling an ordering over a project
+    it does not own, and not a supervisor invented or rebound to cover the pair. Not project A's parent deciding whether project B
     proceeds, which is an ordering it does not own. Where this check runs as a
     bounded helper for a coordinator rather than holding the assignment itself, the
     finding goes back to that coordinator and the helper contacts no owner directly.
