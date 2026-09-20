@@ -13,12 +13,19 @@ original baseline date and its currently approved date, the baseline time and ti
 of target the date applies to, the evidence that counts as actually achieving it, the source of
 any change, and the predecessors it requires.
 
-**Pending CRW-143.** Until that section is on `dev`, this reference names it and stops there. Read
-whatever dates the project and its milestones actually carry, report them as the unstructured
-dates they are, and say that the shared contract is not yet available. Do not invent a substitute
-contract, a local field set, or a second place where baselines live: two schedule contracts is the
-problem the shared one exists to prevent. `crw-check` verifies the same contract under CRW-144,
-so a private variant here would also break the agreement that check depends on.
+**Pending CRW-143.** Until that section is on `dev`, do not invent a substitute contract, a local
+field set, or a second place where baselines live: two schedule contracts is the problem the shared
+one exists to prevent, and `crw-check` verifies the same contract under CRW-144, so a private
+variant here would break the agreement check depends on.
+
+Without it, two of the five verdicts are unavailable and saying so is the verdict. 계획대로 and
+앞섬 both assert that a date was met as originally agreed, and neither can be established while
+nothing distinguishes an original baseline from a date that was moved to wherever the work had
+reached. So until the contract lands, the only verdicts available are 지연, where an approved date
+has visibly passed and the result it names does not exist, and 판단 불가 for everything else,
+reported as 판단 불가, 공유 일정 기준 계약 미도입 so the reason is the missing contract rather than
+missing work. Whatever dates the project and its milestones carry are reported as the unstructured
+dates they are, as context beside the verdict and never as the baseline that produced it.
 
 ## Read these, and not the issue count
 
@@ -44,6 +51,13 @@ Mark 앞섬 only where early achievement is actually confirmed. Work that looks 
 finished its turn, and a burn-down that looks comfortable are not achievements. Risk before a date
 and a date that has passed are different verdicts and are never merged into one hedge: 지연 위험
 says there is still time, 지연 says there is not.
+
+A project usually tracks several targets at once, and they can point different ways, so one
+project's verdict is decided in a fixed order. Judge the obligations whose dates have already
+arrived first: if any of them is short, the project is 지연, whatever else is running early. Only
+when nothing already due is short does an early achievement elsewhere make it 앞섬, and only when
+that achievement is confirmed. A future target's risk gives 지연 위험 when nothing due is short.
+Report the other targets on their own lines rather than averaging them into the verdict.
 
 Where a check only reached part of the scope, judge that part and say so. A verdict covering
 projects you did not read is a claim about work you did not do.
@@ -93,5 +107,6 @@ check is asked for often, and a check that costs as much as an audit stops being
 
 Reporting 지연 changes no date, wakes no parent, and starts no execution. A schedule change belongs
 to [crw-plan](../../crw-plan/SKILL.md) and the work to [crw-run](../../crw-run/SKILL.md), and Jun
-asking for one hands the scoped request to that owner. Do not set up recurring schedule alerts
-without a request that asks for them.
+asking for one hands the scoped request to that owner. Status sets up no recurring or background
+schedule alert, and a request for one is handed to that owner too rather than built here: a check
+that keeps running on its own is no longer a check somebody asked for.

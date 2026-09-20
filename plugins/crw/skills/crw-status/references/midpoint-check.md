@@ -27,8 +27,14 @@ total makes a growing backlog look like slipping delivery, or hides it inside a 
 
 ## Read each level for what only that level knows
 
-Per project, from its Linear record: done, in progress, or waiting, judged against the project's
-own criteria rather than against a status field somebody set by hand.
+Per project: done, in progress, or waiting against the project's own criteria rather than against a
+status field somebody set by hand. That judgement is [crw-check](../../crw-check/SKILL.md)'s, not
+this check's, so take it from the most recent trustworthy result its parent or a prior check
+already produced. What this check reads for itself is the current delivery state: the pull request,
+whether it merged, and whether anything was installed. Where no such judgement exists, or the one
+on hand is too old or too thin to rely on, report that project's criteria state as unverified and
+route it to check. A midpoint check that starts auditing criteria has become the audit it was
+supposed to be cheaper than.
 
 Per task, parent and child alike, from the host rather than from its last report: `active` with a
 turn id, `idle`, `notLoaded`, or `systemError`, and when its last turn ended and how. The
@@ -99,8 +105,11 @@ order. Nothing is described as handled unless this check performed it, which it 
 
 Observed: the approved set holds three projects; one parent is `active` with a turn, one is
 `idle`, one is `notLoaded`, and their children are spread across all three states.
-Action: report each project's own state, and read `notLoaded` as unread rather than as stopped.
-Name the idle parent with a working child as a blocker. Do not message or wake any of them.
+Action: report each project's own state, and name the idle parent with a working child as a
+blocker. `notLoaded` is neither running nor finished, so read that task again once before
+reporting it, as the bridge contract requires; a task that was merely not loaded a second ago may
+read `active`. Where it stays `notLoaded`, keep that exact value rather than translating it into
+idle or stopped, and report its last turn as unverified. Do not message or wake any of them.
 
 ### M2 CI is green and the review is not finished
 

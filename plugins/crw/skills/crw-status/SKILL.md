@@ -90,10 +90,12 @@ as one state.
 
 ## Write the report
 
-Lead with the conclusion: where the work stands overall and the one thing most in the way. Then
-one short status per project, including its schedule verdict. Then what is waiting, split between
-what an internal coordinator will settle and what genuinely needs a new decision from Jun. Then
-the evidence you checked and the items still unverified.
+Lead with the conclusion: what this work is trying to achieve, where it has actually reached
+against that, and the one thing most in the way. The goal is part of the conclusion rather than
+context the reader is assumed to carry, because a position with nothing to measure it against is
+not a status. Then one short status per project, including its schedule verdict. Then what is
+waiting, split between what an internal coordinator will settle and what genuinely needs a new
+decision from Jun. Then the evidence you checked and the items still unverified.
 
 Write it in Korean, short, and in the order above. Keep each project's line to its state, its
 blocker and its evidence pointer. Never write that something was handled, fixed or completed unless
