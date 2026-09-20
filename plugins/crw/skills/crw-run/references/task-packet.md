@@ -758,6 +758,12 @@ needed to resume:
   retain superseded PR links as history. Record non-PR results separately.
 - Each task's scope, dependency edges, overlap decisions, and code baseline SHA
   or non-PR source revision.
+- Per re-evaluation pass: what triggered it, the store identity and readability each read
+  answered at, and per candidate the decision from
+  [Decisions and what clears them](reevaluation.md#decisions-and-what-clears-them) with the
+  condition that clears it and the row it rests on. The latest pass replaces the previous one;
+  this is the outstanding-items field a checkpoint reads, not a growing transcript. Raw reader
+  payloads stay in private receipts.
 - Where a relay holds the assignment: relationship id, current generation, current
   revision, assignment state, and the synchronisation jobs still owed.
 - Per direct agreement with a peer parent: the request and reply ids, the counterpart parent and

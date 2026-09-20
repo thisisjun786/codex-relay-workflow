@@ -23,7 +23,7 @@ request rather than in the link.
 |---|---|---|
 | Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run](../SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
 | Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
-| How is it going | a status read | none; it reads existing records and wakes nothing |
+| How is it going | a status read by default; where this task supervises the initiative and its execution approval is still in force, also a checkpoint | none either way. A standalone request, or one under an explicit status-only, report-only, read-only, plan-only, pause or no-contact limit, reads existing records and wakes nothing. A checkpoint is not only a read: while approved work remains unfinished under an approval still in force, it inspects the existing parents, hands that pending work to the responsible parent on the resume path that parent already has, and reports the actions actually taken. It still binds no supervisor, moves no ownership, and starts nothing for work that already has an owner |
 | An initiative link carried as context by other work | the operation already running | none; it locates context |
 
 A designation is explicit and names the initiative. A link by itself rebinds no existing parent,
