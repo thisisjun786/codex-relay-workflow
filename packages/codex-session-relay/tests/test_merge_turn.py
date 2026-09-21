@@ -288,6 +288,23 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
         self.assertEqual(blocked["checkSnapshots"], 0)
         self.assertIsNone(blocked["lastRefusal"])
 
+    def test_restating_a_head_this_turn_does_not_hold_is_reported_as_the_movement_it_is(self):
+        """A check row records what its CALLER restated, not the candidate it was judged
+        against, so filtering on the candidate dropped exactly the mismatch it describes."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-b",
+                base_sha="base-0", checks=run_checks("head-b"), review=dict(GREEN),
+                required=["dev-gate"])
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CANDIDATE_MOVED)
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "candidate_moved")
+        self.assertEqual(blocked["candidateHead"], "head-a")
+        self.assertEqual(blocked["lastCheckedHead"], "head-b")
+        self.assertEqual(blocked["checkSnapshots"], 0)
+
     def test_restating_the_same_evidence_does_not_look_like_a_second_restatement(self):
         """checkSnapshots counts distinct evidence, and says so rather than counting polls."""
         held = self.claim(self.alpha, PROJECT_A, "head-a")
@@ -329,7 +346,7 @@ class AParentThatCameBackFindsItsOwnClaims(MergeTurnTestCase):
         mine = after.outstanding(self.alpha.task_id)
         self.assertEqual([record["turnId"] for record in mine], [held["turnId"]])
         self.assertEqual(mine[0]["grant"]["grantId"],
-                         grant_id(held["turnId"], mine[0]["tenure"], "head-a"))
+                         grant_id(held["turnId"], mine[0]["tenure"], 1))
 
     def test_a_free_target_a_paused_owner_cannot_take_is_not_reported_free(self):
         """targetFree answers whether to try, so occupancy alone was the wrong question."""
@@ -940,11 +957,29 @@ class AGrantIsAddressedAndConverges(MergeTurnTestCase):
     def test_the_grant_is_keyed_by_what_defines_it_and_not_by_a_clock(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
         record = self.turns.turn(held["turnId"])
-        key = "grant:" + grant_id(held["turnId"], record["tenure"], "head-a")
+        key = "grant:" + grant_id(held["turnId"], record["tenure"], 1)
         keys = [entry["idempotencyKey"] for entry in record["ledger"]
                 if entry["evidenceKind"] == "grant"]
         self.assertEqual(keys, [key])
         self.assertNotIn(self.clock.iso(), key)
+
+    def test_a_candidate_this_turn_used_before_can_be_restored(self):
+        """A to B and back to A. Keyed on the candidate, the third grant collided with the
+        first, and the ledger's own consistency check refused the restatement."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        first = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-b")
+        back = self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-a")
+        self.assertEqual(back["candidateHead"], "head-a")
+        self.assertEqual(back["grant"]["candidateHead"], "head-a")
+        self.assertEqual(back["grant"]["sequence"], 3)
+        self.assertNotEqual(back["grant"]["grantId"], first)
+        answered = self.turns.acknowledge_grant(
+            held["turnId"], actor=self.alpha.task_id, grant=back["grant"]["grantId"],
+            evidence="re-read the record for the restored candidate")
+        self.assertEqual(answered["grant"]["acknowledgedBy"], self.alpha.task_id)
 
     def test_a_promotion_grants_the_next_ready_candidate(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
