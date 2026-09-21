@@ -1090,10 +1090,14 @@ uncertain send is reconciled by reading the store, never repeated under a new id
 
 **Protected recipients are not a failure mode.** A paused or archived recipient, and a delivery
 whose assignment is paused, cancelled or archived, has its delivery withheld and waiting under
-OPS-8.2, without consuming the budget above, and no part of this clause resumes it. A withheld
-delivery is also not recorded as a delivery failure: a person stopping their own work is not a
-service fault, and the readiness check in [Start policy](start-policy.md) reads this scope's
-failure records to decide whether a parent may wait idle.
+OPS-8.2, without consuming the budget above, and no part of this clause resumes it.
+
+The two are not recorded alike, and the readiness check in [Start policy](start-policy.md) reads
+this scope's failure records, so the difference is one a parent acts on. A withhold caused by the
+RECIPIENT's own state does write a failure record, under `lifecycle_read` with the withhold reason
+as its code, because that is a host condition somebody may need to see. A withhold caused by the
+ASSIGNMENT's status does not: somebody stopping their own work is not a service fault, and
+recording one would have a parent stand down over a deliberate act.
 
 Measured subset: on 2026-09-21 an isolated store and an isolated scope authority on this operating
 scope exercised four of the behaviours above with real recipient tasks. A recipient observed active
@@ -1120,9 +1124,11 @@ A cancelled recipient TASK has no branch at all, because the host reports no suc
 The registry statuses `paused`, `cancelled` and `archived` are a different mechanism again, and
 they are enforced by exclusion rather than by a recorded refusal: the scheduler does not select
 their deliveries, so the ordinary service path writes nothing. A direct attempt on a named event
-refuses before any host read and journals `relationship_not_active`, and so does the narrow race
-where an assignment is deactivated after the scheduler selected it — a tick that does that reports
-a deferral rather than a quiet pass. All of this carries unit coverage rather than a live run.
+refuses before any host read and journals `delivery_withheld_inactive` carrying the relationship
+and the status it refused on; the `relationship_not_active` reason travels in the returned record
+rather than in the journal. The narrow race where an assignment is deactivated after the scheduler
+selected it takes the same path, and a tick that does that reports a deferral rather than a quiet
+pass. All of this carries unit coverage rather than a live run.
 A superseded assignment is excluded by the same scheduler filter but is deliberately left out of
 that refusal: it is deactivated permanently, `resume` refuses it, and closing it correctly means
 settling how every operator-facing reader renders that terminal, which is not done here.
