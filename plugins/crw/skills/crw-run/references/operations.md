@@ -895,10 +895,32 @@ when the host refuses because the turn moved on. An idle task takes the ordinary
 a task reporting a system error is neither: it is its own problem to resolve. A message transport
 that refuses an active task is protecting that task's turn, and that refusal is a reason to choose
 the steer path, never evidence that the task cannot be reached. Ordinary communication still never
-interrupts a peer or changes its goal. A paused, cancelled or archived
-task is never automatically resumed to receive a delivery: the delivery waits and is reported as
-waiting, and resuming that task is a human decision. Automatic resumption would restart work the
-user deliberately stopped, which is the one outcome nobody can undo by retrying.
+interrupts a peer or changes its goal. A task that was paused or archived is never automatically
+resumed to receive a delivery: the delivery waits and is reported as waiting, and resuming that
+task is a human decision. Automatic resumption would restart work the user deliberately stopped,
+which is the one outcome nobody can undo by retrying.
+
+Cancellation is the same promise made at a different level, and the two are not interchangeable.
+What the relay observes and refuses is a cancelled ASSIGNMENT. `cancelled` is one of the
+registry's relationship statuses; the delivery scheduler selects only `active` relationships, and
+the claim repeats that predicate inside its own atomic statement. A cancelled assignment's
+delivery is therefore never sent, and `resume` is the only thing that lifts it.
+
+How that refusal is recorded depends on which path reaches it, and the difference matters to
+anyone reading a store. On the service's own path nothing is written at all: the scheduler never
+selects the row, so the delivery simply sits where it was and no tick reports it. What says why is
+the assignment-level report, which renders a cancelled assignment `abandoned` and a paused one
+`paused`. Only a direct attempt on a named event reaches the per-delivery refusal, and that one
+refuses before any host read and journals the status it refused on. Do not read a queued delivery
+under a cancelled assignment as a stalled one.
+
+A cancelled RECIPIENT TASK is not the same fact and is not established. The host exposes no
+cancelled task state, so the lifecycle observation has nothing to branch on. Such a task would be
+withheld only if it also reports `can_accept_input` false or appears archived, and which of those
+a cancelled task actually reports has not been observed. Report that gap as the interface
+limitation it is rather than as a guarantee, and never infer cancellation from a turn that merely
+ended interrupted or was stopped mid-flight: an interrupted turn says nothing about whether its
+task was cancelled.
 
 Goal status is an input to deliverability rather than only a report of the recipient's intent. The
 installed relay's lifecycle observation treats `paused`, `usageLimited` and `budgetLimited` as
@@ -1066,9 +1088,12 @@ before anything new is attempted. On parent restart, the parent drains before it
 re-judges a settled event, and neither re-sends a send whose outcome is merely unknown: an
 uncertain send is reconciled by reading the store, never repeated under a new id.
 
-**Protected recipients are not a failure mode.** A paused, cancelled or archived recipient has its
-delivery withheld and waiting under OPS-8.2, without consuming the budget above, and no part of
-this clause resumes it.
+**Protected recipients are not a failure mode.** A paused or archived recipient, and a delivery
+whose assignment is paused, cancelled or archived, has its delivery withheld and waiting under
+OPS-8.2, without consuming the budget above, and no part of this clause resumes it. A withheld
+delivery is also not recorded as a delivery failure: a person stopping their own work is not a
+service fault, and the readiness check in [Start policy](start-policy.md) reads this scope's
+failure records to decide whether a parent may wait idle.
 
 Measured subset: on 2026-09-21 an isolated store and an isolated scope authority on this operating
 scope exercised four of the behaviours above with real recipient tasks. A recipient observed active
@@ -1084,9 +1109,23 @@ generation that created a new delivery while the held row stayed held.
 What that measures is the relay and its store, not this clause. The drain, the marker and the
 ordering rules above are the parent's own behaviour and remain unenforced by the runtime. The cap
 hold was induced directly in a synthetic store rather than reached naturally, so it evidences the
-exclusion and the recovery and not that any real delivery has ever reached the cap. Only `paused`
-was exercised among the protected states; `cancelled` and `archived` rest on the same code path and
-were not observed.
+exclusion and the recovery and not that any real delivery has ever reached the cap.
+
+Among the protected states, only a recipient's own `paused` GOAL was exercised live. The others do
+not rest on one shared code path and must not be reported as if they did. A recipient's archived
+flag is its own earlier branch in the lifecycle observation, closed fail-first so an unestablished
+archive state withholds rather than guesses, and it carries unit coverage but no live observation.
+A cancelled recipient TASK has no branch at all, because the host reports no such state.
+
+The registry statuses `paused`, `cancelled` and `archived` are a different mechanism again, and
+they are enforced by exclusion rather than by a recorded refusal: the scheduler does not select
+their deliveries, so the ordinary service path writes nothing. A direct attempt on a named event
+refuses before any host read and journals `relationship_not_active`, and so does the narrow race
+where an assignment is deactivated after the scheduler selected it — a tick that does that reports
+a deferral rather than a quiet pass. All of this carries unit coverage rather than a live run.
+A superseded assignment is excluded by the same scheduler filter but is deliberately left out of
+that refusal: it is deactivated permanently, `resume` refuses it, and closing it correctly means
+settling how every operator-facing reader renders that terminal, which is not done here.
 
 ## OPS-9 Delivery, review and merge
 
