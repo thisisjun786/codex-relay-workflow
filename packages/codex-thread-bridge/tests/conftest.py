@@ -31,6 +31,11 @@ class FakeServer:
         self.approval_policy = "never"
         # Who this host says reviews approvals on a thread. ThreadResumeResponse requires it.
         self.approvals_reviewer = "user"
+        # What this host calls itself at initialize. Settable because several answers in
+        # get_capabilities are derived from it by comparing version tokens, and a test can only
+        # show that they are derived rather than constant by connecting to a different version.
+        # The default is unchanged, so no existing test moves.
+        self.user_agent = "fake Codex/0.153.4"
         # Measured on codex-cli 0.154.0: resume is a detector, so by default this fake reports
         # the thread's policy whatever the parameter says. Setting this makes it a SETTER
         # instead, which is the only way a test can tell "preserved because the bridge omitted
@@ -162,7 +167,7 @@ class FakeServer:
             ident = message["id"]
             if method == "initialize":
                 initialized = True
-                result = {"userAgent": "fake Codex/0.153.4", "platformOs": "linux"}
+                result = {"userAgent": self.user_agent, "platformOs": "linux"}
             elif not initialized:
                 await ws.send(json.dumps({"id": ident, "error": {"message": "not initialized"}}))
                 continue
