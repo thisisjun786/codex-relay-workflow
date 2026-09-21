@@ -1333,6 +1333,34 @@ class DeclaredStopCommandTest(unittest.TestCase):
                                  "SystemExit(%s) was mapped to %d" % (literal, done.returncode))
 
 
+    def test_an_integer_subclass_is_judged_by_its_value_not_its_equality(self):
+        """Devin review: CPython derives the status from the stored value, not from __eq__.
+
+        int is subclassable and __eq__ is overridable, so comparing the code with zero can
+        dispatch into a method that answers something unrelated to the number. int(code) reads
+        the value the interpreter would use, which is the rule this declaration claims to follow.
+        """
+        lying = ("class E(int):\n"
+                 "    def __eq__(self, other):\n"
+                 "        return %s\n"
+                 "    def __hash__(self):\n"
+                 "        return 0\n"
+                 "raise SystemExit(E(%d))\n")
+        for says, value, expected in ((True, 5, 1), (False, 0, 0)):
+            with self.subTest(value=value, says=says):
+                tag = "%s-%d" % (says, value)
+                cache = self.root / ("sub-" + tag) / "0.4.0"
+                self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
+                           lying % (says, value))
+                home = self.root / ("subhome-" + tag)
+                home.mkdir(parents=True, exist_ok=True)
+                done, ran = self.fire(cache, home)
+                self.assertEqual(ran, ["PACKAGED"])
+                self.assertEqual(done.returncode, expected,
+                                 "E(%d) with __eq__ -> %s was mapped to %d"
+                                 % (value, says, done.returncode))
+
+
     def test_the_declaration_stays_within_the_timeout_the_host_clamps(self):
         self.assertLessEqual(self.timeout, plugin.HOOK_TIMEOUT_SECONDS)
 
