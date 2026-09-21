@@ -223,7 +223,7 @@ class Registry:
                 if refusal is not None:
                     self.linkage.record_conflict_in(db, refusal, at=self.clock.iso())
             if refusal is not None:
-                raise refusal.error()
+                raise self._contest_pending(refusal, refusal.error())
             return self.get(rid)
         now = self.clock.iso()
         if project_key is not None:
@@ -255,7 +255,7 @@ class Registry:
                 if pending is not None:
                     self.linkage.record_conflict_in(db, pending, at=now)
             if pending is not None:
-                raise pending.error()
+                raise self._contest_pending(pending, pending.error())
         try:
             return self._register_in_transaction(
                 rid, parent, child, issue_key, roots, recipients, scope_ref,
@@ -265,18 +265,50 @@ class Registry:
             self._record_raced(failure, now)
             raise
 
+    def _contest_pending(self, refusal, error):
+        """Carry the contest on the error when the transaction that wrote it was not ours.
+
+        Three sites record a contest and then raise, and they are correct as written: the
+        transaction that recorded it commits, and the refusal follows once it has closed. That
+        holds while the transaction belongs to the method that opened it. Under
+        store.composing() it does not -- the scope joined a larger transaction, and the
+        refusal about to be raised will roll that one back and take the contest with it.
+
+        Asked of the store rather than assumed, because the same line has to be right both
+        ways: still inside a transaction means the row is not durable and somebody above has
+        to write it again, and no transaction open means it already committed and attaching
+        here would write it twice.
+        """
+        if self.store.in_transaction:
+            error.raced_refusal = refusal
+        return error
+
     def _record_raced(self, failure, now):
-        """Re-record a refusal whose own transaction rolled back and took the row with it.
+        return self.record_refusal(failure, at=now)
+
+    def record_refusal(self, failure, *, at):
+        """Re-record a refusal whose transaction rolled back and took the row with it.
 
         Carried on the ERROR rather than on self. Instance state made two concurrent
         registrations through one Registry able to read each other's contest, and a refusal
         that has to survive a rollback is the last thing that should depend on nobody sharing
         the object.
+
+        Public because the caller that has to keep the promise is no longer always this
+        class: a command composing several writes into one transaction owns the rollback, so
+        it owns re-recording what the rollback discarded. Safe to call for any failure -- one
+        carrying no refusal has nothing to record.
         """
         raced = getattr(failure, "raced_refusal", None)
-        if raced is not None:
-            with self.store.transaction() as db:
-                self.linkage.record_conflict_in(db, raced, at=now)
+        if raced is None:
+            return
+        if self.store.in_transaction:
+            # A larger transaction is still open around this one and the refusal is going to
+            # roll it back, so writing here would only be rolled back too. The refusal stays
+            # on the error and whoever opened that transaction records it once it has ended.
+            return
+        with self.store.transaction() as db:
+            self.linkage.record_conflict_in(db, raced, at=at)
 
     @staticmethod
     def _inherited_project(reader, rid, issue_key, supersedes):
@@ -502,7 +534,7 @@ class Registry:
                     ).fetchone()
                     self.linkage.attach_apply(db, reborn, project_key, plan, at=now)
         if pending is not None:
-            raise pending.error()
+            raise self._contest_pending(pending, pending.error())
         return self.get(rid)
 
     def _register_in_transaction(self, rid, parent, child, issue_key, roots, recipients,

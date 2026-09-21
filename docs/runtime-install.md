@@ -88,6 +88,17 @@ it covers rather than an independently editable expectation. A point recorded ag
 interpreter is a different combination and does not satisfy this one. Points are appended, never
 replaced.
 
+The `appServer` dimension is the bridge check's whole `get_capabilities` payload, serialized and
+compared by exact string equality. That is deliberate: the identity of the server a combination was
+exercised against is everything the round trip reported, not a version string someone chose to trust.
+It also means any change to that payload's shape changes the dimension, so a point measured before
+such a change does not cover a bridge built after it and the installation reads `unmeasured` until
+it is measured again. The old point is not wrong and is not discarded; it remains evidence about the
+build it was taken against, which is the behaviour a dimension is for. CRW-21 changed that payload,
+so any point recorded before it needs one `measure` run to cover the current bridge. The same
+property is why the payload carries no timestamp and no probe result: a dimension that varied
+between two calls to the same build would never match itself.
+
 ### An interpreter's identity is not one line of a script
 
 `interpreterPath` is recorded because a console script has more than one written shape. pip emits a

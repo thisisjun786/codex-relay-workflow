@@ -291,6 +291,7 @@ FOLD_FREE_BOOLEANS = (
     ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
+    ("store.py", None, "in_transaction", "function"),
 )
 
 # A write context naming a declared boolean that is not one of the producer forms above. All
@@ -321,6 +322,9 @@ UNRESOLVED_READS = (
 # produce, so it can say which side is cheap. For one in FOLDS_BEYOND_ITS_PATHS it does not, and
 # the verdict is the only thing that weighs the site at all.
 SUMMARY_SITES = (
+    ('test_observation_budget.py', 'test_future_legacy_admission_stays_ineligible_after_generation_opens', 'admitted', False, "self.assertFalse(AnchorOrExplicit().admit(self.store, current, current['generations'][-1], 'unrelated').admitted)", 'the previously absent generation now exists and the legacy row remains; false pins the missing anchor binding, with no settlement or event after a daemon tick'),
+    ('test_observation_budget.py', 'test_fresh_explicit_admission_upgrades_legacy_record', 'admitted', False, "self.assertFalse(AnchorOrExplicit().admit(self.store, relation, relation['generations'][0], 'legitimate').admitted)", 'the bound generation and legacy row exist, so false distinguishes missing binding from absent input; the same row becomes admitted only after explicit readmission'),
+    ('test_observation_budget.py', 'test_fresh_explicit_admission_upgrades_legacy_record', 'admitted', True, "self.assertTrue(AnchorOrExplicit().admit(self.store, relation, relation['generations'][0], 'legitimate').admitted)", 'fresh explicit readmission follows the measured legacy rejection, preserves the single row and binds its exact anchor'),
     ("test_ack_reconcile.py", "test_a_turn_starting_in_the_same_second_as_its_send_is_not_refused",
      "certainly_before", False, "self.assertFalse(certainly_before(1789420929, sent))",
      "the function is the subject and both arguments are literals, so the case is identified;"
@@ -1081,6 +1085,22 @@ FAULT_SITES = (
      " inside _claim, with an empty send list as the independent check. The reserved capacity"
      " is in that subset too, so the empty-table checks cannot pass for a reservation that was"
      " never written"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_relationship_commit_leaves_no_settings_behind", "helper",
+     "relationships",
+     "cmd_register composes its writes into ONE transaction, so naming either table reaches"
+     " the same interval; the predicate is what makes the case say which end of it it is"
+     " about. This one kills at the relationship write and asserts authorized_settings was"
+     " in the same set, which is the direction that already held before CRW-173 and is kept"
+     " so neither order can pass this file alone"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_settings_commit_leaves_no_relationship_behind", "helper",
+     "authorized_settings",
+     "the interval CRW-173 is about. Before the fix this predicate reached the SECOND of two"
+     " transactions and the relationship was already committed; the case asserts"
+     " relationships was in the interrupted set, so it fails again the moment the two writes"
+     " come apart rather than only reporting an empty store, which a registration that never"
+     " started would also produce"),
     ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
      "relationships",
      "register() runs three transactions and this name held only because the relationship"

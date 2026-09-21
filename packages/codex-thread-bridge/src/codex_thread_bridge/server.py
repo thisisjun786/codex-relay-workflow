@@ -58,7 +58,11 @@ def make_server(bridge: Bridge):
 
     @mcp.tool(annotations=READ)
     async def get_capabilities() -> dict[str, Any]:
-        """Check connection and report implemented capabilities and compatibility limits."""
+        """Check the connection and report what this bridge implements, plus what it does not ask.
+
+        The capabilities block describes this bridge only. Questions about the connected host
+        that nothing probes are listed unanswered in hostNotProbed rather than answered false.
+        """
         return await bridge.capabilities()
 
     @mcp.tool(annotations=WRITE)
