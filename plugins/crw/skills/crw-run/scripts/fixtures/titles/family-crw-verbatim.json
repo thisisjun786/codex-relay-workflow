@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "prefix": "CRW",
+    "reason": "prefix_added",
+    "title": "[CRW] 설치형 플러그인 전환"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "설치형 플러그인 전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "The label is data. CRW is written exactly as Linear spells it.",
+  "subcommand": "decide"
+}

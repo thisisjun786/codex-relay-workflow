@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "readback": "verified"
+  },
+  "input": {
+    "observed_title": "[CRW] 설치형 플러그인 전환",
+    "requested_title": "[CRW] 설치형 플러그인 전환"
+  },
+  "note": "The host returned the string that was requested.",
+  "subcommand": "readback"
+}

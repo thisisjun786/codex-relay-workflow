@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "readback": "mismatch"
+  },
+  "input": {
+    "observed_title": "설치형 플러그인 전환",
+    "requested_title": "[CRW] 설치형 플러그인 전환"
+  },
+  "note": "Accepted and then different is a mismatch to report with both strings, not a success with a caveat.",
+  "subcommand": "readback"
+}

@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_added",
+    "stripped": null,
+    "title": "[CRW] CRW-137 · 부모 제목 제품군 접두어"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW-137 · 부모 제목 제품군 접두어",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "CRW-137 is an issue code. An unspaced hyphen must never separate the label from its number.",
+  "subcommand": "decide"
+}

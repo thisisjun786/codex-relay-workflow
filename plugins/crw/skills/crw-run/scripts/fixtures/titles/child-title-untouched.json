@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "reason": "role_out_of_scope",
+    "title": "CRW-137 · 부모 제목 제품군 접두어"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW-137 · 부모 제목 제품군 접두어",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "child",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "An issue child keeps ISSUE-ID · title.",
+  "subcommand": "decide"
+}

@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "reason": "already_prefixed",
+    "title": "[CRW] 업데이트 호환 실작업 검증"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[CRW] 업데이트 호환 실작업 검증",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Re-applying the rule to a correct title adds no second prefix.",
+  "subcommand": "decide"
+}

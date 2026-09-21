@@ -1,0 +1,28 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "bracket_body",
+    "reason": "prefix_added",
+    "stripped": null,
+    "title": "[CRW] [v2] 배포 정리"
+  },
+  "input": {
+    "binding_verified": true,
+    "bracket_disposition": {
+      "action": "body",
+      "bracket": "[v2]"
+    },
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[v2] 배포 정리",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Once a person says the bracket is the user’s own words, it stays in the body. The disposition names the bracket as it is written, with no invisible trailing space to reproduce.",
+  "subcommand": "decide"
+}
