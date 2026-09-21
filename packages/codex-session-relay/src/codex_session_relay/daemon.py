@@ -11,11 +11,13 @@ why the gate below asks whether there is anything to learn before invoking anyth
 """
 
 import fcntl
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
+from .admission import BOUND_ADMISSION_SQL
 from .errors import (
     DeliveryRefused, RefusalReason, RegistrationError, RelayError, ScopeError,
 )
@@ -327,8 +329,14 @@ class RelayDaemon:
             row["turn_id"]
             for row in self.intake.staged_events(thread_id=thread, relationship_id=rid)
         ]
+        # An explicitly admitted business or continuation turn may end without
+        # reporting. It has no staged event, so polling only anchors and receipts
+        # would never settle that omission. Include this assignment's admissions
+        # from every generation, like historical anchors, until they settle.
+        page, ceiling = self._admission_page(rid, thread, max(1, share - 1))
+        admitted = [row["turn_id"] for row in page if row["eligible"]]
         ring = [
-            turn_id for turn_id in dict.fromkeys(staged + history)
+            turn_id for turn_id in dict.fromkeys(staged + admitted + history)
             if turn_id != current and self._worth_polling(thread, turn_id, rid)
         ]
         selected = []
@@ -345,7 +353,62 @@ class RelayDaemon:
             start = self._cursor(f"ring:{rid}", len(ring))
             selected.extend(ring[(start + offset) % len(ring)] for offset in range(taken))
             self._advance_cursor(f"ring:{rid}", taken, len(ring))
+        # Commit only the consumed prefix. Moving past an eligible candidate that
+        # lost this tick's ring slot would silently starve it behind later pages.
+        consumed = None
+        for row in page:
+            turn = row["turn_id"]
+            if row["eligible"] and turn != current and turn not in selected:
+                break
+            consumed = row["admission_row"]
+        if consumed is not None:
+            with self.store.transaction() as db:
+                db.execute(
+                    "INSERT INTO discovery_cursors (task_id,listing,cursor,updated_at)"
+                    " VALUES ('scheduler',?,?,?) ON CONFLICT(task_id,listing) DO UPDATE"
+                    " SET cursor=excluded.cursor,updated_at=excluded.updated_at",
+                    (f"admitted:{rid}", json.dumps({"after": consumed, "through": ceiling}), self.clock.iso()),
+                )
         return selected
+
+    def _admission_page(self, rid, thread, limit):
+        """Bound raw work, including settled and foreign admissions.
+
+        Writers only INSERT or UPDATE this table; rowid fixes insertion order even
+        when a new turn sorts before an old turn lexically. A frozen upper rowid
+        prevents ongoing inserts from extending the current pass. The rowid range
+        scans at most limit rows before filtering ownership/eligibility; searching
+        for limit eligible rows first would scan unlimited settled history.
+        This trades latency across a large shared store for a fixed per-tick cost.
+        """
+        row = self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE task_id='scheduler' AND listing=?",
+            (f"admitted:{rid}",),
+        )
+        key, ceiling = 0, None
+        try:
+            saved = json.loads(row["cursor"]) if row else {}
+            if type(saved.get("after")) is int and type(saved.get("through")) is int:
+                key, ceiling = saved["after"], saved["through"]
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if ceiling is None or key >= ceiling:
+            key = 0
+            ceiling = self.store.one("SELECT COALESCE(MAX(rowid),0) AS last FROM generation_turns")["last"]
+        sql = (
+            "SELECT t.rowid AS admission_row,t.turn_id,"
+            " CASE WHEN t.relationship_id=? THEN"
+            " (EXISTS (SELECT 1 FROM generations g WHERE g.relationship_id=t.relationship_id"
+            " AND g.execution_generation=t.execution_generation AND " + BOUND_ADMISSION_SQL + ")"
+            " AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
+            " WHERE s.relationship_id=t.relationship_id AND s.thread_id=? AND s.turn_id=t.turn_id))"
+            " ELSE 0 END AS eligible FROM generation_turns t"
+            " WHERE t.rowid > ? AND t.rowid <= ? ORDER BY t.rowid LIMIT ?"
+        )
+        page = self.store.all(sql, (rid, thread, key, ceiling, limit))
+        if not page and key:
+            page = self.store.all(sql, (rid, thread, 0, ceiling, limit))
+        return page, ceiling
 
     def _record_poll(self, relationship, turn_id, *, status, error) -> None:
         """That we LOOKED, which an observations row cannot tell anyone.

@@ -322,6 +322,9 @@ UNRESOLVED_READS = (
 # produce, so it can say which side is cheap. For one in FOLDS_BEYOND_ITS_PATHS it does not, and
 # the verdict is the only thing that weighs the site at all.
 SUMMARY_SITES = (
+    ('test_observation_budget.py', 'test_future_legacy_admission_stays_ineligible_after_generation_opens', 'admitted', False, "self.assertFalse(AnchorOrExplicit().admit(self.store, current, current['generations'][-1], 'unrelated').admitted)", 'the previously absent generation now exists and the legacy row remains; false pins the missing anchor binding, with no settlement or event after a daemon tick'),
+    ('test_observation_budget.py', 'test_fresh_explicit_admission_upgrades_legacy_record', 'admitted', False, "self.assertFalse(AnchorOrExplicit().admit(self.store, relation, relation['generations'][0], 'legitimate').admitted)", 'the bound generation and legacy row exist, so false distinguishes missing binding from absent input; the same row becomes admitted only after explicit readmission'),
+    ('test_observation_budget.py', 'test_fresh_explicit_admission_upgrades_legacy_record', 'admitted', True, "self.assertTrue(AnchorOrExplicit().admit(self.store, relation, relation['generations'][0], 'legitimate').admitted)", 'fresh explicit readmission follows the measured legacy rejection, preserves the single row and binds its exact anchor'),
     ("test_ack_reconcile.py", "test_a_turn_starting_in_the_same_second_as_its_send_is_not_refused",
      "certainly_before", False, "self.assertFalse(certainly_before(1789420929, sent))",
      "the function is the subject and both arguments are literals, so the case is identified;"
