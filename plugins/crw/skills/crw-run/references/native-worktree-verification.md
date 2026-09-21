@@ -120,10 +120,9 @@ Run against a disposable fixture repository, never a real checkout.
 7. Inspect the new checkout for each of the four fixture file states, and for the
    ignored file specifically.
 8. Read the created thread record for cwd, `projectId`, section, the title where the
-   record exposes one, model, reasoning
-   effort, approval policy, sandbox, originator and source, and record the workspace
-   roots, source repository, base commit, branch and owner too, since the Setting
-   preservation verdict uses all of them.
+   record exposes one, model, reasoning effort, approval policy, sandbox, originator
+   and source, and record the workspace roots, source repository, base commit, branch
+   and owner too, since the Setting preservation verdict uses all of them.
 9. With client access, observe where the created task actually appears in the client
    and record the project it is grouped under, kept distinct from any section, pin or
    rename. Without client access, record Project association as unverified: the
