@@ -864,8 +864,8 @@ def _gates(forge, owner, name, base_ref, problems):
                 parameters.get("required_review_thread_resolution"))
     gates["readable"] = True
     gates["requiredDeclared"] = sorted(set(contexts))
-    gates["requiredProviders"] = {context: sorted(found)
-                                  for context, found in integrations.items()}
+    gates["requiredProviders"] = {context: sorted(apps)
+                                  for context, apps in integrations.items()}
     gates["digest"] = hashlib.sha256(json.dumps({
         "required": gates["requiredDeclared"],
         "providers": gates["requiredProviders"],
@@ -882,7 +882,7 @@ def _provider_map(mapping):
     say either. Comparing the spellings rather than the meaning would report a gate as moved
     because one side wrote a string where the other wrote a list of one.
     """
-    found = {}
+    normalised = {}
     for context, wanted in (mapping or {}).items():
         if isinstance(wanted, (list, tuple, set, frozenset)):
             names = sorted({str(one) for one in wanted if str(one).strip()})
@@ -891,8 +891,8 @@ def _provider_map(mapping):
         else:
             names = [str(wanted)]
         if names:
-            found[str(context)] = names
-    return found
+            normalised[str(context)] = names
+    return normalised
 
 
 def _conflicting_reviewers(required, disabled):
