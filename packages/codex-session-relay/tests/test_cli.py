@@ -617,6 +617,115 @@ class LazyServices(unittest.TestCase):
         self.assertFalse(os.path.exists(empty))
 
 
+class WorkerPolicyRequirements(CliBase):
+    """doctor --require-worker-policy parses requirements and refuses a non-ready worker.
+
+    These cover the CLI surface only: what one command accepts as requirements, what it
+    refuses, and that the diagnosis survives the refusal. Whether a LIVE worker's published
+    snapshot satisfies it is test_worker_policy.py's question, answered with real processes.
+    """
+
+    REQUIREMENTS = json.dumps(
+        [{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]
+    )
+
+    def test_malformed_requirements_are_a_usage_error(self):
+        # A JSON document that cannot be parsed never reaches the readiness comparison:
+        # usage 4 names the input, not the worker. Shape errors are a different failure and
+        # belong to the refusal test below.
+        for bad in ("{not json",):
+            with self.subTest(raw=bad):
+                refused = self.run_cli(
+                    "doctor", "--require-worker-policy", bad, expect=4,
+                )
+                self.assertEqual(refused["error"], "usage")
+                self.assertIn("worker policy requirements", refused["detail"])
+
+    def test_wrong_type_requirements_are_refused_not_reported_healthy(self):
+        # Valid JSON with the wrong shape is a different failure than unparseable JSON: the
+        # comparison runs and answers readiness False with its own reason, exit 2, rather
+        # than exit 4 on parsing. Each fixture names its own reason, so a refactor that
+        # quietly folds one into the other fails here rather than passing as "some refusal".
+        for wrong, reason in (
+            ('{"role": "parent"}', "worker_policy_requirements_invalid"),
+            ('[{"role": "supervisor", "model": "m", "reasoningEffort": "max"}]',
+             "worker_policy_role_unsupported"),
+            ('[{"role": "parent", "model": false, "reasoningEffort": "max"}]',
+             "worker_policy_requirements_invalid"),
+            ("[]", "worker_policy_requirements_invalid"),
+        ):
+            with self.subTest(raw=wrong, reason=reason):
+                report = self.run_cli(
+                    "doctor", "--require-worker-policy", wrong, expect=2,
+                )
+                self.assertFalse(report["workerReadiness"]["ready"])
+                self.assertEqual(report["workerReadiness"]["reason"], reason)
+
+    def test_an_unreadable_requirements_file_is_a_usage_error(self):
+        missing = os.path.join(self.tmp, "absent-requirements.json")
+        refused = self.run_cli(
+            "doctor", "--require-worker-policy", f"@{missing}", expect=4,
+        )
+        self.assertEqual(refused["error"], "usage")
+        self.assertIn("No such file", refused["detail"])
+
+    def test_doctor_without_the_flag_reports_the_worker_and_gates_nothing(self):
+        report = self.run_cli("doctor")
+        self.assertFalse(report["workerPolicy"]["observed"])
+        self.assertEqual(report["callerWorkerAgreement"], "unknown")
+        self.assertNotIn("workerReadiness", report,
+                         "diagnostic doctor answers a question nobody asked")
+
+    def test_the_refusal_keeps_the_whole_diagnosis(self):
+        # Like the store-mismatch refusal, the payload on exit 2 is the full report, so a
+        # coordinator still sees state selection, access and the role policy beside the
+        # readiness answer that refused.
+        report = self.run_cli(
+            "doctor", "--require-worker-policy", self.REQUIREMENTS, expect=2,
+        )
+        self.assertFalse(report["workerReadiness"]["ready"])
+        self.assertEqual(report["workerReadiness"]["reason"], "worker_policy_unreadable")
+        self.assertIn("stateSelection", report)
+        self.assertIn("access", report)
+        self.assertIn("rolePolicy", report)
+
+    def test_the_readiness_refusal_retains_the_store_nonce_and_issue_answers(self):
+        """One combined invocation: readiness False must not hide the requested readings.
+
+        A coordinator asks doctor one question in one command: is the worker ready, is
+        this the store the participants reported, and does it hold the issue? The
+        readiness refusal used to fire before the other answers were computed, so exit 2
+        carried a readiness verdict and nothing else -- the aggregation gap this
+        regression closes.
+        """
+        mine = self.run_cli("store-identity")["store"]
+        nonce = self.run_cli("store-challenge", "--write", "--actor", "parent")["nonce"]
+        report = self.run_cli(
+            "doctor", "--require-worker-policy", self.REQUIREMENTS,
+            "--expect-store", mine["storeId"],
+            "--expect-inode", f"{mine['device']}:{mine['inode']}",
+            "--expect-nonce", nonce, "--issue", ISSUE,
+            expect=2,
+        )
+        self.assertFalse(report["workerReadiness"]["ready"])
+        self.assertEqual(report["workerReadiness"]["reason"], "worker_policy_unreadable")
+        # The refusal carries the whole answer: proven store identity, the nonce found
+        # in the file it proves, and the issue reading, beside the readiness that
+        # refused.
+        self.assertEqual(report["sameStore"], "proven")
+        self.assertTrue(report["nonce"]["found"])
+        self.assertTrue(report["issue"]["readable"])
+        self.assertFalse(report["issue"]["holds"])
+
+    def test_requirements_staged_as_a_file_are_read(self):
+        """The @path spelling goes through the same parser as the inline value."""
+        path = os.path.join(self.tmp, "requirements.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self.REQUIREMENTS)
+        report = self.run_cli("doctor", "--require-worker-policy", f"@{path}", expect=2)
+        self.assertEqual(report["workerReadiness"]["reason"], "worker_policy_unreadable")
+
+
 class ContestedSocket(CliBase):
     """Two stores recording one socket must not quietly become three.
 
