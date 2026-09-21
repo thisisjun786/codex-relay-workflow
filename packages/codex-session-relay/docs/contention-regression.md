@@ -119,6 +119,9 @@ What each one waits on:
 - `test_service.py` starts real subprocesses and polls `time.monotonic` until one
   holds the lock, and runs one real worker for a single short segment outside the
   scripted clock.
+- `test_worker_policy.py` starts real policy publishers holding service locks and
+  waits on their publication pipe. It stops and replaces those processes to test
+  whether a retained policy receipt still names the current worker.
 - `test_operational_scale.py` spawns one real replacement worker.
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
@@ -237,7 +240,7 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
 weigh them, and the ones that reach their value down a single path. Every place the suite
 measures something with either folded kind is listed, keyed by the assertion's own text, with
-a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 66 measured
+a verdict written beside it. Today that reads 50 booleans as 11 / 30 / 9, and 66 measured
 places. Those counts, and the per-module case counts in the landed table above, are read back
 out of this file and compared against the suite, so a number here that went stale fails there.
 
@@ -309,3 +312,12 @@ is that pair together rather than the timeout alone.
 Whether a new test asserts something an existing test already asserts. No scan can answer
 that, and claiming otherwise would be the same kind of overstatement this map exists to
 avoid. The reuse column is where that judgement is recorded, not where it is enforced.
+
+`test_managed_start.py` uses subprocess CLI checks and one bounded worker thread to
+verify the post-resume guard on its actual thread boundary. Its other scenarios
+use a fake host and real SQLite/marker stores; they do not establish live hooks.
+
+`test_reporting_cli.py` starts the real CLI in bounded subprocesses. Its
+read-only and usage-exit evidence spends wall time; it does not contact a live
+App Server or prove installed hook firing. `test_omitted.py` uses persisted
+fixture Stop and settlement records with an injected observation time.
