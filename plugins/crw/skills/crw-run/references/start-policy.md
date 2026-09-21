@@ -254,6 +254,19 @@ words that this is a coordination goal, meaning a project parent goal that carri
 implementation loop, and that it never runs loop initialisation, never enters PABCD,
 and never closes early. A later session reads that before it reads anything else.
 
+Measured once, and narrowly. On 2026-09-21 a deliberately trivial test actor was created holding an
+active goal with nothing to do. Within its first turn its goal moved to `blocked` with no further
+external prompt, and it then held flat at one turn for 270 seconds. Two goal-free actors in the
+same harness held flat for 307 seconds with their turn count, newest turn id and the host's
+`updatedAt` all unmoved. So the blocked exit this section names was reached without anyone
+choosing it.
+
+What that does not establish. The Stop behaviour's firing was not read, so nothing here attributes
+the transition to it; only the outcome was observed. The token figure covers that actor's whole
+first turn rather than an isolated idling or continuation cost. And one trivial actor is one
+trivial actor: how often this happens, whether it must, what a real project parent carrying scope
+would do, and any saving between the two modes are all `unmeasured`.
+
 This is a known incompatibility rather than a scheduled repair. CRW runs as an overlay on CXC as
 installed, and nothing here changes CXC: overriding a hook by registration order, intercepting its
 output, patching the plugin cache and writing private state are all excluded, and none of them is
