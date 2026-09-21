@@ -4,6 +4,7 @@ Run executes the scope its task is bound to. Where that scope is an initiative, 
 entry: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+which also fixes what each level is called in a report to Jun,
 and the project-level procedures [crw-run](../SKILL.md) already owns are not repeated here one
 level up.
 
@@ -88,6 +89,13 @@ task would abandon or blur the implementation it owns. Each task is bound to one
 what decides this is whether the task is free, not which level happens to hold it. A user who does
 want that task to stop being a parent is making an ownership change, recorded and completed first
 rather than produced as a side effect of binding.
+
+A name settles none of this in either direction. A task holding this designation is the supervisor
+whether or not anything calls it one, and going unnamed gives it none of a parent's acceptance or
+merge authority; a task called 감독 세션 in a title or a prompt, with no initiative designated, is
+not one and binds nothing. One task holds one live scope per role, and what a store does with a
+second same-role binding is in
+[What a recorded relationship settles](#what-a-recorded-relationship-settles-and-what-it-does-not).
 
 The supervision then belongs in a task of its own, or in the existing supervisor where there is
 one, and the designation is routed there: to an existing supervisor by the delivery in the reuse
