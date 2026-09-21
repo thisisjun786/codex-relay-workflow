@@ -1876,11 +1876,11 @@ class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
         self.supervise()
         original = type(self.registry)._register_in_transaction
 
-        def racing(registry, rid, parent, child, issue_key, *rest):
+        def racing(registry, rid, parent, child, issue_key, *rest, **options):
             self.linkage.bind_scope(
                 role=linkage.CHILD, scope_key=issue_key,
                 endpoint=Endpoint("01child-racer", HOST))
-            return original(registry, rid, parent, child, issue_key, *rest)
+            return original(registry, rid, parent, child, issue_key, *rest, **options)
 
         with mock.patch.object(
                 type(self.registry), "_register_in_transaction", racing):

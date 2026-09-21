@@ -12,6 +12,7 @@ from codex_session_relay.transport import (
     HELD_UNCERTAIN,
     INBOX_ONLY,
     QUEUED,
+    SUPERSEDED,
     WITHHELD_PRE_SEND,
 )
 
@@ -352,6 +353,225 @@ class AuthorizationRace(DeliveryTestCase):
         _relationship, event_id = self.queued_event()
         self.registry.set_status(self._rid, "paused", actor="user")
         self.assertEqual(self.delivery.eligible(now=self.clock.now()), [])
+
+
+class CountedHostReads:
+    """Every host read the pre-claim path can make, counted, by wrapping rather than patching.
+
+    A plain delegating object on purpose: the suite's fault-injection reader refuses reflective
+    mutation it cannot follow, and a test does not need any.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls = []
+
+    def read_thread(self, thread_id):
+        self.calls.append("read_thread")
+        return self._inner.read_thread(thread_id)
+
+    def is_archived(self, thread_id, *, cwd=None):
+        self.calls.append("is_archived")
+        return self._inner.is_archived(thread_id, cwd=cwd)
+
+    def read_goal_status(self, thread_id):
+        self.calls.append("read_goal_status")
+        return self._inner.read_goal_status(thread_id)
+
+    def list_turn_ids(self, thread_id, limit=20):
+        self.calls.append("list_turn_ids")
+        return self._inner.list_turn_ids(thread_id, limit=limit)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class DeactivatedAssignment(DeliveryTestCase):
+    """An assignment a person stopped stops the delivery visibly, before the host is touched.
+
+    The scheduler already filters these out and the claim refuses them atomically, so nothing
+    was ever sent. What was missing is the record: attempt() read the relationship without
+    checking its status, observed the recipient on the host, wrote a recipient_lifecycle row
+    saying deliverable, and then returned a bare None that reads exactly like "not due yet".
+    These assert the reason survives instead.
+    """
+
+    def _deactivated(self, status):
+        _relationship, event_id = self.queued_event()
+        self.registry.set_status(self._rid, status, actor="user")
+        return event_id
+
+    def _resume(self):
+        record = self.registry.get(self._rid)
+        self.registry.resume(
+            self._rid,
+            expect_generation=record["executionGeneration"],
+            expect_artifact_roots=record["authorizedScope"]["artifactRoots"],
+            expect_allowed_recipients=record["authorizedScope"]["allowedRecipients"],
+            actor="user",
+        )
+
+    def test_a_cancelled_assignment_is_withheld_with_its_reason(self):
+        event_id = self._deactivated("cancelled")
+        record = self.attempt(event_id)
+        self.assertIsNotNone(record, "a refusal that returns None cannot be told from a wait")
+        self.assertEqual(record["deliveryState"], WITHHELD_PRE_SEND)
+        self.assertEqual(record["sendAttempted"], "no")
+        self.assertEqual(record["withheldReason"], RefusalReason.RELATIONSHIP_NOT_ACTIVE)
+        self.assertEqual(record["relationshipStatus"], "cancelled")
+        self.assertEqual(self.adapter.sends, [])
+        self.assertEqual(self.attempts_for(event_id), [])
+
+    def test_paused_and_archived_assignments_are_withheld_the_same_way(self):
+        for status in ("paused", "archived"):
+            with self.subTest(status=status):
+                self.setUp()
+                event_id = self._deactivated(status)
+                record = self.attempt(event_id)
+                self.assertEqual(record["relationshipStatus"], status)
+                self.assertEqual(self.adapter.sends, [])
+
+    def test_the_recipient_is_not_read_on_behalf_of_a_stopped_assignment(self):
+        event_id = self._deactivated("cancelled")
+        counted = CountedHostReads(self.adapter)
+        self.delivery.attempt(event_id, counted, now=self.clock.now())
+        self.assertEqual(
+            counted.calls, [], "the host is not touched for an assignment somebody stopped",
+        )
+        self.assertIsNone(
+            self.store.one("SELECT * FROM recipient_lifecycle WHERE task_id = ?", (PARENT,)),
+            "and nothing claims that recipient was deliverable",
+        )
+
+    def test_the_counter_sees_the_reads_an_active_assignment_makes(self):
+        _relationship, event_id = self.queued_event()
+        counted = CountedHostReads(self.adapter)
+        self.delivery.attempt(event_id, counted, now=self.clock.now())
+        self.assertIn("read_thread", counted.calls, "otherwise the test above proves nothing")
+
+    def test_resuming_the_assignment_delivers_the_same_event(self):
+        event_id = self._deactivated("paused")
+        self.attempt(event_id)
+        self._resume()
+        self.clock.advance(self.delivery.policy.lifecycle_recheck_seconds + 1)
+        record = self.attempt(event_id, now=self.clock.now())
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1, "nothing was lost while it was paused")
+
+    def test_a_deactivation_is_reported_while_a_backoff_is_still_running(self):
+        """Eligible by state, delayed by time, and stopped by its owner.
+
+        The reason has to surface when the event is named, not when the timer expires: an
+        operator asking at 12:02 about an assignment cancelled at 12:01 should not have to
+        wait until 12:05 to be told.
+        """
+        _relationship, event_id = self.queued_event()
+        self.adapter.set_status(PARENT, "active")
+        self.assertIsNone(self.attempt(event_id), "deferred busy, with a retry time set")
+        deferred_until = self.delivery_row(event_id)["next_eligible_at"]
+        self.assertIsNotNone(deferred_until)
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        record = self.attempt(event_id)
+        self.assertIsNotNone(record, "the backoff must not swallow the deactivation")
+        self.assertEqual(record["withheldReason"], RefusalReason.RELATIONSHIP_NOT_ACTIVE)
+        self.assertEqual(record["relationshipStatus"], "cancelled")
+
+    def test_recording_a_deactivation_never_shortens_an_existing_backoff(self):
+        _relationship, event_id = self.queued_event()
+        self.adapter.set_status(PARENT, "active")
+        self.attempt(event_id)
+        deferred_until = self.delivery_row(event_id)["next_eligible_at"]
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        self.attempt(event_id)
+        self.assertGreaterEqual(
+            self.delivery_row(event_id)["next_eligible_at"], deferred_until,
+            "whatever set that time had its own reason",
+        )
+
+    def test_a_backoff_extended_after_the_row_was_read_still_wins(self):
+        """The comparison belongs in the statement, not against a pre-read value.
+
+        Two overlapping refusals: the second one read its row before the first extended the
+        retry time. Resolving that in Python would overwrite the extension with a stale earlier
+        deadline and let a resumed delivery retry sooner than the newest backoff allows.
+        """
+        _relationship, event_id = self.queued_event()
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        stale = self.registry.get(self._rid)
+        far = self.clock.now() + 100000
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET next_eligible_at = ? WHERE event_id = ?",
+                (far, event_id),
+            )
+        self.delivery._withhold_inactive(event_id, stale, self.clock.now(), attempts=0)
+        self.assertEqual(
+            self.delivery_row(event_id)["next_eligible_at"], far,
+            "the later deadline committed in between must survive",
+        )
+
+    def test_a_superseded_assignment_is_left_to_the_supersession_path(self):
+        """Deactivated, but permanently, so it is not this withhold's business.
+
+        Pinned rather than assumed: a superseded relationship must not acquire the
+        relationship_not_active reason, because that reason promises a resume that
+        registry.resume() refuses. Its existing behaviour is what this asserts.
+        """
+        _relationship, event_id = self.queued_event()
+        self.registry.supersede(self._rid, new_relationship_id="rel-bbbbbbbbbbbbbbbb")
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "still never sent")
+        self.assertIsNone(
+            self.store.one(
+                "SELECT * FROM journal WHERE kind = ?", ("delivery_withheld_inactive",),
+            ),
+            "and not recorded as a status something could lift",
+        )
+
+
+    def test_a_resume_racing_the_withhold_leaves_the_delivery_alone(self):
+        _relationship, event_id = self.queued_event()
+        stale = dict(self.registry.get(self._rid))
+        stale["status"] = "paused"
+        self.assertIsNone(
+            self.delivery._withhold_inactive(
+                event_id, stale, self.clock.now(), attempts=0,
+            ),
+            "a stale reading must not hold an assignment that is active now",
+        )
+        row = self.delivery_row(event_id)
+        self.assertEqual(row["state"], QUEUED)
+        self.assertIsNone(
+            self.store.one(
+                "SELECT * FROM journal WHERE kind = ?", ("delivery_withheld_inactive",),
+            ),
+            "and must not journal a reason that was never true",
+        )
+
+    def test_the_withheld_delivery_keeps_no_permanent_hold(self):
+        event_id = self._deactivated("cancelled")
+        self.attempt(event_id)
+        row = self.delivery_row(event_id)
+        self.assertEqual(row["state"], WITHHELD_PRE_SEND)
+        self.assertIsNone(
+            row["hold_reason"],
+            "cancelled is a status resume lifts, so the delivery must stay recoverable",
+        )
+
+    def test_the_deactivation_is_journalled(self):
+        event_id = self._deactivated("cancelled")
+        self.attempt(event_id)
+        entry = self.store.one(
+            "SELECT * FROM journal WHERE kind = ? AND subject = ?",
+            ("delivery_withheld_inactive", event_id),
+        )
+        self.assertIsNotNone(entry)
+        self.assertIn("cancelled", entry["detail"])
+
+    def test_an_active_assignment_is_untouched_by_the_check(self):
+        _relationship, event_id = self.queued_event()
+        record = self.attempt(event_id)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
 
 
 if __name__ == "__main__":

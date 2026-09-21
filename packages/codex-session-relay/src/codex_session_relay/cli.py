@@ -21,7 +21,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker, restoration
+from . import guard, intent, marker, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -46,7 +46,7 @@ EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 # caller should learn this from one command instead of from a failure halfway through.
 HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
-    "service restart", "verify-acks",
+    "service restart", "verify-acks", "managed-start",
 )
 # Every command that touches the managed marker and nothing else. Listed once so the store-selection
 # refusal and the doctor reachability report cannot drift apart.
@@ -71,7 +71,7 @@ OFFLINE_COMMANDS = (
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
     # Read-only, offline, and constructs no Store at all.
-    "dispositions-show",
+    "dispositions-show", "managed-show", "managed-release", "reporting-show",
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
@@ -106,6 +106,7 @@ class Services:
         self.clock = SystemClock()
         self.socket_path = args.socket
         self.adapter_requested = bool(args.socket)
+        self._pin_adapter_ledger = False
         self._store = None
         self._adapter = None
         self._criteria = None
@@ -241,8 +242,11 @@ class Services:
         if self._adapter is None and self.adapter_requested:
             from .bridge_adapter import BridgeHostAdapter
 
+            options = {}
+            if self._pin_adapter_ledger:
+                options["ledger_directory"] = self.selection.path
             self._adapter = BridgeHostAdapter(
-                self.socket_path, store=self.store, clock=self.clock
+                self.socket_path, store=self.store, clock=self.clock, **options,
             )
         return self._adapter
 
@@ -295,6 +299,89 @@ class PayloadExit(Exception):
 
 
 # --------------------------------------------------------------------- commands
+
+
+def cmd_managed_start(services, args) -> dict:
+    from .managed import ManagedStart, parse_request, MAX_REQUEST_BYTES
+
+    if not services.socket_path or services.selection.source != "flag":
+        raise SystemExit2("managed-start requires explicit --state and --socket", EXIT_USAGE)
+    # This command alone pins the transport ledger to the selected store directory.
+    # Every other command keeps resolving the ledger from the environment.
+    services._pin_adapter_ledger = True
+    try:
+        if args.request.startswith("@"):
+            with open(args.request[1:], "rb") as handle:
+                raw = handle.read(MAX_REQUEST_BYTES + 1)
+        else:
+            raw = args.request.encode("utf-8")
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise ValueError("managed request exceeds the byte limit")
+        request = parse_request(json.loads(raw))
+    except (ValueError, TypeError, OSError) as error:
+        raise SystemExit2(str(error), EXIT_USAGE) from error
+    # Read worker evidence without creating a missing store. A missing service must
+    # fail before reservation or task creation, and diagnostics stay available.
+    service = _service_for(services)
+    requirements = [{"role": role, "model": request[role]["settings"]["model"],
+                     "reasoningEffort": request[role]["settings"]["reasoningEffort"]}
+                    for role in ("parent", "child")]
+    readiness = rolepolicy.worker_readiness(service.read_worker_policy(), requirements)
+    if not readiness["ready"]:
+        raise PayloadExit({"schema": "managed-start/1", "state": "refused", "stage": "preflight",
+                           "requestId": request["requestId"], "reason": readiness["reason"]}, EXIT_REFUSED)
+    result = ManagedStart(services.store, services.clock, services.adapter,
+                          service.read_worker_policy, socket=services.socket_path,
+                          marker_root=args.marker_root, state_selector=args.state).run(request)
+    if result["state"] != "admitted":
+        raise PayloadExit(result, EXIT_REFUSED)
+    return result
+
+
+def cmd_managed_show(services, args) -> dict:
+    from .store import read_only_rows
+
+    observed = read_only_rows(services.selection,
+        "SELECT r.*, (SELECT detail FROM journal WHERE kind='managed_start_observed'"
+        " AND subject=r.request_id ORDER BY rowid DESC LIMIT 1) AS observation"
+        " FROM managed_start_requests r WHERE request_id=?", (args.request_id,))
+    row = observed["rows"][0] if observed["rows"] else None
+    last = row.pop("observation") if row else None
+    return {"request": row, "lastObservation": json.loads(last) if last else None,
+            "readable": observed["readable"], "detail": observed["detail"]}
+
+
+def cmd_managed_release(services, args) -> dict:
+    return services.registry.release_unstarted(args.request_id, args.fingerprint,
+                                               args.revision, args.reason)
+
+
+def cmd_reporting_show(services, args) -> dict:
+    """Read one exact turn's reporting observation and write nothing.
+
+    The projection owns the diagnosis. This command only checks that every selector was named,
+    refuses a store it would have to guess, and prints the completed observation, including an
+    unmeasured one. A missing store stays missing: omitted.observe is given the selection and
+    never a Store.
+    """
+    if services.selection.source != "flag":
+        raise SystemExit2("reporting-show requires explicit --state", EXIT_USAGE)
+    if services.socket_path:
+        raise SystemExit2("reporting-show does not take --socket", EXIT_USAGE)
+    from . import omitted
+
+    try:
+        return omitted.observe(
+            services.selection,
+            root=args.marker_root,
+            workspace=args.workspace,
+            assignment=args.assignment,
+            session=args.session,
+            turn=args.turn,
+            now=services.clock.iso(),
+        )
+    except ValueError as error:
+        raise SystemExit2(str(error), EXIT_USAGE) from error
 
 
 def cmd_register(services, args) -> dict:
@@ -1385,18 +1472,22 @@ def cmd_store_challenge(services, args) -> dict:
 
 
 def _ledger_location(services) -> dict:
-    """Where the transport ledger will actually live, which --state does not move.
+    """Where the transport ledger will actually live.
 
-    bridge_adapter._build resolves it with state_dir(socket_path), reading the environment
+    Ordinary commands still resolve it with state_dir(socket_path), from the environment
     only, so a run that overrides --state alone splits the relay store from the ledger that
-    carries send idempotency. Mirrors codex_thread_bridge.ledger.open_endpoint_ledger, which
-    cannot be called here because opening it is a side effect.
+    carries send idempotency. managed-start is the exception: it pins the adapter ledger to
+    the explicit store directory before the adapter is built. This report follows that pin
+    and does not open the ledger.
     """
     import hashlib
 
     if not services.socket_path:
         return {"configured": False, "directory": None, "path": None, "split": False}
-    directory = Path(state_dir(services.socket_path)).expanduser()
+    if getattr(services, "_pin_adapter_ledger", False):
+        directory = Path(services.selection.path)
+    else:
+        directory = Path(state_dir(services.socket_path)).expanduser()
     canonical = Path(services.socket_path).expanduser().absolute().resolve()
     endpoint = hashlib.sha256(str(canonical).encode()).hexdigest()[:16]
     split = directory.resolve() != services.selection.path.resolve()
@@ -1864,6 +1955,20 @@ def cmd_doctor(services, args) -> dict:
     # side and can be laid against each other. The bridge's own digest is not fetched; the
     # report names where to read it.
     report["rolePolicy"] = _role_policy_report(services)
+    report["workerPolicy"] = _service_for(services).read_worker_policy()
+    caller = rolepolicy.snapshot_record()
+    worker = report["workerPolicy"].get("policy") or {}
+    report["callerWorkerAgreement"] = (
+        "same" if caller.get("digest") and worker == caller else
+        "different" if caller.get("digest") and worker.get("digest") else "unknown"
+    )
+    requested = getattr(args, "require_worker_policy", None)
+    if requested is not None:
+        try:
+            requirements = _settings_json(requested)
+        except (OSError, ValueError, TypeError) as error:
+            raise SystemExit2(f"invalid worker policy requirements: {error}", EXIT_USAGE) from error
+        report["workerReadiness"] = rolepolicy.worker_readiness(report["workerPolicy"], requirements)
 
     # The other half of OPS-3.4's conjunction, on request. Answered from the same file the
     # probe measured, so a coordinator gets one answer instead of joining two commands and
@@ -1880,10 +1985,11 @@ def cmd_doctor(services, args) -> dict:
     )
     asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
     report.update(comparison)
-    if asked and comparison["sameStore"] != "proven":
+    if (asked and comparison["sameStore"] != "proven") or (
+            requested is not None and not report["workerReadiness"]["ready"]):
         # A caller that asked whether this is the same store and got no proof must not read
-        # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
-        # is that a different database is never reported as healthy.
+        # exit 0 as yes. Complete every requested reading before choosing the exit, so
+        # a worker-policy refusal cannot hide the issue/store/nonce observations.
         raise PayloadExit(report, EXIT_REFUSED)
     if issue_key and report["issue"]["readable"] and report["issue"]["storeAgreement"] != "same":
         # Same criterion, one level down, and unproven is refused exactly as a mismatch is:
@@ -1937,6 +2043,12 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
                 services.store, services.registry, services.intake, services.delivery,
                 services.ack, services.reconciler, services.adapter, clock=services.clock,
             )
+            try:
+                service.publish_worker_policy(rolepolicy.snapshot_record())
+            except OSError as error:
+                # Missing health evidence withholds new managed admissions; it must not stop
+                # this worker's existing queue recovery or non-role-bound deliveries.
+                service.store_journal_note(f"worker policy receipt unavailable: {error}")
             reports = daemon.run(
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
@@ -2382,6 +2494,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", default=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    managed_start = subparsers.add_parser("managed-start")
+    managed_start.add_argument("--request", required=True, help="complete request JSON or @file")
+    managed_start.add_argument("--marker-root", required=True)
+    managed_start.set_defaults(handler=cmd_managed_start)
+    managed_show = subparsers.add_parser("managed-show")
+    managed_show.add_argument("--request-id", required=True)
+    managed_show.set_defaults(handler=cmd_managed_show)
+    managed_release = subparsers.add_parser("managed-release")
+    managed_release.add_argument("--request-id", required=True)
+    managed_release.add_argument("--fingerprint", required=True)
+    managed_release.add_argument("--revision", required=True, type=int)
+    managed_release.add_argument("--reason", required=True)
+    managed_release.set_defaults(handler=cmd_managed_release)
+
+    reporting_show = subparsers.add_parser("reporting-show")
+    reporting_show.add_argument("--marker-root", required=True)
+    reporting_show.add_argument("--workspace", required=True)
+    reporting_show.add_argument("--assignment", required=True)
+    reporting_show.add_argument("--session", required=True)
+    reporting_show.add_argument("--turn", required=True)
+    reporting_show.set_defaults(handler=cmd_reporting_show)
+
     register = subparsers.add_parser("register")
     register.add_argument("--parent-task", required=True)
     register.add_argument("--parent-host", required=True)
@@ -2823,6 +2957,10 @@ def build_parser() -> argparse.ArgumentParser:
     service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")
+    doctor.add_argument(
+        "--require-worker-policy",
+        help="JSON list (or @file) of {role,model,reasoningEffort}; refuse unless the live worker matches",
+    )
     doctor.add_argument("--expect-store", help="the store id another participant reported")
     doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
     doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")

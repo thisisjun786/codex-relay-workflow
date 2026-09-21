@@ -1,9 +1,15 @@
 ---
 name: crw-loop
-description: "Add a native parent goal and automatic continuation to crw-run's execution of one Linear project. Use for a project coordination loop or restoring its goal. Run owns project binding, scheduling and delivery; Loop owns goal lifecycle and persistence. Children keep their own implementation workflow."
+description: "Add a native parent goal to crw-run's execution of one Linear project, where the user explicitly wants one. The default parent holds no goal and is resumed by the relay delivery path, so this is an opt-in rather than the ordinary entry. Use for an explicitly requested project coordination goal or restoring one. Run owns project binding, scheduling and delivery; Loop owns goal lifecycle and persistence. Children keep their own implementation workflow."
 ---
 
 # CRW Loop
+
+Since CRW-165's 2026-09-21 decision a project parent runs goal-free by default: it ends its turn
+when only waiting remains and a delivered relay event resumes it. This skill is what adds a native
+goal on top of that same execution, and it is entered only where the user explicitly asks for one.
+Loading it does not make the goal the default again, and an ordinary project execution request is
+[crw-run](../crw-run/SKILL.md)'s, not this skill's.
 
 One parent coordinates one project; one independent child owns one issue and its
 one delivery PR, under the shared
@@ -20,9 +26,8 @@ same parent, not a request to start another coordinator or recursively invoke sk
 
 A submitted `$crw-loop <Linear project link>` execution request, where a plugin
 installation exposes this skill as `crw:crw-loop`, establishes the project
-parent's native goal and automatic execution of the agreed scope. The role policy makes that goal
-the default rather than an opt-in, so this entry is the supported way to establish it rather than
-the only occasion for it. Designate or
+parent's native goal and automatic execution of the agreed scope. That request is what opens the
+goal, since the parent default opens none, and it is also the only occasion for one. Designate or
 restore the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding),
 then follow [Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone
 already advances through in-scope successors; Loop adds the goal and automatic host
@@ -33,8 +38,13 @@ Binding-only, status, explanation, quoted examples, automatic skill discovery an
 prompts do not authorize goal creation or execution. For binding-only requests, perform
 the shared binding procedure and return. Explicit no-goal, read-only,
 no-create, no-merge, pause, model and resource limits survive routing. No-goal prevents
-activation of this goal-backed Loop: report that limit, and perform goal-free Run only
-if the request separately covers it. Do not silently substitute Run and call it Loop.
+activation of this goal-backed Loop: report that limit, and continue as the ordinary goal-free Run,
+which the default already authorizes. Do not silently substitute Run and call it Loop, and do not
+report the default as a degraded Loop when it is simply the normal mode.
+
+A parent already holding a goal is not migrated by pausing it. A paused goal makes the parent
+undeliverable, so pausing to reach the default is what strands the assignment; the supported routes
+are in [Retiring a goal a parent already holds](references/parent-goal.md#retiring-a-goal-a-parent-already-holds).
 
 An initiative is not a Loop target. A designation to execute an initiative's approved projects
 binds at that level through
@@ -57,7 +67,11 @@ silent fallback to direct, and direct sends are never counted as relay completio
 
 The parent's native goal tracks verified results and integrations for the agreed
 scope. It has no CXC implementation goalplan/FSM and needs no source diff in the
-parent checkout. Children retain their effective workflow, normally CXC Loop. Load
+parent checkout. A goal is not what makes the role: the parent is the task bound to
+the project ID under
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+so opening or closing one changes what wakes this task rather than which level it is.
+Children retain their effective workflow, normally CXC Loop. Load
 CXC development skills for development/review work as applicable.
 
 The goal lifecycle reference owns preflight, create/reuse, blocked recovery and
@@ -101,10 +115,11 @@ not cancel it. Never automatically resume a user-paused or cancelled task.
 
 ## Wait, finish or hand off
 
-Use active bounded observation by default. Returning idle is an event-driven handoff
-only after the registered assignment, live service and supported parent-resume and
-receipt path are verified under OPS-8.1. Record the pending action and how the parent
-will resume before yielding. Preserve existing registered delivery paths; a busy-parent
+Return idle as an event-driven handoff once every readiness fact under OPS-8.1 holds, and use
+active bounded observation where one of them does not. A Loop parent reaches that idle only after
+its own bounded Stop budget releases, which is a cost the goal-free default does not pay and which
+a usage comparison between the two modes is measuring. Record the pending action and how the
+parent will resume before yielding. Preserve existing registered delivery paths; a busy-parent
 relay incompatibility is a concrete blocker, not a reason to fake ACK or bypass it.
 
 Finish when every obligation in the agreed scope meets its verified delivery boundary

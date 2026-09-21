@@ -29,20 +29,27 @@ WOULD = "would_change"
 REFUSED = "refused"
 BUSY = "busy"
 NOT_REACHED = "not_reached"
+# The surface was acted on and is live again anyway, because something outside this run put
+# back what it had just retired. Deliberately not SETTLED: settled is read as "stopped", and a
+# host whose settings reappeared is a host whose adapter can be called again.
+LIVE_AGAIN = "live_again"
+
+# The launchers this package ships, named rather than globbed. Adding a launcher means adding it
+# here; adding an ordinary helper under wiring/ must not appear here, because everything in this
+# tuple is compared byte for byte and a mismatch refuses a transition.
+LAUNCHERS = ("wiring/crw_stop_hook.py", "wiring/crw_bridge_mcp.py")
 
 # Steps that changed something are reported apart from steps that found nothing to do, because
 # "converged" and "did the work" are different answers and a rerun has to be able to say which.
 DONE = (SETTLED, ALREADY)
 
-# The packaged launcher waits min(timeoutSeconds + MARGIN, MAX) seconds, with MARGIN 2 and MAX the
-# number completion.py calls LAUNCHER_CEILING_SECONDS. So a budget at the ceiling is not the
-# problem the ceiling was written for: every budget above MAX - MARGIN collapses the margin the
-# launcher exists to keep, and at 8.999 the launcher's deadline arrives first and discards the
-# record the adapter was in the middle of writing. What a plugin-owned document may record is
-# therefore the ceiling minus the margin, and this is where that is enforced, because the
-# validation the two adapters share lives in a module this branch does not own.
-LAUNCHER_MARGIN_SECONDS = 2
-MAX_GUARD_SECONDS = completion.LAUNCHER_CEILING_SECONDS - LAUNCHER_MARGIN_SECONDS
+# The packaged launcher waits min(timeoutSeconds + MARGIN, CEILING), so a budget above
+# CEILING - MARGIN collapses the margin the launcher exists to keep. This used to be enforced
+# here alone, which left runtime_install.py hook --owner plugin accepting a document this branch
+# would refuse. The bound now lives with the validation both writers share and these names are
+# aliases of it, so the two paths cannot drift apart again.
+LAUNCHER_MARGIN_SECONDS = completion.LAUNCHER_MARGIN_SECONDS
+MAX_GUARD_SECONDS = completion.MAX_PLUGIN_GUARD_SECONDS
 
 
 def stamp():
@@ -662,12 +669,20 @@ def _declared(root, repo_root):
                     # the expansion that makes ${PLUGIN_ROOT} a path: python3 '${PLUGIN_ROOT}/...'
                     # tokenises exactly like the declaration this package ships and starts
                     # nothing, because the literal directory does not exist.
+                    #
+                    # The matcher and the timeout are appended to BOTH shapes. They used to ride
+                    # only on the readable one, which was harmless while every declared command
+                    # resolved to a file. It stopped being harmless when the Stop hook became a
+                    # python3 -c bootstrap: an unreadable command carried neither field, so a
+                    # cache that changed only the matcher or only the timeout compared equal and
+                    # was accepted as the replacement. Those are exactly the two replacements
+                    # that do not replace.
                     events.setdefault(event, []).append(
                         (shape + " as written " + repr(written.strip())
-                         + " matcher=" + repr((group or {}).get("matcher"))
-                         + " timeout=" + repr((hook or {}).get("timeout"))) if shape else
-                        ("a command this cannot read: "
-                         + repr(written)))
+                         if shape else
+                         "a command this cannot read, as written " + repr(written))
+                        + " matcher=" + repr((group or {}).get("matcher"))
+                        + " timeout=" + repr((hook or {}).get("timeout")))
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
@@ -767,15 +782,38 @@ def launcher_complaints(repo_root, cache_version):
     of the plugin root -- the same test same_adapter makes of a registered adapter. A launcher the
     cache carries and this checkout does not is reported rather than skipped, since it is a program
     a declaration names and nothing here can vouch for.
+
+    The declared set alone is no longer enough. The Stop hook is declared as a python3 -c
+    bootstrap, and _resolve deliberately answers None for -c because what follows it is source
+    text rather than a file. That is the right answer for the parser and the wrong amount of
+    coverage here, so the comparison takes the union of the scripts the declarations name and
+    LAUNCHERS, the launchers this package actually ships. LAUNCHERS is written out rather than
+    globbed: a glob would take a future non-executable helper under wiring/ for a launcher and
+    refuse a transition over a file nothing runs.
     """
     ours = Path(repo_root) / "plugins" / "crw"
     events, servers, unread = _declared(cache_version, repo_root)
     found, seen = [], set()
+    census = []
     for value in [item for values in events.values() for item in values] + list(servers.values()):
+        # The unreadable-command marker is recognised on the VALUE, not on what is left after a
+        # word is taken off the front of it. "a command this cannot read: ..." loses its leading
+        # "a " to the split below, so a test for that prefix on the remainder never matched and
+        # the marker sentence itself was carried forward as though it were a script path. That
+        # went unnoticed while every declared command resolved; declaring the Stop hook as a
+        # python3 -c bootstrap makes it the ordinary case.
+        if value.startswith("a command this cannot read"):
+            continue
         script = value.split(" as written ")[0].split(" ", 1)[-1] if " " in value else None
-        if not script or script in seen or script.startswith("a command this cannot read"):
+        if not script or script in seen:
             continue
         seen.add(script)
+        census.append(script)
+    for script in LAUNCHERS:
+        if script not in seen:
+            seen.add(script)
+            census.append(script)
+    for script in census:
         cached, mine = Path(cache_version) / script, ours / script
         try:
             same = mine.is_file() and cached.is_file() \
@@ -1439,6 +1477,36 @@ def settings_install(host, options, *, apply=False, previous=None):
                    applied=written.get("applied"))
 
 
+def launcher_install(host, options, *, apply=False):
+    """Place the fallback Stop launcher, as part of the migration and not only beside it.
+
+    This command writes the same plugin-owned settings runtime_install.py hook writes, through
+    settings_install, so a host migrated here would otherwise end with the settings and no
+    fallback: the declaration would have one candidate again, and the first package replacement
+    during an open turn would land back in the loop this whole change exists to close.
+
+    Before settings install, for the reason that ordering exists everywhere else here: a launcher
+    with no settings stands down in silence, while settings whose fallback was never placed look
+    installed and are not. A refusal here therefore stops the sequence with the host unchanged.
+
+    hostrecord.Busy is deliberately NOT caught. transition() catches it, names the step that was
+    running and marks every later step not reached; catching it here would return an ordinary
+    busy answer that the main loop does not break on, and settings install would then write a
+    plugin-owned document for a host whose fallback was never placed -- the exact combination
+    this step was added to prevent.
+    """
+    step = "stable launcher install"
+    path = completion.launcher_path(Path(host["codexHome"]))
+    source = Path(host["repoRoot"]) / completion.LAUNCHER_SOURCE
+    placed = completion.place_launcher(path, source, apply=apply)
+    outcome = placed["outcome"]
+    settled = SETTLED if outcome == completion.LAUNCHER_PLACED else (
+        ALREADY if outcome == completion.LAUNCHER_UNCHANGED else (
+            WOULD if outcome == completion.LAUNCHER_WOULD_PLACE else REFUSED))
+    return _answer(step, settled, placed.get("detail"), launcher=placed,
+                   applied=placed.get("applied"), wrote=placed.get("wrote"))
+
+
 def mcp_record_retire(host, options, *, apply=False):
     """Retire the user-owned record, because owner is part of what makes a record the same one."""
     record = host["mcp"].get("record")
@@ -1844,7 +1912,14 @@ def skill_unlink(host, options, *, apply=False):
 # host with no completion hook. Retiring first costs a window in which the old registration runs
 # against absent settings -- it releases in silence and records nothing -- and no window in which
 # two adapters run, because the plugin-owned settings are still not installed.
-ORDER = (("settings retire", settings_retire), ("hook standdown", hook_standdown),
+# The launcher goes FIRST, ahead of everything that takes something away. It is the only
+# non-destructive step here and the only one that can refuse on a condition outside this command
+# -- a foreign file at the path, or another run holding its lock. Placed after the retire and the
+# standdown, such a refusal left the host with its settings archived and its manual registration
+# removed and nothing to restore them, which is a worse host than the one the command started
+# with. First, it refuses before anything is taken away.
+ORDER = (("stable launcher install", launcher_install),
+         ("settings retire", settings_retire), ("hook standdown", hook_standdown),
          ("settings install", settings_install), ("mcp record retire", mcp_record_retire),
          ("mcp table standdown", mcp_table_standdown),
          ("mcp record install", mcp_record_install), ("skill unlink", skill_unlink))
@@ -2350,18 +2425,33 @@ STOP_CLAIMS = (
     ("bridge record", "new bridge starts, because the packaged launcher has no record to read"),
 )
 
+# What remove claims on top of those. Its own set, because disable deliberately deletes nothing:
+# it stops calls by retiring the settings and leaves the fallback where it is, so listing that
+# file among the surfaces disable did not stop would report a step that was never its to run.
+#
+# remove does run it, and it runs it AFTER the settings are retired. A supported installer
+# writing the settings back in between leaves the earlier claim true of a host that no longer
+# exists, and this is the step positioned to notice.
+REMOVE_CLAIMS = STOP_CLAIMS + (
+    ("stable launcher", "the fallback the declaration reaches when the version cache is gone"),
+)
 
-def stop_claims(results):
+
+def stop_claims(results, claims=STOP_CLAIMS):
     """The stop claims split by what this run actually did to each surface.
 
     settled and already_done are both true of the host now: one because this run moved the record,
     the other because there was none there to move. would_change is what an --apply would do and
     nothing more. Every other outcome leaves the surface live, and the reason travels with it
     rather than being left for a reader to infer from the step list.
+
+    The claim set is a parameter because the two callers own different surfaces, and a claim
+    about a step its caller never runs reads as a surface left live rather than as one nobody
+    asked about.
     """
     answers = {item["step"]: item for item in results}
     stopped, projected, live = [], [], []
-    for step, claim in STOP_CLAIMS:
+    for step, claim in claims:
         item = answers.get(step)
         if item is None:
             live.append(claim + " -- NOT stopped: " + step + " did not run")
@@ -2388,8 +2478,82 @@ def remove(host, options, *, apply=False):
                                " are: removing them now would take the skills from an install"
                                " this command did not disable"))
         return results
+    results.append(launcher_remove(host, options, apply=apply))
     results.append(skill_unlink(host, options, apply=apply))
     return results
+
+
+def launcher_remove(host, options, *, apply=False):
+    """Delete the fallback Stop launcher this repository installed, and only that file.
+
+    Ours means it carries completion.LAUNCHER_MARKER. That marker is a claim of ownership and
+    not of provenance: it says CRW put a launcher at this path, not who ran the command. A file
+    without it is somebody else's and is left where it is; a symlink or a directory is reported
+    by kind and never followed, because removing through a link deletes a file nobody named.
+
+    This runs after the settings are retired, so the only window it can leave is a launcher with
+    no settings, and that combination stands down in silence. The reverse order would leave
+    settings whose fallback is gone, which looks installed and is not.
+
+    The marker is proved twice: once to answer the caller, once inside the lock immediately
+    before the unlink, so a file replaced during the run is not deleted as though it were still
+    ours. The lock is on this path alone. What the run cannot prevent is the settings being
+    written again around it, so the answer reports what the settings path held afterwards rather
+    than claiming new invocations are stopped on the strength of its own earlier step.
+    """
+    step = "stable launcher"
+    home = Path(host["codexHome"])
+    path = completion.launcher_path(home)
+    settings = home / completion.CONFIG_NAME
+
+    def observed():
+        return {"settingsPath": str(settings), "settingsPresent": settings.exists()}
+
+    kind = completion.launcher_kind(path)
+    if kind == "absent":
+        return _answer(step, ALREADY, "there is nothing at " + str(path), **observed())
+    if kind != "file":
+        return _answer(step, REFUSED, "the launcher path holds a " + kind + ", so it is not"
+                       " this command's to remove and it is not followed", **observed())
+    try:
+        found = path.read_bytes()
+    except OSError as error:
+        return _answer(step, REFUSED, "the launcher at " + str(path) + " could not be read ("
+                       + type(error).__name__ + ": " + str(error) + "), so it is left alone",
+                       **observed())
+    if completion.LAUNCHER_MARKER.encode("utf-8") not in found:
+        return _answer(step, REFUSED, "the file at " + str(path) + " does not carry "
+                       + completion.LAUNCHER_MARKER + ", so it is not this command's to remove",
+                       **observed())
+    if not apply:
+        return _answer(step, WOULD, "would remove " + str(path), **observed())
+    try:
+        with hostrecord.Locked(path):
+            if completion.launcher_kind(path) != "file":
+                return _answer(step, REFUSED, "the launcher path changed after it was read, so"
+                               " nothing was removed", **observed())
+            again = path.read_bytes()
+            if completion.LAUNCHER_MARKER.encode("utf-8") not in again:
+                return _answer(step, REFUSED, "the file at " + str(path) + " was replaced while"
+                               " this ran and no longer carries the marker, so it was left",
+                               **observed())
+            path.unlink()
+    except hostrecord.Busy as error:
+        return _answer(step, BUSY, str(error), **observed())
+    except OSError as error:
+        return _answer(step, REFUSED, "the launcher could not be removed ("
+                       + type(error).__name__ + ": " + str(error) + ")", **observed())
+    answer = _answer(step, SETTLED, "removed " + str(path), applied=True, wrote=True,
+                     **observed())
+    if answer["settingsPresent"]:
+        # The launcher is gone and the settings are back, so the packaged copy under the current
+        # version cache can answer a Stop again. Reporting settled here would put this surface in
+        # the stopped list and say the opposite of what the host now does.
+        answer["outcome"] = LIVE_AGAIN
+        answer["detail"] += ("; the settings are present again at " + str(settings)
+                             + ", so a supported installer wrote them back around this run and"
+                             " new adapter invocations are NOT stopped")
+    return answer
 
 
 def swap_state(host, options):

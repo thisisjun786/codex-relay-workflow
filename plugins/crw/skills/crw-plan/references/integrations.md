@@ -132,7 +132,7 @@ Load the existing owner for the requested operation:
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore the project parent's native goal, which the role policy makes the default | [crw-loop](../../crw-loop/SKILL.md) |
+| Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
@@ -353,6 +353,26 @@ execution owner. Internal helpers acquire no ownership by receiving a subtask, a
 helper agent is not a child, and the operating system's process supervisor is a different thing
 that happens to share the word.
 
+Jun's own words for the three levels are 감독 세션, 부모 세션 and 자식 세션, shortened to 감독, 부모
+and 자식 once a report has introduced them. English instruction text calls them the supervisor, the
+parent and the child, and the ids a relationship store and a host's role policy already record are
+`supervisor`, `parent` and `child`
+([OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity),
+[Execution settings by role](#execution-settings-by-role)). One role in three renderings: the
+Korean name is what a reader is shown, the English word is what an instruction says, and the id is
+what a record keys on.
+
+Writing the names down settles what they are called and nothing else. A display name in either
+language keys nothing, so no relationship id, assignment, goal, worktree or task title is
+regenerated because this section now spells them out, and titles keep the convention
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) already fixes. Read
+earlier phrasing the same way rather than rewriting it: an initiative task, an initiative
+management task or a 상위 관리 세션 is the supervisor under another description. That is how to read
+those words, not a licence to substitute them wherever they appear, and the two things that merely
+share the word stay excluded exactly as above. A role word is not a designation either: a request,
+a prompt, a title or a folder saying 감독 or supervisor designates nobody, so what a task is stays
+something read from its binding rather than from what anyone called it.
+
 | Role | Bound to | Coordinates | Instructs |
 |---|---|---|---|
 | Supervisor | one initiative ID | its initiative's projects: cross-project dependencies, priority, shared resources, and the order in which projects reach a shared target | the parents of those projects |
@@ -364,6 +384,17 @@ that happens to share the word.
 | Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
 | Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
 | Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks have passed, its required reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
+
+The tables say what each level answers for. What the supervisor spends its time on is the level
+above them: it talks with Jun, carries the requests he approves down to the parents, decides which
+parent takes which project, answers the midpoint check when he asks for one, collects what the
+parents report, and writes the initiative's record. The work it never takes is divided by name
+rather than left to the pair below it. The child implements, verifies and resolves the review on
+its own pull request; the parent accepts that delivery against the issue's criteria and performs
+the merge; the supervisor tests each reported project outcome against the initiative's finish
+condition and stops there. Holding no goal of its own narrows none of that: inside an execution
+approval still in force it moves the approved work and resumes the responsible parent, which is
+what [the midpoint check](../../crw-status/references/midpoint-check.md) already describes.
 
 A ready batch means several separate children, not several issues assigned to one child, and the
 same holds a level up: several ready projects mean several parents. Each level reads the level
@@ -408,9 +439,14 @@ establishing the new one.
 
 Approvals and limits travel down without widening. The user's restrictions, approvals, settings and
 pause or cancel hold in the scope they were given, and being linked to a level above is neither an
-expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)). A
-supervisor's or a parent's coordination goal is its own, and neither is mixed with a child's
-implementation FSM.
+expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)).
+The role decides what goal a task opens, never the other way round. A supervisor opens none and
+runs no automatic loop, and a child keeps its own goal and its implementation loop. What a project
+parent opens is not this section's fact to hold: it is the decision
+[Start policy](../../crw-run/references/start-policy.md#roles-and-the-goal-each-one-opens) records,
+that record has already changed once, and it is read there rather than remembered. A coordination
+goal that does exist is its own and is never mixed with a child's implementation FSM, and an absent
+goal says what a task is waiting on rather than which role it is.
 
 This contract fixes the roles; it does not establish how a supervisor is instantiated. A task
 becomes a supervisor only by an explicit designation naming the initiative, and an initiative link
@@ -676,9 +712,10 @@ Only one owner controls an operation. `crw-define` defines initiative intent, `c
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
 is a scheduling unit; only an explicit narrower request limits delivery to that batch.
-[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
-and automatic host continuation to the same Run execution and scope. Run alone does
-not establish the parent goal or promise future wake-ups; the goal is the role default and
+[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of a native parent goal
+and automatic host continuation to the same Run execution and scope. Run holds no goal,
+which is the default rather than a gap: what returns a waiting parent is the delivery path,
+on the readiness its start policy recorded. A goal is what an explicit Loop opens, and
 `crw-loop` establishes it. Run inside Loop returns to the
 existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
@@ -707,6 +744,10 @@ Keep task titles under the existing Korean title convention, and keep user-facin
 reports and Linear records in Korean unless explicitly requested otherwise. This
 language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
+Name the three levels the same way in both registers. A Korean report or record calls them 감독 세션,
+부모 세션 and 자식 세션, spelled out where prose first introduces the role and shortened to 감독, 부모
+and 자식 after that or in a one-line label, while the English instruction keeps the role words those
+records are keyed on. They are one role in two registers, so neither version needs a gloss.
 
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the pair the role policy declares for the child role, with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. That pair is read from the declared policy at the time of the call under [Execution settings by role](#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
@@ -730,11 +771,11 @@ Judge a dispatch on four separate facts rather than one: the instruction the chi
 
 ### Default parent start policy
 
-A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars the goal without authorizing goal-free Run and leaves unresolved activation `blocked`, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
+A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars only an explicitly requested Loop and leaves the default goal-free Run untouched, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
 
 That number is the value chosen in one 2026-09-18 run and carried forward as the standing default. It is not a measurement of what this or any host supports, and [OPS-8.4](../../crw-run/references/operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs what may be claimed about scale, so a run that needs a different number states its own and records why. The default binds this parent's own children and is not a host-global limit: several parents share one operating scope under [OPS-3.1](../../crw-run/references/operations.md#ops-31-the-operating-scope-is-the-sharing-unit), each counts only its own children while what the others are running informs the observation that can lower the number, and nothing interlocks them.
 
-The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent creates or reuses its own goal for the approved project scope, without a CXC goalplan or FSM, its continuation being a bounded Stop nudge rather than a durable loop; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default replaced the earlier arrangement in which a parent ran goal-free unless a Loop was separately requested; an explicit user no-goal limit is separate and still wins. [Start policy](../../crw-run/references/start-policy.md) owns the role table, what the start adjudication records, and the compatibility and evidence rules.
+The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent opens none either, waiting idle with no goal while a delivered relay event resumes it, and building no CXC goalplan or FSM; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default is CRW-165's 2026-09-21 decision, which replaced the 2026-09-20 arrangement in which the parent held its own goal and its continuation was a bounded Stop nudge. An explicit user no-goal limit now agrees with the default and bars only an explicitly requested Loop. [Start policy](../../crw-run/references/start-policy.md) owns the role table, the recorded fields including the pairing matrix and the readiness facts, and the compatibility and evidence rules.
 
 A value this precedence settles is applied without asking. A value it does not settle is a new decision, asked before anything is created rather than after. [Start policy](../../crw-run/references/start-policy.md) owns the recorded fields, the scope each decision carries, when a recorded decision is re-read instead of re-decided, and what bounds the number actually dispatched.
 
@@ -841,7 +882,7 @@ A delivery report answers two questions no status word answers: how far this cha
 
 Choose the stages from what happened rather than from the chain's full length. Walk the chain in order, naming each stage this delivery has evidence for and, where one exists, the first stage that is missing or was never observed, saying which of the two it is. A delivery with no gap has no such stage to name. The stages are independent: never infer a later one from an earlier one, and never drop an observed later stage because an earlier one is absent, since a commit that was never pushed can still be live through a link resolving to that checkout. A stage this change cannot have, such as an installation surface it never touches, is left out rather than reported as passing, and a stage the issue's own criteria require is always named, as unverified when nothing was observed. A report that lists every stage every time trains its reader to skip the one that matters.
 
-Changing source, installing it, and refreshing an already-loaded conversation are three events, and the installation method decides what the third one costs. A linked installation resolves each skill through a symlink, so an edit is visible to the next read of that file, no reinstall is involved, and a conversation that already read the old text keeps it until the file is read again or a new task starts. A versioned plugin installation resolves a cached copy of a published version, so an edit reaches nobody until the version is bumped and installed again, and a session already running keeps the package it started with. Report the method actually observed and what the reader must do under it; where it was not checked, say so instead of assuming a linked installation. Reading a link's own target is what establishes which checkout an installed skill resolves to.
+Changing source, installing it, and refreshing an already-loaded conversation are three events, and the installation method decides what the third one costs. A linked installation resolves each skill through a symlink, so an edit is visible to the next read of that file, no reinstall is involved, and a conversation that already read the old text keeps it until the file is read again or a new task starts. A versioned plugin installation resolves a cached copy of a published version, so an edit reaches nobody until the version is bumped and installed again, and a session already running may still hold cache-bound references to the version it started with, which is the copy the next install removes. Report the method actually observed and what the reader must do under it; where it was not checked, say so instead of assuming a linked installation. Reading a link's own target is what establishes which checkout an installed skill resolves to.
 
 Usable now is a claim about a representative user path, run through the installed entry point, with the time and environment of the most recent such run attached. Passing checks, a listed hook, an accepted delivery and a completed issue each establish only themselves. [OPS-6.1](../../crw-run/references/operations.md#ops-61-six-states-that-never-imply-one-another) already records which states never imply one another, and [OPS-11.3](../../crw-run/references/operations.md#ops-113-four-stages-that-are-not-one-event) separates a landed source change from what a host installs and executes. Use those meanings rather than restating them here.
 

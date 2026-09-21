@@ -6,6 +6,7 @@ it while an unfiltered listing returns the exact same id.
 """
 
 import unittest
+import json
 
 from codex_session_relay.bridge_adapter import BridgeHostAdapter
 from codex_session_relay.hostadapter import HostUnavailable
@@ -455,7 +456,9 @@ class GuardedSettingsSeam(unittest.TestCase):
         from codex_session_relay.transport import WITHHELD_PRE_SEND, classify_operation_receipt
 
         self.assertNotIn("turn/start", self._methods(calls), "a turn was started anyway")
-        self.assertEqual(receipt["status"], "failed")
+        self.assertIn(receipt["status"], ("failed", "not_attempted", "outcome_unknown"))
+        if receipt["status"] != "failed":
+            raise AssertionError(json.dumps({k: receipt.get(k) for k in ("status", "error", "threadId", "settings", "rpcError")}, default=str)[:2000])
         self.assertEqual(receipt["rpcError"]["code"], code)
         self.assertIsNone(receipt.get("turnId"))
         facts = classify_operation_receipt(receipt)
@@ -1375,3 +1378,574 @@ class ShutdownCancellationSettlesItsDelivery(DeliveryTestCase):
         self.assertNotEqual(row["state"], "sending", "the delivery is still mid-send")
         self.assertIsNone(row["lease_owner"], "the lease outlived the process that took it")
         self.assertIsNone(row["lease_until"])
+
+
+class ThreadCreationAndPreStartGuard(unittest.TestCase):
+    """Creation and the optional pre-start guard, on the real worker and a real ledger.
+
+    The RPC is fake. The ledger is the pinned bridge's sqlite ledger, built on the worker, so
+    a retained thread id is a row rather than a stand-in. No socket is opened.
+    """
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import shutil
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp(prefix="admission-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cwd = tempfile.mkdtemp(prefix="cwd-", dir=self.tmp)
+
+    def _adapter(self, server):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        self.ledger_path = Path(self.tmp) / "operations.sqlite3"
+
+        def ledger_factory():
+            return Path(self.tmp) / "socket", Ledger(self.ledger_path)
+
+        adapter = BridgeHostAdapter(
+            str(Path(self.tmp) / "socket"),
+            app_server_factory=lambda canonical: server,
+            ledger_factory=ledger_factory,
+            timeout=10,
+        )
+        self.addCleanup(adapter.close)
+        return adapter
+
+    def test_a_read_only_adapter_refuses_creation(self):
+        adapter = BridgeHostAdapter(call=lambda method, params: {})
+        with self.assertRaises(HostUnavailable) as raised:
+            adapter.create_thread(request_id="create-readonly", cwd=self.cwd)
+        self.assertIn("read-only", str(raised.exception))
+
+    def test_creation_keeps_one_stable_id_and_a_partial_failure_is_not_duplicated(self):
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                from codex_thread_bridge.effects import mark_sent
+
+                mark_sent(method)
+                calls.append(method)
+                if method == "thread/start":
+                    return {
+                        "thread": {
+                            "id": "thread-created-1",
+                        },
+                        "cwd": self_cwd,
+                        "approvalPolicy": "never",
+                        "model": "gpt-5.4",
+                        "reasoningEffort": "medium",
+                        "runtimeWorkspaceRoots": [self_cwd],
+                        "sandbox": {"type": "readOnly", "networkAccess": False},
+                    }
+                if method == "thread/name/set":
+                    from codex_thread_bridge.rpc import RpcError
+
+                    raise RpcError("thread/name/set", {
+                        "code": "naming_failed",
+                        "message": "naming failed after the shell existed",
+                    })
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        self_cwd = self.cwd
+        adapter = self._adapter(Creating())
+        receipt = adapter.create_thread(
+            "create-stable-1", cwd=self.cwd, title="bootstrap", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only",
+        )
+        self.assertEqual(receipt.get("threadId"), "thread-created-1", json.dumps(receipt, default=str)[:2500])
+        # Bridge._mutate records an RpcError-shaped failure as failed and keeps the shell.
+        # A bare exception after thread/start is outcome_unknown. Either way the id stays,
+        # and the same request does not create a second thread. This case is the named one:
+        # naming raised through the fake RPC as a normal exception, which the bridge saves
+        # as failed once the id is already on the receipt.
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("thread-created-1", json.dumps(receipt))
+        retained = adapter.get_operation("create-stable-1")
+        self.assertEqual(retained["threadId"], "thread-created-1")
+        again = adapter.create_thread(
+            "create-stable-1", cwd=self.cwd, title="bootstrap", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only",
+        )
+        self.assertTrue(again.get("replayed"))
+        self.assertEqual(again["threadId"], "thread-created-1")
+        self.assertEqual(calls, ["thread/start", "thread/name/set"])
+
+    def test_a_pause_during_resume_starts_no_turn(self):
+        import asyncio
+        import threading
+
+        calls = []
+        resumed = threading.Event()
+        release = threading.Event()
+        goal = {"status": "active"}
+
+        class Resuming:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    resumed.set()
+                    await asyncio.to_thread(release.wait)
+                    return authorized_resume_response()
+                if method == "thread/goal/get":
+                    return {"goal": {"status": goal["status"]}}
+                if method == "turn/start":
+                    return {"turn": {"id": "must-not-start"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Resuming())
+
+        async def before_start(rpc):
+            # The same worker client the send already holds. A second transport, or a
+            # synchronous call back into the adapter, would wait on this worker forever.
+            fresh = await rpc.call("thread/goal/get", {"threadId": "thread-1"})
+            if (fresh.get("goal") or {}).get("status") == "paused":
+                return {"code": "recipient_paused", "message": "paused during resume"}
+            return None
+
+        outcome = {}
+
+        def run():
+            outcome["receipt"] = adapter.send_message(
+                "send-paused-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+            )
+
+        caller = threading.Thread(target=run, daemon=True)
+        caller.start()
+        self.assertTrue(resumed.wait(5), "resume never started")
+        goal["status"] = "paused"
+        release.set()
+        caller.join(timeout=10)
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(outcome["receipt"]["status"], "not_attempted")
+        self.assertEqual(outcome["receipt"]["rpcError"]["code"], "recipient_paused")
+        self.assertNotIn("turn/start", calls)
+        self.assertIn("thread/goal/get", calls)
+        self.assertEqual(outcome["receipt"]["status"], "not_attempted")
+        self.assertIs(outcome["receipt"]["retrySafe"], True)
+        self.assertEqual(outcome["receipt"]["attemptedEffects"], [])
+        self.assertIn("resumed", outcome["receipt"])
+
+    def test_a_retained_acceptance_does_not_run_the_guard_or_send_again(self):
+        calls = []
+        guards = []
+
+        class Sending:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-kept-1"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            guards.append("ran")
+            self.assertTrue(hasattr(rpc, "call"))
+            return None
+
+        adapter = self._adapter(Sending())
+        first = adapter.send_message(
+            "send-kept-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        again = adapter.send_message(
+            "send-kept-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(first["status"], "accepted")
+        self.assertEqual(first["turnId"], "turn-kept-1")
+        self.assertTrue(again.get("replayed"))
+        self.assertEqual(again["turnId"], "turn-kept-1")
+        self.assertEqual(guards, ["ran"])
+        self.assertEqual(calls.count("turn/start"), 1)
+
+    def test_a_guard_refusal_retries_once_under_the_same_request(self):
+        calls = []
+        decision = {"refuse": True}
+
+        class Sending:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-after-recovery"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            if decision["refuse"]:
+                return {"code": "recipient_paused", "message": "paused before the business turn"}
+            return None
+
+        adapter = self._adapter(Sending())
+        refused = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(refused["status"], "not_attempted")
+        self.assertTrue(refused["retrySafe"])
+        self.assertEqual(refused["attemptedEffects"], [])
+        self.assertNotIn("turn/start", calls)
+        decision["refuse"] = False
+        accepted = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(accepted["turnId"], "turn-after-recovery")
+        self.assertFalse(accepted.get("replayed"))
+        self.assertEqual(calls.count("turn/start"), 1)
+        replay = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertTrue(replay.get("replayed"))
+        self.assertEqual(replay["turnId"], "turn-after-recovery")
+        self.assertEqual(calls.count("turn/start"), 1)
+
+
+class _UseProcessPolicy:
+    """Leave BridgeHostAdapter on the policy this process snapshotted."""
+
+
+_USE_PROCESS_POLICY = _UseProcessPolicy()
+
+
+def _child_policy(directory, *, model="gpt-5.4", effort="medium"):
+    """A host policy that declares a child pair and nothing the caller can invent."""
+    import json
+    from pathlib import Path
+
+    path = Path(directory) / "execution-policy.json"
+    path.write_text(json.dumps({
+        "roles": {"child": {"model": model, "reasoningEffort": effort}},
+    }))
+    return path
+
+
+class ChildCreationUnderDeclaredPolicy(unittest.TestCase):
+    """A managed child is created on the real Bridge, under the policy this process declared.
+
+    The RPC is a stand-in. The ledger and the execution policy are the pinned bridge's own,
+    so a role the policy does not declare is refused before thread/start, and a declared
+    child pair is the one the host is asked for.
+    """
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import os
+        import shutil
+        import tempfile
+
+        from codex_session_relay import rolepolicy
+
+        root = os.environ.get("TMPDIR") or tempfile.gettempdir()
+        self.tmp = tempfile.mkdtemp(prefix="child-policy-", dir=root)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cwd = tempfile.mkdtemp(prefix="cwd-", dir=self.tmp)
+        self._policy_env = os.environ.get("CODEX_THREAD_BRIDGE_EXECUTION_POLICY")
+        os.environ["CODEX_THREAD_BRIDGE_EXECUTION_POLICY"] = str(_child_policy(self.tmp))
+        rolepolicy.reset()
+        self.addCleanup(self._restore_policy)
+
+    def _restore_policy(self):
+        import os
+
+        from codex_session_relay import rolepolicy
+
+        if self._policy_env is None:
+            os.environ.pop("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", None)
+        else:
+            os.environ["CODEX_THREAD_BRIDGE_EXECUTION_POLICY"] = self._policy_env
+        rolepolicy.reset()
+
+    def _adapter(self, server, *, execution_policy=_USE_PROCESS_POLICY):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        def ledger_factory():
+            return Path(self.tmp) / "socket", Ledger(Path(self.tmp) / "operations.sqlite3")
+
+        options = {}
+        if execution_policy is not _USE_PROCESS_POLICY:
+            options["execution_policy"] = execution_policy
+        adapter = BridgeHostAdapter(
+            str(Path(self.tmp) / "socket"),
+            app_server_factory=lambda canonical: server,
+            ledger_factory=ledger_factory,
+            timeout=10,
+            **options,
+        )
+        self.addCleanup(adapter.close)
+        return adapter
+
+    def test_a_child_role_is_refused_when_the_bridge_carries_no_declared_roles(self):
+        """Presence-only has no roles, so role=child must not reach thread/start."""
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                raise AssertionError(f"a refused creation reached {method}")
+
+            async def close(self):
+                return None
+
+        from codex_thread_bridge.execution import PRESENCE_ONLY
+
+        adapter = self._adapter(Creating(), execution_policy=PRESENCE_ONLY)
+        with self.assertRaises(Exception) as raised:
+            adapter.create_thread(
+                "create-child-refused", cwd=self.cwd, title="bootstrap",
+                model="gpt-5.4", reasoning_effort="medium", sandbox="read-only",
+                role="child",
+            )
+        self.assertIn("execution_role", str(raised.exception))
+        self.assertEqual(calls, [])
+
+    def test_a_declared_child_pair_is_created_and_a_parent_pair_is_not(self):
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append((method, params))
+                if method == "thread/start":
+                    return {
+                        "thread": {"id": "thread-child-1"},
+                        "cwd": self_cwd,
+                        "approvalPolicy": "never",
+                        "model": params.get("model"),
+                        "reasoningEffort": "medium",
+                        "runtimeWorkspaceRoots": [self_cwd],
+                        "sandbox": {"type": "readOnly", "networkAccess": False},
+                    }
+                if method == "thread/name/set":
+                    return {}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        self_cwd = self.cwd
+        adapter = self._adapter(Creating())
+        with self.assertRaises(Exception) as raised:
+            adapter.create_thread(
+                "create-child-wrong-pair", cwd=self.cwd, model="devin/swe-2",
+                reasoning_effort="max", sandbox="read-only", role="child",
+            )
+        self.assertIn("execution_role", str(raised.exception))
+        self.assertEqual(calls, [])
+        receipt = adapter.create_thread(
+            "create-child-1", cwd=self.cwd, title="child", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only", role="child",
+        )
+        self.assertEqual(receipt.get("status"), "accepted", json.dumps(receipt, default=str)[:2000])
+        self.assertEqual(receipt.get("threadId"), "thread-child-1")
+        self.assertEqual(receipt.get("executionPolicy", {}).get("role"), "child")
+        started = [params for method, params in calls if method == "thread/start"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0].get("model"), "gpt-5.4")
+
+
+class GuardedSendBudget(unittest.TestCase):
+    """A declared guard widens one submission; an ordinary send keeps both old bounds."""
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import shutil
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp(prefix="guard-budget-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _adapter(self, server):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        socket = Path(self.tmp) / "socket"
+        return BridgeHostAdapter(
+            str(socket),
+            timeout=0.2,
+            caller_slack=0.2,
+            app_server_factory=lambda canonical: server,
+            ledger_factory=lambda: (socket, Ledger(Path(self.tmp) / "operations.sqlite3")),
+        )
+
+    def _observe(self, adapter, seen):
+        import asyncio
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        real_wait_for = asyncio.wait_for
+        real_result = adapter._transport._futures.Future.result
+
+        async def observe_wait_for(awaitable, timeout):
+            seen["execution"] = timeout
+            return await real_wait_for(awaitable, timeout)
+
+        def observe_result(future, budget):
+            seen["caller"] = budget
+            return real_result(future, budget)
+
+        @contextmanager
+        def observed():
+            with patch.object(asyncio, "wait_for", observe_wait_for), patch.object(
+                adapter._transport._futures.Future, "result", observe_result,
+            ):
+                try:
+                    yield
+                finally:
+                    adapter.close()
+
+        return observed()
+
+    def test_a_declared_guard_widens_both_budgets_and_finishes(self):
+        from codex_session_relay.bridge_adapter import _Transport
+
+        calls = []
+
+        class Guarded:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "thread/list":
+                    return {"data": [{"id": "thread-1"}], "nextCursor": None}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-guarded"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            for _page in range(10):
+                await rpc.call("thread/list", {"limit": 1})
+            return None
+
+        adapter = self._adapter(Guarded())
+        stage = adapter._transport.timeout * _Transport.RPC_STAGES_PER_REQUEST
+        ordinary = stage * _Transport.RPC_REQUESTS_PER_SEND
+        execution = stage * (_Transport.RPC_REQUESTS_PER_SEND + 10)
+        seen = {}
+        with self._observe(adapter, seen):
+            receipt = adapter.send_message(
+                "send-guarded-budget", "thread-1", "hello", AUTHORIZED,
+                before_start=before_start, guard_rpc_requests=10,
+            )
+            self.assertEqual(seen["execution"], execution)
+            self.assertGreater(seen["execution"], ordinary)
+            self.assertEqual(seen["caller"], execution + adapter._transport._caller_slack)
+            self.assertGreater(seen["caller"], seen["execution"])
+        self.assertEqual(receipt["status"], "accepted")
+        self.assertEqual(receipt["turnId"], "turn-guarded")
+        self.assertEqual(calls.count("thread/list"), 10)
+
+    def test_an_ordinary_send_keeps_both_historical_budgets(self):
+        from codex_session_relay.bridge_adapter import _Transport
+
+        class Idle:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-ordinary"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Idle())
+        execution = adapter._transport.timeout * _Transport.RPC_STAGES_PER_SEND
+        caller = adapter._transport.timeout + adapter._transport._caller_slack
+        seen = {}
+        with self._observe(adapter, seen):
+            receipt = adapter.send_message("send-ordinary-budget", "thread-1", "hello", AUTHORIZED)
+            self.assertEqual(seen["execution"], execution)
+            self.assertEqual(seen["caller"], caller)
+            self.assertLess(seen["caller"], execution)
+        self.assertEqual(receipt["status"], "accepted")
+
+    def test_an_invalid_guard_budget_is_refused_before_any_send(self):
+        calls = []
+
+        class Untouched:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                raise AssertionError("an invalid budget reached the host")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Untouched())
+        self.addCleanup(adapter.close)
+        for budget in (-1, 11, True, 1.5, None, "10"):
+            with self.subTest(budget=budget):
+                with self.assertRaises(HostUnavailable) as raised:
+                    adapter.send_message(
+                        "send-bad-budget", "thread-1", "hello", AUTHORIZED,
+                        guard_rpc_requests=budget,
+                    )
+                self.assertIn("guard_rpc_requests", str(raised.exception))
+        self.assertEqual(calls, [])
+        self.assertIsNone(adapter.get_operation("send-bad-budget"))

@@ -2324,6 +2324,16 @@ def cmd_hook(args):
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )
+                # The document this run would write, judged HERE rather than inside
+                # write_configuration. That is the same check, and it used to be the first
+                # thing write_configuration did -- but write_configuration runs after the
+                # fallback launcher is placed, so a budget the plugin owner may not record
+                # (anything above completion.MAX_PLUGIN_GUARD_SECONDS) left a launcher on
+                # disk and then refused the settings. A launcher alone is harmless, but
+                # installing one for a document this command just called unusable is not
+                # something to do quietly, and the preconditions are where "nothing was
+                # written" is promised.
+                refused += completion.complaints(wanted)
             except ValueError as error:
                 refused = [str(error)]
         if refused:
@@ -2368,6 +2378,29 @@ def cmd_hook(args):
         # Preconditions are settled. Now the writes, settings before the hook that reads them:
         # a hook registered against settings that are not there releases on every Stop and says
         # so nowhere, while settings with no hook cost nothing at all.
+        #
+        # And before both, for the plugin owner, the fallback launcher. The order is chosen from
+        # what each half does alone: a launcher with no settings stands down in silence, while
+        # settings whose fallback was never installed look installed and are not. So the half
+        # that is harmless on its own goes first, and a refusal here leaves the host untouched.
+        # The user owner gets none of this: its registration runs this checkout's own script by
+        # absolute path, with no version cache underneath it to be replaced.
+        placement = None
+        if owner == completion.OWNER_PLUGIN:
+            launcher = completion.launcher_path(codex_home)
+            try:
+                placement = completion.place_launcher(
+                    launcher, ROOT / completion.LAUNCHER_SOURCE, apply=args.apply)
+            except hostrecord.Busy as error:
+                return _hook_busy(adapter, path, error, settings=None, locked=launcher)
+            if placement["outcome"] not in completion.LAUNCHER_SETTLED:
+                emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
+                      "settings": None, "launcher": placement, "hookFile": str(path),
+                      "result": None, "error": placement.get("detail"),
+                      "note": ("Nothing was written. The fallback launcher is installed before"
+                               " the settings, so a refusal here leaves this host as it was"
+                               " rather than with settings whose fallback is missing.")})
+                return EXIT_REFUSED
         try:
             settings = completion.write_configuration(
                 configuration, wanted, apply=args.apply)
@@ -2375,10 +2408,13 @@ def cmd_hook(args):
             return _hook_busy(adapter, path, error, settings=None, locked=configuration)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
-                  "hookFile": str(path), "result": None,
+                  "hookFile": str(path), "result": None, "launcher": placement,
                   "note": ("The settings were not written, so no hook was appended. A hook"
                            " registered against settings it cannot act on is installed and"
-                           " inert, which is the one outcome worth refusing outright.")})
+                           " inert, which is the one outcome worth refusing outright. A"
+                           " launcher already placed is left where it is: alone it stands"
+                           " down, so removing it would buy nothing and could take a fallback"
+                           " from a registration this command did not install.")})
             return EXIT_REFUSED
         if owner == completion.OWNER_PLUGIN:
             # The registration is the plugin package's to declare, so this command writes the
@@ -2388,15 +2424,59 @@ def cmd_hook(args):
             # Reported as what it is: settings written, nothing registered. A caller reading
             # only the exit status would otherwise record an installed hook, and on this host
             # there is none until the plugin is installed.
+            #
+            # Both paths are read back here, at the end, because these two files are written
+            # under separate locks. A concurrent removal can retire the settings and delete the
+            # launcher around this run, and the receipt would otherwise say a fallback was
+            # installed when the host no longer has one. This does not prevent that race; it
+            # stops it from ending quietly.
+            observed = completion.launcher_state(codex_home,
+                                                 ROOT / completion.LAUNCHER_SOURCE)
+            # BOTH halves, read back at the end. The launcher and the settings are written under
+            # separate locks, so either can be taken away between its own write and this point,
+            # and a receipt that checked only one would report an installation the host does not
+            # have. For the launcher: gone, or there and not what this run put there, because a
+            # concurrent installer from another revision leaves a regular file at the same path.
+            # For the settings: retired by a concurrent removal, which leaves a declared hook
+            # that finds nothing to act on and stands down on every Stop in silence.
+            settled = placement["outcome"] in (completion.LAUNCHER_PLACED,
+                                               completion.LAUNCHER_UNCHANGED) \
+                if placement is not None else False
+            launcher_lost = args.apply and settled \
+                and (observed["kind"] != "file"
+                     or observed["digest"] != placement["sourceDigest"])
+            back = reading.read_json(configuration, "the completion hook configuration")
+            settings_now = {"configuration": str(configuration), "state": back.state,
+                            "matchesWanted": bool(back.usable and back.value == wanted)}
+            settings_lost = args.apply and not settings_now["matchesWanted"]
+            reasons = []
+            if launcher_lost:
+                reasons.append("the fallback launcher at " + observed["launcher"] + " is not the"
+                               " one this run installed (kind " + str(observed["kind"])
+                               + ", digest " + str(observed["digest"]) + ", expected "
+                               + str(placement["sourceDigest"]) + ")")
+            if settings_lost:
+                reasons.append("the settings at " + str(configuration) + " are no longer the ones"
+                               " this run wrote (reading " + str(back.state) + "), so the"
+                               " declared hook has nothing to act on and stands down on every"
+                               " Stop")
+            lost = bool(reasons)
             emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
                   "settings": settings, "hookFile": str(path), "result": None,
-                  "registrations": [],
+                  "registrations": [], "launcher": placement, "launcherObserved": observed,
+                  "settingsObserved": settings_now,
+                  "error": ("; ".join(reasons) + ". Something changed this host while the run was"
+                            " writing, so what this receipt would have claimed is not what the"
+                            " host holds") if lost else None,
                   "note": ("Settings written; no registration was made and the hook file was"
                            " not touched. The " + completion.OWNER_PLUGIN + " owner registers"
                            " this event through the plugin package's own manifest, so install"
                            " that package to register it. Written, registered and observed to"
-                           " have fired stay three separate claims.")})
-            return EXIT_OK
+                           " have fired stay three separate claims. launcherObserved is what"
+                           " the launcher path held after the writes and settingsObserved is"
+                           " what the settings path held, neither of them what this run"
+                           " intended.")})
+            return EXIT_INCOMPLETE if lost else EXIT_OK
     else:
         command = args.hook_command
         event = args.event or SESSION_START
@@ -2491,7 +2571,13 @@ def cmd_hook_status(args):
     are separate cells here for exactly that reason.
     """
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    emit(completion.status(codex_home=codex_home, event=args.event or completion.EVENT))
+    answer = completion.status(codex_home=codex_home, event=args.event or completion.EVENT)
+    # Beside the rest, never merged into it. An installed fallback says a turn whose version
+    # cache was replaced still has something to run; it says nothing about registration, trust
+    # or firing, and matchesCheckout is how a copy left behind by an older install becomes
+    # visible instead of staying quietly stale.
+    answer["launcher"] = completion.launcher_state(codex_home, ROOT / completion.LAUNCHER_SOURCE)
+    emit(answer)
     return EXIT_OK
 
 

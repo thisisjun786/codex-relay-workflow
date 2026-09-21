@@ -4,6 +4,7 @@ Run executes the scope its task is bound to. Where that scope is an initiative, 
 entry: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+which also fixes what each level is called in a report to Jun,
 and the project-level procedures [crw-run](../SKILL.md) already owns are not repeated here one
 level up.
 
@@ -89,6 +90,13 @@ what decides this is whether the task is free, not which level happens to hold i
 want that task to stop being a parent is making an ownership change, recorded and completed first
 rather than produced as a side effect of binding.
 
+A name settles none of this in either direction. A task holding this designation is the supervisor
+whether or not anything calls it one, and going unnamed gives it none of a parent's acceptance or
+merge authority; a task called 감독 세션 in a title or a prompt, with no initiative designated, is
+not one and binds nothing. One task holds one live scope in exactly one role, and what a store does
+with a second binding of either kind is in
+[What a recorded relationship settles](#what-a-recorded-relationship-settles-and-what-it-does-not).
+
 The supervision then belongs in a task of its own, or in the existing supervisor where there is
 one, and the designation is routed there: to an existing supervisor by the delivery in the reuse
 order below, and otherwise to a task created for it the way this workflow creates any independent
@@ -100,8 +108,12 @@ nothing: a designation reported unbound is better than a parent quietly repurpos
 
 ### What a recorded relationship settles, and what it does not
 
-Where an installation records these relationships, one live scope per task per role is the rule it
-enforces, so a second same-role binding is refused rather than silently replacing the first. Where
+Where an installation records these relationships, what it enforces is one live scope in one role
+per task, and it separates two different mistakes. A task asking for a second scope of the role it
+already holds is refused, because several ready projects mean several parents rather than one
+parent holding two. A task that already holds one role and asks to be bound in another is refused
+too, which is what stops a parent from also supervising somebody. Either refusal leaves the first
+binding standing rather than silently replacing it. Where
 nothing records them, and the bundled relay records none, the reuse below is a read and not a lock:
 two designations issued at once can both find no supervisor, and the initiative's own record is
 what reconciles that afterwards rather than what prevents it.
@@ -286,9 +298,10 @@ nobody reported.
 | The project and the record | completed, and a dependency recorded as blocking | Linear and the supervision record |
 
 Label every reading with its register before anything acts on it. The fourth register is the one a
-restart is most likely to skip, and it is what makes the second readable: a project parent's goal
-is the role default under [Start policy](start-policy.md), so an absent goal is not a resting state
-on its own. Read it against the recorded mode — `goal-free-run` accounts for it, `loop` makes it a
+restart is most likely to skip, and it is what makes the second readable: a project parent holds no
+goal by default under [Start policy](start-policy.md), so an absent goal is the ordinary resting
+state rather than a finding. Read it against the recorded mode — `goal-free-run` accounts for it,
+`loop` makes it a
 finding, and `blocked` means no child should exist yet. Where a record exists, restore it and
 re-adjudicate only the fields whose conditions have changed. Where none is found, that is unknown
 rather than proof none was written: a record can also be partial or damaged, and adjudicating from
