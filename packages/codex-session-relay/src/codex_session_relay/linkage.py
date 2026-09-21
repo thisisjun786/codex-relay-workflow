@@ -25,6 +25,7 @@ same transaction and the exception is raised after it closes.
 
 import json
 
+from . import envelope
 from .errors import LinkageError, RefusalReason
 from .identity import sha256_hex
 
@@ -1294,6 +1295,20 @@ class Linkage:
                     + " as its upper endpoint, not " + repr(from_task_id),
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=edge["upper_task_id"], challenger=from_task_id,
+                )
+            elif envelope.contradiction(reference, link_id=link_id_value, digest=digest):
+                # A reference that is one of ours is checked by RE-DERIVING its message id from
+                # this row's own link and digest, rather than by comparing copies of them. The
+                # pointer carries no duplicate of anything, so there is nothing to drift; what
+                # it carries is derived FROM those facts, and a pointer that derives something
+                # else belongs to another instruction. A column that is not ours - an
+                # operator's note, or anything written before this contract - contradicts
+                # nothing and is stored exactly as it was given.
+                refusal = _Refusal(
+                    RefusalReason.LINK_CONFLICT,
+                    envelope.contradiction(reference, link_id=link_id_value, digest=digest),
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=str(link_id_value), challenger=str(reference),
                 )
             if refusal is None:
                 did = directive_id(scope_kind, scope_key, from_scope_key, digest,

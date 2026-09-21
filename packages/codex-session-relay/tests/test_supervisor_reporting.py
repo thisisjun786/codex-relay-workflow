@@ -1,0 +1,331 @@
+"""CRW-148: what the level above is told, what it is still owed, and what nobody proved.
+
+Every case runs against a real Store and the real synchronisation outbox. A format fixture
+would prove that a message can be shaped; none of these claim a supervisor received anything,
+because no row in this store could say so.
+"""
+
+import json
+import os
+
+from codex_session_relay import cxc, envelope, identity, report, supervision
+from codex_session_relay.omitted import SCHEMA as OBSERVATION_SCHEMA
+from codex_session_relay.store import Store
+from codex_session_relay.sync import CONFIRMED, PENDING, SyncOutbox, render_block
+
+from .support import CHILD, PARENT, DeliveryTestCase
+from .test_report_contract import a_report
+
+DOC = "https://linear.app/example/document/coordination-000000000000"
+SUPERVISOR = "01supervisor-task"
+
+
+class ReportingTestCase(DeliveryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.sync = SyncOutbox(self.store, self.clock)
+        self.ack.sync = self.sync
+
+    def reported(self, **overrides):
+        """A queued event with a work report on it, which is the ordinary completion shape."""
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id, **a_report(**overrides))
+        return event_id
+
+    def obligation_for(self, event_id):
+        return supervision.from_event(
+            self.store, event_id, report.read(self.store, event_id))
+
+    def halted(self, status, reason):
+        """A run that stopped rather than delivering, which the contract pairs with this outcome.
+
+        A blocked or needs-human report cannot ride a ready_for_review event: cxc.check_status
+        refuses the pair, and rightly, because a report saying nobody can proceed alongside an
+        outcome saying the work is reviewable is two claims that contradict each other.
+        """
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        payload = self.execution_payload(relationship, "blocked_needs_input")
+        self.accept(payload)
+        report.record(self.store, self.clock, event_id=payload["eventId"],
+                      **a_report(cxc_status=status, cxc_reason=reason, pr_number=None,
+                                 pr_url=None, pr_state=None, handoff=None))
+        return payload["eventId"]
+
+    def lifecycle(self, task_id, deliverable, reason=None):
+        self.store.db.execute(
+            "INSERT OR REPLACE INTO recipient_lifecycle (task_id, runtime_status, archived,"
+            " goal_status, can_accept_input, deliverable, withhold_reason, detail, observed_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (task_id, "idle", 0, None, 1, deliverable, reason, "", self.clock.iso()),
+        )
+
+    def sync_job(self, event_id):
+        row = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        self.sync.set_target(self._rid, "coordination_document", DOC)
+        with self.store.transaction() as db:
+            return self.sync.enqueue_in(
+                db, relationship_id=self._rid, issue_key="REL-1", subject_kind="verdict",
+                summary="the child reported its work is ready", event_id=event_id,
+                generation=row["execution_generation"], revision=row["revision_hash"],
+                verdict="verified")
+
+
+class WhatIsNewsForTheLevelAbove(ReportingTestCase):
+    def test_a_completion_raises_an_obligation(self):
+        one = self.obligation_for(self.reported())
+        self.assertEqual(one["kind"], supervision.COMPLETION)
+        self.assertEqual(one["basis"]["cxcStatus"], cxc.DONE)
+
+    def test_a_block_and_a_user_decision_are_not_the_same_news(self):
+        blocked = self.obligation_for(
+            self.halted(cxc.BLOCKED, "the upstream package has not landed"))
+        self.assertEqual(blocked["kind"], supervision.BLOCKED)
+
+    def test_a_judgment_only_the_user_can_make_is_a_decision(self):
+        one = self.obligation_for(
+            self.halted(cxc.NEEDS_HUMAN, "two readings of the criterion are defensible"))
+        self.assertEqual(one["kind"], supervision.DECISION)
+
+    def test_an_execution_that_failed_is_the_parents_business(self):
+        """How a turn ended is work for the parent, not news for the level above.
+
+        Re-dispatching a failed turn is ordinary. Treating it as a supervisor wake would put a
+        turn on the busiest level for something the level below handles without help.
+        """
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        payload = self.execution_payload(relationship, "failed")
+        self.accept(payload)
+        self.assertIsNone(self.obligation_for(payload["eventId"]))
+
+    def test_an_acknowledgement_does_not_add_news_of_its_own(self):
+        """An ACK-only round trip must not produce a second obligation.
+
+        The same event is read before and after the parent acknowledges it. One fact, one
+        obligation, one id - whatever else happened to the delivery in between.
+        """
+        event_id = self.reported()
+        before = self.obligation_for(event_id)
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(event_id, ack_turn_id=turn.turn_id,
+                             ack_proof=identity.ack_proof(event_id, turn.turn_id),
+                             accepted=True, adapter=self.adapter)
+        after = self.obligation_for(event_id)
+        self.assertEqual(before["obligationId"], after["obligationId"])
+
+    def test_the_delivery_seam_answers_no_for_an_ordinary_event(self):
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        payload = self.execution_payload(relationship, "interrupted")
+        self.accept(payload)
+        decided = self.delivery.supervisor_selection(payload["eventId"])
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.NOT_NEWS)
+        self.assertIsNone(decided["obligationId"])
+
+
+class OneFactOneObligation(ReportingTestCase):
+    def test_a_second_reading_converges_on_the_same_id(self):
+        event_id = self.reported()
+        self.assertEqual(self.obligation_for(event_id)["obligationId"],
+                         self.obligation_for(event_id)["obligationId"])
+
+    def test_the_same_event_survives_a_restart_with_the_same_id_and_still_standing(self):
+        """Nothing was remembered between these two readings, which is the whole point."""
+        event_id = self.reported()
+        first = self.obligation_for(event_id)
+        self.store.close()
+        self.store = Store(os.path.join(self.tmp, "state", "relay.sqlite3"))
+        self.addCleanup(self.store.close)
+        second = supervision.from_event(
+            self.store, event_id, report.read(self.store, event_id))
+        self.assertEqual(first["obligationId"], second["obligationId"])
+        self.assertEqual(supervision.select(self.store, second)["standing"],
+                         supervision.STANDING)
+
+    def test_a_produced_report_is_recorded_once_and_suppresses_the_next_wake(self):
+        event_id = self.reported()
+        one = self.obligation_for(event_id)
+        self.assertTrue(supervision.select(self.store, one)["report"])
+        first = supervision.record_report(self.store, one, at=self.clock.iso())
+        second = supervision.record_report(self.store, one, at=self.clock.iso())
+        self.assertTrue(first["recorded"])
+        self.assertFalse(second["recorded"], "a second call converges rather than writing again")
+        decided = supervision.select(self.store, one)
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.ALREADY_REPORTED)
+
+    def test_a_handover_does_not_change_what_is_owed(self):
+        """The obligation is keyed on the relation and the fact, not on who parents it now."""
+        event_id = self.reported()
+        one = self.obligation_for(event_id)
+        self.store.db.execute(
+            "UPDATE relationships SET parent_task_id = ? WHERE relationship_id = ?",
+            ("01replacement-parent", self._rid))
+        self.assertEqual(self.obligation_for(event_id)["obligationId"], one["obligationId"])
+
+
+class WhatDoesNotDischargeIt(ReportingTestCase):
+    def test_a_report_nobody_wrote_to_linear_leaves_the_obligation_standing(self):
+        event_id = self.reported()
+        one = self.obligation_for(event_id)
+        supervision.record_report(self.store, one, at=self.clock.iso())
+        decided = supervision.select(self.store, one)
+        self.assertFalse(decided["report"], "the duplicate is suppressed")
+        self.assertEqual(decided["standing"], supervision.STANDING,
+                         "and what is owed is still owed")
+        self.assertIn("no Linear record", decided["dischargeReason"])
+
+    def test_a_failed_linear_write_is_not_a_finished_one(self):
+        """SyncOutbox.fail looks terminal and means the opposite of done."""
+        event_id = self.reported()
+        identifier = self.sync_job(event_id)
+        claim = self.sync.claim(identifier, owner="test")
+        self.sync.fail(identifier, claim_token=claim["claimToken"], error="linear said no")
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn(PENDING, decided["dischargeReason"])
+
+    def test_only_a_confirmed_record_discharges_it(self):
+        event_id = self.reported()
+        identifier = self.sync_job(event_id)
+        claim = self.sync.claim(identifier, owner="test")
+        row = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (identifier,))
+        self.sync.complete(identifier, claim_token=claim["claimToken"], target_ref=DOC,
+                           readback=render_block(row), external_ref="linear-doc-1")
+        self.assertEqual(
+            self.store.one("SELECT state FROM sync_outbox WHERE sync_id = ?",
+                           (identifier,))["state"], CONFIRMED)
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.DISCHARGED)
+        self.assertEqual(decided["reason"], supervision.ALREADY_RECORDED)
+
+
+class APausedSupervisorIsNotAFailure(ReportingTestCase):
+    def test_an_uncontactable_recipient_keeps_the_obligation_and_is_not_woken(self):
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "no", reason="recipient_paused")
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR)
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.NO_CONTACT)
+        self.assertEqual(decided["standing"], supervision.STANDING)
+
+    def test_an_unobserved_recipient_is_unmeasured_rather_than_reachable(self):
+        event_id = self.reported()
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient="01never-observed")
+        self.assertIsNone(decided["recipient"]["contactable"])
+        self.assertIn("unmeasured", decided["recipient"]["reason"])
+
+
+class TheReportNobodyWrote(ReportingTestCase):
+    """The counterexample: a child that simply did not report.
+
+    It leaves no events row, so nothing keyed on events can see it. The reading comes from
+    CRW-180's observer, and what is owed because of it is decided here.
+    """
+
+    def observation(self, state, **overrides):
+        record = {"schema": OBSERVATION_SCHEMA, "reportingState": state,
+                  "reason": "terminal_without_report", "relationshipId": "rel-0123456789abcdef",
+                  "executionGeneration": 1, "selectors": {"turn": "turn-7"}}
+        record.update(overrides)
+        return record
+
+    def test_an_admitted_turn_that_ended_without_a_report_still_owes_one(self):
+        one = supervision.from_observation(self.observation("unreported"))
+        self.assertEqual(one["kind"], supervision.UNREPORTED)
+        self.assertEqual(one["subject"], "turn-7")
+
+    def test_the_states_that_said_the_opposite_raise_nothing(self):
+        for state in ("reported", "in_progress", "unmanaged"):
+            self.assertIsNone(supervision.from_observation(self.observation(state)),
+                              f"{state} is not an omission")
+
+    def test_a_reading_that_established_nothing_is_a_gap_and_not_an_obligation(self):
+        unmeasured = self.observation("unmeasured", reason="marker_unreadable")
+        self.assertIsNone(supervision.from_observation(unmeasured))
+        gap = supervision.unmeasured_gap(unmeasured)
+        self.assertEqual(gap["gap"], "reporting_unmeasured")
+        self.assertEqual(gap["reason"], "marker_unreadable")
+
+
+class AnExplicitRequestIsItsOwnPath(ReportingTestCase):
+    def test_a_status_request_is_answered_while_the_automatic_wake_is_suppressed(self):
+        from codex_session_relay.assignment import AssignmentView
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        # An issue attaches to a project that already has a parent, which is the ordinary
+        # order: the project is owned before its issues are handed out.
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(relationship, [path])
+        self.accept(payload)
+        self.delivery.enqueue(payload["eventId"])
+        report.record(self.store, self.clock, event_id=payload["eventId"], **a_report())
+        one = self.obligation_for(payload["eventId"])
+        supervision.record_report(self.store, one, at=self.clock.iso())
+        self.assertFalse(supervision.select(self.store, one)["report"],
+                         "the automatic channel is quiet")
+
+        assignments = AssignmentView(self.store, self.registry, self.clock, linkage=linkage)
+        answer = supervision.status_answer(self.store, linkage, assignments, "CRW")
+        self.assertEqual([entry["obligationId"] for entry in answer["standing"]],
+                         [one["obligationId"]],
+                         "and the question is still answered with what is owed")
+        self.assertIn("explicit status request", answer["answeredBecause"])
+        # The project reading is carried through unchanged, and the strongest word it has is
+        # complete_candidate. An obligation raised about one issue never becomes a statement
+        # about the project.
+        self.assertIn(answer["projectState"]["state"],
+                      ("unreadable", "unregistered", "ambiguous", "incomplete",
+                       "complete_candidate"))
+        self.assertNotEqual(answer["projectState"]["state"], "complete")
+
+
+class TheUpwardEnvelope(ReportingTestCase):
+    def test_the_supervisor_direction_claims_no_receipt(self):
+        event_id = self.reported()
+        one = self.obligation_for(event_id)
+        region = supervision.envelope_for(
+            self.store, one, sender=PARENT, recipient=SUPERVISOR,
+            scope="project CRW, issue REL-1", observed_at=self.clock.iso())
+        self.assertEqual(region["kind"], envelope.NOTIFICATION)
+        self.assertEqual(region["sender"]["role"], "parent")
+        for name in envelope.STAGES:
+            self.assertEqual(region["reach"][name]["state"], envelope.IMPOSSIBLE)
+
+    def test_a_decision_envelope_has_to_name_what_is_being_decided(self):
+        one = self.obligation_for(self.halted(cxc.NEEDS_HUMAN, "two readings are defensible"))
+        with self.assertRaises(envelope.EnvelopeRefused):
+            supervision.envelope_for(self.store, one, sender=PARENT, recipient=SUPERVISOR)
+        region = supervision.envelope_for(
+            self.store, one, sender=PARENT, recipient=SUPERVISOR,
+            decision="which of the two readings of the criterion is the agreed one")
+        self.assertEqual(region["kind"], envelope.DECISION)
+        self.assertEqual(region["answerOwedBy"], envelope.USER)
+
+    def test_the_journal_entry_names_the_message_it_reported(self):
+        event_id = self.reported()
+        one = self.obligation_for(event_id)
+        region = supervision.envelope_for(
+            self.store, one, sender=PARENT, recipient=SUPERVISOR,
+            observed_at=self.clock.iso())
+        supervision.record_report(self.store, one, at=self.clock.iso(),
+                                  messageId=region["messageId"])
+        recorded = supervision.prior_report(self.store, one["obligationId"])
+        self.assertEqual(recorded["detail"]["messageId"], region["messageId"])
+        self.assertEqual(json.loads(self.store.one(
+            "SELECT detail FROM journal WHERE kind = ? AND subject = ?",
+            (supervision.JOURNAL_KIND, one["obligationId"]))["detail"])["kind"],
+            supervision.COMPLETION)

@@ -406,6 +406,29 @@ class DeliveryService:
                 "scope": scope or envelope.absent(
                     envelope.UNKNOWN, "neither a project nor an issue scope was readable")}
 
+    def supervisor_selection(self, event_id: str, *, recipient=None) -> dict:
+        """Whether this event is news for the level above, answered from the rows here.
+
+        A read. It sends nothing, queues nothing and records nothing, and it exists on this
+        class because this is where the event, its report and its delivery already are.
+        Producing the report, and recording that one was produced, belong to whoever owns the
+        turn that does it.
+
+        Most events answer no, and that is the point: an ordinary child progressing, a CI run
+        changing and an acknowledgement arriving are all real state changes that the level
+        above does not need a turn for.
+        """
+        from . import supervision
+
+        obligation = supervision.from_event(
+            self.store, event_id, read_work_report(self.store, event_id))
+        if obligation is None:
+            return supervision.suppressed(
+                event_id,
+                "this event is not a completion, a new block or a decision the user owes")
+        return {**supervision.select(self.store, obligation, recipient=recipient),
+                "obligation": obligation}
+
     def _render_and_account(self, row, record, request, report=None):
         """The bytes, and what became of a declared restoration block in exactly those bytes.
 

@@ -6,11 +6,12 @@ but whether somebody holding this envelope would act on something nobody establi
 
 import unittest
 
-from codex_session_relay import envelope, identity, report
+from codex_session_relay import envelope, identity, linkage as linkage_module, report
 from codex_session_relay.errors import RefusalReason
 
 from .support import DeliveryTestCase
 from .test_report_contract import a_report
+from .test_linkage import INITIATIVE, PROJECT, SUPERVISOR_TASK, LinkageTestCase
 
 LINK = "lnk-0123456789abcdef"
 DIGEST = "d" * 64
@@ -245,6 +246,58 @@ class TheRenderedMessage(DeliveryTestCase):
         self.assertIn("omitted:", tight, "this budget is supposed to cost something")
         self.assertIn("message: request", tight)
         self.assertIn("messageId:", tight)
+
+
+class TheDirectiveSeam(LinkageTestCase):
+    """What the row can authoritatively contradict, and what it must leave alone."""
+
+    def directive(self, digest, reference):
+        execution = getattr(self, "_edge", None) or self.supervise()
+        self._edge = execution
+        return self.linkage.record_directive(
+            scope_kind=linkage_module.PROJECT, scope_key=PROJECT,
+            from_task_id=SUPERVISOR_TASK, from_scope_key=INITIATIVE,
+            link_id_value=execution["linkId"], digest=digest, reference=reference)
+
+    def test_a_pointer_derived_from_this_row_is_stored_as_given(self):
+        execution = self.supervise()
+        self._edge = execution
+        pointer = envelope.directive_reference(
+            purpose="project_assignment", link_id=execution["linkId"], digest="d-one")
+        row = self.directive("d-one", pointer)
+        self.assertEqual(row["reference"], pointer)
+        self.assertEqual(envelope.parse_reference(row["reference"])["purpose"],
+                         "project_assignment")
+
+    def test_a_pointer_belonging_to_another_instruction_is_refused_and_the_contest_kept(self):
+        execution = self.supervise()
+        self._edge = execution
+        stolen = envelope.directive_reference(
+            purpose="project_assignment", link_id=execution["linkId"], digest="d-other")
+        self.assertRefused(RefusalReason.LINK_CONFLICT,
+                           lambda: self.directive("d-one", stolen))
+        self.assertTrue(
+            [row for row in self.linkage.conflicts(linkage_module.PROJECT, PROJECT)
+             if row.get("reason") == RefusalReason.LINK_CONFLICT.value],
+            "a refusal that leaves no record is the contest disappearing with it")
+        self.assertIsNone(
+            self.store.one("SELECT directive_id FROM scope_directives WHERE digest = ?",
+                           ("d-one",)),
+            "and nothing was stored for the instruction that was refused")
+
+    def test_a_column_that_is_not_ours_is_stored_unchanged(self):
+        """The reference column is free-form and predates this contract."""
+        execution = self.supervise()
+        self._edge = execution
+        row = self.directive("d-one", "see the thread from Tuesday")
+        self.assertEqual(row["reference"], "see the thread from Tuesday")
+
+    def test_a_directive_written_before_this_contract_reads_as_unknown(self):
+        execution = self.supervise()
+        self._edge = execution
+        row = self.directive("d-one", None)
+        self.assertIsNone(row["reference"])
+        self.assertIsNone(envelope.parse_reference(row["reference"]))
 
 
 if __name__ == "__main__":
