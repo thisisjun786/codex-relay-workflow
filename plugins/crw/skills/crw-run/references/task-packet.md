@@ -277,8 +277,10 @@ Return:
   `{runId, name, headSha, conclusion, attempt}`, the review coverage as
   `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, a judged disposition with
   evidence for every thread in `threadsSeen`, where an `accepted` one also names the parent
-  decision behind it and, in its own `followUp`, the owner and the trigger that reopens it,
-  plus the boundary it leaves known. Then your per-criterion evidence and the limitations that
+  decision behind it in `addressedBy`, its `followUpOwner`, and the `reopenTrigger` that
+  brings it back. Those last two are separate fields because they are separate facts: one
+  string naming an owner and saying nothing about what reopens the finding is a waiver
+  wearing a follow-up's name. Then your per-criterion evidence and the limitations that
   remain. State every field: an absent one used to read as satisfied, so a record that said
   nothing passed every check. The parent restates these values immediately before merging
   rather than collecting them again, which is why they are yours to produce, and it confirms
