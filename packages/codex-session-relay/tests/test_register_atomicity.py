@@ -79,6 +79,7 @@ class RegisterAtomicity(RelayTestCase):
             "the relationship and the settings are not written in one transaction, so a"
             f" registration interrupted here is half durable: {kill.killed}",
         )
+        self.assertEqual(kill.fired, 1, "more than one commit means more than one transaction")
         self.assertEqual(
             self.counts(), {"relationships": 0, "generations": 0, "authorized_settings": 0},
         )
@@ -104,6 +105,18 @@ class ContestOutlivesTheComposedRollback(RegisterAtomicity):
     def conflicts(self):
         return self.store.all("SELECT * FROM linkage_conflicts ORDER BY id")
 
+    def refusals_journalled(self):
+        """How many times a contest was WRITTEN, which the conflict row itself cannot say.
+
+        _record_conflict_in upserts, so writing the same contest twice still leaves one row.
+        The journal line is the one place a second write shows, which is why the duplicate
+        this file guards against has to be counted here rather than by looking at the table.
+        """
+        return len([
+            row for row in self.store.all("SELECT kind FROM journal")
+            if row["kind"] == "linkage_refused"
+        ])
+
     def test_the_contest_is_readable_after_the_registration_rolls_back(self):
         self.contested()
         with self.assertRaises(RelayError):
@@ -125,14 +138,35 @@ class ContestOutlivesTheComposedRollback(RegisterAtomicity):
             with self.assertRaises(RelayError):
                 cmd_register(self.services(), self.args(project="PROJ-1"))
         self.assertEqual(len(self.conflicts()), 1)
-        refused = [
-            row for row in self.store.all("SELECT kind FROM journal")
-            if row["kind"] == "linkage_refused"
-        ]
         self.assertEqual(
-            len(refused), 2,
+            self.refusals_journalled(), 2,
             "one journal line per refusal: a doubled line means the contest was written both"
-            f" inside the rolled-back transaction and again afterwards. Saw {len(refused)}",
+            " inside the rolled-back transaction and again afterwards. Saw"
+            f" {self.refusals_journalled()}",
+        )
+
+    def test_an_uncomposed_registration_still_records_its_contest_exactly_once(self):
+        """The other half of the same predicate, and the reason it is asked of the store.
+
+        registry.register called directly opens its own transaction, and that transaction
+        COMMITS the contest before the refusal is raised. Nothing above it has a rollback to
+        compensate for, so nothing may write the contest a second time. Attaching the refusal
+        to every error unconditionally -- the obvious way to make the composed case work --
+        breaks exactly this, and it breaks it invisibly: the conflict row upserts, so only the
+        journal shows the second write.
+        """
+        self.contested()
+        with self.assertRaises(RelayError):
+            self.registry.register(
+                parent=Endpoint(PARENT, HOST, cwd="/parent", cxc_session="cxc-parent"),
+                child=Endpoint(CHILD, HOST, cwd=self.root, cxc_session="cxc-child"),
+                issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+                dispatch_request_id="dispatch-1", project_key="PROJ-1",
+            )
+        self.assertEqual(len(self.conflicts()), 1)
+        self.assertEqual(
+            self.refusals_journalled(), 1,
+            "the contest was written twice on a path that has no rollback to recover from",
         )
 
     def test_killed_before_the_relationship_commit_leaves_no_settings_behind(self):
@@ -145,6 +179,7 @@ class ContestOutlivesTheComposedRollback(RegisterAtomicity):
             "the settings are written outside the transaction that writes the relationship,"
             f" so the two can still disagree after a failure: {kill.killed}",
         )
+        self.assertEqual(kill.fired, 1, "more than one commit means more than one transaction")
         self.assertEqual(
             self.counts(), {"relationships": 0, "generations": 0, "authorized_settings": 0},
         )
