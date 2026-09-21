@@ -288,9 +288,10 @@ that the last reader is gone; that needs evidence of its own.
 
 A host carrying temporary compatibility files — an old cache path kept alive by hand after an
 update went wrong — needs a record of its own, kept with the task record outside this
-repository. Record the path, who made it, why, the condition under which it may be removed, and
-the command that shows whether anything still references it. Such a file is a repair, not a
-guarantee that the next update will be survivable.
+repository. Record the path, who made it, why, and the condition under which it may be removed.
+Nothing here enumerates the tasks still holding a reference, so the evidence that the last reader
+is gone has to come from the host; record which observation was used. Such a file is a repair, not
+a guarantee that the next update will be survivable.
 
 ## Update and roll back
 
