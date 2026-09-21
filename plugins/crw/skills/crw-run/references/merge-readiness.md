@@ -62,11 +62,42 @@ is still unknown.
 ## Inspect review content and coverage
 
 Collect relevant submitted reviews, inline threads, summary comments, statuses,
-and independent local review artifacts. Follow pagination where necessary. For
-each applicable source, establish who reviewed what base/head or diff, whether
-the run completed, and which findings remain. A successful review job can still
-contain defects; a completed COMMENTED review can be useful evidence without
-being a formal approval. Thread resolution alone does not prove a fix.
+and independent local review artifacts. For each applicable source, establish who
+reviewed what base/head or diff, whether the run completed, and which findings
+remain. A successful review job can still contain defects; a completed COMMENTED
+review can be useful evidence without being a formal approval. Thread resolution
+alone does not prove a fix.
+
+Where a count is the gate, read it to the end and prove that you did. An unresolved
+count of zero is the value that OPENS the merge gate, so a truncated page reads as
+a pass: sixty of sixty-three threads with nothing unresolved among the sixty once
+reported "0 unresolved" about a candidate with three open threads and a P1 among
+them. Every connection the verdict rests on - threads, reviews, comments, check
+runs, workflow runs, jobs, statuses and the branch's own effective rules - carries
+the same obligation, because a second required check on page two is exactly as
+invisible as the sixty-first thread was, and a required gate declared by a ruleset
+on a later page is missing from the very set that decides what "required" means.
+
+`codex-session-relay merge-evidence --repository owner/name --pull-request N`
+performs that reading and returns the record: it enumerates each connection until
+its pagination is exhausted, counts unique identifiers against the reported total,
+pins the head and base before collecting and re-reads them with the effective rules
+afterwards, and reads a zero twice before reporting it. Exit 0 is the ready verdict
+alone; a stale, unknown or not-ready answer exits 2 with the whole payload. A
+truncated page, a permission error or a head that moved is reported as stale or
+unknown and never as green or zero. Its `handoff` is the record a completion report
+carries; the dispositions and the criterion evidence stay yours to judge, and it
+never resolves a thread.
+
+Three distinctions it makes that a reading by hand usually does not. A check is
+identified by its workflow run and job name rather than by its name, so two runs
+publishing one gate on a head are both binding and a run that REPLACED another -
+a re-run, or a cancellation when new CI starts - does not block the run that
+replaced it. A required context bound to an integration is answered only by that
+integration, so a namesake from another app neither satisfies the gate nor blocks
+it. And a submitted review whose state is CHANGES_REQUESTED refuses on its own,
+while a summary comment is collected and never graded, because whether prose
+describes a defect is a triage judgement and not an observation.
 
 Keep completed, running, not run/disabled, unavailable/error, and stale evidence
 distinct. A completion label without identifiable revision/scope does not prove
@@ -235,6 +266,15 @@ and newly arrived findings. Reconcile changes since the review; refresh only the
 proof they invalidate. A relevant unresolved finding still matters even if its
 author is an optional reviewer. Use the repository's merge method and the host's
 expected-head guard; preserve required base-update or merge-queue behavior.
+
+`merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
+own and grades the child's record against it, rather than reading the child's own
+numbers back. A thread that arrived on the same head and is not in the record's
+`threadsSeen` invalidates the record, which returns to the child that produced it.
+The reading and the merge are not one act, and the command does not pretend they
+are: the expected-head guard is what closes the gap at the moment of merging, and a
+finding that lands after it is a late finding for the original issue's correction
+path.
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.

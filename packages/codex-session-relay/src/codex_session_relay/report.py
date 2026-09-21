@@ -1874,11 +1874,14 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
             "the handoff states isDraft as true or false; it is how a reviewer knows the "
             "review was actually requested, and leaving it out is not the same as false",
         )
-    if handoff["isDraft"]:
+    drafted = mergeevidence.draft_problems(handoff["isDraft"])
+    if drafted:
+        # Delegated rather than restated. The forge collector asks the same question before any
+        # receipt exists, and while both spellings said the same thing today, one rule written
+        # in two places is how it starts meaning two things. The sentence is unchanged.
         raise ReceiptRefused(
             RefusalReason.MERGE_EVIDENCE_REQUIRED,
-            "the pull request is still a draft, so the review it reports was never actually "
-            "requested; mark it ready for review before handing it over",
+            "; ".join(mergeevidence.details(drafted)),
         )
     verified_at = _verified_at(handoff.get("baseVerifiedAt"))
     if verified_at is None:
