@@ -280,6 +280,45 @@ class Elision(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id, **a_report())
         self.assertNotIn("confirm each was yours", self.delivery.render_message(event_id))
 
+    def test_the_largest_permitted_acceptance_block_still_renders_at_the_default_budget(self):
+        """The reserve and the budget have to agree, or one of them is decoration.
+
+        Unelidable confirmations plus a per-field-only bound let four individually legal
+        acceptances render past the whole budget, and rendering happens inside the delivery
+        claim, so the report stored once and never went out. ACCEPTANCE_SHOWN is the ceiling
+        that closes that; this is the check that a set sitting right under the ceiling is
+        actually deliverable rather than merely recordable.
+        """
+        _relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+        threads = [f"PRRT_accepted_{n}" for n in range(6)]
+        handoff = a_handoff(head)
+        handoff["reviewCoverage"] = {"hasNextPage": False, "pagesRead": 1,
+                                     "totalCount": len(threads), "threadsSeen": threads,
+                                     "unresolved": 0}
+        handoff["threadDispositions"] = [
+            {"threadId": one, "disposition": "accepted", "evidence": f"residue {n}",
+             "addressedBy": "parent task 01a0b406 decided this".ljust(295, "."),
+             "followUpOwner": "CRW-176",
+             "reopenTrigger": "the wording reaches a criterion"}
+            for n, one in enumerate(threads)
+        ]
+        block = sum(len(line.encode("utf-8")) + 1
+                    for line in report._acceptance_lines(handoff["threadDispositions"]))
+        self.assertGreater(block, report.ACCEPTANCE_SHOWN - 300,
+                           "this case has to sit near the ceiling or it tests nothing")
+        self.assertLessEqual(block, report.ACCEPTANCE_SHOWN)
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(handoff=handoff, head_sha=head,
+                                 unresolved=[f"open item {n} with text" for n in range(400)]))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        message = report.render_completion(row, receipt, "del-x-a1", stored)
+        for one in threads:
+            self.assertIn(one, message, f"{one} did not survive the default budget")
+        self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
+
     def test_shortening_a_long_list_stays_correct_and_does_not_rescan(self):
         _relationship, event_id = self.queued_event()
         receipt = self.intake.get(event_id)

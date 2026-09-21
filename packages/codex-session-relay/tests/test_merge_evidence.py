@@ -433,6 +433,39 @@ def test_a_rendered_acceptance_field_cannot_be_unbounded(field):
             _ready_handoff(threadDispositions=[_accepted(**{field: "x" * 4000})]),
             12, HEAD, BASE, "ready_for_review")
     assert caught.value.reason is RefusalReason.MALFORMED_RECEIPT
+
+
+def test_confirmations_that_cannot_fit_the_message_are_refused_while_it_is_recordable():
+    """Every field legal and the sum impossible, which per-field bounds cannot catch.
+
+    Making the confirmations unelidable is what stops a forged acceptance passing in
+    silence, and it is also what turns an oversized set into a report that is stored once
+    and delivered never: rendering happens inside the delivery claim, so the claim rolls
+    back unsent and retries land on the same arithmetic forever. Refusing at record time is
+    the difference between a child that is told to fix some of them and a queue entry
+    nobody can drain.
+    """
+    threads = [f"PRRT_{n}" for n in range(4)]
+    handoff = _ready_handoff(
+        reviewCoverage=_clean_review(totalCount=len(threads), threadsSeen=threads),
+        threadDispositions=[
+            _accepted(threadId=one, addressedBy="a" * 300, followUpOwner="o" * 300,
+                      reopenTrigger="t" * 300)
+            for one in threads
+        ],
+    )
+    with pytest.raises(ReceiptRefused) as caught:
+        report._check_handoff(handoff, 12, HEAD, BASE, "ready_for_review")
+    assert caught.value.reason is RefusalReason.MERGE_EVIDENCE_REQUIRED
+    assert "reserve" in str(caught.value)
+    # The same four threads, with references somebody would actually write, are fine. The
+    # bound is on what the parent has to be shown, not on how many findings may be accepted.
+    ordinary = _ready_handoff(
+        reviewCoverage=_clean_review(totalCount=len(threads), threadsSeen=threads),
+        threadDispositions=[_accepted(threadId=one) for one in threads],
+    )
+    recorded = report._check_handoff(ordinary, 12, HEAD, BASE, "ready_for_review")
+    assert [one["threadId"] for one in recorded["threadDispositions"]] == threads
 def test_resolving_a_thread_is_still_not_among_the_judgments():
     """Adding a word to the enum must not turn it into a place to put the button."""
     with pytest.raises(ReceiptRefused) as caught:

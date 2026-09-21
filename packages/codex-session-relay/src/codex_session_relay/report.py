@@ -61,6 +61,15 @@ URL_MAX = 2000
 # on an essential line now, so it is given a bounded REPRESENTATION here rather than a limit
 # imposed on a contract field this layer does not own.
 REF_SHOWN = 240
+# Acceptance confirmations cannot be elided, because dropping one hides a decision the parent
+# is credited with and never made. Something unelidable needs an aggregate ceiling or it
+# becomes an undeliverable report instead: four acceptances with individually legal 300-byte
+# fields render past the whole budget, and rendering happens inside the delivery claim, so the
+# claim rolls back unsent every time and the report is stored forever and delivered never.
+# Bounding the fields one at a time cannot catch that, since each one is fine and the sum is
+# not. A candidate whose confirmations do not fit the message the parent reads is a candidate
+# carrying too many accepted defects to hand over in one piece.
+ACCEPTANCE_SHOWN = 2400
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -1656,6 +1665,23 @@ def _accepted_dispositions(handoff) -> list:
     ]
 
 
+def _acceptance_lines(accepted) -> list:
+    """The confirmations, formatted once.
+
+    The record-time bound and the render read the same function on purpose. Measuring one
+    string and rendering another is how a limit passes its own check and then overflows the
+    thing it was protecting.
+    """
+    if not accepted:
+        return []
+    lines = [f"  accepted by your decision ({len(accepted)}) - confirm each was yours:"]
+    for one in accepted:
+        lines.append(f"    {one.get('threadId')}: {one.get('addressedBy')}"
+                     f" - {one.get('followUpOwner')} owns it,"
+                     f" reopens on {one.get('reopenTrigger')}")
+    return lines
+
+
 def _handoff_lines(report) -> list:
     """What the parent restates, said in the message rather than left in the store.
 
@@ -1685,13 +1711,7 @@ def _handoff_lines(report) -> list:
         f"  review: {coverage.get('totalCount')} thread(s) seen over"
         f" {coverage.get('pagesRead')} page(s), {coverage.get('unresolved')} unresolved",
     ]
-    if accepted:
-        lines.append(f"  accepted by your decision ({len(accepted)}) - confirm each was yours:")
-        for one in accepted:
-            lines.append(f"    {one.get('threadId')}: {one.get('addressedBy')}"
-                         f" - {one.get('followUpOwner')} owns it,"
-                         f" reopens on {one.get('reopenTrigger')}")
-    return lines
+    return lines + _acceptance_lines(accepted)
 
 #: Which refusal a problem code becomes. The next action genuinely differs for each, which is
 #: why the predicate returns codes rather than prose: an undeclared required set is something
@@ -1828,6 +1848,23 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
             "against; without one there is nothing for the pre-merge re-read to disagree with",
         )
     dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
+    # Checked here rather than per field, because every field can be legal while the sum is
+    # not, and refusing at record time is the difference between a child that is told to fix
+    # some of them and a report that is accepted now and undeliverable for good.
+    shown = _acceptance_lines([one for one in dispositions
+                               if one["disposition"] == "accepted"])
+    if shown:
+        total = sum(_size(line) + 1 for line in shown)
+        if total > ACCEPTANCE_SHOWN:
+            raise ReceiptRefused(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                f"the acceptance confirmations for this candidate render {total} bytes and the"
+                f" reserve is {ACCEPTANCE_SHOWN}. They cannot be shortened, because a dropped"
+                " confirmation hides a decision the parent is credited with and never made, so"
+                " a candidate whose confirmations do not fit the message is carrying too many"
+                " accepted defects to hand over at once. Fix some of them, shorten the decision"
+                " and follow-up references, or split the change",
+            )
     return {
         "isDraft": False,
         "baseVerifiedAt": verified_at,
