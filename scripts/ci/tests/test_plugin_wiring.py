@@ -1340,25 +1340,34 @@ class DeclaredStopCommandTest(unittest.TestCase):
         dispatch into a method that answers something unrelated to the number. int(code) reads
         the value the interpreter would use, which is the rule this declaration claims to follow.
         """
-        lying = ("class E(int):\n"
-                 "    def __eq__(self, other):\n"
-                 "        return %s\n"
-                 "    def __hash__(self):\n"
-                 "        return 0\n"
-                 "raise SystemExit(E(%d))\n")
-        for says, value, expected in ((True, 5, 1), (False, 0, 0)):
-            with self.subTest(value=value, says=says):
-                tag = "%s-%d" % (says, value)
-                cache = self.root / ("sub-" + tag) / "0.4.0"
-                self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
-                           lying % (says, value))
-                home = self.root / ("subhome-" + tag)
-                home.mkdir(parents=True, exist_ok=True)
-                done, ran = self.fire(cache, home)
-                self.assertEqual(ran, ["PACKAGED"])
-                self.assertEqual(done.returncode, expected,
-                                 "E(%d) with __eq__ -> %s was mapped to %d"
-                                 % (value, says, done.returncode))
+        shapes = {
+            "__eq__": "class E(int):\n"
+                      "    def __eq__(self, other):\n"
+                      "        return %s\n"
+                      "    def __hash__(self):\n"
+                      "        return 0\n"
+                      "raise SystemExit(E(%d))\n",
+            "__int__": "class E(int):\n"
+                       "    def __int__(self):\n"
+                       "        return %s\n"
+                       "raise SystemExit(E(%d))\n",
+        }
+        for name, template in sorted(shapes.items()):
+            lies = "True" if name == "__eq__" else "0"
+            truths = "False" if name == "__eq__" else "5"
+            for says, value, expected in ((lies, 5, 1), (truths, 0, 0)):
+                with self.subTest(override=name, value=value, says=says):
+                    tag = "%s-%s-%d" % (name.strip("_"), says, value)
+                    cache = self.root / ("sub-" + tag) / "0.4.0"
+                    self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
+                               template % (says, value))
+                    home = self.root / ("subhome-" + tag)
+                    home.mkdir(parents=True, exist_ok=True)
+                    done, ran = self.fire(cache, home)
+                    self.assertEqual(ran, ["PACKAGED"])
+                    self.assertEqual(done.returncode, expected,
+                                     "E(%d) with %s -> %s was mapped to %d"
+                                     % (value, name, says, done.returncode))
 
 
     def test_the_declaration_stays_within_the_timeout_the_host_clamps(self):
