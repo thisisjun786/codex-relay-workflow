@@ -738,13 +738,16 @@ class DeliveryService:
             return None
         if row["state"] not in CLAIMABLE:
             return None
-        if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
-            return None
         if relationship["status"] != RELATIONSHIP_ACTIVE and not relationship["supersededBy"]:
             # Decided before any host read. The claim already refuses this atomically, so
             # nothing was ever sent either way; what was missing is the reason. Reading the
             # host here would also observe a task on behalf of an assignment somebody stopped,
             # and leave a recipient_lifecycle row calling that recipient deliverable.
+            #
+            # Ahead of the next_eligible_at guard on purpose. A delivery can be eligible by
+            # state but still waiting out a backoff, and returning None for that reason would
+            # hide a deactivation that has already happened: an operator naming the event
+            # during the wait would learn nothing until the timer expired.
             #
             # Superseded relationships are deliberately NOT routed here. They are deactivated
             # too, but permanently - resume() refuses them - so they belong to the terminal
@@ -753,7 +756,10 @@ class DeliveryService:
             # that terminal. They keep their existing behaviour until that is decided.
             return self._withhold_inactive(
                 event_id, relationship, now, attempts=row["attempt_count"],
+                not_before=row["next_eligible_at"],
             )
+        if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
+            return None
         assert_assignment_delivery(
             relationship, kind=row["kind"], recipient_task_id=recipient,
             recipient_thread_id=row["recipient_thread_id"],
@@ -1047,7 +1053,8 @@ class DeliveryService:
             if row["state"] != DEFERRED_BUSY:
                 self.store.journal("delivery_deferred_busy", event_id, at=self.clock.iso())
 
-    def _withhold_inactive(self, event_id: str, relationship, now: float, *, attempts: int):
+    def _withhold_inactive(self, event_id: str, relationship, now: float, *, attempts: int,
+                           not_before=None):
         """An assignment status a person set stops the delivery here, with the reason kept.
 
         Deliberately NOT a hold_reason: paused, cancelled and archived are exactly the statuses
@@ -1062,6 +1069,11 @@ class DeliveryService:
         """
         status = relationship["status"]
         when = now + self.policy.lifecycle_recheck_seconds
+        if not_before is not None and not_before > when:
+            # Never brings an existing backoff forward. Whatever set that time - a busy
+            # recipient, a rate limit - had its own reason, and recording this status is not
+            # a reason to retry sooner than it asked.
+            when = not_before
         with self.store.transaction() as db:
             cursor = db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"

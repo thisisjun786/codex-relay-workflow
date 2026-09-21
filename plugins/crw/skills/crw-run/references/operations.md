@@ -1126,7 +1126,9 @@ they are enforced by exclusion rather than by a recorded refusal: the scheduler 
 their deliveries, so the ordinary service path writes nothing. A direct attempt on a named event
 refuses before any host read and journals `delivery_withheld_inactive` carrying the relationship
 and the status it refused on; the `relationship_not_active` reason travels in the returned record
-rather than in the journal. The narrow race where an assignment is deactivated after the scheduler
+rather than in the journal. That answer does not wait on a retry timer: a delivery still serving a
+backoff reports the deactivation when it is asked, and recording it never brings the existing
+retry time forward. The narrow race where an assignment is deactivated after the scheduler
 selected it takes the same path, and a tick that does that reports a deferral rather than a quiet
 pass. All of this carries unit coverage rather than a live run.
 A superseded assignment is excluded by the same scheduler filter but is deliberately left out of

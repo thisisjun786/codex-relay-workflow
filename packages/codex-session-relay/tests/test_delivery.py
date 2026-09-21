@@ -458,6 +458,36 @@ class DeactivatedAssignment(DeliveryTestCase):
         self.assertEqual(record["deliveryState"], DISPATCHED)
         self.assertEqual(len(self.adapter.sends), 1, "nothing was lost while it was paused")
 
+    def test_a_deactivation_is_reported_while_a_backoff_is_still_running(self):
+        """Eligible by state, delayed by time, and stopped by its owner.
+
+        The reason has to surface when the event is named, not when the timer expires: an
+        operator asking at 12:02 about an assignment cancelled at 12:01 should not have to
+        wait until 12:05 to be told.
+        """
+        _relationship, event_id = self.queued_event()
+        self.adapter.set_status(PARENT, "active")
+        self.assertIsNone(self.attempt(event_id), "deferred busy, with a retry time set")
+        deferred_until = self.delivery_row(event_id)["next_eligible_at"]
+        self.assertIsNotNone(deferred_until)
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        record = self.attempt(event_id)
+        self.assertIsNotNone(record, "the backoff must not swallow the deactivation")
+        self.assertEqual(record["withheldReason"], RefusalReason.RELATIONSHIP_NOT_ACTIVE)
+        self.assertEqual(record["relationshipStatus"], "cancelled")
+
+    def test_recording_a_deactivation_never_shortens_an_existing_backoff(self):
+        _relationship, event_id = self.queued_event()
+        self.adapter.set_status(PARENT, "active")
+        self.attempt(event_id)
+        deferred_until = self.delivery_row(event_id)["next_eligible_at"]
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        self.attempt(event_id)
+        self.assertGreaterEqual(
+            self.delivery_row(event_id)["next_eligible_at"], deferred_until,
+            "whatever set that time had its own reason",
+        )
+
     def test_a_superseded_assignment_is_left_to_the_supersession_path(self):
         """Deactivated, but permanently, so it is not this withhold's business.
 
