@@ -95,6 +95,8 @@ def _confined_facts(directory, root, session, turn):
         for path in paths:
             if pattern and path.name.startswith("."):
                 continue
+            if folder == directory / "hook" / session / turn and path.name == guard.HOLD_FILE:
+                continue
             count += 1
             if count > MAX_FACTS:
                 raise Unmeasured("marker_history_limit")

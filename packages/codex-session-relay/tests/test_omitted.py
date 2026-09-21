@@ -337,3 +337,16 @@ class Reporting(GuardTestCase):
             for n in range(omitted.MAX_FACTS + 1):
                 (folder / (str(n) + ".json")).write_text("{}")
         self.assertEqual(self.read()["reportingState"], "unreported")
+
+    def test_ignored_hold_file_does_not_consume_the_fact_budget(self):
+        relation = self.managed()
+        self.evaluate(mode=guard.OBSERVE)
+        self.settle(relation)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        folder = directory / "hook" / CHILD / DISPATCH_TURN
+        # The consumed paths here are one claims directory and one Stop record.
+        with patch.object(omitted, "MAX_FACTS", 2):
+            before = self.read()
+            self.assertEqual(before["reportingState"], "unreported")
+            (folder / guard.HOLD_FILE).write_text("{}")
+            self.assertEqual(self.read()["reportingState"], "unreported")
