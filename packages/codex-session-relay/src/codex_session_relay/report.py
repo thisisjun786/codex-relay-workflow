@@ -77,14 +77,15 @@ ACCEPTANCE_SHOWN = 2400
 # confirmations is therefore measured against what those four actually cost on this report
 # rather than assumed.
 #
-# PROTOCOL_FLOOR is what stays unelidable underneath them: the header framing, the readiness
-# lines, the omission notice, the relay record and the instruction for answering. It is
-# MEASURED rather than estimated, by bisecting the smallest budget that renders, and the
-# measured figure is flat across one, two, four and eight confirmations. That flatness is the
-# shape to expect, because pinning the confirmations also pins the three readiness lines above
-# them that used to shrink, and that delta is a constant. The margin is for the scaffolding
-# changing; the worst-legal-report test is what fails if it moves past the margin.
-PROTOCOL_FLOOR = 1500
+# PROTOCOL_FLOOR is what stays unelidable underneath them once the merge-readiness block is
+# measured separately: the header framing, the omission notice, the relay record and the
+# instruction for answering. It is MEASURED rather than estimated, by bisecting the smallest
+# budget that renders, and the measured figure is a flat 1235 across one, four and eight
+# confirmations AND across one and six declared required checks. That flatness in both
+# directions is the evidence that the varying parts are all being charged where they vary
+# rather than absorbed into this constant. The margin is for the scaffolding changing, and
+# the worst-legal-report test is what fails if it moves past the margin.
+PROTOCOL_FLOOR = 1280
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -217,16 +218,18 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     # cxc_reason and next_action, and they live at this level. Refusing now is the difference
     # between a child that is told to fix some of them and a report that is accepted and then
     # undeliverable for good, since rendering happens inside the delivery claim.
-    shown = _acceptance_lines(_accepted_dispositions(handoff))
-    if shown:
-        total = sum(_size(line) + 1 for line in shown)
-        room = _confirmations_room(summary, reason, next_action, pr_url)
+    if _accepted_dispositions(handoff):
+        # The WHOLE block, because an acceptance pins all of it, including the line that
+        # joins every required check name together.
+        pinned = _handoff_lines({"headSha": head_sha, "baseSha": base_sha, "handoff": handoff})
+        total = sum(_size(line) + 1 for line in pinned)
+        room = _confirmations_room(summary, reason, next_action)
         if total > room:
             raise ReceiptRefused(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
-                f"the acceptance confirmations for this candidate render {total} bytes and"
-                f" only {room} are left for them once this report's summary, reason, next"
-                " action and pull request url have taken theirs. They cannot be shortened,"
+                f"the merge readiness block for this candidate renders {total} bytes and only"
+                f" {room} are left for it once this report's summary, reason and next action"
+                " have taken theirs. An acceptance pins the whole block, checks line included,"
                 " because a dropped"
                 " confirmation hides a decision the parent is credited with and never made,"
                 " so a candidate whose confirmations do not fit the message is carrying too"
@@ -1790,15 +1793,24 @@ def _verified_at(value):
         return None
     return parsed.isoformat()
 
-def _confirmations_room(summary, reason, next_action, pr_url=None) -> int:
-    """How many bytes the unelidable confirmations may take on THIS report.
+def _confirmations_room(summary, reason, next_action) -> int:
+    """How many bytes the pinned merge-readiness block may take on THIS report.
 
-    A fixed reserve answered the wrong question. What matters is not whether the
-    confirmations are large in the abstract but whether they still fit once the other things
-    nobody can shorten have taken their share, and those vary per report.
+    A fixed reserve answered the wrong question. What matters is not whether the block is
+    large in the abstract but whether it still fits once the other things nobody can shorten
+    have taken their share, and those vary per report.
+
+    What is charged here is what is actually pinned. An acceptance sets the section's floor to
+    its whole length, so the base readiness lines above the confirmations are pinned too, and
+    one of them joins every declared required check name onto a single line whose length
+    nothing bounds in aggregate. Charging only the confirmations left that line free to grow
+    past the budget on its own.
+
+    pr_url is deliberately NOT charged. It is the third line of a section with keep=2, so the
+    composer can drop it, and charging an elidable line would make the recorder stricter than
+    the renderer and refuse reports that would have delivered perfectly well.
     """
-    spoken_for = (PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
-                  + _size(pr_url or ""))
+    spoken_for = PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
     # Never negative: a report whose other required parts already fill the budget has room
     # for no confirmation at all, and that is a refusal rather than a wrapped-around ceiling.
     return max(0, min(ACCEPTANCE_SHOWN, BUDGET - spoken_for))

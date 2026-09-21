@@ -451,13 +451,7 @@ def test_the_room_for_confirmations_shrinks_as_the_other_unelidable_fields_grow(
     assert worst < roomy, "and a report at every other limit gets less"
     assert (worst + report.PROTOCOL_FLOOR + report.SUMMARY_MAX + report.REASON_MAX
             + report.ACTION_MAX) <= report.BUDGET
-    # A url is unelidable too and may be longer than the other three together, so it counts
-    # against the same room. Visible only where the reserve is not already the binding
-    # ceiling, which is why this compares two reports that are both at the other limits.
-    with_url = report._confirmations_room("s" * report.SUMMARY_MAX, "r" * report.REASON_MAX,
-                                          "n" * report.ACTION_MAX, "u" * report.URL_MAX)
-    assert with_url < worst, "a long url takes room too"
-    assert with_url == 0, (
+    assert report._confirmations_room("s" * report.BUDGET, "r", "n") == 0, (
         "a report whose required parts already fill the budget has room for no confirmation,"
         " which is a refusal rather than a wrapped-around ceiling"
     )
