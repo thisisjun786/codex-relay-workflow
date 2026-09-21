@@ -332,8 +332,10 @@ class RelayDaemon:
         # would never settle that omission. Include this assignment's admissions
         # from every generation, like historical anchors, until they settle.
         admitted = [row["turn_id"] for row in self.store.all(
-            "SELECT turn_id FROM generation_turns WHERE relationship_id = ?"
-            " ORDER BY admitted_at, turn_id", (rid,),
+            "SELECT t.turn_id FROM generation_turns t WHERE t.relationship_id = ?"
+            " AND EXISTS (SELECT 1 FROM generations g WHERE g.relationship_id = t.relationship_id"
+            " AND g.execution_generation = t.execution_generation)"
+            " ORDER BY t.admitted_at, t.turn_id", (rid,),
         )]
         ring = [
             turn_id for turn_id in dict.fromkeys(staged + admitted + history)

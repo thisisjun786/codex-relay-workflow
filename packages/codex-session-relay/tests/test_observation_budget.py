@@ -256,6 +256,18 @@ class AdmittedTurnsWithoutReceipts(DaemonTestCase):
         self.assertEqual(self.store.all("SELECT event_id FROM events"), [])
         self.assertEqual(self.adapter.sends, [])
 
+    def test_unknown_generation_admission_is_not_assignment_work(self):
+        relation = self.register()
+        self.admit(relation, "unknown-generation-failure", generation=99, status="failed")
+        selected = self.daemon._turns_to_poll(self.registry.get(relation["relationshipId"]), 8)
+        self.assertNotIn("unknown-generation-failure", selected)
+        self.daemon.tick()
+        self.assertIsNone(self.store.one(
+            "SELECT turn_id FROM assignment_settlements WHERE turn_id=?",
+            ("unknown-generation-failure",)))
+        self.assertEqual(self.store.all("SELECT event_id FROM events"), [])
+        self.assertEqual(self.adapter.sends, [])
+
     def test_active_admitted_turn_is_read_again_but_not_settled(self):
         relation = self.register()
         self.admit(relation, "business-active", status="inProgress")
