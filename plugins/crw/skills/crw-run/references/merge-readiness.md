@@ -101,13 +101,16 @@ current-head readiness, and proposes the rest.
 
 A finding BLOCKS, and is never conditionally accepted, when it is any of these:
 
-- a required issue or acceptance criterion left unmet, where the user has not
-  expressly conceded it;
+- a severe effect on what this change is for, or the failure of a core function it
+  delivers;
 - a safety effect, or data loss or corruption;
 - an authorization, permission, credential, or protection boundary that the change
   weakens or bypasses;
-- a regression this change introduced, including one introduced by the round's own
-  fix;
+- a required issue or acceptance criterion left unmet. A user's concession moves
+  that criterion rather than excusing it, and it counts only once the registered
+  criterion carries the conceded wording, under the per-criterion dispositions
+  [crw-check](../../crw-check/SKILL.md) owns;
+- a material regression this change introduced;
 - an unmet required review gate or required check.
 
 A blocking finding is fixed on this pull request, or the candidate is reported
@@ -115,11 +118,24 @@ blocked. One that arrives after the child has finished its rounds is raised to t
 parent rather than absorbed silently, and the parent decides whether it belongs to
 this issue or to a successor.
 
-Every other real finding is MINOR AND SEPARABLE: worth recording, and not worth
-holding this delivery for. Wording, formatting, a clearer phrasing, a naming
-preference, a hardening suggestion beyond this issue's scope, and an independent
-defect that predates this change are the usual shapes. Being real is what earns it
-a disposition; being separable is what makes it acceptable.
+A regression this change introduced is in scope whatever its size, because this
+change caused it, so it is never dispositioned as pre-existing or out of scope. A
+material one blocks. A trivial one left by the round's own fix is finished rather
+than accepted, because fixing what you just broke costs less than recording why
+you left it.
+
+A finding is MINOR AND SEPARABLE when both of these hold: it reaches none of the
+classes above, and the residue it leaves is detachable from what this issue
+delivers. Separability is established rather than assumed. Wording, formatting, a
+clearer phrasing, a naming preference, a hardening suggestion beyond this issue's
+scope, and an independent defect that predates this change are the usual shapes.
+Being real is what earns it a disposition; being separable is what makes it
+acceptable.
+
+A finding whose class is genuinely unclear is raised to the parent as unclassified
+rather than settled into this one. The list above is finite and the ways to break
+something are not, so "it is not on the list" is not a classification, and neither
+is a severity a reviewer happened to print.
 
 A level above the owning parent may raise a finding, and may decide merge order. It
 does not reclassify a minor separable residue as blocking by asserting that it is
@@ -132,6 +148,16 @@ The parent that owns the criteria owns this judgment, and a child does not grant
 own. A parent may instead grant it in the assignment as a bounded standing decision,
 stating the bound it covers. Either way, each acceptance records five things or is
 not recorded:
+
+The exchange that produces one is small, and it happens before the handoff rather
+than as another review round. The child sends the finding, its own reading of the
+effect and the separability, and what it proposes; the parent answers accept or fix.
+What the parent decides is the criteria-and-purpose question only, which is whether
+this residue matters for what the issue is for. It does not re-read the diff,
+re-triage the thread, or re-derive the finding: those stay the child's under
+[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release), and a parent
+that finds itself reconstructing the finding has crossed into the child's round and
+returns it instead.
 
 1. the exact finding, quoted or linked to its thread;
 2. its current effect, stated concretely rather than as "minor";
@@ -147,6 +173,15 @@ closing. Nor is it available for a finding nobody weighed. A disposition written
 clear a gate without assessing what the finding actually does is the thing this
 section exists to forbid, and it is worse than another round, because the round
 costs time while the false record costs the reader their trust in every other one.
+
+An acceptance recorded by a child is that child ASSERTING a decision the parent
+made, and no transport here authenticates the claim. So the parent's pre-merge
+restatement confirms each accepted disposition against a decision it actually made,
+and an acceptance it does not recognise returns the candidate to that child
+fail-closed, exactly as any other disagreement between the record and the re-read
+does under [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran).
+This is the one disposition that legitimises a defect the candidate still carries,
+which is why it is confirmed rather than counted.
 
 A bounded follow-up never waives a required criterion. Where accepting a finding
 would leave an issue criterion unmet, the criterion governs and the finding blocks.

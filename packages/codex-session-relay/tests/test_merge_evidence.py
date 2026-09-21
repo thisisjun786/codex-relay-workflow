@@ -336,13 +336,15 @@ def test_a_minor_finding_a_parent_accepted_has_a_true_disposition_to_record():
     handoff = _ready_handoff(threadDispositions=[{
         "threadId": "t1", "disposition": "accepted",
         "evidence": "wording residue in a comment; no criterion depends on it",
-        "addressedBy": "parent decision 2026-09-21, follow-up CRW-176",
+        "addressedBy": "parent task 01a0b406 accepted it on 2026-09-21",
+        "followUp": "CRW-176 owns it; reopens if the wording reaches a criterion",
     }])
     recorded = report._check_handoff(handoff, 12, HEAD, BASE, "ready_for_review")
     assert recorded["threadDispositions"] == [{
         "threadId": "t1", "disposition": "accepted",
         "evidence": "wording residue in a comment; no criterion depends on it",
-        "addressedBy": "parent decision 2026-09-21, follow-up CRW-176",
+        "addressedBy": "parent task 01a0b406 accepted it on 2026-09-21",
+        "followUp": "CRW-176 owns it; reopens if the wording reaches a criterion",
     }]
 
 
@@ -358,11 +360,68 @@ def test_an_acceptance_that_names_no_decision_is_refused_like_a_fix_with_no_comm
             report._check_handoff(_ready_handoff(threadDispositions=[{
                 "threadId": "t1", "disposition": "accepted",
                 "evidence": "minor and separable", "addressedBy": missing,
+                "followUp": "CRW-176 owns it",
             }]), 12, HEAD, BASE, "ready_for_review")
         assert caught.value.reason is RefusalReason.MERGE_REVIEW_INCOMPLETE
-        assert "accepted" in str(caught.value)
+        assert "parent decision" in str(caught.value)
 
 
+def test_an_acceptance_that_leaves_nobody_holding_the_residue_is_refused():
+    """A known defect with no owner is how it stops being anybody's.
+
+    The five older values all describe something that is over. An acceptance describes
+    something that is not, so the owner and the reopen trigger are the part that makes it a
+    decision rather than an abandonment.
+    """
+    for missing in (None, "", "   "):
+        with pytest.raises(ReceiptRefused) as caught:
+            report._check_handoff(_ready_handoff(threadDispositions=[{
+                "threadId": "t1", "disposition": "accepted",
+                "evidence": "minor and separable",
+                "addressedBy": "parent task 01a0b406 accepted it", "followUp": missing,
+            }]), 12, HEAD, BASE, "ready_for_review")
+        assert caught.value.reason is RefusalReason.MERGE_REVIEW_INCOMPLETE
+        assert "follow-up" in str(caught.value)
+
+
+def test_a_follow_up_on_anything_but_an_acceptance_is_refused():
+    """If a fix could carry one, "there is a follow-up" would stop meaning anything."""
+    with pytest.raises(ReceiptRefused) as caught:
+        report._check_handoff(_ready_handoff(threadDispositions=[{
+            "threadId": "t1", "disposition": "fixed", "evidence": "fixed and rechecked",
+            "addressedBy": "abc1234", "followUp": "CRW-176 owns the rest",
+        }]), 12, HEAD, BASE, "ready_for_review")
+    assert caught.value.reason is RefusalReason.MALFORMED_RECEIPT
+
+
+def test_every_acceptance_reaches_the_parent_that_would_know_it_never_decided_it():
+    """Nothing authenticates "the parent accepted this", so it is shown, not counted.
+
+    An acceptance is the one disposition that legitimises a defect the candidate still
+    carries. Left in the store it is a row the parent has no reason to fetch, and a forged
+    one then clears the gate silently. Rendered, it lands in front of the only party who can
+    recognise whether the decision happened, during the restatement it performs anyway.
+    """
+    lines = report._handoff_lines({
+        "headSha": HEAD, "baseSha": BASE,
+        "handoff": report._check_handoff(_ready_handoff(threadDispositions=[{
+            "threadId": "t1", "disposition": "accepted",
+            "evidence": "wording residue; no criterion depends on it",
+            "addressedBy": "parent task 01a0b406 accepted it on 2026-09-21",
+            "followUp": "CRW-176 owns it",
+        }]), 12, HEAD, BASE, "ready_for_review"),
+    })
+    rendered = chr(10).join(lines)
+    assert "confirm each was yours" in rendered
+    assert "t1" in rendered
+    assert "parent task 01a0b406" in rendered
+    assert "CRW-176" in rendered
+    # A candidate with nothing accepted says nothing about acceptances.
+    plain = chr(10).join(report._handoff_lines({
+        "headSha": HEAD, "baseSha": BASE,
+        "handoff": report._check_handoff(_ready_handoff(), 12, HEAD, BASE, "ready_for_review"),
+    }))
+    assert "confirm each was yours" not in plain
 def test_resolving_a_thread_is_still_not_among_the_judgments():
     """Adding a word to the enum must not turn it into a place to put the button."""
     with pytest.raises(ReceiptRefused) as caught:

@@ -1652,7 +1652,15 @@ def _handoff_lines(report) -> list:
     coverage = handoff.get("reviewCoverage") or {}
     required = handoff.get("requiredDeclared") or []
     checks = handoff.get("checks") or []
-    return [
+    # An acceptance is the child asserting a decision the PARENT made, and nothing here can
+    # authenticate that. Rendering each one puts the assertion in front of the only party who
+    # knows whether it happened, at the moment it restates the record anyway. Left in the
+    # store it would be a row nobody had a reason to fetch.
+    accepted = [
+        one for one in (handoff.get("threadDispositions") or [])
+        if one.get("disposition") == "accepted"
+    ]
+    lines = [
         "",
         "merge readiness (restate these; do not collect them again):",
         f"  head {report.get('headSha')} on base {report.get('baseSha')}"
@@ -1662,6 +1670,12 @@ def _handoff_lines(report) -> list:
         f"  review: {coverage.get('totalCount')} thread(s) seen over"
         f" {coverage.get('pagesRead')} page(s), {coverage.get('unresolved')} unresolved",
     ]
+    if accepted:
+        lines.append(f"  accepted by your decision ({len(accepted)}) - confirm each was yours:")
+        for one in accepted:
+            lines.append(f"    {one.get('threadId')}: {one.get('addressedBy')}"
+                         f" - follow-up {one.get('followUp')}")
+    return lines
 
 #: Which refusal a problem code becomes. The next action genuinely differs for each, which is
 #: why the predicate returns codes rather than prose: an undeclared required set is something
@@ -1831,6 +1845,16 @@ def _check_dispositions(entries, review):
     it left because that is where ITS claim is checkable. An acceptance with nothing to point
     at is the shape this gate exists to refuse: it reads exactly like a weighed judgment and
     contains none.
+
+    What this canNOT do is authenticate the parent. Nothing here has an authenticated caller,
+    so a child asserting "the parent accepted this" is asserting it, exactly as `--actor` and
+    `--task` are asserted everywhere else in this package. An acceptance is therefore the one
+    disposition that legitimises a defect the candidate still carries, which makes an
+    unnoticed forgery the real risk rather than a malformed field. The answer is not a check
+    that cannot be performed and reads like one: every acceptance is rendered into the merge
+    readiness lines the parent restates before merging, so a decision the parent did not make
+    arrives in front of the party that would know, and OPS-9.4 already returns a record that
+    disagrees with the re-read to the child fail-closed.
     """
     judged = {}
     for item in _sequence(entries, "threadDispositions"):
@@ -1870,16 +1894,35 @@ def _check_dispositions(entries, review):
                 "a per-finding trail is the finding, the commit that addressed it, and the "
                 "recheck",
             )
-        if disposition == "accepted" and not (isinstance(addressed, str) and addressed.strip()):
+        follow_up = item.get("followUp")
+        if disposition == "accepted":
+            if not (isinstance(addressed, str) and addressed.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted without naming the parent "
+                    "decision that accepted it; an acceptance is a judgment somebody made and "
+                    "owns, not a fix and not a cleared thread",
+                )
+            if not (isinstance(follow_up, str) and follow_up.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted with no follow-up owner and "
+                    "reopen trigger; an acceptance that leaves nobody holding the residue is "
+                    "how a known defect stops being anybody's",
+                )
+        elif follow_up is not None:
+            # Only an acceptance leaves a residue somebody owns. Letting the field ride along
+            # on a fix would make "there is a follow-up" stop meaning anything.
             raise ReceiptRefused(
-                RefusalReason.MERGE_REVIEW_INCOMPLETE,
-                f"thread {identifier!r} is recorded accepted without naming the decision that "
-                "accepted it and the follow-up it left; an acceptance is a judgment somebody "
-                "made and owns, not a fix and not a cleared thread",
+                RefusalReason.MALFORMED_RECEIPT,
+                f"thread {identifier!r} is recorded {disposition!r} and carries a follow-up; "
+                "a follow-up belongs to an acceptance, which is the disposition that leaves "
+                "a residue for somebody to own",
             )
         judged[identifier] = {
             "threadId": identifier, "disposition": disposition, "evidence": note,
             "addressedBy": addressed.strip() if isinstance(addressed, str) else None,
+            "followUp": follow_up.strip() if isinstance(follow_up, str) else None,
         }
     seen = [str(one) for one in (review.get("threadsSeen") or [])]
     unaccounted = [one for one in seen if one not in judged]

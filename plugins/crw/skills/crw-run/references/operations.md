@@ -984,9 +984,13 @@ a review thread loses the history a reviewer needs and starts the review over.
 ### OPS-9.2 What normal completion means
 
 A child reports normal completion only when the required checks and reviews on the CURRENT head
-have finished and every blocking finding is resolved. Each finding carries its own evidence: the
-finding, the commit that addressed it, and the recheck that confirms it. A summary saying review
-was addressed, with no per-finding trail, is not that evidence.
+have finished and every blocking finding is resolved, with
+[Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact) deciding which
+findings those are. Each finding carries its own evidence. For one that was fixed that is the
+finding, the commit that addressed it, and the recheck that confirms it. For one the parent
+accepted it is the finding, that decision, and the follow-up owner and trigger it left, because
+an acceptance has no commit to name and is not a fix. A summary saying review was addressed,
+with no per-finding trail, is not that evidence.
 
 An optional review that is unavailable or stalled is recorded as unavailable, with sufficient
 independent review obtained instead under the repository's policy, and the work continues. Waiting
@@ -1035,6 +1039,16 @@ the head and the base immediately before merging and compares the counts it sees
 That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
 record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
 reviews on the child's behalf.
+
+Two further things the parent does are not a second review round either. Deciding an acceptance
+the child PROPOSED is the parent's own judgment: the child brings the finding with its reading of
+the effect and the separability, and the parent rules only on whether that residue matters for
+what the issue is for, which is a criteria question nobody else holds. And confirming that each
+disposition recorded as accepted names a decision the parent actually made is recognition rather
+than triage, because nothing authenticates that claim and the parent is the only party who would
+know; an acceptance it does not recognise returns the candidate fail-closed like any other
+disagreement. [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact)
+holds both, and neither lets the parent re-derive the finding itself.
 
 Release and deployment are separate and still require the user. A merge that is known to trigger a
 release or a deployment needs that approval before the merge, since the branch name alone does not

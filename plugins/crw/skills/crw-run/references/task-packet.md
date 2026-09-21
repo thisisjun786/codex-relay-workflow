@@ -277,11 +277,12 @@ Return:
   `{runId, name, headSha, conclusion, attempt}`, the review coverage as
   `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, a judged disposition with
   evidence for every thread in `threadsSeen`, where an `accepted` one also names the parent
-  decision behind it, the follow-up owner and the trigger that reopens it, and the boundary
-  it leaves known, your per-criterion evidence, and the limitations that remain. State every
-  field: an absent one used to read as satisfied, so a record that said nothing passed every
-  check. The parent restates these values immediately before merging rather than collecting
-  them again, which is why they are yours to produce.
+  decision behind it and, in its own `followUp`, the owner and the trigger that reopens it,
+  plus the boundary it leaves known. Then your per-criterion evidence and the limitations that
+  remain. State every field: an absent one used to read as satisfied, so a record that said
+  nothing passed every check. The parent restates these values immediately before merging
+  rather than collecting them again, which is why they are yours to produce, and it confirms
+  each acceptance against a decision it actually made.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 - Proposed changes to a Linear record, returned rather than written: the document or issue ID,
   the revision you read, the reason, the smallest sufficient change and its evidence.
