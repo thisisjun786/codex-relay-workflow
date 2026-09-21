@@ -230,6 +230,56 @@ class Elision(DeliveryTestCase):
         self.assertIn("submission: 1", tight, "nor which submission produced these bytes")
         self.assertIn("requestId: del-x-a1", tight)
 
+    def test_acceptance_confirmations_are_not_what_a_tight_budget_drops(self):
+        """CRW-25: an acceptance is the child asserting a decision the PARENT made.
+
+        Nothing in this package authenticates that claim, so the confirmation line is the
+        whole mitigation: it lands in front of the only party who knows whether it decided
+        anything. This section used to shrink to its heading, which put a forged acceptance
+        back to clearing the gate in silence, and the count is exactly what the parent would
+        never have known to go looking for.
+        """
+        _relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+        threads = [f"PRRT_accepted_{n}" for n in range(6)]
+        handoff = a_handoff(head)
+        handoff["reviewCoverage"] = {"hasNextPage": False, "pagesRead": 1,
+                                     "totalCount": len(threads), "threadsSeen": threads,
+                                     "unresolved": 0}
+        handoff["threadDispositions"] = [
+            {"threadId": one, "disposition": "accepted",
+             "evidence": f"wording residue {n}; no criterion depends on it",
+             "addressedBy": "parent task 01a0b406 accepted it on 2026-09-21",
+             "followUpOwner": "CRW-176",
+             "reopenTrigger": "the wording reaches a criterion"}
+            for n, one in enumerate(threads)
+        ]
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(handoff=handoff, head_sha=head,
+                                 unresolved=[f"open item {n} with text" for n in range(400)]))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        for budget in (4000, 6000, report.BUDGET):
+            message = report.render_completion(row, receipt, "del-x-a1", stored, budget=budget)
+            self.assertIn("confirm each was yours", message,
+                          f"the confirmations vanished at budget {budget}")
+            for one in threads:
+                self.assertIn(one, message,
+                              f"acceptance {one} was dropped in silence at budget {budget}")
+            self.assertIn("omitted:", message, "something else shortened instead")
+        # And where they genuinely cannot fit, the refusal is loud. Dropping them to make a
+        # message fit is the one outcome that must not happen, so an impossible budget raises
+        # instead of shipping a candidate whose acceptances nobody was shown.
+        with self.assertRaises(ValueError) as caught:
+            report.render_completion(row, receipt, "del-x-a1", stored, budget=1700)
+        self.assertIn("raise the budget", str(caught.exception))
+
+    def test_a_candidate_with_nothing_accepted_claims_no_acceptances(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.assertNotIn("confirm each was yours", self.delivery.render_message(event_id))
+
     def test_shortening_a_long_list_stays_correct_and_does_not_rescan(self):
         _relationship, event_id = self.queued_event()
         receipt = self.intake.get(event_id)

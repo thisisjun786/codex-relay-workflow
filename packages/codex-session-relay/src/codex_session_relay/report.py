@@ -1236,6 +1236,8 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
     event_id = row["event_id"]
     assert_current(report, execution_generation=receipt.get("executionGeneration")
                    or report["executionGeneration"])
+    readiness = _handoff_lines(report)
+    readiness_keep = len(readiness) if _accepted_dispositions(report.get("handoff")) else 2
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -1248,7 +1250,13 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
         # keep counts from the top of the block, and these blocks open with a blank line, so
         # a floor of two is what keeps the heading attached to whatever survives under it.
         _Section("pull request", _pr_lines(report), rank=1, essential=True, keep=2),
-        _Section("merge readiness", _handoff_lines(report), rank=1, essential=True, keep=2),
+        # keep is a floor on what survives shrinking, and 2 left only the heading. That was
+        # survivable while this section carried counts the parent could re-read for itself,
+        # and it is not now: an acceptance line is the ONLY place the parent learns it is
+        # credited with a decision it may never have made, so dropping it silently restores
+        # exactly the forgery this rendering exists to catch. Naming the whole block makes
+        # the composer shorten something else instead.
+        _Section("merge readiness", readiness, rank=1, essential=True, keep=readiness_keep),
         _Section("verification", _evidence_lines(report), rank=4),
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
@@ -1638,6 +1646,16 @@ def _ack_lines(event_id):
 
 # ------------------------------------------------------------------- merge readiness
 
+def _accepted_dispositions(handoff) -> list:
+    """The threads a handoff claims the parent agreed to leave unfixed."""
+    if not handoff:
+        return []
+    return [
+        one for one in (handoff.get("threadDispositions") or [])
+        if one.get("disposition") == "accepted"
+    ]
+
+
 def _handoff_lines(report) -> list:
     """What the parent restates, said in the message rather than left in the store.
 
@@ -1656,10 +1674,7 @@ def _handoff_lines(report) -> list:
     # authenticate that. Rendering each one puts the assertion in front of the only party who
     # knows whether it happened, at the moment it restates the record anyway. Left in the
     # store it would be a row nobody had a reason to fetch.
-    accepted = [
-        one for one in (handoff.get("threadDispositions") or [])
-        if one.get("disposition") == "accepted"
-    ]
+    accepted = _accepted_dispositions(handoff)
     lines = [
         "",
         "merge readiness (restate these; do not collect them again):",
@@ -1674,7 +1689,8 @@ def _handoff_lines(report) -> list:
         lines.append(f"  accepted by your decision ({len(accepted)}) - confirm each was yours:")
         for one in accepted:
             lines.append(f"    {one.get('threadId')}: {one.get('addressedBy')}"
-                         f" - follow-up {one.get('followUp')}")
+                         f" - {one.get('followUpOwner')} owns it,"
+                         f" reopens on {one.get('reopenTrigger')}")
     return lines
 
 #: Which refusal a problem code becomes. The next action genuinely differs for each, which is
@@ -1869,7 +1885,12 @@ def _check_dispositions(entries, review):
                 RefusalReason.MALFORMED_RECEIPT,
                 "each thread disposition names the review thread it is about",
             )
-        identifier = identifier.strip()
+        # Bounded and single-lined because these three are spliced into the acceptance
+        # confirmations the parent reads. Before they were rendered, a newline in one was
+        # merely ugly storage; now it adds a line to the protocol, which is the splice
+        # `_single_line` exists to refuse.
+        identifier = _bounded(_single_line(identifier.strip(), "a thread identifier"),
+                              "a thread identifier", LABEL_MAX)
         if identifier in judged:
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
@@ -1887,6 +1908,9 @@ def _check_dispositions(entries, review):
         note = _single_line(_required(item.get("evidence"), "a disposition evidence"),
                             "a disposition evidence")
         addressed = item.get("addressedBy")
+        if isinstance(addressed, str) and addressed.strip():
+            addressed = _bounded(_single_line(addressed.strip(), "a disposition addressedBy"),
+                                 "a disposition addressedBy", LABEL_MAX)
         if disposition == "fixed" and not (isinstance(addressed, str) and addressed.strip()):
             raise ReceiptRefused(
                 RefusalReason.MERGE_REVIEW_INCOMPLETE,
@@ -1894,7 +1918,8 @@ def _check_dispositions(entries, review):
                 "a per-finding trail is the finding, the commit that addressed it, and the "
                 "recheck",
             )
-        follow_up = item.get("followUp")
+        owner = item.get("followUpOwner")
+        trigger = item.get("reopenTrigger")
         if disposition == "accepted":
             if not (isinstance(addressed, str) and addressed.strip()):
                 raise ReceiptRefused(
@@ -1903,26 +1928,41 @@ def _check_dispositions(entries, review):
                     "decision that accepted it; an acceptance is a judgment somebody made and "
                     "owns, not a fix and not a cleared thread",
                 )
-            if not (isinstance(follow_up, str) and follow_up.strip()):
+            # Two facts, two fields. One opaque follow-up string was satisfied by naming an
+            # owner and saying nothing about what brings the finding back, and an acceptance
+            # nothing can reopen is a waiver wearing a follow-up's name.
+            if not (isinstance(owner, str) and owner.strip()):
                 raise ReceiptRefused(
                     RefusalReason.MERGE_REVIEW_INCOMPLETE,
-                    f"thread {identifier!r} is recorded accepted with no follow-up owner and "
-                    "reopen trigger; an acceptance that leaves nobody holding the residue is "
-                    "how a known defect stops being anybody's",
+                    f"thread {identifier!r} is recorded accepted with no follow-up owner; an "
+                    "acceptance that leaves nobody holding the residue is how a known defect "
+                    "stops being anybody's",
                 )
-        elif follow_up is not None:
-            # Only an acceptance leaves a residue somebody owns. Letting the field ride along
-            # on a fix would make "there is a follow-up" stop meaning anything.
+            if not (isinstance(trigger, str) and trigger.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted with no reopen trigger; "
+                    "without one the acceptance cannot be revisited by anything, which is a "
+                    "waiver rather than a deferral",
+                )
+            owner = _bounded(_single_line(owner.strip(), "a follow-up owner"),
+                             "a follow-up owner", LABEL_MAX)
+            trigger = _bounded(_single_line(trigger.strip(), "a reopen trigger"),
+                               "a reopen trigger", LABEL_MAX)
+        elif owner is not None or trigger is not None:
+            # Only an acceptance leaves a residue somebody owns. Letting these ride along on
+            # a fix would make "there is a follow-up" stop meaning anything.
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
-                f"thread {identifier!r} is recorded {disposition!r} and carries a follow-up; "
-                "a follow-up belongs to an acceptance, which is the disposition that leaves "
-                "a residue for somebody to own",
+                f"thread {identifier!r} is recorded {disposition!r} and carries follow-up "
+                "fields; a follow-up owner and a reopen trigger belong to an acceptance, "
+                "which is the disposition that leaves a residue for somebody to own",
             )
         judged[identifier] = {
             "threadId": identifier, "disposition": disposition, "evidence": note,
             "addressedBy": addressed.strip() if isinstance(addressed, str) else None,
-            "followUp": follow_up.strip() if isinstance(follow_up, str) else None,
+            "followUpOwner": owner if isinstance(owner, str) else None,
+            "reopenTrigger": trigger if isinstance(trigger, str) else None,
         }
     seen = [str(one) for one in (review.get("threadsSeen") or [])]
     unaccounted = [one for one in seen if one not in judged]
