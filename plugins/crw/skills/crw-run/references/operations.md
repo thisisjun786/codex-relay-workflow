@@ -1023,6 +1023,13 @@ parent is not woken at all, nothing detects this automatically on the currently 
 and that gap is reported as the named limitation it is rather than covered by an assurance nobody
 can keep.
 
+Opening that generation has no reason of its own. The reasons available describe an initial
+assignment and a needs-changes revision, and a hold recovery is neither, so whichever is chosen
+misdescribes what happened: the record afterwards reads as a correction round nobody performed.
+Record the real reason beside it in the coordination record until a reason exists for this case,
+and read a recovery generation's stated reason as the closest available word rather than as what
+occurred.
+
 **Restart.** On service restart, start-up recovery re-reads unsettled rows and in-flight leases
 before anything new is attempted. On parent restart, the parent drains before it acts. Neither
 re-judges a settled event, and neither re-sends a send whose outcome is merely unknown: an
@@ -1031,6 +1038,24 @@ uncertain send is reconciled by reading the store, never repeated under a new id
 **Protected recipients are not a failure mode.** A paused, cancelled or archived recipient has its
 delivery withheld and waiting under OPS-8.2, without consuming the budget above, and no part of
 this clause resumes it.
+
+Measured subset: on 2026-09-21 an isolated store and an isolated scope authority on this operating
+scope exercised four of the behaviours above with real recipient tasks. A recipient observed active
+before the claim was deferred at `attempt_count` 0 and delivered at attempt 1 once reachable,
+96 seconds later. A recipient whose own goal was paused, while its runtime read `idle` and its
+`can_accept_input` read true, was observed `deliverable: no` with `withhold_reason`
+`recipient_paused`, its delivery `withheld_pre_send` at `attempt_count` 0 with no hold, and it was
+not woken. A duplicate emission of the same generation and artifact returned the same event id and
+attempt rather than a second delivery. And a delivery carrying a cap hold was not selected across
+three ticks despite being eligible by time, was reported as held, and was recovered by a fresh
+generation that created a new delivery while the held row stayed held.
+
+What that measures is the relay and its store, not this clause. The drain, the marker and the
+ordering rules above are the parent's own behaviour and remain unenforced by the runtime. The cap
+hold was induced directly in a synthetic store rather than reached naturally, so it evidences the
+exclusion and the recovery and not that any real delivery has ever reached the cap. Only `paused`
+was exercised among the protected states; `cancelled` and `archived` rest on the same code path and
+were not observed.
 
 ## OPS-9 Delivery, review and merge
 
