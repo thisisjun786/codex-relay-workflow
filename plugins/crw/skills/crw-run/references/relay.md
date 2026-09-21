@@ -141,8 +141,9 @@ bridge operation rather than retried with a new request id.
 
 An ordinary turn end without a child receipt is not success. The Stop guard records omissions
 only for the assignment and session it can establish, and its bounded holds do not guarantee
-that an agent will submit a report. Direct bridge calls and tasks without a managed marker
-remain outside that observation. The worker's send-time policy and lifecycle checks remain
+that an agent will submit a report. Raw bridge calls are not themselves intercepted by the
+guard. Tasks without a managed marker remain outside its observation. The worker's send-time
+policy and lifecycle checks remain
 necessary even when an earlier readiness check passed.
 
 ## One shared state directory
