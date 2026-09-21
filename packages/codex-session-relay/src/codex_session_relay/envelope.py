@@ -235,8 +235,13 @@ def unreached(direction) -> dict:
     }
 
 
-def reached(ladder, name) -> bool:
-    """Whether a stage actually holds. Only yes counts; conditional is not yes."""
+def stage_holds(ladder, name) -> bool:
+    """Whether a stage actually holds. Only yes counts; conditional is not yes.
+
+    Not called reached, deliberately. editregion binds a local of that name, and the regression
+    map classifies declared booleans package-wide by bare name, so declaring one here would
+    change what that map derives about a module this work does not own.
+    """
     return (ladder.get(name) or {}).get("state") == YES
 
 

@@ -159,7 +159,9 @@ class TheFiveStages(unittest.TestCase):
 
     def test_silence_is_never_agreement_and_a_state_needs_a_source(self):
         ladder = envelope.unreached(envelope.CHILD_TO_PARENT)
-        self.assertFalse(envelope.reached(ladder, envelope.AGREED))
+        self.assertEqual(ladder[envelope.AGREED]["state"], envelope.UNMEASURED,
+                         "the stage is present and unanswered, not missing")
+        self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))
         with self.assertRaises(envelope.EnvelopeRefused):
             envelope.stage(envelope.YES)
         self.assertEqual(
@@ -169,7 +171,7 @@ class TheFiveStages(unittest.TestCase):
         ladder = envelope.unreached(envelope.CHILD_TO_PARENT)
         ladder[envelope.AGREED] = envelope.stage(
             envelope.CONDITIONAL, source="acks", detail="accepted subject to a follow-up")
-        self.assertFalse(envelope.reached(ladder, envelope.AGREED))
+        self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))
 
     def test_a_stage_standing_on_one_that_does_not_hold_is_named(self):
         ladder = envelope.unreached(envelope.CHILD_TO_PARENT)
