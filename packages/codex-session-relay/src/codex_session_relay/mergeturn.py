@@ -34,6 +34,11 @@ from . import mergeevidence
 
 PROJECT = "project"
 PARENT = "parent"
+# linkage.ACTIVE, spelled here for the same reason PROJECT and PARENT are: this module reads
+# the linkage through the object it was given rather than importing it. paused is LIVE
+# ownership there and stays live ownership here - a paused parent keeps its claim and its
+# place in the queue. This constant is read only where ACTING is the question.
+ACTIVE = "active"
 
 WAITING = "waiting"
 HOLDING = "holding"
@@ -58,6 +63,28 @@ TRANSITION = "transition"
 ATTESTATION = "attestation"
 TRANSPORT_ACCEPTED = "transport_accepted"
 RETURN_REQUESTED = "return_requested"
+GRANT = "grant"
+GRANT_ACKNOWLEDGED = "grant_acknowledged"
+READINESS_DECLARED = "readiness_declared"
+READINESS_WITHDRAWN = "readiness_withdrawn"
+
+# What this module writes, and therefore what nobody else may write through attest().
+#
+# attest() takes any evidence kind and any idempotency key, and the ledger converges with
+# ON CONFLICT DO NOTHING. Without this, a caller could write one of these keys onto a turn
+# first and the engine's own later write would be discarded in silence - the transition, the
+# grant or the acknowledgement simply absent, with nothing anywhere saying so. Reserved as a
+# CLASS rather than as the two names this issue adds, because the hole was never specific to
+# them. transport_accepted and return_requested stay open: they are what the surface is for.
+RESERVED_KINDS = (
+    "claim", "close", "candidate_head_changed", "took_free_target", "promoted",
+    "currency_confirmed", "outcome_unknown",
+    GRANT, GRANT_ACKNOWLEDGED, READINESS_DECLARED, READINESS_WITHDRAWN,
+)
+RESERVED_PREFIXES = (
+    "request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:",
+    GRANT + ":", GRANT_ACKNOWLEDGED + ":",
+)
 
 
 def target_key(repository, base_ref):
@@ -77,6 +104,32 @@ def turn_id(target, holder_task_id, tenure):
 
 def ledger_id(turn, idempotency_key):
     return derive("mte", turn, exact(idempotency_key, "an idempotency key"))
+
+
+def grant_id(turn, tenure):
+    """One turn's one acquisition of a target, named from what defines it.
+
+    A tenure reaches holding exactly once: waiting to holding is one way, a close is terminal,
+    and the same parent taking the turn again later opens a NEW tenure. So the turn and its
+    tenure identify the acquisition exactly, and a caller that read a grant, went away and came
+    back names the same one rather than a fresh reading of a clock.
+
+    That is the whole difference from what this replaced. The promotion and the take-a-free-
+    target keys were derived from the timestamp of the write, which is not a property of the
+    acquisition at all - two readers describing one grant could not tell they meant one grant.
+    """
+    return derive("mtg", turn, str(tenure))
+
+
+def reserved(evidence_kind, idempotency_key):
+    """Whether a caller is reaching for something only this module may write."""
+    if evidence_kind in RESERVED_KINDS:
+        return "evidence kind " + repr(evidence_kind)
+    for prefix in RESERVED_PREFIXES:
+        if str(idempotency_key).startswith(prefix):
+            return "idempotency key " + repr(idempotency_key) + ", which is in the " \
+                   + repr(prefix) + " namespace"
+    return ""
 
 
 def check_id(turn, head_sha, base_sha, checks_digest, review_digest):
@@ -126,7 +179,56 @@ class MergeTurn:
             return None
         record = self._record(row)
         record["ledger"] = self.ledger(turn)
+        record["grant"] = self._grant_record(record["ledger"], turn, row["tenure"])
         return record
+
+    def outstanding(self, task_id):
+        """Every live claim one task holds, for a parent that has just come back.
+
+        A parent that restarted, or whose context was compacted, knows its own task id and
+        nothing else: not a turn, not a target. Every other reader here needs one of those,
+        which is why coming back used to end with somebody asking a human which window they
+        had. An unresolved outcome is reported as unresolved rather than as a free target, and
+        targetFree says whether a waiting claim could be taken right now - which is the one
+        thing a resumed parent has to know, because nothing acquires a target on its behalf.
+        """
+        exact(task_id, "a task id")
+        answer = []
+        for row in self.store.all(
+                "SELECT turn_id, target_key, state FROM merge_turns"
+                "  WHERE holder_task_id = ? AND state IN ('waiting','holding','merging',"
+                "'unknown') ORDER BY requested_at, turn_id",
+                (task_id,)):
+            record = self.turn(row["turn_id"])
+            occupant = self.store.one(
+                "SELECT turn_id FROM merge_turns"
+                "  WHERE target_key = ? AND state IN ('holding','merging','unknown')",
+                (row["target_key"],))
+            record["targetFree"] = occupant is None
+            answer.append(record)
+        return answer
+
+    @staticmethod
+    def _grant_record(entries, turn, tenure):
+        """This tenure's grant, and whether its recipient has answered it.
+
+        Read out of the ledger rather than stored beside the turn, because the ledger is what
+        makes it durable and convergent in the first place. A claim made before grants were
+        recorded answers None, which is the truth about it and not a fault.
+        """
+        identifier = grant_id(turn, tenure)
+        notice = next((entry for entry in entries
+                       if entry["idempotencyKey"] == GRANT + ":" + identifier), None)
+        if notice is None:
+            return None
+        answered = next(
+            (entry for entry in entries
+             if entry["idempotencyKey"] == GRANT_ACKNOWLEDGED + ":" + identifier), None)
+        envelope = json.loads(notice["evidence"])
+        envelope["recordedAt"] = notice["recordedAt"]
+        envelope["acknowledgedAt"] = answered["recordedAt"] if answered else None
+        envelope["acknowledgedBy"] = answered["actorTaskId"] if answered else None
+        return envelope
 
     def ledger(self, turn):
         return [
@@ -172,7 +274,58 @@ class MergeTurn:
             answer["returnRequestedAt"] = marks[0]
             answer["transportAcceptedAt"] = marks[1]
             answer["releasedAt"] = holder["closedAt"]
+            holder["grant"] = self._grant_record(
+                self.ledger(holder["turnId"]), holder["turnId"], holder["tenure"])
+        answer["blocked"] = self._blocked_report(holder, waiters)
         return answer
+
+    def _blocked_report(self, holder, waiters):
+        """Why this target is not moving, and who is behind it.
+
+        The observation this was written for could not tell a holder that was MERGING from one
+        restating the same candidate against checks that had not finished. Both read as "a
+        parent has the turn", so three parents waited on a human to reassign the window. The
+        cause is named from the turn's own state and from the check rows it wrote, and the
+        ready peers behind it are named with it.
+
+        Nothing here times anything out. A report is what a caller needs in order to decide,
+        and a deadline is the thing this module refuses to have.
+
+        checkSnapshots counts distinct RESTATEMENTS, never polls: check_id folds the head, the
+        base, the declared required set and both digests, and the row is written ON CONFLICT DO
+        UPDATE, so resubmitting identical evidence converges on one row. A rerun changes the
+        attempt inside checks_digest, so a re-poll against NEW evidence does open a new one.
+        """
+        if holder is None:
+            return None
+        rows = self.store.all(
+            "SELECT * FROM merge_turn_checks WHERE turn_id = ?"
+            "  ORDER BY recorded_at DESC, check_id DESC",
+            (holder["turnId"],))
+        latest = rows[0] if rows else None
+        if holder["state"] == MERGING:
+            cause = "merge_in_flight"
+        elif holder["state"] == UNKNOWN:
+            cause = "outcome_unknown"
+        elif not holder["declaredReady"]:
+            cause = "candidate_not_ready"
+        elif latest is not None and latest["result"] == "refused":
+            cause = "required_checks_unfinished"
+        else:
+            cause = "candidate_not_restated"
+        return {
+            "cause": cause, "turnId": holder["turnId"],
+            "holderTaskId": holder["holderTaskId"],
+            "candidateHead": holder["candidateHead"], "prNumber": holder["prNumber"],
+            "checkSnapshots": len(rows),
+            "lastResult": latest["result"] if latest is not None else None,
+            "lastRefusal": latest["refusal_reason"] if latest is not None else None,
+            "lastCheckedHead": latest["head_sha"] if latest is not None else None,
+            "readyPeers": [
+                {"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"],
+                 "candidateHead": waiter["candidateHead"], "prNumber": waiter["prNumber"]}
+                for waiter in waiters if waiter["declaredReady"]],
+        }
 
     def _return_marks(self, turn):
         requested, accepted = None, None
@@ -230,6 +383,19 @@ class MergeTurn:
                 domain=DOMAIN_MERGE_TARGET, subject=subject, challenger=challenger)
         return held[0], None
 
+    def _owner_status(self, project_key):
+        """The single live parent's binding status, or None when the walk cannot name one.
+
+        Asked only where ACTING is the question, never where owning is. A paused parent owns
+        its project and keeps its merge claim; what it cannot do is hold a target it is not
+        running to use, which is how a pause turned into a wedge that only a human noticed.
+        """
+        held = [record for record in self.linkage.owners(PROJECT, project_key)
+                if record["role"] == PARENT]
+        if len(held) != 1:
+            return None
+        return held[0]["status"]
+
     # ------------------------------------------------------------ ledger
 
     def _write_ledger(self, db, turn, *, kind, from_state, to_state, evidence_kind,
@@ -242,6 +408,57 @@ class MergeTurn:
             (ledger_id(turn, idempotency_key), turn, kind, from_state, to_state,
              evidence_kind, actor, evidence, idempotency_key, at),
         )
+        if evidence_kind not in RESERVED_KINDS:
+            return
+        # A reserved write reads itself back. The insert above converges on conflict, which is
+        # what makes a replay one fact - and is also what would make a key somebody else wrote
+        # first look like a successful write of ours. attest() refuses this namespace, so a
+        # row of the wrong kind here means the ledger already disagrees with itself. Raising
+        # rolls the whole operation back, because a transition whose record was silently
+        # dropped is worse than an operation that did not happen.
+        seen = db.execute(
+            "SELECT evidence_kind, actor_task_id FROM merge_turn_ledger"
+            "  WHERE turn_id = ? AND idempotency_key = ?",
+            (turn, idempotency_key),
+        ).fetchone()
+        if seen is not None and seen["evidence_kind"] != evidence_kind:
+            raise CoordinationError(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                "turn " + repr(turn) + " already holds " + repr(idempotency_key) + " as "
+                + repr(seen["evidence_kind"]) + " by " + repr(seen["actor_task_id"])
+                + ", so recording " + repr(evidence_kind) + " under it would be discarded"
+                " without anything saying so; this ledger is inconsistent and the operation is"
+                " rolled back rather than half written")
+
+    def _grant_in(self, db, *, turn, tenure, target, repository, base_ref, recipient, head,
+                  state, granted_from, at):
+        """The notice that a parent now holds this target, written WITH the acquisition.
+
+        Addressed, not broadcast. actor_task_id carries the RECIPIENT rather than whoever's
+        release freed the target, because the question a parent asks this ledger when it comes
+        back is which rows are addressed to it. The recipient is the owner verified inside this
+        same transaction, so a project that changed hands between a release and the promotion
+        that followed it is never notified at an address that is already stale.
+
+        What this is not. It is not a push and it is not a second queue: nothing here wakes a
+        parent that is not running. It is durable, its identity is logical, and it converges,
+        so a retry, a restart and a duplicate reading all describe one grant - and a parent
+        finds it by re-reading its own claims on entry, which is the wake path's own rule that
+        the queue is the truth and a wake is only a hint.
+        """
+        grant = grant_id(turn, tenure)
+        self._write_ledger(
+            db, turn, kind=ATTESTATION, from_state=state, to_state=None,
+            evidence_kind=GRANT, actor=recipient,
+            evidence=json.dumps(
+                {"kind": "merge_turn_grant", "grantId": grant, "turnId": turn,
+                 "tenure": tenure, "targetKey": target, "repository": repository,
+                 "baseRef": base_ref, "recipientTaskId": recipient, "candidateHead": head,
+                 "grantedFrom": granted_from},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            idempotency_key=GRANT + ":" + grant, at=at)
+        return grant
+
     # ---------------------------------------------------------------- claiming
 
     def request(self, *, repository, base_ref, project_key, holder, candidate_head,
@@ -296,7 +513,12 @@ class MergeTurn:
                     (target, holder.task_id),
                 ).fetchone()
                 tenure = (previous["highest"] or 0) + 1
-                state = WAITING if occupied is not None else HOLDING
+                # A paused parent QUEUES even when the target is free. It owns the project, so
+                # refusing the claim would take its place away; it is not running, so handing
+                # it the target would occupy the branch against every peer until somebody
+                # noticed. Waiting is the only answer that costs neither.
+                idle = self._owner_status(project_key) != ACTIVE
+                state = WAITING if (occupied is not None or idle) else HOLDING
                 turn = turn_id(target, holder.task_id, tenure)
                 db.execute(
                     "INSERT INTO merge_turns (turn_id, target_key, repository, base_ref,"
@@ -313,6 +535,11 @@ class MergeTurn:
                     evidence_kind="claim", actor=holder.task_id,
                     evidence="requested " + repository + " " + base_ref,
                     idempotency_key="request:" + str(tenure), at=now)
+                if state == HOLDING:
+                    self._grant_in(
+                        db, turn=turn, tenure=tenure, target=target, repository=repository,
+                        base_ref=base_ref, recipient=owner, head=candidate_head,
+                        state=HOLDING, granted_from="claim", at=now)
                 self.store.journal(
                     "merge_turn_requested", turn,
                     {"targetKey": target, "state": state, "holder": holder.task_id}, at=now)
@@ -322,7 +549,7 @@ class MergeTurn:
             raise refusal.error()
         return self.turn(turn)
 
-    def declare_ready(self, turn, *, actor, ready, candidate_head=None):
+    def declare_ready(self, turn, *, actor, ready, candidate_head=None, cause=""):
         """Record readiness, and take the target if it happens to be free.
 
         Never refuses on occupancy. A waiter saying it is ready is stating a fact about itself
@@ -333,6 +560,13 @@ class MergeTurn:
 
         A changed head resets readiness. Without that, a holder could restate its head and then
         pass the currency check unchallenged, which is the check's whole purpose.
+
+        A head is the only thing this package can notice for itself. A base that moved and a
+        finding that arrived are equally fatal to a readiness claim and equally invisible from
+        here - nothing in this package contacts a forge - so the caller says so through cause,
+        and the change is recorded either way. Before this, readiness could go from true to
+        false with nothing in the ledger saying it ever had, which is how a peer reading the
+        record could not tell a candidate that was never ready from one that stopped being it.
         """
         now = self.clock.iso()
         refusal, blocked = None, None
@@ -358,21 +592,44 @@ class MergeTurn:
                         evidence_kind="candidate_head_changed", actor=actor,
                         evidence=row["candidate_head"] + " -> " + head,
                         idempotency_key="head:" + head, at=now)
+                if flag != row["declared_ready"]:
+                    self._write_ledger(
+                        db, turn, kind=TRANSITION, from_state=state, to_state=state,
+                        evidence_kind=READINESS_DECLARED if flag == 1
+                        else READINESS_WITHDRAWN,
+                        actor=actor,
+                        evidence=cause or (
+                            "the head moved to " + head if moved
+                            else ("declared ready on " + head if flag == 1
+                                  else "readiness withdrawn on " + head)),
+                        idempotency_key="ready:" + str(row["tenure"]) + ":" + head + ":"
+                        + str(flag), at=now)
                 if state == WAITING and flag == 1:
                     occupant = db.execute(
                         "SELECT turn_id, state FROM merge_turns"
                         "  WHERE target_key = ? AND state IN ('holding','merging','unknown')",
                         (row["target_key"],),
                     ).fetchone()
-                    if occupant is None:
+                    if occupant is not None:
+                        blocked = {"state": occupant["state"], "turnId": occupant["turn_id"]}
+                    elif self._owner_status(row["project_key"]) != ACTIVE:
+                        # Free target, ready candidate, and an owner that is not running to
+                        # use it. Taking it here would hold the branch against every peer on
+                        # behalf of a parent that cannot act; the claim keeps its place and
+                        # this says why, so a resumed parent knows the one call that acquires.
+                        blocked = {"state": "owner_paused", "turnId": None}
+                    else:
                         state, held_at = HOLDING, now
                         self._write_ledger(
                             db, turn, kind=TRANSITION, from_state=WAITING, to_state=HOLDING,
                             evidence_kind="took_free_target", actor=actor,
                             evidence="declared ready while the target was free",
-                            idempotency_key="take:" + now, at=now)
-                    else:
-                        blocked = {"state": occupant["state"], "turnId": occupant["turn_id"]}
+                            idempotency_key="take:" + str(row["tenure"]), at=now)
+                        self._grant_in(
+                            db, turn=turn, tenure=row["tenure"], target=row["target_key"],
+                            repository=row["repository"], base_ref=row["base_ref"],
+                            recipient=actor, head=head, state=HOLDING,
+                            granted_from="late_ready", at=now)
                 db.execute(
                     "UPDATE merge_turns SET declared_ready = ?, candidate_head = ?, state = ?,"
                     " held_at = ?, updated_at = ? WHERE turn_id = ?",
@@ -392,7 +649,20 @@ class MergeTurn:
         This is where a transport accepting a message lands. It writes no state, which is the
         whole point: a delivery layer accepting a request to give the turn back is not the
         holder giving it back, and a parent asserting its turn is not its turn.
+
+        It refuses the names this module writes for itself. The ledger converges on conflict,
+        so a caller that reached one of those keys first would not overwrite the engine's
+        record - it would make the engine's record silently not happen, which is the one
+        outcome an append-only ledger must not be able to produce.
         """
+        squatted = reserved(evidence_kind, idempotency_key)
+        if squatted:
+            raise CoordinationError(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                squatted + " belongs to the merge turn itself. Attesting is for facts that"
+                " reached a turn from outside it, such as a transport accepting a message;"
+                " the turn's own transitions, grants and acknowledgements are written by the"
+                " operations that cause them")
         now = self.clock.iso()
         with self.store.transaction() as db:
             row = self._row_in(db, turn)
@@ -407,6 +677,86 @@ class MergeTurn:
         return self.attest(
             turn, evidence_kind=RETURN_REQUESTED,
             idempotency_key=RETURN_REQUESTED + ":" + actor, actor=actor, evidence=evidence)
+
+    def acknowledge_grant(self, turn, *, actor, grant, evidence):
+        """A parent acting on a grant it read, checked against what is true NOW.
+
+        A grant is not authority carried forward. Between the promotion and the parent reading
+        it, the tenure can have closed, the project can have changed hands or been paused, and
+        the candidate can have moved. A parent that acted on the payload alone would be acting
+        on evidence that expired while it was away, which is the remembered-message failure
+        this whole module exists to replace with a record.
+
+        So the caller NAMES the grant it read and it is compared with this tenure's own. Every
+        one of those cases is refused here, before the parent spends a merge attempt on it. A
+        second acknowledgement of the same grant converges, because a duplicate delivery of one
+        notice is one notice.
+        """
+        if not str(evidence or "").strip():
+            raise CoordinationError(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                "acknowledging a grant states what was read; a bare acknowledgement is exactly"
+                " the remembered message this replaces")
+        exact(grant, "a grant id")
+        now = self.clock.iso()
+        refusal, notice = None, None
+        with self.store.transaction() as db:
+            row = self._row_in(db, turn)
+            current = grant_id(turn, row["tenure"])
+            if row["holder_task_id"] != actor:
+                refusal = self._not_holder(row, actor, "acknowledge a grant on")
+            elif row["state"] != HOLDING:
+                refusal = self._wrong_state(row, actor, "acknowledging a grant")
+            elif grant != current:
+                refusal = Refusal(
+                    RefusalReason.MERGE_TURN_NOT_HELD,
+                    "grant " + repr(grant) + " is not the grant for tenure "
+                    + str(row["tenure"]) + " of turn " + repr(turn) + ", which is "
+                    + repr(current) + "; the grant you read was returned before you acted"
+                    " on it",
+                    domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                    incumbent=current, challenger=grant)
+            if refusal is None:
+                owner, refusal = self._project_owner(
+                    db, row["project_key"], row["target_key"], actor)
+                if refusal is None and owner != actor:
+                    refusal = self._stale_owner(row, owner, actor)
+            if refusal is None and self._owner_status(row["project_key"]) != ACTIVE:
+                refusal = self._paused(row, actor, "act on a grant")
+            if refusal is None:
+                notice = db.execute(
+                    "SELECT evidence FROM merge_turn_ledger"
+                    "  WHERE turn_id = ? AND idempotency_key = ?",
+                    (turn, GRANT + ":" + current),
+                ).fetchone()
+                if notice is None:
+                    refusal = Refusal(
+                        RefusalReason.MERGE_TURN_NOT_HELD,
+                        "turn " + repr(turn) + " records no grant for tenure "
+                        + str(row["tenure"]) + ", so there is nothing here to acknowledge;"
+                        " a claim made before grants were recorded has none and needs none",
+                        domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                        incumbent=row["holder_task_id"], challenger=actor)
+            if refusal is None:
+                envelope = json.loads(notice["evidence"])
+                if envelope.get("candidateHead") != row["candidate_head"]:
+                    refusal = Refusal(
+                        RefusalReason.MERGE_CANDIDATE_MOVED,
+                        "the grant was for head " + repr(envelope.get("candidateHead"))
+                        + " and this turn now names " + repr(row["candidate_head"])
+                        + "; the candidate moved after the turn was granted",
+                        domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+                        incumbent=envelope.get("candidateHead") or "", challenger=actor)
+            if refusal is None:
+                self._write_ledger(
+                    db, turn, kind=ATTESTATION, from_state=row["state"], to_state=None,
+                    evidence_kind=GRANT_ACKNOWLEDGED, actor=actor, evidence=evidence,
+                    idempotency_key=GRANT_ACKNOWLEDGED + ":" + current, at=now)
+            else:
+                self.conflicts.record_in(db, refusal, at=now)
+        if refusal is not None:
+            raise refusal.error()
+        return self.turn(turn)
 
     def withdraw(self, turn, *, actor):
         now = self.clock.iso()
@@ -471,6 +821,23 @@ class MergeTurn:
             + repr(row["target_key"]) + ". Its holder may already have merged, so no amount of"
             " waiting and no cancellation releases it. Record the outcome with land or"
             " report_unknown, then resolve_unknown with an observation of the target",
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=row["holder_task_id"], challenger=actor)
+
+    @staticmethod
+    def _paused(row, actor, what):
+        """Owning a project and running are two facts, and a pause separates them.
+
+        Not a stale owner and not a stranger: this task IS the parent and keeps the turn. The
+        binding says it is not running, and a target held by somebody who is not running is
+        the wedge a peer cannot do anything about.
+        """
+        return Refusal(
+            RefusalReason.SCOPE_ROLE_MISMATCH,
+            "task " + repr(actor) + " owns project " + repr(row["project_key"]) + " with a"
+            " paused binding, so it keeps turn " + repr(row["turn_id"]) + " and cannot "
+            + what + " under it; resume the binding, or return the turn so a ready peer can"
+            " proceed",
             domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
             incumbent=row["holder_task_id"], challenger=actor)
 
@@ -557,6 +924,13 @@ class MergeTurn:
             owner, refusal = self._project_owner(
                 db, candidate["project_key"], target, candidate["holder_task_id"])
             if refusal is None and owner == candidate["holder_task_id"]:
+                if self._owner_status(candidate["project_key"]) != ACTIVE:
+                    # A paused owner keeps its claim and its place, and is not handed a target
+                    # it is not running to use. The walk tries the next ready waiter; if every
+                    # one of them is paused the target is simply left free, with no grant
+                    # written and nothing woken. Nothing promotes on a status change either -
+                    # a resumed parent reads its own claims and declares readiness.
+                    continue
                 db.execute(
                     "UPDATE merge_turns SET state = ?, held_at = ?, updated_at = ?"
                     " WHERE turn_id = ?",
@@ -567,7 +941,12 @@ class MergeTurn:
                     to_state=HOLDING, evidence_kind="promoted",
                     actor=candidate["holder_task_id"],
                     evidence="promoted when the target was released",
-                    idempotency_key="promote:" + at, at=at)
+                    idempotency_key="promote:" + str(candidate["tenure"]), at=at)
+                self._grant_in(
+                    db, turn=candidate["turn_id"], tenure=candidate["tenure"], target=target,
+                    repository=candidate["repository"], base_ref=candidate["base_ref"],
+                    recipient=owner, head=candidate["candidate_head"], state=HOLDING,
+                    granted_from="promotion", at=at)
                 return candidate["turn_id"]
             stale = refusal or self._stale_owner(candidate, owner, candidate["holder_task_id"])
             self._close_in(
@@ -628,6 +1007,11 @@ class MergeTurn:
                 ]
                 if held != [actor]:
                     refusal = self._stale_owner(row, held[0] if held else None, actor)
+            if refusal is None and self._owner_status(row["project_key"]) != ACTIVE:
+                # The same question the acquisition paths ask, asked again at the write that
+                # actually lands work. A binding paused after the turn was granted leaves a
+                # parent holding a target it is not running to use.
+                refusal = self._paused(row, actor, "begin a merge")
             if refusal is None and head_sha != row["candidate_head"]:
                 refusal = Refusal(
                     RefusalReason.MERGE_CANDIDATE_MOVED,

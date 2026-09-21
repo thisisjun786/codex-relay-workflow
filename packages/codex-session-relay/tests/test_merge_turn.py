@@ -11,12 +11,14 @@ that would be testing the opposite of what it claims.
 
 import threading
 import unittest
+import json
+import pathlib
 
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.coordination import DOMAIN_MERGE_TARGET, Conflicts
 from codex_session_relay.errors import CoordinationError, RefusalReason
 from codex_session_relay.linkage import Linkage, PARENT, PROJECT
-from codex_session_relay.mergeturn import MergeTurn, target_key
+from codex_session_relay.mergeturn import MergeTurn, grant_id, target_key
 from codex_session_relay.models import Endpoint
 from codex_session_relay.store import Store
 
@@ -61,6 +63,215 @@ class MergeTurnTestCase(RelayTestCase):
 
     def contests_for(self, repository=REPO, base=BASE):
         return self.contests.all(DOMAIN_MERGE_TARGET, target_key(repository, base))
+
+    def set_status(self, project, status):
+        """A binding that is live but not running, or running again."""
+        self.store.db.execute(
+            "UPDATE scope_bindings SET status = ? WHERE scope_key = ? AND role = ?",
+            (status, project, "parent"))
+
+
+class APausedParentKeepsItsClaimAndCannotAct(MergeTurnTestCase):
+    """Owning a project and running are two facts, and a pause separates them.
+
+    The linkage treats paused as LIVE ownership on purpose, so a paused parent must not lose
+    its claim or its place. It must also not hold a target it is not running to use: that is
+    a branch occupied against every peer until a human notices, which is the failure this
+    whole issue is about, reached by a different door.
+    """
+
+    def test_a_paused_owner_queues_even_when_the_target_is_free(self):
+        self.set_status(PROJECT_A, "paused")
+        claimed = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.assertEqual(claimed["state"], "waiting")
+        self.assertFalse(self.turns.target(REPO, BASE)["occupied"])
+
+    def test_a_paused_waiter_does_not_take_a_free_target(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b", ready=False)
+        self.set_status(PROJECT_B, "paused")
+        self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="deferring")
+        answer = self.turns.declare_ready(
+            waiter["turnId"], actor=self.beta.task_id, ready=True)
+        self.assertEqual(answer["state"], "waiting")
+        self.assertEqual(answer["blockedBy"]["state"], "owner_paused")
+        self.assertFalse(self.turns.target(REPO, BASE)["occupied"])
+
+    def test_a_promotion_skips_a_paused_waiter_and_keeps_its_claim(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.set_status(PROJECT_B, "paused")
+        released = self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="not ready")
+        self.assertIsNone(released["promoted"])
+        self.assertEqual(self.turns.turn(waiter["turnId"])["state"], "waiting")
+        self.assertIsNone(self.turns.turn(waiter["turnId"])["grant"])
+        self.assertFalse(self.turns.target(REPO, BASE)["occupied"])
+
+    def test_a_paused_holder_cannot_begin_a_merge(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.set_status(PROJECT_A, "paused")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"), review=dict(GREEN),
+                required=["dev-gate"])
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+
+    def test_a_paused_holder_cannot_act_on_its_grant(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        self.set_status(PROJECT_A, "paused")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.acknowledge_grant(
+                held["turnId"], actor=self.alpha.task_id, grant=grant, evidence="back now")
+        self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
+
+    def test_a_resumed_parent_reads_its_claim_and_takes_the_free_target(self):
+        """B4's recovery, end to end.
+
+        Nothing promotes on a status change, and re-requesting replays the waiting claim
+        rather than acquiring. So the whole route back is: read your own claims, see the
+        target is free, declare readiness. One read and one call, no trigger and no wake.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.set_status(PROJECT_B, "paused")
+        self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned", reason="done")
+
+        self.set_status(PROJECT_B, "active")
+        mine = self.turns.outstanding(self.beta.task_id)
+        self.assertEqual([record["turnId"] for record in mine], [waiter["turnId"]])
+        self.assertTrue(mine[0]["targetFree"])
+
+        answer = self.turns.declare_ready(
+            waiter["turnId"], actor=self.beta.task_id, ready=True)
+        self.assertEqual(answer["state"], "holding")
+        self.assertEqual(answer["grant"]["recipientTaskId"], self.beta.task_id)
+
+
+class ReadinessThatDiedLeavesARecord(MergeTurnTestCase):
+    def test_a_withdrawn_readiness_is_recorded_with_the_cause_the_caller_states(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        answer = self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=False,
+            cause="a new finding arrived on the pull request")
+        entry = next(e for e in answer["ledger"]
+                     if e["evidenceKind"] == "readiness_withdrawn")
+        self.assertEqual(entry["evidence"], "a new finding arrived on the pull request")
+        self.assertFalse(answer["declaredReady"])
+
+    def test_a_holder_that_lost_its_readiness_returns_and_the_ready_peer_proceeds(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=False,
+            cause="the base moved to base-7")
+        released = self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="my readiness died; handing it on")
+        self.assertEqual(released["promoted"]["turnId"], waiter["turnId"])
+        self.assertEqual(released["promoted"]["state"], "holding")
+
+    def test_a_restated_head_records_the_readiness_it_reset(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        answer = self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-a2")
+        kinds = [e["evidenceKind"] for e in answer["ledger"]]
+        self.assertIn("candidate_head_changed", kinds)
+        self.assertIn("readiness_withdrawn", kinds)
+        self.assertFalse(answer["declaredReady"])
+
+
+class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
+    """The state the 2026-09-21 observation could not name.
+
+    A holder that is MERGING and a holder restating the same candidate against checks that
+    have not finished both read as "a parent has the turn". They need different answers, and
+    neither answer is a timeout.
+    """
+
+    def refused_check(self, turn):
+        with self.assertRaises(CoordinationError):
+            self.turns.begin_merge(
+                turn, actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+                checks=run_checks("head-a", conclusion="failure"), review=dict(GREEN),
+                required=["dev-gate"])
+
+    def test_a_refused_check_with_a_ready_peer_behind_it_names_both(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.refused_check(held["turnId"])
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "required_checks_unfinished")
+        self.assertEqual(blocked["candidateHead"], "head-a")
+        self.assertEqual(blocked["lastResult"], "refused")
+        self.assertEqual(blocked["lastRefusal"], "merge_currency_stale")
+        self.assertEqual([peer["turnId"] for peer in blocked["readyPeers"]],
+                         [waiter["turnId"]])
+
+    def test_a_holder_that_never_declared_readiness_is_not_reported_as_checking(self):
+        self.claim(self.alpha, PROJECT_A, "head-a", ready=False)
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "candidate_not_ready")
+        self.assertEqual(blocked["checkSnapshots"], 0)
+
+    def test_a_merging_holder_is_told_apart_from_one_restating_its_candidate(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["cause"],
+                         "merge_in_flight")
+
+    def test_an_unoccupied_target_has_nothing_to_be_waiting_on(self):
+        self.assertIsNone(self.turns.target(REPO, BASE)["blocked"])
+
+    def test_restating_the_same_evidence_does_not_look_like_a_second_restatement(self):
+        """checkSnapshots counts distinct evidence, and says so rather than counting polls."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.refused_check(held["turnId"])
+        self.refused_check(held["turnId"])
+        self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["checkSnapshots"], 1)
+
+
+class AParentThatCameBackFindsItsOwnClaims(MergeTurnTestCase):
+    def test_outstanding_answers_from_a_task_id_alone(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        mine = self.turns.outstanding(self.alpha.task_id)
+        self.assertEqual([record["turnId"] for record in mine], [held["turnId"]])
+        self.assertEqual(mine[0]["state"], "holding")
+        self.assertFalse(mine[0]["targetFree"])
+        self.assertEqual(mine[0]["grant"]["recipientTaskId"], self.alpha.task_id)
+
+    def test_an_unresolved_outcome_is_reported_as_unresolved_and_not_as_free(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.turns.report_unknown(
+            held["turnId"], actor=self.alpha.task_id, reason="the host stopped answering")
+        self.clock.advance(1_000_000)
+        mine = self.turns.outstanding(self.alpha.task_id)
+        self.assertEqual(mine[0]["state"], "unknown")
+        self.assertFalse(mine[0]["targetFree"])
+
+    def test_a_second_store_on_the_same_path_reads_the_same_claims(self):
+        """A restart is a different process reading one durable record, and nothing else."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        store = Store(self.store.path)
+        self.addCleanup(store.close)
+        clock = FakeClock()
+        after = MergeTurn(store, clock, Linkage(store, clock))
+        mine = after.outstanding(self.alpha.task_id)
+        self.assertEqual([record["turnId"] for record in mine], [held["turnId"]])
+        self.assertEqual(mine[0]["grant"]["grantId"],
+                         grant_id(held["turnId"], mine[0]["tenure"]))
 
 
 class OneParentHoldsTheTargetAtATime(MergeTurnTestCase):
@@ -618,6 +829,176 @@ class ReviewEvidenceIsCountedByDistinctThread(MergeTurnTestCase):
         self.assertEqual(answer["state"], "merging")
 
 
+class AGrantIsAddressedAndConverges(MergeTurnTestCase):
+    """Who was told they have the turn, and what a second telling does.
+
+    Before this, a promotion moved a row and said nothing to anybody. The parent behind it
+    learned it had the turn only if it happened to look, which is how four parents ended up
+    waiting for a human to reassign a window none of them could see had moved.
+    """
+
+    def test_a_claim_on_a_free_target_is_granted_to_its_owner(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]
+        self.assertEqual(grant["recipientTaskId"], self.alpha.task_id)
+        self.assertEqual(grant["grantedFrom"], "claim")
+        self.assertEqual(grant["candidateHead"], "head-a")
+        self.assertIsNone(grant["acknowledgedAt"])
+
+    def test_the_grant_is_keyed_by_tenure_and_carries_no_timestamp(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        record = self.turns.turn(held["turnId"])
+        key = "grant:" + grant_id(held["turnId"], record["tenure"])
+        keys = [entry["idempotencyKey"] for entry in record["ledger"]
+                if entry["evidenceKind"] == "grant"]
+        self.assertEqual(keys, [key])
+        self.assertNotIn(self.clock.iso(), key)
+
+    def test_a_promotion_grants_the_next_ready_candidate(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        released = self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="checks are not green yet")
+        grant = released["promoted"]["grant"]
+        self.assertEqual(grant["recipientTaskId"], self.beta.task_id)
+        self.assertEqual(grant["grantedFrom"], "promotion")
+        self.assertEqual(grant["turnId"], waiter["turnId"])
+
+    def test_a_late_ready_waiter_is_granted_when_it_takes_the_target(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b", ready=False)
+        self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="deferring")
+        answer = self.turns.declare_ready(
+            waiter["turnId"], actor=self.beta.task_id, ready=True)
+        self.assertEqual(answer["grant"]["grantedFrom"], "late_ready")
+
+    def test_a_duplicate_acknowledgement_records_one_fact(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        for _ in range(3):
+            answer = self.turns.acknowledge_grant(
+                held["turnId"], actor=self.alpha.task_id, grant=grant,
+                evidence="read the grant and re-checked the head")
+        entries = [entry for entry in answer["ledger"]
+                   if entry["evidenceKind"] == "grant_acknowledged"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(answer["grant"]["acknowledgedBy"], self.alpha.task_id)
+
+    def test_a_grant_from_a_closed_tenure_acknowledges_nothing(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        stale = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned",
+            reason="handing it back")
+        again = self.claim(self.alpha, PROJECT_A, "head-a2")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.acknowledge_grant(
+                again["turnId"], actor=self.alpha.task_id, grant=stale,
+                evidence="I still had the old one")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
+
+    def test_a_candidate_that_moved_after_the_grant_is_refused(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-a2")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.acknowledge_grant(
+                held["turnId"], actor=self.alpha.task_id, grant=grant,
+                evidence="acting on what I read")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CANDIDATE_MOVED)
+
+    def test_a_bare_acknowledgement_is_refused(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.acknowledge_grant(
+                held["turnId"], actor=self.alpha.task_id, grant=grant, evidence="  ")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    def test_a_stranger_cannot_acknowledge_somebody_elses_grant(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.acknowledge_grant(
+                held["turnId"], actor=self.beta.task_id, grant=grant, evidence="mine now")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
+
+    def test_no_grant_is_written_while_an_outcome_is_unknown(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.turns.report_unknown(
+            held["turnId"], actor=self.alpha.task_id, reason="the host stopped answering")
+        self.clock.advance(1_000_000)
+        self.assertIsNone(self.turns.turn(waiter["turnId"])["grant"])
+        self.assertEqual(self.turns.turn(waiter["turnId"])["state"], "waiting")
+
+
+class TheNamesThisModuleWritesAreItsOwn(MergeTurnTestCase):
+    """A ledger that converges on conflict can be made to converge on somebody else's row.
+
+    attest() takes any kind and any key, and the write is ON CONFLICT DO NOTHING. Reaching a
+    key first would not overwrite the engine's record; it would make the engine's record
+    silently not happen, which is the one thing an append-only ledger must not produce.
+    """
+
+    def test_attesting_a_reserved_evidence_kind_is_refused(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.attest(
+                held["turnId"], evidence_kind="grant", idempotency_key="mine-1",
+                actor=self.beta.task_id, evidence="I say it is granted")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    def test_attesting_into_a_reserved_key_namespace_is_refused(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.attest(
+                held["turnId"], evidence_kind="transport_accepted",
+                idempotency_key="close:landed", actor=self.beta.task_id, evidence="accepted")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_EVIDENCE_REQUIRED)
+
+    def test_a_transport_acceptance_is_still_ordinary_and_allowed(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        answer = self.turns.attest(
+            held["turnId"], evidence_kind="transport_accepted", idempotency_key="delivery-9",
+            actor=self.beta.task_id, evidence="the relay accepted the message")
+        kinds = {entry["evidenceKind"] for entry in answer["ledger"]}
+        self.assertIn("transport_accepted", kinds)
+
+    def test_a_squatted_reserved_key_rolls_the_whole_operation_back(self):
+        """The read-back, measured where attest() can no longer reach.
+
+        A store can already hold such a row - written before the namespace was reserved, or by
+        something that is not this module. The engine must not treat the discarded insert as a
+        successful one, and must not leave half of a release behind either.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        tenure = self.turns.turn(waiter["turnId"])["tenure"]
+        self.store.db.execute(
+            "INSERT INTO merge_turn_ledger (entry_id, turn_id, kind, from_state, to_state,"
+            " evidence_kind, actor_task_id, evidence, idempotency_key, recorded_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("squatted-1", waiter["turnId"], "attestation", None, None, "transport_accepted",
+             self.beta.task_id, "not a promotion", "promote:" + str(tenure),
+             "2026-01-01T00:00:00Z"))
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.release(
+                held["turnId"], actor=self.alpha.task_id, disposition="returned",
+                reason="handing it on")
+        self.assertIn("promote:" + str(tenure), caught.exception.detail)
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+        self.assertEqual(self.turns.turn(waiter["turnId"])["state"], "waiting")
+        self.assertTrue(self.turns.target(REPO, BASE)["occupied"])
+
+
 class TwoParentsRacingForOneTarget(MergeTurnTestCase):
     """One independent Store per thread, a barrier, bounded joins, errors collected.
 
@@ -663,6 +1044,100 @@ class TwoParentsRacingForOneTarget(MergeTurnTestCase):
             "SELECT * FROM merge_turns WHERE target_key = ? AND state = 'holding'",
             (target_key(REPO, BASE),))
         self.assertEqual(len(rows), 1)
+
+
+CROSSED = json.loads(
+    (pathlib.Path(__file__).parent / "fixtures" / "merge_turn_crossed_handoff.json")
+    .read_text(encoding="utf-8"))
+
+
+class TheCrossedHandoffOf20260921(MergeTurnTestCase):
+    """The sequence this issue started from, replayed as an input rather than as a claim.
+
+    What this is: four parents on one base ref, one of them holding while its required CI was
+    still running, one of them asking for the turn back, and a peer reporting that the window
+    had been handed over. It is reconstructed from those parents' own reports and replayed
+    against this store.
+
+    What it is NOT, said here because the distinction is the whole point of keeping it. It was
+    never observed inside this store. It was not rerun on any host. It does not reverse the
+    landing it describes, and a green run here is not evidence that the original defect was
+    reproduced - it is evidence that the SHAPE is refused now.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.crossed = {}
+        for entry in CROSSED["parents"]:
+            endpoint = Endpoint(entry["task"], entry["host"], cwd="/" + entry["task"])
+            self.linkage.bind_scope(
+                role=PARENT, scope_key=entry["project"], endpoint=endpoint)
+            self.linkage.register_supervision(
+                initiative_key="INIT-1", project_key=entry["project"],
+                supervisor=self.supervisor, parent=endpoint)
+            self.crossed[entry["task"]] = (endpoint, entry)
+
+    def claim_fixture(self, task):
+        endpoint, entry = self.crossed[task]
+        return self.turns.request(
+            repository=CROSSED["repository"], base_ref=CROSSED["baseRef"],
+            project_key=entry["project"], holder=endpoint,
+            candidate_head=entry["head"], pr_number=entry["pr"], ready=True)
+
+    def test_the_recorded_sequence_is_refused_at_every_step_it_should_be(self):
+        repository, base = CROSSED["repository"], CROSSED["baseRef"]
+        held = self.claim_fixture("task-hierarchy")
+        waiting = [self.claim_fixture(task)
+                   for task in ("task-plugin", "task-docs", "task-status")]
+        self.assertEqual(held["state"], "holding")
+        self.assertEqual([turn["state"] for turn in waiting], ["waiting"] * 3)
+
+        # Its required CI has not finished. The restatement is refused, the refusal is kept,
+        # and the turn stays exactly where it was.
+        with self.assertRaises(CoordinationError):
+            self.turns.begin_merge(
+                held["turnId"], actor="task-hierarchy", head_sha="head-73",
+                base_sha="base-0", required=["dev-gate"],
+                checks=run_checks("head-73", conclusion=None), review=dict(GREEN))
+        self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
+
+        blocked = self.turns.target(repository, base)["blocked"]
+        self.assertEqual(blocked["cause"], "required_checks_unfinished")
+        self.assertEqual(blocked["prNumber"], 73)
+        self.assertEqual(len(blocked["readyPeers"]), 3)
+
+        # The crossing itself. Asking is recorded, the transport accepting is recorded, and a
+        # peer's account of having been given the window is not in the store at all.
+        self.turns.request_return(
+            held["turnId"], actor="task-status", evidence="my candidate is green")
+        self.turns.attest(
+            held["turnId"], evidence_kind="transport_accepted", idempotency_key="msg-69",
+            actor="task-status", evidence="the relay accepted the message")
+        answer = self.turns.target(repository, base)
+        self.assertIsNotNone(answer["returnRequestedAt"])
+        self.assertIsNotNone(answer["transportAcceptedAt"])
+        self.assertIsNone(answer["releasedAt"])
+        self.assertEqual(answer["holder"]["holderTaskId"], "task-hierarchy")
+
+        # Only the holder's own write returns it, and exactly one waiter is granted the turn.
+        released = self.turns.release(
+            held["turnId"], actor="task-hierarchy", disposition="returned",
+            reason="required CI has not finished and a peer is ready")
+        promoted = released["promoted"]
+        self.assertEqual(promoted["turnId"], waiting[0]["turnId"])
+        self.assertEqual(promoted["grant"]["recipientTaskId"], "task-plugin")
+        still = [self.turns.turn(turn["turnId"])["state"] for turn in waiting[1:]]
+        self.assertEqual(still, ["waiting", "waiting"])
+        self.assertEqual(
+            [self.turns.turn(turn["turnId"])["grant"] for turn in waiting[1:]], [None, None])
+
+    def test_the_fixture_says_what_it_is_and_what_it_is_not(self):
+        """A fixture that lost its provenance becomes a claim about a host it never touched."""
+        self.assertIn("never observed inside this store", CROSSED["provenance"])
+        self.assertIn("not rerun on any host", CROSSED["provenance"])
+        self.assertEqual(len(CROSSED["parents"]), 4)
+        for step in CROSSED["steps"]:
+            self.assertTrue(step["invariant"].strip())
 
 
 if __name__ == "__main__":
