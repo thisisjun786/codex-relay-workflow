@@ -10,7 +10,7 @@ import stat
 from pathlib import Path
 
 from . import guard, intent, marker
-from .admission import AnchorOrExplicit
+from .admission import AnchorOrExplicit, BOUND_ADMISSION_SQL
 from .store import read_only_rows
 from .receipts import DAEMON
 
@@ -28,7 +28,8 @@ SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_
        g.dispatch_turn_id, g.anchor_state,
        (SELECT json_group_array(turn_id) FROM generation_turns t
         WHERE t.relationship_id=r.relationship_id
-          AND t.execution_generation=g.execution_generation) AS admitted,
+          AND t.execution_generation=g.execution_generation
+          AND """ + BOUND_ADMISSION_SQL + """) AS admitted,
        (SELECT json_group_array(json_object('status',s.terminal_status,'at',s.settled_at))
         FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id
           AND s.thread_id=? AND s.turn_id=?) AS settlements,
