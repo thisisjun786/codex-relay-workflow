@@ -231,3 +231,72 @@ class SchedulingFairness(DaemonTestCase):
             {"turn-blocked-2", "turn-blocked-3", "turn-blocked-4"} <= seen,
             "one unreadable turn must not starve the rest of the ring",
         )
+
+
+class AdmittedTurnsWithoutReceipts(DaemonTestCase):
+    """Admission makes a turn observable even when its producer never reports."""
+
+    def admit(self, relation, turn, *, generation=1, status="completed"):
+        from codex_session_relay.admission import admit_explicitly
+
+        self.adapter.start_turn(CHILD, turn_id=turn, status=status)
+        admit_explicitly(self.store, self.clock, relation["relationshipId"], generation,
+                         turn, actor="assignment-owner", detail="authorized business turn")
+
+    def test_terminal_admitted_turn_settles_without_fabricating_a_report(self):
+        relation = self.register()
+        self.admit(relation, "business-without-report")
+        self.daemon.tick()
+        row = self.store.one(
+            "SELECT terminal_status FROM assignment_settlements"
+            " WHERE relationship_id=? AND turn_id=?",
+            (relation["relationshipId"], "business-without-report"))
+        self.assertIsNotNone(row)
+        self.assertEqual(row["terminal_status"], "completed")
+        self.assertEqual(self.store.all("SELECT event_id FROM events"), [])
+        self.assertEqual(self.adapter.sends, [])
+
+    def test_active_admitted_turn_is_read_again_but_not_settled(self):
+        relation = self.register()
+        self.admit(relation, "business-active", status="inProgress")
+        self.daemon.tick()
+        self.assertIsNotNone(self.store.one(
+            "SELECT turn_id FROM poll_observations WHERE turn_id=?", ("business-active",)))
+        self.assertIsNone(self.store.one(
+            "SELECT turn_id FROM assignment_settlements WHERE turn_id=?", ("business-active",)))
+        self.assertIn("business-active", self.daemon._turns_to_poll(
+            self.registry.get(relation["relationshipId"]), 8))
+
+    def test_admission_is_scoped_to_its_assignment_on_a_shared_child(self):
+        first = self.register()
+        second = self.register(issue_key="REL-2", dispatch_request_id="dispatch-2",
+                               dispatch_turn_id="second-anchor")
+        self.admit(first, "first-business")
+        self.admit(second, "second-business")
+        selected = self.daemon._turns_to_poll(self.registry.get(first["relationshipId"]), 8)
+        self.assertIn("first-business", selected)
+        self.assertNotIn("second-business", selected)
+
+    def test_admitted_backlog_rotates_without_spending_the_anchor_share(self):
+        relation = self.register()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        expected = {f"business-{i}" for i in range(12)}
+        for turn in sorted(expected):
+            self.admit(relation, turn, status="inProgress")
+        seen = set()
+        for _ in range(12):
+            selected = self.daemon._turns_to_poll(self.registry.get(relation["relationshipId"]), 2)
+            self.assertLessEqual(len(selected), 2)
+            self.assertIn("turn-dispatch-1", selected)
+            seen.update(selected)
+        self.assertLessEqual(expected, seen)
+
+    def test_old_generation_admission_is_read_until_its_own_settlement(self):
+        relation = self.register()
+        self.admit(relation, "older-business")
+        self.registry.open_generation(relation["relationshipId"], dispatch_request_id="dispatch-next",
+                                      dispatch_turn_id="next-anchor", reason="needs_changes_revision")
+        current = self.registry.get(relation["relationshipId"])
+        self.assertIn("older-business", self.daemon._turns_to_poll(current, 8))
+        self.daemon.tick()
+        self.assertNotIn("older-business", self.daemon._turns_to_poll(current, 8))

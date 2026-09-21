@@ -327,8 +327,16 @@ class RelayDaemon:
             row["turn_id"]
             for row in self.intake.staged_events(thread_id=thread, relationship_id=rid)
         ]
+        # An explicitly admitted business or continuation turn may end without
+        # reporting. It has no staged event, so polling only anchors and receipts
+        # would never settle that omission. Include this assignment's admissions
+        # from every generation, like historical anchors, until they settle.
+        admitted = [row["turn_id"] for row in self.store.all(
+            "SELECT turn_id FROM generation_turns WHERE relationship_id = ?"
+            " ORDER BY admitted_at, turn_id", (rid,),
+        )]
         ring = [
-            turn_id for turn_id in dict.fromkeys(staged + history)
+            turn_id for turn_id in dict.fromkeys(staged + admitted + history)
             if turn_id != current and self._worth_polling(thread, turn_id, rid)
         ]
         selected = []
