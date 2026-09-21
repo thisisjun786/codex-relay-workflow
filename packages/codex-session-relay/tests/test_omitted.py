@@ -50,6 +50,46 @@ class Reporting(GuardTestCase):
         self.assertEqual(before, self.snapshot())
         self.assertEqual(self.store.all("SELECT event_id FROM events"), [])
 
+    def test_daemon_observes_admitted_business_omission_after_standby(self):
+        from .test_daemon import DaemonTestCase
+
+        # Use the real daemon and its normal boundary adapter rather than manually
+        # injecting the settlement that the reporting reader is waiting for.
+        runtime = DaemonTestCase()
+        runtime.setUp()
+        self.addCleanup(runtime.doCleanups)
+        self.addCleanup(runtime.tearDown)
+        relation = runtime.register()
+        runtime.adapter.start_turn(CHILD, turn_id=DISPATCH_TURN, status="completed")
+        turn = "managed-business-without-receipt"
+        runtime.adapter.start_turn(CHILD, turn_id=turn, status="completed")
+        admit_explicitly(runtime.store, runtime.clock, relation["relationshipId"], 1,
+                         turn, actor="assignment-owner")
+        root = self.markers
+        workspace = Path(runtime.root)
+        assignment = marker.assignment_id("dispatch-1")
+        intent.declare_intent(root, workspace=workspace, dispatch_request_id="dispatch-1",
+                              issue_key="REL-1", declared_at=NOW, db_path=str(runtime.store.path))
+        intent.publish_claim(root, workspace=workspace, assignment=assignment,
+                             session_id=CHILD, dispatch_request_id="dispatch-1",
+                             first_turn_id=DISPATCH_TURN, at=NOW)
+        intent.bind(root, workspace=workspace, assignment=assignment, session_id=CHILD,
+                    task_id=CHILD, at=NOW)
+        intent.register_relationship(root, workspace=workspace, assignment=assignment,
+            relationship_id=relation["relationshipId"], dispatch_request_id="dispatch-1",
+            at=NOW, db_path=str(runtime.store.path))
+        # The real Stop observer records a pre-terminal omission only.
+        guard.evaluate(root, {"cwd": str(workspace), "session_id": CHILD,
+                              "turn_id": turn, "stop_hook_active": False},
+                       db_path=runtime.store.path, now=NOW)
+        runtime.daemon.tick()
+        result = omitted.observe(resolve_state_dir(str(runtime.store.path.parent)), root,
+                                 workspace, assignment, CHILD, turn, LATER)
+        self.assertEqual(result["reportingState"], "unreported")
+        self.assertEqual(result["reason"], "terminal_without_report")
+        self.assertEqual(runtime.store.all("SELECT event_id FROM events"), [])
+        self.assertEqual(runtime.adapter.sends, [])
+
     def test_empty_queue_is_not_a_stop_observation(self):
         relation = self.managed()
         self.settle(relation)
@@ -130,6 +170,20 @@ class Reporting(GuardTestCase):
                               dispatch_request_id="new", issue_key="OTHER", declared_at=LATER,
                               db_path=str(self.store.path))
         self.assertEqual(self.read()["reportingState"], "unreported")
+
+    def test_legacy_admission_needs_fresh_binding_before_omission_is_proven(self):
+        relation = self.managed()
+        turn = "legacy-business"
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO generation_turns VALUES (?,?,?,?,?,?,?)",
+                       (relation["relationshipId"], 1, turn, "explicit_admission",
+                        "legacy-owner", "", NOW))
+        self.evaluate(turn_id=turn)
+        self.settle(relation, turn=turn)
+        self.assertEqual(self.read(turn=turn)["reason"], "admission_unrecorded")
+        admit_explicitly(self.store, self.clock, relation["relationshipId"], 1, turn,
+                         actor="confirmed-owner")
+        self.assertEqual(self.read(turn=turn)["reportingState"], "unreported")
 
     def test_unadmitted_business_is_not_inferred_from_claim_or_time(self):
         self.managed()
