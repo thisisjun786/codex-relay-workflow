@@ -13,6 +13,17 @@ than reporting a fault.
 It parses no arguments. The host reads exit 2 as the blocking code and argparse exits 2 on any
 usage error, so there is no argument parser here and nothing imported that has one.
 
+It is not reached directly. The declaration runs a fixed bootstrap that opens the first of two
+candidates it can read: this file under the version cache, and a copy the runtime installer
+places at <CODEX_HOME>/crw-stop-hook.py. The cache copy comes first so the current version
+always wins and a stale copy can never outrank it; the installed copy exists for what the cache
+cannot answer, which is a task still holding a command into a version that has been replaced,
+with nothing measured showing a later turn of that task resolving it afresh. The turn's
+hook command is fixed when the turn starts, so a cache directory removed underneath it leaves
+an absolute path to a file that is gone, and python3 exits 2 for a missing script -- the same
+number the hook protocol reads as "block this turn". That collision is what turned one missing
+file into a termination loop, and it is why the declaration no longer names only a cache path.
+
 It writes nothing to stderr and exits 0 on every path, including the paths where it does
 nothing at all. An unreliable detector must degrade into no detector, never into a stuck
 session.
@@ -34,6 +45,18 @@ from pathlib import Path
 
 SETTINGS_NAME = "crw-completion-hook.json"
 PLUGIN_OWNER = "plugin"
+# What marks a copy of this launcher as CRW's to replace or remove. It says whose file this is
+# and nothing more: it does not establish who wrote it, and it does not establish that the bytes
+# around it are intact. Those are separate questions, and the installer answers the second one
+# by reporting this file's digest beside the checkout's rather than by trusting the marker.
+LAUNCHER_MARKER = "crw-stop-hook/1"
+# The settings contract this launcher implements, mirrored from scripts/crw_runtime/completion.py
+# CONFIG_VERSION, which this file cannot import. An installed copy outlives the package that
+# wrote it, so it can meet a document written for a later contract. Absent reads as the first
+# contract, because a host that installed before the key existed holds a document without it.
+# Anything else is a contract this copy does not implement, and the answer to that is to stand
+# down rather than to act on a document it would be guessing about.
+CONFIG_VERSION = 1
 # Kept under the timeout this hook is registered with, so the host does not kill the adapter
 # in the middle of recording why it could not answer.
 MARGIN_SECONDS = 2
@@ -43,10 +66,11 @@ MAX_SECONDS = 9
 # adapter only while the recorded budget stays at or under MAX_SECONDS - MARGIN_SECONDS: above
 # that the cap eats the margin, and at a budget just under MAX_SECONDS this deadline arrives
 # while the adapter is still writing the record of its own timeout. Settings that record such a
-# budget are refused where they are written -- scripts/crw_transition/steps.py, which derives its
-# limit from these two numbers -- rather than here, because this launcher cannot wait longer than
-# the hook it is registered under. If one of these numbers moves, that limit has to move with it;
-# a test asserts they still agree, because this file cannot import that module.
+# budget are refused where they are written rather than here, because this launcher cannot wait
+# longer than the hook it is registered under. That limit is completion.MAX_PLUGIN_GUARD_SECONDS,
+# derived from these same two numbers and shared by both writers; scripts/crw_transition/steps.py
+# aliases it rather than keeping a second copy. If one of these numbers moves, that limit moves
+# with it; a test asserts they still agree, because this file cannot import that module.
 
 
 def settings_path():
@@ -77,6 +101,9 @@ def adapter_call(document):
     would be writing to a stream the host reads as a continuation prompt.
     """
     if not isinstance(document, dict) or document.get("owner") != PLUGIN_OWNER:
+        return None
+    version = document.get("configVersion")
+    if version is not None and version != CONFIG_VERSION:
         return None
     interpreter = document.get("adapterInterpreter")
     entry_point = document.get("adapterEntryPoint")
