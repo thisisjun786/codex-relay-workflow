@@ -295,6 +295,16 @@ one that is usually skipped.
    `recipientStatusBefore: notLoaded` on one the host had evicted after three hours idle, each
    tying the parent's new turn id to the delivery record that named it.
 
+   A probe stands in for this parent only where it matches in the dimension that decides the
+   unloaded route: the role it is bound as, and where its pair comes from. The relay derives an
+   unloaded resume's pair from the role's declared pair and refuses a record-based or
+   exception-authorized one, so an ordinary parent-role probe waking from `notLoaded` says
+   nothing about a parent running under a named exception — that parent's delivery is refused at
+   exactly the moment the probe's succeeded. Where nothing can match it, because an
+   exception-authorized pair has no ordinary equivalent to probe with, the parent has no
+   non-circular evidence for its own unloaded route: it records fact 5 `unmeasured` with the
+   provenance that made it so and keeps `active-observation`.
+
 Fact 5 is written that way because the obvious version is circular: a parent cannot observe its
 own first wake without first yielding idle on the strength of the observation it has not made. A
 probe recipient breaks that loop, since a throwaway recipient can establish the scope's capability
