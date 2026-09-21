@@ -19,6 +19,10 @@ CHECKS = (
     # declares them, so the checker and the contract cannot drift apart unnoticed.
     ("start policy", "plugins/crw/skills/crw-run/scripts/start_policy.py",
      "plugins/crw/skills/crw-run/references/start-policy.md", ["selftest"]),
+    # The parent title rule lives in the binding procedure, so the checker is paired with it
+    # rather than with the skill the script happens to sit under.
+    ("parent title", "plugins/crw/skills/crw-run/scripts/parent_title.py",
+     "plugins/crw/skills/crw-plan/references/integrations.md", ["replay"]),
 )
 
 

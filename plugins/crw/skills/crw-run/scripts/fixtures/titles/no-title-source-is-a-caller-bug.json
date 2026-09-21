@@ -1,0 +1,21 @@
+{
+  "expected": {
+    "decision": "invalid",
+    "reason": "no_title_source"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": null,
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Neither an observed title nor a summary means there is nothing to name.",
+  "subcommand": "decide"
+}

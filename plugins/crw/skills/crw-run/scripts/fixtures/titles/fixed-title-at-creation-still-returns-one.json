@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "body": "내가 정한 제목",
+    "decision": "unchanged",
+    "reason": "user_fixed_title",
+    "title": "내가 정한 제목"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": null,
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": "내가 정한 제목",
+    "user_title": "fixed"
+  },
+  "note": "A task created with a fixed title takes no prefix, and the title it is created with is the summary it was given. Returning nothing here would leave the caller with no name at all.",
+  "subcommand": "decide"
+}

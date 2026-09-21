@@ -61,10 +61,17 @@ parent is actually in, read from its recorded `run_mode` and `observation_path` 
 [Start policy](../../crw-run/references/start-policy.md), which now owns which role carries which
 lifecycle by default.
 
-For a goal-free parent the stall question moves to the delivery path, and one state deserves its
-own check: a parent whose own goal is paused receives nothing at all, because the relay reads
-`paused` as undeliverable. That is a real stall with a specific cause, and it looks identical from
-the outside to a parent nobody has anything to send.
+For a parent recorded `goal-free-run` the stall question is the delivery path alone, because an
+absent goal is deliverable. The other no-goal record is `blocked`, a parent that can neither hold a
+goal nor proceed without one, and that one is M14's case rather than a delivery fault. A goal
+blocks only where one exists, which means an explicit Loop or a parent carried over from before
+the default and recorded `loop` by [Start policy](../../crw-run/references/start-policy.md) rather
+than converted, and there
+[OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+owns which goal statuses the relay treats as blocking, read from there rather than named here. That
+is a real stall with a specific cause, and it looks identical from the outside to a parent nobody
+has anything to send. Pausing a parent's goal is never the way to quiet it, because that is the act
+that revokes its own reachability.
 
 Neither reading decides a contact on its own, and this is where the two rows would otherwise
 disagree. The goal says whether the parent returns; the outstanding item says whether there is
@@ -117,13 +124,21 @@ never as a review that passed.
 A list of green rows is not a report. What makes a midpoint check worth asking for is the places
 where two levels disagree, and three of them recur:
 
-- The parent is idle while one of its children is still working AND nothing will bring it back.
+- The parent is idle while its children's work is still outstanding AND nothing will bring it back.
   Idle alone is not the blocker: under event-driven handoff a parent answers, returns to idle, and
-  is woken when the child's turn ends by a verified registered assignment, a running delivery
-  service and a resume path, which [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)
-  owns. Read that path before calling it anything. The blocker is an idle parent with no such path,
-  whose child's result will sit unread until someone restarts it by hand, and a paused or cancelled
-  parent, which nothing resumes automatically no matter what arrives for it.
+  a delivered event starts its next turn, which
+  [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting) owns.
+  What makes that path a verified one is the readiness list in
+  [Before a parent may wait idle](../../crw-run/references/start-policy.md#before-a-parent-may-wait-idle),
+  read from there rather than from a shorter copy here, because the fact it calls the one usually
+  skipped is the one a checkpoint skips too. The blockers are an idle parent with no such path,
+  whose child's result sits unread until someone restarts it by hand; a parent
+  [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+  puts out of reach, by its own state, its goal status or its assignment's, which nothing resumes
+  automatically whatever arrives for it; and a delivery already held after its retry budget ran out,
+  which [OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path)
+  records as terminal and recoverable only by a fresh execution generation. That last one reads as
+  an ordinary quiet queue unless held rows are read, so read them.
 - A child ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
   by an unanswered question, and the question has an owner who has not seen it.
 - The newest report and the newest pull request describe different states. The report is stale, or
@@ -172,9 +187,9 @@ growing inside Status where Run already owns one.
 | Observed on a responsible parent | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent |
+| `idle` at the current read, holding an unprocessed child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent. A delivery already held after its retry budget ran out is not revived by that resume: the parent's own drain on entry is what finds it, and [OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path) makes a fresh execution generation the only recovery |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
-| paused, cancelled or archived, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take ([OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)) |
+| paused or archived, holding an assignment [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents) records as inactive, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take. Cancellation is an assignment status there rather than an observable task state, so report it as the assignment's and never infer it from a turn that merely ended |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
 
 Nothing here recreates a child, duplicates a resume, or nudges a parent that is already moving.
@@ -236,7 +251,8 @@ delivery states mean are in
 Observed: the approved set holds three projects; one parent is `active` with a turn, one is
 `idle`, one is `notLoaded`, and their children are spread across all three states.
 Action: report each project's own state. For the idle parent with a working child, read its wake
-path first and call it a blocker only where that path is missing or the task is paused.
+path first and call it a blocker only where that path is missing, where OPS-8.2 puts the parent or
+its assignment out of reach, or where a delivery is already held under OPS-8.5.
 `notLoaded` is neither running nor finished, so read that task again once before
 reporting it, as the bridge contract requires; a task that was merely not loaded a second ago may
 read `active`. Where it stays `notLoaded`, keep that exact value rather than translating it into
@@ -323,8 +339,8 @@ Preserved: the user's decision, exactly as given.
 
 ### M10b One parent is paused while the others are not
 
-Observed: no limit on the request, but one parent in the approved set is paused, cancelled or
-archived, and the others are ordinary.
+Observed: no limit on the request, but one parent in the approved set is paused or archived, or
+holds an assignment OPS-8.2 records as inactive, and the others are ordinary.
 Action: that parent is not contacted and nothing resumes it; report its state and the exact resume
 action its owner has to take. The other parents are handled on their own rows as usual. A pause on
 one task is a decision about that task, not a stop order for the initiative, and holding back

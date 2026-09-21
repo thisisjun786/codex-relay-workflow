@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "foreign_prefix",
+    "title": "[CRW]전환"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[CRW]전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A prefix is the bracket alone or the bracket separated by whitespace. A bracket run together with the body is ambiguous from here, so it waits for a decision rather than being normalised into one reading.",
+  "subcommand": "decide"
+}

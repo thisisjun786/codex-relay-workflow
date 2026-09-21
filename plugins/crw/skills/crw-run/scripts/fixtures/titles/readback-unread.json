@@ -1,0 +1,11 @@
+{
+  "expected": {
+    "readback": "unread"
+  },
+  "input": {
+    "observed_title": null,
+    "requested_title": "[CRW] 설치형 플러그인 전환"
+  },
+  "note": "No readback means unread. It is not evidence that the write failed.",
+  "subcommand": "readback"
+}

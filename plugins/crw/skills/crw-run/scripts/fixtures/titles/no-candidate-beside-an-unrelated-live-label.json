@@ -1,0 +1,20 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "no_family_label",
+    "title": "공통 기획 정리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [],
+    "observed_title": "공통 기획 정리",
+    "project_labels": [
+      "저장소 · codex-relay-workflow"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "The regression this design exists for: the project carries one live label and it is not a product family, so there is no candidate and nothing may be inferred from the count.",
+  "subcommand": "decide"
+}
