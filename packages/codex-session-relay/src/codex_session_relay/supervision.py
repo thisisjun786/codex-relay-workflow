@@ -47,6 +47,10 @@ NOT_NEWS = "no_meaningful_transition"
 ALREADY_REPORTED = "already_reported_under_this_obligation"
 ALREADY_RECORDED = "already_in_the_record_the_supervisor_reads"
 NO_CONTACT = "recipient_is_not_contactable"
+# Nobody has observed whether the level above can be reached. Different from NO_CONTACT, which
+# is a recipient observed as unreachable, and it fails the same way: without evidence that a
+# wake can land, this does not produce one.
+CONTACT_UNMEASURED = "recipient_contactability_unmeasured"
 REPORTABLE = "reportable"
 
 # What a child's own report status means for the level above. A blocked or exhausted run is a
@@ -190,7 +194,7 @@ def unmeasured_gap(reading) -> dict | None:
             "detail": "nothing was established about whether a report was owed here"}
 
 
-def discharge_of(store, obligation) -> dict:
+def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dict:
     """Whether the record the supervisor actually reads has this yet.
 
     There is no supervisor receipt in this store and this does not pretend otherwise. What
@@ -200,21 +204,40 @@ def discharge_of(store, obligation) -> dict:
     pending, claimed, written and failed all leave the obligation standing, and failed is the
     one worth naming: SyncOutbox.fail flips to it after MAX_ATTEMPTS and drops the row out of
     automatic selection, so it LOOKS terminal while meaning the opposite of done.
+
+    Two things are checked besides the state, because neither is implied by it. The row has to
+    be the one that carries this kind of news: a confirmed progress note is a real row about
+    the same event and says nothing about whether the outcome was reported, so only a verdict
+    row discharges. And it has to have landed in the document anybody is reading now: a
+    confirmation written to a target that has since been repointed is a record in a place the
+    supervisor no longer looks.
     """
     rows = store.all(
         "SELECT sync_id, state, target, target_ref, external_ref, confirmed_at, last_error"
-        "  FROM sync_outbox WHERE relationship_id = ? AND event_id = ?"
+        "  FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = ?"
         " ORDER BY created_at",
-        (obligation["relationId"], obligation["subject"]),
+        (obligation["relationId"], obligation["subject"], sync.VERDICT),
     )
     records = [dict(row) for row in rows]
-    confirmed = [one for one in records if one["state"] == sync.CONFIRMED]
+    configured = store.one(
+        "SELECT target_ref FROM sync_targets WHERE relationship_id = ? AND target = ?",
+        (obligation["relationId"], target),
+    )
+    current = configured["target_ref"] if configured is not None else None
+    confirmed = [one for one in records if one["state"] == sync.CONFIRMED
+                 and (current is None or one["target_ref"] == current)]
     if confirmed:
         return {"standing": DISCHARGED, "reason": "the Linear record is confirmed",
                 "records": records, "externalRef": confirmed[0]["external_ref"],
                 "confirmedAt": confirmed[0]["confirmed_at"]}
     if records:
         states = ", ".join(sorted({one["state"] for one in records}))
+        elsewhere = [one for one in records if one["state"] == sync.CONFIRMED]
+        if elsewhere:
+            return {"standing": STANDING,
+                    "reason": f"the only confirmed record is on {elsewhere[0]['target_ref']},"
+                              f" which is no longer the target for this relationship",
+                    "records": records}
         return {"standing": STANDING,
                 "reason": f"the Linear record is {states} rather than {sync.CONFIRMED}",
                 "records": records}
@@ -314,6 +337,11 @@ def select(store, obligation, *, recipient=None) -> dict:
         return {**decision, "report": False, "reason": ALREADY_RECORDED}
     if prior is not None:
         return {**decision, "report": False, "reason": ALREADY_REPORTED}
+    if contact["contactable"] is None:
+        # Not a wake. Deliverability needs positive evidence for the same reason delivery's
+        # own lifecycle check does: an unobserved recipient is a question nobody asked the
+        # host, and answering it optimistically is how a paused task gets woken anyway.
+        return {**decision, "report": False, "reason": CONTACT_UNMEASURED}
     if contact["contactable"] is False:
         return {**decision, "report": False, "reason": NO_CONTACT}
     return {**decision, "report": True, "reason": REPORTABLE}
@@ -325,12 +353,24 @@ def suppressed(reason, detail) -> dict:
             "detail": detail, "candidate": reason}
 
 
-def standing_for(store, linkage, project_key) -> dict:
+def standing_for(store, linkage, project_key, *, observations=()) -> dict:
     """Every standing obligation in one project, derived rather than remembered.
 
     Scoped to the project rather than to whichever task currently parents each row, for the
     same reason linkage.outstanding is: after a handover, filtering by the parent would report
     a replacement owner as having nothing owed.
+
+    Nor is it scoped to LIVE relationships. A real handover registers a successor and
+    supersedes the row it replaces, so filtering on status would drop exactly the obligations a
+    replacement owner most needs to see - the ones the outgoing owner left behind. Every
+    relationship in the project is read and each obligation carries the status of the row it
+    came from.
+
+    Observations are passed IN rather than produced here. A turn that ended without reporting
+    writes no events row, so no query over this store can find it; the reading comes from
+    CRW-180's observer, which needs a marker root and explicit selectors this module does not
+    have. What is owed because of such a reading is decided here, and a reading that
+    established nothing is carried as a gap instead.
 
     This does NOT say the project is complete or close to it. An obligation is raised about the
     issue it came from and is never promoted into a statement about the project, which
@@ -338,15 +378,15 @@ def standing_for(store, linkage, project_key) -> dict:
     """
     from .report import read as read_work_report
 
-    relations = [row["relationship_id"] for row in store.all(
-        "SELECT r.relationship_id FROM relationships r"
+    rows = store.all(
+        "SELECT r.relationship_id, r.status, r.superseded_by FROM relationships r"
         "  JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
-        " WHERE s.project_key = ? AND r.status IN ('active','paused')"
-        "   AND r.superseded_by IS NULL ORDER BY r.created_at",
+        " WHERE s.project_key = ? ORDER BY r.created_at",
         (project_key,),
-    )]
+    )
+    relations = {row["relationship_id"]: dict(row) for row in rows}
     obligations = []
-    for relation in relations:
+    for relation, about in relations.items():
         for row in store.all(
             "SELECT event_id FROM events WHERE relationship_id = ?"
             " ORDER BY first_seen_at", (relation,),
@@ -356,22 +396,36 @@ def standing_for(store, linkage, project_key) -> dict:
                 continue
             decided = select(store, one, recipient=None)
             if decided["standing"] == STANDING:
-                obligations.append({**one, "decision": decided})
-    return {"schema": SCHEMA, "projectKey": project_key, "relations": relations,
-            "standing": obligations,
+                obligations.append({**one, "decision": decided,
+                                    "relationshipStatus": about["status"],
+                                    "supersededBy": about["superseded_by"]})
+    gaps = []
+    for reading in observations:
+        one = from_observation(reading)
+        if one is not None:
+            obligations.append({**one, "decision": select(store, one, recipient=None),
+                                "relationshipStatus": (relations.get(one["relationId"]) or {})
+                                .get("status")})
+            continue
+        gap = unmeasured_gap(reading)
+        if gap is not None:
+            gaps.append(gap)
+    return {"schema": SCHEMA, "projectKey": project_key, "relations": list(relations),
+            "standing": obligations, "gaps": gaps,
             "limits": "derived from this store's rows only. It says what is owed upward, never"
                       " that a supervisor received anything, and never that the project is"
-                      " complete"}
+                      " complete. A turn that ended without reporting has no row here at all,"
+                      " so it is present only when its observation was passed in"}
 
 
-def status_answer(store, linkage, assignments, project_key) -> dict:
+def status_answer(store, linkage, assignments, project_key, *, observations=()) -> dict:
     """The answer to an EXPLICIT request, which automatic suppression does not silence.
 
     A midpoint check is a question somebody asked, not a notification this module decided to
     send. Skipping it because the automatic channel is quiet would answer a different question
     from the one that was put.
     """
-    answer = standing_for(store, linkage, project_key)
+    answer = standing_for(store, linkage, project_key, observations=observations)
     answer["projectState"] = assignments.project_state(project_key)
     answer["answeredBecause"] = (
         "an explicit status request is a separate path from automatic notification; it is"

@@ -257,11 +257,30 @@ they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
 | I-183 | A returning tenure recovers the project it retained when its predecessor has none, and refuses a dispatch request id that already opened an earlier tenure | `registry._inherited_project` asks the predecessor then the returning identity's own scope row, decided under the lock; the generations replay check turns a unique-index violation into a domain refusal | implemented |
 | I-184 | Restoring an assignment checks WHERE its child is, not only whether somebody else holds the issue | `apply_relationship_status_in` compares the live child binding's host with the relationship's recorded one, so a child that reclaimed its issue from another host refuses the resume instead of reactivating an assignment nothing can route to | implemented |
 
+## The shared envelope and what is owed upward
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-185 | A message's logical identity survives the retries its transport identity counts | `envelope.message_id` derives from direction, relation, purpose and subject; `identity.request_id` renders `del-<event>-a<attempt>` and is kept beside it rather than used as one | implemented |
+| I-186 | A field nobody read says which kind of nothing it is | `envelope.absent` with `inherited`, `unknown` and `not_applicable`, checked per kind by `envelope.check`, and rendered by `shown` rather than left blank | implemented |
+| I-187 | A reach stage may not be answered by a record its own direction does not read, and a direction with no mechanism may only say so | `envelope.check_reach` against `REACH_SOURCES`, so a `parent_to_supervisor` region carrying `received=yes` from `acks` is refused rather than recorded | implemented |
+| I-188 | A kind is derived from the purpose and the direction, never supplied | `envelope.kind_of`; a purpose belongs to one direction, and a relayed decision is a request because the parent owes the application rather than another opinion | implemented |
+| I-189 | A directive's envelope pointer is checked by re-derivation, and a column that is not ours contradicts nothing | `envelope.contradiction` recomputes the message id from the row's own link and digest; `linkage.record_directive` refuses a mismatch and records the contest, and stores an operator's note unchanged | implemented |
+| I-190 | Only a completion, a new real block or a user decision raises an obligation upward | `supervision.from_event` with `BY_STATUS` and `BY_OUTCOME`; a staged claim, a suppressed event, and a failed or interrupted turn raise none | implemented |
+| I-191 | One fact yields one obligation across restarts, and a produced report is recorded once | `supervision.obligation_id` derives from kind, relation and subject; `record_report` reads inside its own transaction before writing the journal entry | implemented |
+| I-192 | A report that was produced is not a report that was recorded, and both are returned | `supervision.select` returns `reason` and `standing` separately, so a suppressed duplicate whose Linear write failed reads as suppressed AND standing | implemented |
+| I-193 | Only a confirmed verdict row on the currently configured target discharges an obligation | `supervision.discharge_of` filters `subject_kind = verdict` and compares `target_ref` with `sync_targets`; `pending`, `claimed`, `written` and `failed` all leave it standing | implemented |
+| I-194 | A wake needs positive evidence that the recipient can be reached | `supervision.select` answers `recipient_contactability_unmeasured` for an unobserved recipient and `recipient_is_not_contactable` for one observed as unreachable, and preserves the obligation in both | implemented |
+| I-195 | An obligation left behind by a superseded relationship is still enumerated | `supervision.standing_for` reads every relationship in the project and carries each row's status, rather than filtering to live ones as `linkage.attached` does for its own question | implemented |
+| I-196 | A report nobody wrote is raised only from a reading that said so | `supervision.from_observation` requires `reportingState == unreported`; `unmeasured` becomes a gap through `unmeasured_gap`, and `reported`, `in_progress` and `unmanaged` raise nothing | implemented |
+
 ## Recorded limits, so a row above is not read as more than it is
 
 | Limit | Consequence |
 |---|---|
 | Linkage records levels; it does not carry a peer MESSAGE | a registered peer link is a record, not a channel. Delivery, acknowledgement and shared merge order between parents belong to their own issues, and nothing in the rows above shows a message was transported between two parents |
+| The supervisor direction has no channel, so nothing above it is measured | `envelope.REACH_SOURCES` answers not_applicable for every supervisor stage and `supervision` refuses to claim a receipt. An obligation's only readable discharge is the Linear record the supervisor reads for itself, and a confirmed row proves what Linear holds rather than that anybody read it |
+| A produced report is not an arrived one | the journal entry under `supervisor_report` says a report was composed for an obligation. Whether a turn was created, whether it ran, and whether the supervisor acted are three further facts, and no row here carries any of them |
 | These rows are proved against a temporary store | the evidence is `packages/codex-session-relay/tests/test_linkage*.py`. Whether an installed relay on a real host records any of this is separate evidence, and a green suite is not an installed runtime |
 | Codex native parentage is untouched | these are relay-owned records. Nothing here writes or reads a Codex native `parentThreadId`, so a claim that a thread is registered in the host's own hierarchy or its UI needs host evidence and cannot be read off these rows |
 | Ordering is not lineage | a later turn is admitted only by an explicit continuation record; host ordering corroborates and can contradict, never admits |

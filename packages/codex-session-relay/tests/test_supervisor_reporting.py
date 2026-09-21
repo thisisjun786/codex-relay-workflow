@@ -149,12 +149,13 @@ class OneFactOneObligation(ReportingTestCase):
     def test_a_produced_report_is_recorded_once_and_suppresses_the_next_wake(self):
         event_id = self.reported()
         one = self.obligation_for(event_id)
-        self.assertTrue(supervision.select(self.store, one)["report"])
+        self.lifecycle(SUPERVISOR, "yes")
+        self.assertTrue(supervision.select(self.store, one, recipient=SUPERVISOR)["report"])
         first = supervision.record_report(self.store, one, at=self.clock.iso())
         second = supervision.record_report(self.store, one, at=self.clock.iso())
         self.assertTrue(first["recorded"])
         self.assertFalse(second["recorded"], "a second call converges rather than writing again")
-        decided = supervision.select(self.store, one)
+        decided = supervision.select(self.store, one, recipient=SUPERVISOR)
         self.assertFalse(decided["report"])
         self.assertEqual(decided["reason"], supervision.ALREADY_REPORTED)
 
@@ -166,6 +167,36 @@ class OneFactOneObligation(ReportingTestCase):
             "UPDATE relationships SET parent_task_id = ? WHERE relationship_id = ?",
             ("01replacement-parent", self._rid))
         self.assertEqual(self.obligation_for(event_id)["obligationId"], one["obligationId"])
+
+    def test_superseding_the_relationship_does_not_retire_what_it_left_owed(self):
+        """A real handover registers a successor and supersedes the row it replaces.
+
+        Enumerating only live relationships would drop exactly the obligations a replacement
+        owner most needs to see: the ones the outgoing owner never discharged.
+        """
+        from codex_session_relay.assignment import AssignmentView
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(relationship, [path])
+        self.accept(payload)
+        report.record(self.store, self.clock, event_id=payload["eventId"], **a_report())
+        one = self.obligation_for(payload["eventId"])
+        self.store.db.execute(
+            "UPDATE relationships SET status = 'archived', superseded_by = ?"
+            " WHERE relationship_id = ?", ("rel-successor", self._rid))
+        answer = supervision.standing_for(self.store, linkage, "CRW")
+        self.assertIn(one["obligationId"],
+                      [entry["obligationId"] for entry in answer["standing"]])
+        self.assertEqual(answer["standing"][0]["relationshipStatus"], "archived")
+        del AssignmentView
 
 
 class WhatDoesNotDischargeIt(ReportingTestCase):
@@ -203,6 +234,35 @@ class WhatDoesNotDischargeIt(ReportingTestCase):
         self.assertEqual(decided["standing"], supervision.DISCHARGED)
         self.assertEqual(decided["reason"], supervision.ALREADY_RECORDED)
 
+    def test_a_confirmed_progress_note_is_not_the_outcome_being_reported(self):
+        """A progress row is a real record about the same event and is different news."""
+        event_id = self.reported()
+        self.sync.set_target(self._rid, "coordination_document", DOC)
+        row = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        with self.store.transaction() as db:
+            identifier = self.sync.enqueue_in(
+                db, relationship_id=self._rid, issue_key="REL-1", subject_kind="progress",
+                summary="the checks have started", event_id=event_id,
+                generation=row["execution_generation"], revision=row["revision_hash"])
+        claim = self.sync.claim(identifier, owner="test")
+        stored = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (identifier,))
+        self.sync.complete(identifier, claim_token=claim["claimToken"], target_ref=DOC,
+                           readback=render_block(stored), external_ref="linear-doc-1")
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+
+    def test_a_confirmation_in_a_document_nobody_reads_now_does_not_discharge_it(self):
+        event_id = self.reported()
+        identifier = self.sync_job(event_id)
+        claim = self.sync.claim(identifier, owner="test")
+        row = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (identifier,))
+        self.sync.complete(identifier, claim_token=claim["claimToken"], target_ref=DOC,
+                           readback=render_block(row), external_ref="linear-doc-1")
+        self.sync.set_target(self._rid, "coordination_document", DOC.replace("000000", "111111"))
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn("no longer the target", decided["dischargeReason"])
+
 
 class APausedSupervisorIsNotAFailure(ReportingTestCase):
     def test_an_uncontactable_recipient_keeps_the_obligation_and_is_not_woken(self):
@@ -220,6 +280,16 @@ class APausedSupervisorIsNotAFailure(ReportingTestCase):
                                      recipient="01never-observed")
         self.assertIsNone(decided["recipient"]["contactable"])
         self.assertIn("unmeasured", decided["recipient"]["reason"])
+        self.assertFalse(decided["report"], "deliverability needs positive evidence")
+        self.assertEqual(decided["reason"], supervision.CONTACT_UNMEASURED)
+
+    def test_an_observed_and_reachable_supervisor_is_the_only_way_to_a_wake(self):
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR)
+        self.assertTrue(decided["report"])
+        self.assertEqual(decided["reason"], supervision.REPORTABLE)
 
 
 class TheReportNobodyWrote(ReportingTestCase):
@@ -252,6 +322,30 @@ class TheReportNobodyWrote(ReportingTestCase):
         gap = supervision.unmeasured_gap(unmeasured)
         self.assertEqual(gap["gap"], "reporting_unmeasured")
         self.assertEqual(gap["reason"], "marker_unreadable")
+
+    def test_the_project_answer_carries_the_omission_and_the_gap_it_was_given(self):
+        """The reading is passed in, because no query over this store could find it.
+
+        A turn that ended without reporting writes no events row. Enumerating events would
+        answer that a project owes nothing precisely when a child went quiet, which is the
+        counterexample CRW-148 asks to be checked rather than assumed.
+        """
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        readings = [self.observation("unreported", relationshipId=self._rid),
+                    self.observation("unmeasured", reason="marker_unreadable")]
+        answer = supervision.standing_for(self.store, linkage, "CRW", observations=readings)
+        self.assertEqual([entry["kind"] for entry in answer["standing"]],
+                         [supervision.UNREPORTED])
+        self.assertEqual([gap["gap"] for gap in answer["gaps"]], ["reporting_unmeasured"])
+        self.assertIn("passed in", answer["limits"])
 
 
 class AnExplicitRequestIsItsOwnPath(ReportingTestCase):

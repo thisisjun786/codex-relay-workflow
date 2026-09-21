@@ -365,6 +365,35 @@ def check(one) -> None:
             raise EnvelopeRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"the {name} is neither a task id nor a stated absence")
+    check_reach(one["direction"], one.get("reach") or {})
+
+
+def check_reach(direction, ladder) -> None:
+    """Refuse a ladder that answers with a record its own direction does not have.
+
+    Without this the table above is only advice. A caller could hand the shared contract a
+    parent-to-supervisor region carrying received=yes sourced from acks, and the one module
+    that exists to stop a supervisor being credited with an acknowledgement would have written
+    it down. A stage with no mechanism may only say so, and a stage that answers must name the
+    record its direction actually reads.
+    """
+    _known(direction, DIRECTIONS, "direction")
+    sources = REACH_SOURCES[direction]
+    for name in STAGES:
+        entry = ladder.get(name) or {}
+        state = entry.get("state")
+        declared = sources[name]
+        if declared is None:
+            if state != IMPOSSIBLE:
+                raise EnvelopeRefused(
+                    RefusalReason.MALFORMED_RECEIPT,
+                    f"{direction} has no mechanism for {name}, so it cannot answer "
+                    f"{state!r}: {NO_MECHANISM[direction]}")
+        elif state in (YES, NO, CONDITIONAL) and entry.get("source") != declared:
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"{name} on {direction} is answered by {declared}, not by "
+                f"{entry.get('source')!r}")
 
 
 def announce_lines(one, *, compact=False) -> list:

@@ -177,6 +177,27 @@ class TheFiveStages(unittest.TestCase):
         ladder[envelope.APPLIED] = envelope.stage(envelope.YES, source="verdicts")
         self.assertEqual(envelope.promotion_refused(ladder), [envelope.APPLIED])
 
+    def test_a_supervisor_acknowledgement_cannot_be_written_into_the_contract(self):
+        """The table is enforced, not advice.
+
+        Without this the one module that exists to stop a supervisor being credited with an
+        acknowledgement would happily record one, because a caller handed it the ladder.
+        """
+        ladder = envelope.unreached(envelope.PARENT_TO_SUPERVISOR)
+        ladder[envelope.RECEIVED] = envelope.stage(envelope.YES, source="acks")
+        with self.assertRaises(envelope.EnvelopeRefused) as caught:
+            envelope.region(
+                direction=envelope.PARENT_TO_SUPERVISOR, purpose="completion",
+                relation_id=LINK, sender="01parent", recipient="01supervisor",
+                subject=DIGEST, observed_at="2026-09-22T00:00:00Z", reach=ladder)
+        self.assertIn("no supervisor message channel", str(caught.exception))
+
+    def test_a_stage_may_not_be_answered_by_a_record_its_direction_does_not_read(self):
+        ladder = envelope.unreached(envelope.CHILD_TO_PARENT)
+        ladder[envelope.RECEIVED] = envelope.stage(envelope.YES, source="a screenshot")
+        with self.assertRaises(envelope.EnvelopeRefused):
+            envelope.check_reach(envelope.CHILD_TO_PARENT, ladder)
+
 
 class TheDirectivePointer(unittest.TestCase):
     def test_a_pointer_derived_from_this_row_agrees_with_it(self):
