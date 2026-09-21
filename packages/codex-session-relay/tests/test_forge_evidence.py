@@ -651,7 +651,8 @@ class ARunThatWasReplacedDoesNotBlockTheOneThatReplacedIt(unittest.TestCase):
     def test_a_cancelled_earlier_run_of_the_same_workflow_is_not_graded(self):
         fake = Fake(
             threads=threads(1),
-            runs=[workflow_run(1, workflow_id=100), workflow_run(2, workflow_id=100)],
+            runs=[dict(workflow_run(1, workflow_id=100), conclusion="cancelled"),
+                  workflow_run(2, workflow_id=100)],
             jobs={1: [job("dev-gate", identifier=11, conclusion="cancelled")],
                   2: [job("dev-gate", identifier=22)]},
         )
@@ -865,11 +866,12 @@ class TwoJobsCanShareOneName(unittest.TestCase):
 
 class RecencyIsNotAnAssumptionAboutIdentifiers(unittest.TestCase):
     def test_the_run_the_forge_started_later_is_the_one_that_answers(self):
-        older = dict(workflow_run(900, workflow_id=100), run_started_at="2026-09-22T09:00:00Z")
+        older = dict(workflow_run(900, workflow_id=100), run_started_at="2026-09-22T09:00:00Z",
+                     conclusion="cancelled")
         newer = dict(workflow_run(2, workflow_id=100), run_started_at="2026-09-22T11:00:00Z")
         fake = Fake(
             threads=threads(1), runs=[older, newer],
-            jobs={900: [job("dev-gate", identifier=11, conclusion="failure")],
+            jobs={900: [job("dev-gate", identifier=11, conclusion="cancelled")],
                   2: [job("dev-gate", identifier=22)]},
         )
         snapshot = collect(fake)
@@ -957,3 +959,57 @@ class TheBranchRulesAreAListLikeAnyOther(unittest.TestCase):
         named = [one["connection"] for one in collect(fake)["connections"]]
         self.assertIn("effective branch rules", named)
 
+
+
+class OnlyACancelledRunIsEverDropped(unittest.TestCase):
+    """Narrow on purpose: dropping a finished run would hide its failure, which opens a gate."""
+
+    def test_two_finished_runs_of_one_workflow_are_both_binding(self):
+        fake = Fake(
+            threads=threads(1),
+            runs=[dict(workflow_run(1, workflow_id=100), conclusion="failure"),
+                  dict(workflow_run(2, workflow_id=100), conclusion="success")],
+            jobs={1: [job("dev-gate", identifier=11, conclusion="failure")],
+                  2: [job("dev-gate", identifier=22)]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertEqual(snapshot["supersededRuns"], [])
+
+    def test_a_cancelled_run_that_something_replaced_is_dropped(self):
+        fake = Fake(
+            threads=threads(1),
+            runs=[dict(workflow_run(1, workflow_id=100), conclusion="cancelled"),
+                  dict(workflow_run(2, workflow_id=100), conclusion="success")],
+            jobs={1: [job("dev-gate", identifier=11, conclusion="failure")],
+                  2: [job("dev-gate", identifier=22)]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        self.assertEqual([one["runId"] for one in snapshot["supersededRuns"]], ["1"])
+
+    def test_a_lone_cancelled_run_leaves_the_gate_unanswered(self):
+        fake = Fake(
+            threads=threads(1),
+            runs=[dict(workflow_run(1, workflow_id=100), conclusion="cancelled")],
+            jobs={1: [job("dev-gate", identifier=11, conclusion="cancelled")]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+
+
+class AMalformedRecordIsRefusedNotRaised(unittest.TestCase):
+    def test_a_review_coverage_of_the_wrong_type_does_not_escape(self):
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        for broken in ("not-a-record", ["T1"], 7):
+            record = full_record(snapshot, reviewCoverage=broken)
+            problems = forge.restate_problems(HEAD, record, snapshot)
+            self.assertIn(mergeevidence.MALFORMED, [one.code for one in problems])
+
+    def test_a_required_declaration_of_the_wrong_type_does_not_escape(self):
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        record = full_record(snapshot, requiredDeclared=7)
+        problems = forge.restate_problems(HEAD, record, snapshot)
+        self.assertIn(mergeevidence.MALFORMED, [one.code for one in problems])

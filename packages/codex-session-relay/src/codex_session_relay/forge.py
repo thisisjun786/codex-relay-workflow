@@ -660,6 +660,12 @@ def _checks(forge, owner, name, head, problems, connections):
     beside a successful one. So the newest run of each workflow and event answers for it, and the
     ones it replaced are recorded as superseded rather than graded. Different workflows sharing a
     name are still peers and still both binding.
+
+    Only a CANCELLED run is ever dropped, though, and that narrowness is deliberate. A repository
+    can launch two independent runs of one workflow on a head for its own reasons, and silently
+    grading the newer alone would hide the older one's failure - which is the direction that opens
+    a gate. A cancelled run is different in kind: it never finished, so it is evidence about
+    nothing, and the only question is whether something replaced it.
     """
     root = "repos/" + owner + "/" + name
     entries, detail = [], []
@@ -692,7 +698,8 @@ def _checks(forge, owner, name, head, problems, connections):
                                     " so its jobs cannot be read"))
             continue
         lane = newest.get((run.get("workflow_id"), run.get("event")))
-        replaced = lane is not None and lane[1] != int(run_id)
+        replaced = (lane is not None and lane[1] != int(run_id)
+                    and str(run.get("conclusion") or "").lower() == "cancelled")
         if replaced:
             superseded.append({"runId": run_id, "workflowId": run.get("workflow_id"),
                                "event": run.get("event"), "url": run.get("html_url"),
@@ -1147,6 +1154,13 @@ def restate_problems(head_sha, record, snapshot):
         str(head_sha or ""), record.get("reviewCoverage"), record.get("checks") or [],
         required=record.get("requiredDeclared", mergeevidence.UNDECLARED),
         providers=providers))
+    if any(one.code == mergeevidence.MALFORMED for one in problems):
+        # Shape first, and nothing else when shape fails - the same ordering handoff_problems
+        # keeps, and for the same reason. Reading a malformed record further does not merely risk
+        # a wrong answer: a reviewCoverage that is a string or a requiredDeclared that is a
+        # number raises out of this function, and the command reports a host failure instead of
+        # telling the caller its own record is the problem.
+        return problems
     gates = (snapshot or {}).get("gates") or {}
     fresh = gates.get("requiredDeclared")
     stated = record.get("requiredDeclared")
