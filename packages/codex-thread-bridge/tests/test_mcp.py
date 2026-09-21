@@ -282,7 +282,15 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         }
         caps = await session.call_tool("get_capabilities", {})
         assert not caps.isError
-        assert caps.structuredContent["capabilities"]["desktopManagedWorktrees"] is False
+        # The same distinction survives the real MCP surface. What this bridge implements is a
+        # map of flags; what nobody asked the host is a separate block of sentences, and the
+        # question that used to be answered false is not answered here at all.
+        flags = caps.structuredContent["capabilities"]
+        assert "desktopManagedWorktrees" not in flags
+        assert all(isinstance(flag, bool) for flag in flags.values())
+        questions = caps.structuredContent["hostNotProbed"]
+        assert set(questions) == {"desktopManagedWorktrees", "desktopProjectRegistry"}
+        assert all(isinstance(answer, str) for answer in questions.values())
         # Exposure and host support are separate answers over MCP too: this bridge offers
         # steering, withholds interrupt, and does not claim the connected host was tested.
         assert caps.structuredContent["exposure"]["steerActiveTurn"] is True
