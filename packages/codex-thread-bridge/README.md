@@ -202,11 +202,11 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
   "allowed": [
     {"model": "anthropic/claude-opus-5", "efforts": ["xhigh"]},
     {"model": "openai/gpt-5.6-sol", "efforts": ["high"]},
-    {"model": "xai/grok-4.6", "efforts": ["xhigh"]}
+    {"model": "devin/swe-2", "efforts": ["max"]}
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
-    "parent": {"model": "xai/grok-4.6", "reasoningEffort": "xhigh"},
+    "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
     "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
   },
   "exceptions": {
