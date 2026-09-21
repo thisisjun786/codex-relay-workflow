@@ -2324,6 +2324,16 @@ def cmd_hook(args):
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )
+                # The document this run would write, judged HERE rather than inside
+                # write_configuration. That is the same check, and it used to be the first
+                # thing write_configuration did -- but write_configuration runs after the
+                # fallback launcher is placed, so a budget the plugin owner may not record
+                # (anything above completion.MAX_PLUGIN_GUARD_SECONDS) left a launcher on
+                # disk and then refused the settings. A launcher alone is harmless, but
+                # installing one for a document this command just called unusable is not
+                # something to do quietly, and the preconditions are where "nothing was
+                # written" is promised.
+                refused += completion.complaints(wanted)
             except ValueError as error:
                 refused = [str(error)]
         if refused:

@@ -1509,6 +1509,40 @@ class StableLauncherPlacementTest(unittest.TestCase):
         self.assertFalse(completion.launcher_path(home).exists())
 
 
+    def test_a_budget_the_plugin_owner_may_not_record_places_no_fallback(self):
+        """Devin review, by the route the first measurement missed.
+
+        The earlier check exercised a host that already carried a bad document, and the
+        ownership precondition caught that one before the placement. A fresh host with the
+        budget on the command line took a different road: the document was only judged inside
+        write_configuration, which runs after the launcher is placed, so the run left a
+        launcher on disk and then refused the settings. The judgement moved into the
+        preconditions, where "nothing was written" is promised.
+        """
+        relay = self.home / "relay"
+        relay.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        relay.chmod(0o755)
+        for budget, expected in ((8, False), (7, True)):
+            with self.subTest(budget=budget):
+                home = self.home / ("budget-%d" % budget)
+                done = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts" / "runtime_install.py"), "hook",
+                     "--adapter", "completion", "--owner", "plugin", "--codex-home", str(home),
+                     "--relay-command", str(relay), "--guard-timeout", str(budget), "--apply"],
+                    capture_output=True, text=True)
+                placed = completion.launcher_path(home).exists()
+                self.assertEqual(placed, expected,
+                                 "budget %d: launcher placed=%s\n%s"
+                                 % (budget, placed, done.stdout[:400]))
+                settled = (home / completion.CONFIG_NAME).exists()
+                self.assertEqual(settled, expected, "budget %d: settings=%s" % (budget, settled))
+                if expected:
+                    self.assertEqual(done.returncode, 0, done.stdout[:300])
+                else:
+                    self.assertNotEqual(done.returncode, 0, done.stdout[:300])
+                    self.assertIn("timeoutSeconds", json.loads(done.stdout)["error"])
+
+
     def test_the_state_reader_separates_the_marker_from_the_digest(self):
         self.place(apply=True)
         state = completion.launcher_state(self.home, self.SOURCE)
