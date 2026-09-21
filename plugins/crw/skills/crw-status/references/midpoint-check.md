@@ -52,16 +52,19 @@ A parent has two states worth reading and they answer different questions. The t
 is working right now. The goal says whether anything brings it back when this turn ends. Read both
 and report both, and read the parent's effective workflow before judging either.
 
-The workflow is what makes a missing goal a fact or a fault. A parent running goal-free `crw-run`
-is in a supported mode: it does not resume itself, and the ordinary message path is how its next
-handoff reaches it, so absent goal is normal there and not a stall. A parent running
-[crw-loop](../../crw-loop/SKILL.md) was given a goal and automatic continuation on purpose, so a
-missing, paused or unactivatable goal on that parent is a real stall cause and the report leads
-with it. Judge against the mode the parent is actually in, taken from the
-[workflow ownership](../../crw-plan/references/integrations.md#workflow-ownership) rules in force
-now. CRW-118's `crw-run/references/start-policy.md` will fix which role carries which lifecycle by
-default; it is not on `dev`, it is deliberately not linked here yet, and until it lands nothing in
-this file treats its shape as the current contract.
+The workflow is what makes a missing goal a fact or a fault, and since CRW-165 the ordinary answer
+is a fact. A project parent runs goal-free by default, so an absent goal is the normal state and
+never the stall: what returns it is the delivery path, and that is what the report reads. A parent
+running [crw-loop](../../crw-loop/SKILL.md) was given a goal because someone asked for one, so a
+missing, paused or unactivatable goal there is worth leading with. Judge against the mode the
+parent is actually in, read from its recorded `run_mode` and `observation_path` under
+[Start policy](../../crw-run/references/start-policy.md), which now owns which role carries which
+lifecycle by default.
+
+For a goal-free parent the stall question moves to the delivery path, and one state deserves its
+own check: a parent whose own goal is paused receives nothing at all, because the relay reads
+`paused` as undeliverable. That is a real stall with a specific cause, and it looks identical from
+the outside to a parent nobody has anything to send.
 
 Neither reading decides a contact on its own, and this is where the two rows would otherwise
 disagree. The goal says whether the parent returns; the outstanding item says whether there is
@@ -96,9 +99,10 @@ in that parent's coordination record, and route the goal work as [crw-loop](../.
 lifecycle work, because that is the operation owner for a goal's creation, activation and recovery;
 `crw-run` executes the project and does not make a parent's goal. Where the record names no
 coordinator, or ownership cannot be established, it is Jun's decision and goes in the report as one.
-Do not hold this routing for `start-policy.md` to land: that file fixes which role carries which
-lifecycle by default, not who is told about a broken one. The goal-free parent some tasks ran under
-early on is a supported mode rather than a defect, and also not a default to copy forward.
+That routing is about who is told about a broken goal, which is a different question from which
+role carries which lifecycle by default; [Start policy](../../crw-run/references/start-policy.md)
+owns the second. A goal-free parent is the default rather than a defect, so finding one is not a
+finding at all.
 
 Per delivery, from GitHub: the current head, the CI attempt that applies to that head, the reviews
 paged to the end, whether the pull request actually merged into its intended target, and whether
@@ -347,9 +351,15 @@ recovery path for a handoff that was accepted and then went nowhere.
 Observed: a parent has no running turn. In one variant its goal is active with continuation
 working; in another it has no goal, or a paused one, or one that cannot activate.
 Action: read its effective workflow, then report the turn and the goal as two readings. A goal-free
-`crw-run` parent is in a supported mode and its absent goal is not the stall; a Loop parent with a
-missing, paused or unactivatable goal will stay quiet whatever arrives, and that is the fact the
-report leads with rather than calling it idle. Either way the parent needs nothing only while
+parent is in the default mode and its absent goal is not the stall; what to check there is whether
+its delivery path is reaching it. A Loop parent whose goal is missing or unactivatable is a mode
+mismatch and the report leads with that rather than calling it idle, but do not infer from it that
+nothing can reach the parent: an absent goal is deliverable under OPS-8.2, so read the delivery
+path and the waiting events separately before naming a cause. The goal statuses that genuinely
+receive nothing whatever arrives are the delivery-blocking set
+[OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
+classifies, read from there rather than listed again here so the two cannot diverge. Either way
+the parent needs nothing only while
 nothing is outstanding for it; where something is, the item decides under the precedence above and
 a working goal is not a reason for silence. Distinguish a goal that exists, a goal that activated,
 and continuation observed actually happening; say which you saw.
@@ -359,7 +369,8 @@ between a healthy goal and a delivered item.
 ### M14 A parent needs a goal it does not have
 
 Observed: the checkpoint establishes that a parent cannot continue because of its goal state.
-Action: confirm first that this parent is one a goal is expected of, because a goal-free Run parent
+Action: confirm first that this parent is one a goal is expected of, which since CRW-165 is only a
+parent an explicit Loop was requested for, because a goal-free parent
 is not stalled by lacking one. For a Loop parent, report the block and route it as crw-loop
 lifecycle work to the task named by the parent's stable coordinator binding, or to Jun where none
 is named. Do not create, activate or repair a goal from a status call. A checkpoint moves approved

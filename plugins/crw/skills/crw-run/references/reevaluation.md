@@ -7,8 +7,9 @@ pass records per candidate. It adds no scheduler, no store and no cursor.
 
 Vocabulary stays with its owner and is not restated here. What each relay reader answers, and the
 limits on it, are in [codex-session-relay](relay.md); capacity bounds and `unmeasured` are in
-[Start policy](start-policy.md#what-bounds-the-number-actually-dispatched); the turn-ending
-prohibition is [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting); where the record
+[Start policy](start-policy.md#what-bounds-the-number-actually-dispatched); when a parent may end
+its turn, and the prohibition that still applies where its readiness facts do not hold, is
+[OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting); where the record
 lives is [Task packet](task-packet.md). Read those for meaning; read this for what the pass does
 with it.
 

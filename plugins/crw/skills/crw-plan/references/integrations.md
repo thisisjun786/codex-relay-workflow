@@ -132,7 +132,7 @@ Load the existing owner for the requested operation:
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore the project parent's native goal, which the role policy makes the default | [crw-loop](../../crw-loop/SKILL.md) |
+| Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
@@ -712,9 +712,10 @@ Only one owner controls an operation. `crw-define` defines initiative intent, `c
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
 is a scheduling unit; only an explicit narrower request limits delivery to that batch.
-[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
-and automatic host continuation to the same Run execution and scope. Run alone does
-not establish the parent goal or promise future wake-ups; the goal is the role default and
+[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of a native parent goal
+and automatic host continuation to the same Run execution and scope. Run holds no goal,
+which is the default rather than a gap: what returns a waiting parent is the delivery path,
+on the readiness its start policy recorded. A goal is what an explicit Loop opens, and
 `crw-loop` establishes it. Run inside Loop returns to the
 existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
@@ -770,11 +771,11 @@ Judge a dispatch on four separate facts rather than one: the instruction the chi
 
 ### Default parent start policy
 
-A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars the goal without authorizing goal-free Run and leaves unresolved activation `blocked`, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
+A `crw-run` parent settles its start policy once, before it creates the first child of a run, and records the result where the next session reads it. Unless the request chooses otherwise its default child cap is 6: at most six of this parent's own children run at the same time. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, no-create which bars child creation, no-goal which bars only an explicitly requested Loop and leaves the default goal-free Run untouched, or a stated concurrency limit; the user's explicit choice for this scope; a decision already recorded for this same project while the conditions it stands on still hold; then this default. The cap is a ceiling on simultaneous children rather than a batch size, so the parent still dispatches the largest useful set inside it and refills a slot as soon as one genuinely frees, counting a creation whose outcome is unresolved as still holding one.
 
 That number is the value chosen in one 2026-09-18 run and carried forward as the standing default. It is not a measurement of what this or any host supports, and [OPS-8.4](../../crw-run/references/operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs what may be claimed about scale, so a run that needs a different number states its own and records why. The default binds this parent's own children and is not a host-global limit: several parents share one operating scope under [OPS-3.1](../../crw-run/references/operations.md#ops-31-the-operating-scope-is-the-sharing-unit), each counts only its own children while what the others are running informs the observation that can lower the number, and nothing interlocks them.
 
-The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent creates or reuses its own goal for the approved project scope, without a CXC goalplan or FSM, its continuation being a bounded Stop nudge rather than a durable loop; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default replaced the earlier arrangement in which a parent ran goal-free unless a Loop was separately requested; an explicit user no-goal limit is separate and still wins. [Start policy](../../crw-run/references/start-policy.md) owns the role table, what the start adjudication records, and the compatibility and evidence rules.
+The role decides which goal a task opens: an initiative management task opens no native goal and runs no automatic loop; a project parent opens none either, waiting idle with no goal while a delivered relay event resumes it, and building no CXC goalplan or FSM; an issue child creates or reuses its own goal for the issue scope and keeps its CXC Loop. That parent default is CRW-165's 2026-09-21 decision, which replaced the 2026-09-20 arrangement in which the parent held its own goal and its continuation was a bounded Stop nudge. An explicit user no-goal limit now agrees with the default and bars only an explicitly requested Loop. [Start policy](../../crw-run/references/start-policy.md) owns the role table, the recorded fields including the pairing matrix and the readiness facts, and the compatibility and evidence rules.
 
 A value this precedence settles is applied without asking. A value it does not settle is a new decision, asked before anything is created rather than after. [Start policy](../../crw-run/references/start-policy.md) owns the recorded fields, the scope each decision carries, when a recorded decision is re-read instead of re-decided, and what bounds the number actually dispatched.
 

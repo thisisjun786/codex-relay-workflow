@@ -17,6 +17,7 @@ from .currency import (
 from .identity import request_id as derive_request_id
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
+from .registry import ACTIVE as RELATIONSHIP_ACTIVE
 from .scope import assert_assignment_delivery, check_recipient
 from .transport import (
     DEFERRED_BUSY,
@@ -737,6 +738,25 @@ class DeliveryService:
             return None
         if row["state"] not in CLAIMABLE:
             return None
+        if relationship["status"] != RELATIONSHIP_ACTIVE and not relationship["supersededBy"]:
+            # Decided before any host read. The claim already refuses this atomically, so
+            # nothing was ever sent either way; what was missing is the reason. Reading the
+            # host here would also observe a task on behalf of an assignment somebody stopped,
+            # and leave a recipient_lifecycle row calling that recipient deliverable.
+            #
+            # Ahead of the next_eligible_at guard on purpose. A delivery can be eligible by
+            # state but still waiting out a backoff, and returning None for that reason would
+            # hide a deactivation that has already happened: an operator naming the event
+            # during the wait would learn nothing until the timer expired.
+            #
+            # Superseded relationships are deliberately NOT routed here. They are deactivated
+            # too, but permanently - resume() refuses them - so they belong to the terminal
+            # supersession vocabulary rather than to a status waiting to be lifted, and
+            # closing them correctly means settling how every operator-facing reader renders
+            # that terminal. They keep their existing behaviour until that is decided.
+            return self._withhold_inactive(
+                event_id, relationship, now, attempts=row["attempt_count"],
+            )
         if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
             return None
         assert_assignment_delivery(
@@ -1031,6 +1051,58 @@ class DeliveryService:
             )
             if row["state"] != DEFERRED_BUSY:
                 self.store.journal("delivery_deferred_busy", event_id, at=self.clock.iso())
+
+    def _withhold_inactive(self, event_id: str, relationship, now: float, *, attempts: int):
+        """An assignment status a person set stops the delivery here, with the reason kept.
+
+        Deliberately NOT a hold_reason: paused, cancelled and archived are exactly the statuses
+        resume() lifts, so the delivery has to stay claimable afterwards. Deliberately not a
+        failed_operations row either - somebody stopping their own work is not a service
+        failure, and a parent reading this scope's failures to decide whether it may wait idle
+        would find one and stand down over it.
+
+        The status is re-checked inside the write. Between the caller's read and this statement
+        the relationship can be resumed, and holding an active assignment's delivery for a whole
+        recheck interval on a stale reading is the one way this could delay real work.
+
+        The retry time is resolved in the statement for the same reason. An existing backoff is
+        never brought forward - whatever set it, a busy recipient or a rate limit, had its own
+        reason - and comparing against a value read before the transaction would let a caller
+        overwrite an extension another one committed in between. The row's own current value is
+        the one that wins, read under the write.
+        """
+        status = relationship["status"]
+        when = now + self.policy.lifecycle_recheck_seconds
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE deliveries SET state = ?,"
+                "       next_eligible_at = MAX(?, COALESCE(next_eligible_at, 0)),"
+                "       updated_at = ?"
+                " WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?"
+                "   AND EXISTS (SELECT 1 FROM relationships r"
+                "                WHERE r.relationship_id = deliveries.relationship_id"
+                "                  AND r.status = ? AND r.superseded_by IS NULL)",
+                (
+                    WITHHELD_PRE_SEND, when, self.clock.iso(), event_id, QUEUED, DEFERRED_BUSY,
+                    WITHHELD_PRE_SEND, attempts, status,
+                ),
+            )
+            if cursor.rowcount != 1:
+                # It moved under the read. Write nothing, say nothing, and let the next
+                # attempt decide on whatever is true then.
+                return None
+            self.store.journal(
+                "delivery_withheld_inactive", event_id,
+                {"relationshipId": relationship["relationshipId"], "status": status},
+                at=self.clock.iso(),
+            )
+        return {
+            "deliveryState": WITHHELD_PRE_SEND,
+            "withheldReason": RefusalReason.RELATIONSHIP_NOT_ACTIVE.value,
+            "relationshipStatus": status,
+            "eventId": event_id,
+            "sendAttempted": "no",
+        }
 
     def _withhold(self, event_id: str, observation, now: float, *, attempts: int) -> None:
         # Deliberately NOT a hold_reason. A recipient that is archived, paused or unreadable
