@@ -1070,12 +1070,21 @@ def restate_problems(head_sha, record, snapshot):
             GATES_MOVED, "the record was graded against required checks " + repr(sorted(
                 str(one) for one in stated)) + " and this branch now declares " + repr(sorted(
                     str(one) for one in fresh))))
-    elif (isinstance(gates.get("requiredProviders"), dict) and isinstance(providers, dict)
-            and {str(k): str(v) for k, v in gates["requiredProviders"].items()}
-            != {str(k): str(v) for k, v in providers.items()}):
-        problems.append(Problem(
-            GATES_MOVED, "the record and this branch disagree about which integration answers"
-            " for a required context"))
+    # Its own check rather than an else-branch. Two records can name the same required contexts
+    # and disagree about which app answers for them, and a record that OMITS the providers
+    # entirely used to skip this comparison altogether - which is the same "absence reads as
+    # satisfied" failure the whole module exists for, since a record that never read the
+    # integration out of the rule cannot answer a gate bound to one.
+    fresh_providers = gates.get("requiredProviders")
+    if isinstance(fresh_providers, dict):
+        stated_providers = providers if isinstance(providers, dict) else {}
+        expected = {str(key): str(value) for key, value in fresh_providers.items()}
+        recorded = {str(key): str(value) for key, value in stated_providers.items()}
+        if expected != recorded:
+            problems.append(Problem(
+                GATES_MOVED, "the record states " + (repr(recorded) if recorded else "nothing")
+                + " about which integration answers for a required context and this branch"
+                " declares " + repr(expected)))
     if head_sha and observed and str(head_sha) != str(observed):
         problems.append(Problem(
             CANDIDATE_MOVED, "the record is about head " + repr(str(head_sha)) + " and the forge"

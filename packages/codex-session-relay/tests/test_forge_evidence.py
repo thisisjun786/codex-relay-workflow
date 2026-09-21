@@ -874,3 +874,18 @@ class AGateSetCanMoveBetweenTheRecordAndTheRestatement(unittest.TestCase):
         problems = forge.restate_problems(HEAD, record, snapshot)
         self.assertIn(forge.RECORD_INVALID, [one.code for one in problems])
 
+
+    def test_a_record_that_never_read_the_providers_cannot_answer_a_bound_gate(self):
+        # Absence reading as agreement is the failure this whole module exists for. A record
+        # that never read the integration out of the rule has not satisfied a gate bound to one.
+        fake = Fake(threads=threads(1), rules=[{
+            "type": "required_status_checks",
+            "parameters": {"required_status_checks": [
+                {"context": "dev-gate", "integration_id": 42}]}}], runs=[], jobs={},
+            checks=[{"id": 9, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                     "conclusion": "success", "app": {"id": 42, "slug": "actions"}}])
+        snapshot = collect(fake)
+        record = full_record(snapshot)
+        record.pop("requiredProviders")
+        self.assertIn(forge.GATES_MOVED,
+                      [one.code for one in forge.restate_problems(HEAD, record, snapshot)])
