@@ -106,6 +106,7 @@ class Services:
         self.clock = SystemClock()
         self.socket_path = args.socket
         self.adapter_requested = bool(args.socket)
+        self._pin_adapter_ledger = False
         self._store = None
         self._adapter = None
         self._criteria = None
@@ -241,8 +242,11 @@ class Services:
         if self._adapter is None and self.adapter_requested:
             from .bridge_adapter import BridgeHostAdapter
 
+            options = {}
+            if self._pin_adapter_ledger:
+                options["ledger_directory"] = self.selection.path
             self._adapter = BridgeHostAdapter(
-                self.socket_path, store=self.store, clock=self.clock
+                self.socket_path, store=self.store, clock=self.clock, **options,
             )
         return self._adapter
 
@@ -302,6 +306,9 @@ def cmd_managed_start(services, args) -> dict:
 
     if not services.socket_path or services.selection.source != "flag":
         raise SystemExit2("managed-start requires explicit --state and --socket", EXIT_USAGE)
+    # This command alone pins the transport ledger to the selected store directory.
+    # Every other command keeps resolving the ledger from the environment.
+    services._pin_adapter_ledger = True
     try:
         if args.request.startswith("@"):
             with open(args.request[1:], "rb") as handle:
@@ -1465,18 +1472,22 @@ def cmd_store_challenge(services, args) -> dict:
 
 
 def _ledger_location(services) -> dict:
-    """Where the transport ledger will actually live, which --state does not move.
+    """Where the transport ledger will actually live.
 
-    bridge_adapter._build resolves it with state_dir(socket_path), reading the environment
+    Ordinary commands still resolve it with state_dir(socket_path), from the environment
     only, so a run that overrides --state alone splits the relay store from the ledger that
-    carries send idempotency. Mirrors codex_thread_bridge.ledger.open_endpoint_ledger, which
-    cannot be called here because opening it is a side effect.
+    carries send idempotency. managed-start is the exception: it pins the adapter ledger to
+    the explicit store directory before the adapter is built. This report follows that pin
+    and does not open the ledger.
     """
     import hashlib
 
     if not services.socket_path:
         return {"configured": False, "directory": None, "path": None, "split": False}
-    directory = Path(state_dir(services.socket_path)).expanduser()
+    if getattr(services, "_pin_adapter_ledger", False):
+        directory = Path(services.selection.path)
+    else:
+        directory = Path(state_dir(services.socket_path)).expanduser()
     canonical = Path(services.socket_path).expanduser().absolute().resolve()
     endpoint = hashlib.sha256(str(canonical).encode()).hexdigest()[:16]
     split = directory.resolve() != services.selection.path.resolve()

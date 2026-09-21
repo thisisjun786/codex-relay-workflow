@@ -169,13 +169,18 @@ verifying, and whichever process delivers all read one store; a mismatched `--st
 they do not see each other.
 
 There are TWO selectors and they are set separately. `--state` chooses the relay's own store, and
-falls back to `state_dir()` when omitted. The adapter's ledger, which is where duplicate
-suppression and delivery recovery live, always comes from `state_dir()`: it reads
+falls back to `state_dir()` when omitted. For ordinary delivery commands, the adapter's ledger,
+which is where duplicate suppression and delivery recovery live, comes from `state_dir()`: it reads
 `CODEX_SESSION_RELAY_STATE`, and otherwise `$XDG_STATE_HOME/codex-session-relay` or
 `~/.local/state/codex-session-relay/<endpoint hash>`. So passing only `--state` moves the store
 and leaves the ledger behind. Measured: `--state /tmp/assigned` reported that store while the
 adapter's root resolved under `~/.local/state`. Recovery then reads a ledger that never saw the
 attempts, so it can miss one or repeat a delivery.
+
+`managed-start` pins its ledger to its required explicit `--state` instead. Its request
+fingerprint includes the observed ledger path, device and inode, and mutation boundaries
+revalidate that identity. A retry after ledger replacement refuses. This exception does not
+change the shared environment requirement for the delivery worker and other socket commands.
 
 Set both to the same resolved absolute path, before any command that reaches the socket:
 
@@ -199,8 +204,10 @@ for that assignment rather than relocated into one.
 
 ## Who runs what
 
-Exactly five commands reach the App Server and need `--socket`: `deliver`, `reconcile`, `recover`,
-`daemon` and `verify-acks`. Every other command works from the store alone. Where a task cannot
+Commands that require the App Server and `--socket` include `managed-start`, `deliver`,
+`reconcile`, `recover`, `daemon` and `verify-acks`. Inspect `doctor`
+`actorReachability.hostRequiredCommands` for the installed command inventory;
+`reporting-show` reads only the explicitly selected marker and store. Where a task cannot
 reach the socket, it uses the store-only subset and a host-capable process owns delivery.
 
 `ack` sits between the two. It does not REQUIRE a socket, which is why it is not in that list, but

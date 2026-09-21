@@ -23,6 +23,20 @@ class Host:
         self.standby = "completed"
         self.paused = False
         self.creation_status = "accepted"
+        self.ledger_path = Path(settings["cwd"]) / "test-operations-ledger"
+        self.ledger_path.touch()
+
+    def ledger_identity_record(self):
+        from codex_session_relay.bridge_adapter import ledger_identity
+        return ledger_identity(self.ledger_path)
+
+    def require_ledger(self, expected):
+        from codex_session_relay.hostadapter import HostUnavailable
+        actual = self.ledger_identity_record()
+        if tuple(expected[key] for key in ("realPath", "device", "inode")) != tuple(
+                actual[key] for key in ("realPath", "device", "inode")):
+            raise HostUnavailable("ledger replaced")
+        return actual
 
     def get_operation(self, request):
         return self.operations.get(request)
@@ -126,6 +140,63 @@ class ManagedEntry(RelayTestCase):
         self.assertEqual(recovered["state"], "admitted")
         self.assertEqual((self.host.created, self.host.sent), (1, 1))
 
+    def partial_creation(self, *, attempted_turn=False):
+        real_create = self.host.create_thread
+        def partial(request, **kwargs):
+            receipt = real_create(request, **kwargs)
+            receipt.update(status="failed", attemptedEffects=["thread/start", "thread/name/set"])
+            receipt.pop("turnId")
+            if attempted_turn:
+                receipt["attemptedEffects"].append("turn/start")
+            return receipt
+        self.host.create_thread = partial
+
+    def test_failed_naming_recovers_standby_on_same_shell(self):
+        self.partial_creation()
+        original_send = self.host.send_message
+        def send(request, task, message, settings, **kwargs):
+            receipt = original_send(request, task, message, settings, **kwargs)
+            if request.startswith("managed-standby-"):
+                receipt["turnId"] = "recovered-standby"
+            return receipt
+        self.host.send_message = send
+        result = self.start.run(self.request)
+        self.assertEqual(result["state"], "admitted", result)
+        self.assertEqual(result["standbyTurnId"], "recovered-standby")
+        self.assertEqual((self.host.created, self.host.sent), (1, 2))
+        replay = self.start.run(self.request)
+        self.assertEqual(replay["state"], "admitted", replay)
+        self.assertEqual((self.host.created, self.host.sent), (1, 2))
+        original = self.host.operations[result["creationRequestId"]]
+        self.assertEqual(original["status"], "failed")
+        self.assertNotIn("turnId", original)
+
+    def test_uncertain_first_turn_is_not_replaced_with_recovery_turn(self):
+        self.partial_creation(attempted_turn=True)
+        first = self.start.run(self.request)
+        self.assertEqual(first["state"], "incomplete")
+        self.start.run(self.request)
+        self.assertEqual((self.host.created, self.host.sent), (1, 0))
+
+    def test_paused_partial_shell_is_preserved_without_recovery_send(self):
+        self.partial_creation()
+        self.host.paused = True
+        result = self.start.run(self.request)
+        self.assertEqual(result["state"], "incomplete")
+        self.assertEqual((self.host.created, self.host.sent), (1, 0))
+
+    def test_recovery_send_unknown_is_retained_not_resent(self):
+        self.partial_creation()
+        def unknown(request, task, *args, **kw):
+            self.host.sent += 1
+            receipt = {"status": "outcome_unknown", "threadId": task}
+            self.host.operations[request] = receipt
+            return receipt
+        self.host.send_message = unknown
+        self.start.run(self.request)
+        self.start.run(self.request)
+        self.assertEqual((self.host.created, self.host.sent), (1, 1))
+
     def test_worker_absent_never_creates_or_reserves(self):
         self.observation = {"observed": False, "reason": "worker_policy_unconfigured"}
         result = self.start.run(self.request)
@@ -154,6 +225,93 @@ class ManagedEntry(RelayTestCase):
         self.assertEqual(self.start.run(self.request)["reason"], "creation_unknown")
         self.assertEqual(self.start.run(self.request)["reason"], "creation_unknown")
         self.assertEqual((self.host.created, self.host.sent), (1, 0))
+
+    def test_retry_with_a_replaced_ledger_cannot_create_another_child(self):
+        self.host.creation_status = "outcome_unknown"
+        self.start.run(self.request)
+        replacement = self.host.ledger_path.with_suffix(".replacement")
+        replacement.touch()
+        replacement.replace(self.host.ledger_path)
+        self.host.operations.clear()
+        with self.assertRaises(RegistrationError):
+            self.start.run(self.request)
+        self.assertEqual((self.host.created, self.host.sent), (1, 0))
+
+    def test_real_bridge_recovers_naming_failure_without_another_shell(self):
+        from codex_session_relay.bridge_adapter import BridgeHostAdapter
+        from codex_thread_bridge.effects import mark_sent
+        from codex_thread_bridge.rpc import RpcError
+
+        settings = copy.deepcopy(self.request["child"]["settings"])
+        turns, calls = [], []
+
+        class Rpc:
+            async def call(inner, method, params):
+                calls.append(method)
+                mark_sent(method)
+                if method in ("thread/start", "thread/resume"):
+                    response = copy.deepcopy(settings)
+                    environments = response.pop("environments")
+                    return {**response, "thread": {"id": "retained-shell", "environments": environments}}
+                if method == "thread/name/set":
+                    raise RpcError(method, {"code": "naming_failed", "message": "injected naming failure"})
+                if method == "thread/read":
+                    return {"thread": {"id": "retained-shell", "status": {"type": "idle"},
+                                       "canAcceptDirectInput": True}}
+                if method == "thread/list":
+                    return {"data": [] if params.get("archived") else [{"id": "retained-shell"}]}
+                if method == "thread/goal/get":
+                    return {"goal": None}
+                if method == "turn/start":
+                    turn = {"id": "real-turn-" + str(len(turns)), "status": "completed"}
+                    turns.append(turn)
+                    return {"turn": turn}
+                if method == "thread/turns/list":
+                    return {"data": turns, "nextCursor": None}
+                raise AssertionError(method)
+
+            async def close(inner):
+                pass
+
+        adapter = BridgeHostAdapter(self.start.socket, ledger_directory=Path(self.tmp) / "bridge-ledger",
+                                    app_server_factory=lambda _: Rpc(), timeout=3)
+        self.addCleanup(adapter.close)
+        start = ManagedStart(self.store, self.clock, adapter, lambda: self.observation,
+                             socket=self.start.socket, marker_root=self.start.marker_root)
+        result = start.run(self.request)
+        self.assertEqual(result["state"], "admitted", result)
+        self.assertEqual(result["childTaskId"], "retained-shell")
+        self.assertEqual(calls.count("thread/start"), 1)
+        self.assertEqual(len(turns), 2)  # standby recovery, then registered business
+        creation = adapter.get_operation(operation_ids(self.request["requestId"])[0])
+        self.assertEqual(creation["status"], "failed")
+        self.assertNotIn("turn/start", creation["attemptedEffects"])
+        replay = start.run(self.request)
+        self.assertEqual(replay["businessTurnId"], result["businessTurnId"])
+        self.assertEqual((calls.count("thread/start"), len(turns)), (1, 2))
+
+    def test_ledger_replacement_after_preflight_refuses_before_creation(self):
+        from codex_session_relay.hostadapter import HostUnavailable
+        original = self.start.registry.arm_start
+
+        def replace_after_arm(*args):
+            row = original(*args)
+            replacement = self.host.ledger_path.with_suffix(".replacement")
+            replacement.touch()
+            replacement.replace(self.host.ledger_path)
+            return row
+
+        with patch.object(self.start.registry, "arm_start", side_effect=replace_after_arm):
+            with self.assertRaises(HostUnavailable):
+                self.start.run(self.request)
+        self.assertEqual((self.host.created, self.host.sent), (0, 0))
+
+    def test_an_unknown_ledger_refuses_before_reserving_or_creating(self):
+        with patch.object(self.host, "ledger_identity_record", return_value=None):
+            with self.assertRaises(ValueError):
+                self.start.run(self.request)
+        self.assertIsNone(self.registry.start_request(self.request["requestId"]))
+        self.assertEqual((self.host.created, self.host.sent), (0, 0))
 
     def test_changed_business_prompt_refuses_before_dispatch(self):
         self.host.standby = "inProgress"

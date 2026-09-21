@@ -1635,3 +1635,156 @@ class ThreadCreationAndPreStartGuard(unittest.TestCase):
         self.assertTrue(replay.get("replayed"))
         self.assertEqual(replay["turnId"], "turn-after-recovery")
         self.assertEqual(calls.count("turn/start"), 1)
+
+
+class _UseProcessPolicy:
+    """Leave BridgeHostAdapter on the policy this process snapshotted."""
+
+
+_USE_PROCESS_POLICY = _UseProcessPolicy()
+
+
+def _child_policy(directory, *, model="gpt-5.4", effort="medium"):
+    """A host policy that declares a child pair and nothing the caller can invent."""
+    import json
+    from pathlib import Path
+
+    path = Path(directory) / "execution-policy.json"
+    path.write_text(json.dumps({
+        "roles": {"child": {"model": model, "reasoningEffort": effort}},
+    }))
+    return path
+
+
+class ChildCreationUnderDeclaredPolicy(unittest.TestCase):
+    """A managed child is created on the real Bridge, under the policy this process declared.
+
+    The RPC is a stand-in. The ledger and the execution policy are the pinned bridge's own,
+    so a role the policy does not declare is refused before thread/start, and a declared
+    child pair is the one the host is asked for.
+    """
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import os
+        import shutil
+        import tempfile
+
+        from codex_session_relay import rolepolicy
+
+        root = os.environ.get("TMPDIR") or tempfile.gettempdir()
+        self.tmp = tempfile.mkdtemp(prefix="child-policy-", dir=root)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cwd = tempfile.mkdtemp(prefix="cwd-", dir=self.tmp)
+        self._policy_env = os.environ.get("CODEX_THREAD_BRIDGE_EXECUTION_POLICY")
+        os.environ["CODEX_THREAD_BRIDGE_EXECUTION_POLICY"] = str(_child_policy(self.tmp))
+        rolepolicy.reset()
+        self.addCleanup(self._restore_policy)
+
+    def _restore_policy(self):
+        import os
+
+        from codex_session_relay import rolepolicy
+
+        if self._policy_env is None:
+            os.environ.pop("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", None)
+        else:
+            os.environ["CODEX_THREAD_BRIDGE_EXECUTION_POLICY"] = self._policy_env
+        rolepolicy.reset()
+
+    def _adapter(self, server, *, execution_policy=_USE_PROCESS_POLICY):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        def ledger_factory():
+            return Path(self.tmp) / "socket", Ledger(Path(self.tmp) / "operations.sqlite3")
+
+        options = {}
+        if execution_policy is not _USE_PROCESS_POLICY:
+            options["execution_policy"] = execution_policy
+        adapter = BridgeHostAdapter(
+            str(Path(self.tmp) / "socket"),
+            app_server_factory=lambda canonical: server,
+            ledger_factory=ledger_factory,
+            timeout=10,
+            **options,
+        )
+        self.addCleanup(adapter.close)
+        return adapter
+
+    def test_a_child_role_is_refused_when_the_bridge_carries_no_declared_roles(self):
+        """Presence-only has no roles, so role=child must not reach thread/start."""
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                raise AssertionError(f"a refused creation reached {method}")
+
+            async def close(self):
+                return None
+
+        from codex_thread_bridge.execution import PRESENCE_ONLY
+
+        adapter = self._adapter(Creating(), execution_policy=PRESENCE_ONLY)
+        with self.assertRaises(Exception) as raised:
+            adapter.create_thread(
+                "create-child-refused", cwd=self.cwd, title="bootstrap",
+                model="gpt-5.4", reasoning_effort="medium", sandbox="read-only",
+                role="child",
+            )
+        self.assertIn("execution_role", str(raised.exception))
+        self.assertEqual(calls, [])
+
+    def test_a_declared_child_pair_is_created_and_a_parent_pair_is_not(self):
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append((method, params))
+                if method == "thread/start":
+                    return {
+                        "thread": {"id": "thread-child-1"},
+                        "cwd": self_cwd,
+                        "approvalPolicy": "never",
+                        "model": params.get("model"),
+                        "reasoningEffort": "medium",
+                        "runtimeWorkspaceRoots": [self_cwd],
+                        "sandbox": {"type": "readOnly", "networkAccess": False},
+                    }
+                if method == "thread/name/set":
+                    return {}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        self_cwd = self.cwd
+        adapter = self._adapter(Creating())
+        with self.assertRaises(Exception) as raised:
+            adapter.create_thread(
+                "create-child-wrong-pair", cwd=self.cwd, model="devin/swe-2",
+                reasoning_effort="max", sandbox="read-only", role="child",
+            )
+        self.assertIn("execution_role", str(raised.exception))
+        self.assertEqual(calls, [])
+        receipt = adapter.create_thread(
+            "create-child-1", cwd=self.cwd, title="child", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only", role="child",
+        )
+        self.assertEqual(receipt.get("status"), "accepted", json.dumps(receipt, default=str)[:2000])
+        self.assertEqual(receipt.get("threadId"), "thread-child-1")
+        self.assertEqual(receipt.get("executionPolicy", {}).get("role"), "child")
+        started = [params for method, params in calls if method == "thread/start"]
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0].get("model"), "gpt-5.4")

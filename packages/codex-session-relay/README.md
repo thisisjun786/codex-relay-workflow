@@ -297,6 +297,11 @@ The entry reserves the issue before asking the bridge to create a standby task. 
 the returned task and turn to the marker, registry, criteria and settings before sending the
 business prompt. The standby prompt does no implementation work. A missing or mismatching live
 worker policy refuses before creation; a later refusal retains the same task for recovery.
+The internal bridge uses the caller's snapshotted execution policy. Managed admission pins
+its operation ledger to the explicit `--state` directory, independently of environment defaults.
+The ledger's resolved path, device and inode are part of the request fingerprint and are
+rechecked before host mutations. Replacing that file refuses recovery rather than creating
+another child from an empty ledger.
 
 Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
 rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
@@ -304,6 +309,10 @@ bridge's retained operation, never retried under a new identity. A still-running
 `incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
 `admitted` means the business turn was dispatched, not that the child claimed it, that its hook
 fired, or that its issue passed review. Those remain separately observed facts.
+If naming failed after a verified task was created and the bridge recorded that no first turn
+was attempted, retry resumes that same task with a separately retained standby operation.
+The original failed creation receipt is preserved. An unknown or attempted first turn does not
+qualify for this recovery; its effects still need reconciliation.
 
     codex-session-relay --state /absolute/relay-state managed-show --request-id <id>
 

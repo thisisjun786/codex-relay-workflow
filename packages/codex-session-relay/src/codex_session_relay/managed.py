@@ -171,7 +171,7 @@ def operation_ids(request_id):
     return f"managed-create-{digest}", f"managed-business-{digest}"
 
 
-def request_identity(request, store, socket, marker_root, *, state_selector=None):
+def request_identity(request, store, socket, marker_root, *, ledger_identity, state_selector=None):
     """The request plus its physical routing context, never business text in a new store."""
     location = store.locate()
     if location["device"] is None or location["inode"] is None:
@@ -184,6 +184,7 @@ def request_identity(request, store, socket, marker_root, *, state_selector=None
                      "socket": str(socket), "markerRoot": str(marker_root)},
         "db": {key: location[key] for key in ("storeId", "device", "inode", "realPath")},
         "socket": socket_identity, "markerRoot": root, "workspace": workspace,
+        "ledger": ledger_identity,
         "artifactRoots": [_path(p, "artifactRoots") for p in request["artifactRoots"]],
         "bootstrapVersion": BOOTSTRAP_VERSION,
     }
@@ -219,8 +220,14 @@ class ManagedStart:
         from .errors import RegistrationError, RefusalReason
 
         request = parse_request(raw)
+        ledger = self.adapter.ledger_identity_record()
+        if not isinstance(ledger, dict) or any(ledger.get(key) is None
+                for key in ("realPath", "device", "inode")):
+            raise ValueError("managed start requires an observed bridge ledger identity")
+        self.adapter.require_ledger(ledger)
+        self._ledger_identity = ledger
         identity = request_identity(request, self.store, self.socket, self.marker_root,
-                                    state_selector=self.state_selector)
+                                    ledger_identity=ledger, state_selector=self.state_selector)
         self.request, self.identity = request, identity
         info = self.store.path.stat()
         self._physical = (info.st_dev, info.st_ino)
@@ -265,6 +272,7 @@ class ManagedStart:
             "creationRequestId": self.identity["create_request_id"],
             "businessRequestId": self.identity["dispatch_request_id"],
             "requestFingerprint": self.identity["request_fingerprint"],
+            "ledger": self._ledger_identity,
             "reservationState": row.get("state"),
             "reservationRevision": row.get("revision"),
             "recovery": "Retry only this same complete request; do not create a replacement.",
@@ -337,12 +345,14 @@ class ManagedStart:
             self.row = self.registry.arm_start(request["requestId"], identity["request_fingerprint"],
                                                self.row["revision"])
         settings = TaskSettings(request["child"]["settings"])
+        self.adapter.require_ledger(self._ledger_identity)
         receipt = self.adapter.get_operation(identity["create_request_id"])
         if receipt is None or receipt.get("status") == "not_attempted":
             readiness = rolepolicy.worker_readiness(self.worker_observation(), self.requirements)
             if not readiness["ready"]:
                 return self.result("refused", "creation", readiness["reason"])
             data = settings.data
+            self.adapter.require_ledger(self._ledger_identity)
             receipt = self.adapter.create_thread(
                 identity["create_request_id"], cwd=data["cwd"], prompt=BOOTSTRAP,
                 title=request["child"]["title"], sandbox=settings.sandbox_mode(),
@@ -350,12 +360,18 @@ class ManagedStart:
                 runtime_workspace_roots=data["runtimeWorkspaceRoots"],
                 expected_sandbox_policy=data["sandbox"], role="child",
             )
+        if isinstance(receipt, dict) and receipt.get("status") == "failed":
+            receipt = self._recover_standby(receipt, settings)
         if not isinstance(receipt, dict) or receipt.get("status") != "accepted":
             outcome = "failed" if isinstance(receipt, dict) and receipt.get("status") == "failed" else "unknown"
             intent.record_attempt(root, workspace=workspace, assignment=self.assignment,
                                   outcome=outcome, at=self.clock.iso(),
                                   task_id=receipt.get("threadId") if isinstance(receipt, dict) else None)
-            return self.result("incomplete", "creation", "creation_" + outcome)
+            return self.result("incomplete", "creation", "creation_" + outcome,
+                               retainedChildTaskId=receipt.get("threadId") if isinstance(receipt, dict) else None,
+                               standbyRecovery={key: receipt[key] for key in
+                                   ("recoveryReason", "recoveryRequestId", "recoveryStatus")
+                                   if isinstance(receipt, dict) and key in receipt})
         task, standby = receipt.get("threadId"), receipt.get("turnId")
         if not marker.valid_segment(task) or not marker.valid_segment(standby):
             return self.result("incomplete", "creation", "creation_identity_unobserved")
@@ -391,6 +407,7 @@ class ManagedStart:
             return self.result("refused", "readback", problem)
         # Accepted or uncertain business effects are reconciled BEFORE checking busy:
         # the same request is allowed to observe its own running turn.
+        self.adapter.require_ledger(self._ledger_identity)
         sent = self.adapter.get_operation(identity["dispatch_request_id"])
         if sent is not None and sent.get("status") != "not_attempted":
             return self._business_result(sent)
@@ -404,9 +421,68 @@ class ManagedStart:
         readiness = rolepolicy.worker_readiness(self.worker_observation(), self.requirements)
         if not readiness["ready"]:
             return self.result("refused", "business", readiness["reason"])
+        self.adapter.require_ledger(self._ledger_identity)
         sent = self.adapter.send_message(identity["dispatch_request_id"], task, self._packet(),
                                          settings, before_start=self._before_start)
         return self._business_result(sent)
+
+    def _recover_standby(self, creation, settings):
+        """Resume a proven shell only when the bridge proves no first turn was sent.
+
+        The original failed creation receipt remains immutable in its ledger. The
+        separate deterministic send receipt owns the recovered standby turn.
+        Unknown turn/start effects are never retried under this new identity.
+        """
+        task = creation.get("threadId")
+        effects = creation.get("attemptedEffects")
+        observed = creation.get("creation")
+        if (not marker.valid_segment(task) or creation.get("turnId")
+                or not isinstance(effects, list) or "thread/start" not in effects
+                or "turn/start" in effects or not isinstance(observed, dict)
+                or settings.mismatches(observed)):
+            return creation
+        request_id = "managed-standby-" + hashlib.sha256(
+            self.request["requestId"].encode()).hexdigest()
+        self.adapter.require_ledger(self._ledger_identity)
+        recovered = self.adapter.get_operation(request_id)
+        if recovered is None or recovered.get("status") == "not_attempted":
+            from .lifecycle import observe
+            from . import rolepolicy
+            lifecycle = observe(self.adapter, task, cwd=self.identity["workspace"])
+            if not lifecycle.may_send:
+                return {**creation, "recoveryReason": lifecycle.withhold_reason}
+            readiness = rolepolicy.worker_readiness(self.worker_observation(), self.requirements)
+            if not readiness["ready"]:
+                return {**creation, "recoveryReason": readiness["reason"]}
+
+            async def before_start(rpc):
+                import sqlite3
+                self.adapter.require_ledger(self._ledger_identity)
+                readiness = rolepolicy.worker_readiness(self.worker_observation(), self.requirements)
+                if not readiness["ready"]:
+                    return {"code": readiness["reason"], "message": "Standby recovery withheld"}
+                info = self.store.path.stat()
+                if (info.st_dev, info.st_ino) != self._physical:
+                    return {"code": "managed_store_changed", "message": "Standby recovery store changed"}
+                with closing(sqlite3.connect(self.store.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                    row = db.execute("SELECT request_fingerprint,state FROM managed_start_requests "
+                                     "WHERE request_id=?", (self.request["requestId"],)).fetchone()
+                if row != (self.identity["request_fingerprint"], "create_armed"):
+                    return {"code": "managed_reservation_changed", "message": "Standby recovery reservation changed"}
+                return await self._host_ready(rpc, task)
+
+            self.adapter.require_ledger(self._ledger_identity)
+            recovered = self.adapter.send_message(request_id, task, BOOTSTRAP, settings,
+                                                  before_start=before_start)
+        if (not isinstance(recovered, dict) or recovered.get("status") != "accepted"
+                or recovered.get("threadId") != task
+                or not marker.valid_segment(recovered.get("turnId"))):
+            return {**creation, "recoveryRequestId": request_id,
+                    "recoveryStatus": recovered.get("status") if isinstance(recovered, dict) else "unknown"}
+        # This is a composed admission fact, not a rewrite of the failed bridge operation.
+        return {**creation, "status": "accepted", "turnId": recovered["turnId"],
+                "creationStatus": creation["status"], "standbyRecovery": recovered,
+                "recoveryRequestId": request_id}
 
     def _registered_problem(self, *, complete=False):
         from .registry import load_settings
@@ -508,6 +584,7 @@ class ManagedStart:
         def refuse(code):
             return {"code": code, "message": "Managed business start withheld: " + code}
 
+        self.adapter.require_ledger(self._ledger_identity)
         task = self.row["child_task_id"]
         readiness = rolepolicy.worker_readiness(self.worker_observation(), self.requirements)
         if not readiness["ready"]:
@@ -569,6 +646,14 @@ class ManagedStart:
                                  "required": bool(e["required"])} for e in criteria]) !=
                     set_digest(self.request["criteria"])):
                 return refuse("managed_criteria_changed")
+        return await self._host_ready(rpc, task)
+
+    async def _host_ready(self, rpc, task):
+        from .lifecycle import BLOCKING_GOAL_STATUS
+
+        def refuse(code):
+            return {"code": code, "message": "Managed turn withheld: " + code}
+
         # Enumerate by exact task identity; a bounded absence is unknown, not permission.
         archived = None
         for archive_filter in (True, False):

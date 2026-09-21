@@ -18,6 +18,10 @@ continue a descending scan re-serves the newest page forever.
 
 import hashlib
 import json
+import os
+import sqlite3
+import stat
+from pathlib import Path
 
 from .hostadapter import HostUnavailable, ThreadFacts, TokenScan, TurnInfo
 
@@ -28,14 +32,92 @@ PAGE = 50
 MAX_PAGES_PER_CHECK = 4
 
 
+class _ProcessPolicy:
+    """Ask _build to use the execution policy this process already snapshotted."""
+
+
+_PROCESS_POLICY = _ProcessPolicy()
+
+
+def ledger_identity(path) -> dict:
+    """Physical identity of one ledger file, or a refusal when it cannot be stated.
+
+    path, device and inode name the file this process can see. There is no second id:
+    the bridge ledger has none, and this package does not add one. Any field that
+    cannot be read refuses.
+    """
+    location = Path(path)
+    try:
+        real = location.resolve()
+        info = os.stat(real, follow_symlinks=True)
+    except OSError as error:
+        raise HostUnavailable(f"ledger identity is unknown: {error}") from error
+    if not stat.S_ISREG(info.st_mode):
+        raise HostUnavailable(f"ledger identity is unknown: {real} is not a regular file")
+    return {
+        "path": str(location),
+        "realPath": str(real),
+        "device": info.st_dev,
+        "inode": info.st_ino,
+    }
+
+
+def same_ledger(expected, observed) -> bool:
+    """True only when path, device and inode still name the captured ledger."""
+    if not isinstance(expected, dict) or not isinstance(observed, dict):
+        return False
+    keys = ("realPath", "device", "inode")
+    return all(expected.get(key) is not None and expected.get(key) == observed.get(key) for key in keys)
+
+
+def _identity_of_open_ledger(ledger):
+    """Identity of the ledger file the open connection names, or None when unknown.
+
+    This stats the path the connection reports. It does not mint an id. Replacement
+    is caught by comparing the result with the identity captured when the file was
+    opened, which require_ledger does.
+    """
+    database = getattr(ledger, "db", None)
+    rows = None
+    if database is not None:
+        try:
+            rows = database.execute("PRAGMA database_list").fetchall()
+        except sqlite3.Error:
+            rows = None
+    location = None
+    if rows:
+        for row in rows:
+            name = row[1] if len(row) > 1 else None
+            file_name = row[2] if len(row) > 2 else None
+            if name == "main" and file_name:
+                location = file_name
+                break
+    if location is None:
+        location = getattr(ledger, "path", None)
+    if not location:
+        return None
+    try:
+        return ledger_identity(location)
+    except HostUnavailable:
+        return None
+
+
 class BridgeHostAdapter:
     def __init__(self, socket_path=None, *, call=None, ledger_get=None, store=None, clock=None,
-                 timeout: float = 20.0, page: int = PAGE, **transport_options):
+                 timeout: float = 20.0, page: int = PAGE, execution_policy=_PROCESS_POLICY,
+                 ledger_directory=None, **transport_options):
         """call(method, params) -> dict is the only way this class reaches the host.
 
         Supplying it directly is how the tests drive the real logic without a socket. Omitting
         it builds the transport from the pinned bridge library, imported lazily so that importing
         this package never requires it.
+
+        execution_policy is the bridge ExecutionPolicy handed to Bridge. The default sentinel
+        reads the process snapshot once, through rolepolicy.declared(). Pass an ExecutionPolicy,
+        including the presence-only policy, to keep that snapshot out of this adapter. A
+        read-only adapter never creates a thread, so it does not resolve one. ledger_directory,
+        when given, is the store directory the transport ledger is opened in; omitting it keeps
+        the environment resolution every existing caller already has.
         """
         self.page = page
         self.store = store
@@ -43,15 +125,63 @@ class BridgeHostAdapter:
         self._bridge = None
         self._runner = None
         self._transport = None
+        self.ledger_directory = ledger_directory
         if call is not None:
             self._call = call
             self._ledger_get = ledger_get or (lambda request_id: None)
             self._send = None
             return
-        self._transport = _Transport(socket_path, timeout, **transport_options)
+        if execution_policy is _PROCESS_POLICY:
+            from . import rolepolicy
+
+            resolved = rolepolicy.declared()
+            execution_policy = getattr(resolved, "_policy", None)
+        self._execution_policy = execution_policy
+        self._transport = _Transport(
+            socket_path, timeout, execution_policy=execution_policy,
+            ledger_directory=ledger_directory, **transport_options,
+        )
         self._call = self._transport.call
         self._ledger_get = self._transport.ledger_get
         self._send = self._transport.send
+        self._ledger_identity = self._transport.ledger_identity
+
+    def ledger_identity_record(self):
+        """The ledger this transport opened, or None when this adapter has no transport.
+
+        Read-only adapters have no ledger. A transport whose ledger cannot be identified
+        already refused during construction.
+        """
+        if self._transport is None:
+            return None
+        return dict(self._ledger_identity)
+
+    def require_ledger(self, expected):
+        """Re-stat the ledger path captured at open and refuse unless it is that file.
+
+        Synchronous on the caller thread and on the worker thread. It stats the path
+        recorded when the ledger was opened; it does not touch the sqlite connection
+        and does not submit work to the transport queue. A replaced file at that path
+        has a different device or inode and is refused. Nothing is reopened or reminted.
+        """
+        if self._transport is None:
+            raise HostUnavailable("this adapter has no ledger to revalidate")
+        captured = self._ledger_identity or {}
+        location = captured.get("realPath") or captured.get("path")
+        if not location:
+            raise HostUnavailable("ledger identity is unknown; refusing before mutation")
+        try:
+            observed = ledger_identity(location)
+        except HostUnavailable:
+            raise HostUnavailable(
+                "ledger identity changed or is unknown; refusing before mutation"
+            ) from None
+        if observed is None or not same_ledger(expected, observed):
+            raise HostUnavailable(
+                "ledger identity changed or is unknown; refusing before mutation"
+            )
+        self._ledger_identity = observed
+        return observed
 
     # ------------------------------------------------------------------ reads
 
@@ -327,13 +457,17 @@ class _Transport:
     CALLER_SLACK_SECONDS = 10.0
 
     def __init__(self, socket_path, timeout, *, app_server_factory=None, bridge_factory=None,
-                 ledger_factory=None, drain_seconds=None, caller_slack=None):
+                 ledger_factory=None, drain_seconds=None, caller_slack=None,
+                 execution_policy=None, ledger_directory=None):
         import concurrent.futures
         import queue
         import threading
 
         self._futures = concurrent.futures
         self.timeout = timeout
+        self._execution_policy = execution_policy
+        self._ledger_directory = ledger_directory
+        self.ledger_identity = None
         self._inbox = queue.Queue()
         self._stopping = False
         self._accepting = True
@@ -362,6 +496,8 @@ class _Transport:
             raise TimeoutError("the relay transport worker did not start")
         if self._failure is not None:
             raise self._failure
+        self.ledger_identity = self._state.get("ledgerIdentity")
+        self._ledger = self._state.get("ledger")
 
     # ------------------------------------------------------------- worker side
 
@@ -586,9 +722,17 @@ class _Transport:
         if ledger_factory is None:
             from codex_thread_bridge.ledger import open_endpoint_ledger
 
-            canonical, ledger = open_endpoint_ledger(Path(socket_path), state_dir(socket_path))
+            directory = self._ledger_directory if self._ledger_directory is not None else state_dir(socket_path)
+            canonical, ledger = open_endpoint_ledger(Path(socket_path), Path(directory))
         else:
             canonical, ledger = ledger_factory()
+        identity = _identity_of_open_ledger(ledger)
+        if identity is None:
+            try:
+                ledger.close()
+            except Exception:  # noqa: BLE001 - the refusal below is the answer
+                pass
+            raise HostUnavailable("ledger identity is unknown; refusing to use this ledger")
         if app_server_factory is None:
             from codex_thread_bridge.rpc import AppServer
 
@@ -598,10 +742,10 @@ class _Transport:
         if bridge_factory is None:
             from codex_thread_bridge.bridge import Bridge
 
-            bridge = Bridge(rpc, ledger)
+            bridge = Bridge(rpc, ledger, policy=self._execution_policy)
         else:
             bridge = bridge_factory(rpc, ledger)
-        self._state.update(rpc=rpc, ledger=ledger, bridge=bridge)
+        self._state.update(rpc=rpc, ledger=ledger, bridge=bridge, ledgerIdentity=identity)
 
     # ------------------------------------------------------------- caller side
 

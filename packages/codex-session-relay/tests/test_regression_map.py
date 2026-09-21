@@ -254,6 +254,7 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("admission.py", "Admission", "admitted", "field"),
     ("assignment.py", None, "_criteria_current", "function"),
     ("bridge_adapter.py", None, "_scan_listing", "function"),
+    ("bridge_adapter.py", None, "same_ledger", "function"),
     ("cli.py", None, "_reads_no_selected_store", "function"),
     ("daemon.py", None, "_already_observed", "function"),
     ("daemon.py", None, "_reads_were_complete", "function"),
