@@ -353,6 +353,26 @@ execution owner. Internal helpers acquire no ownership by receiving a subtask, a
 helper agent is not a child, and the operating system's process supervisor is a different thing
 that happens to share the word.
 
+Jun's own words for the three levels are 감독 세션, 부모 세션 and 자식 세션, shortened to 감독, 부모
+and 자식 once a report has introduced them. English instruction text calls them the supervisor, the
+parent and the child, and the ids a relationship store and a host's role policy already record are
+`supervisor`, `parent` and `child`
+([OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity),
+[Execution settings by role](#execution-settings-by-role)). One role in three renderings: the
+Korean name is what a reader is shown, the English word is what an instruction says, and the id is
+what a record keys on.
+
+Writing the names down settles what they are called and nothing else. A display name in either
+language keys nothing, so no relationship id, assignment, goal, worktree or task title is
+regenerated because this section now spells them out, and titles keep the convention
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) already fixes. Read
+earlier phrasing the same way rather than rewriting it: an initiative task, an initiative
+management task or a 상위 관리 세션 is the supervisor under another description. That is how to read
+those words, not a licence to substitute them wherever they appear, and the two things that merely
+share the word stay excluded exactly as above. A role word is not a designation either: a request,
+a prompt, a title or a folder saying 감독 or supervisor designates nobody, so what a task is stays
+something read from its binding rather than from what anyone called it.
+
 | Role | Bound to | Coordinates | Instructs |
 |---|---|---|---|
 | Supervisor | one initiative ID | its initiative's projects: cross-project dependencies, priority, shared resources, and the order in which projects reach a shared target | the parents of those projects |
@@ -364,6 +384,17 @@ that happens to share the word.
 | Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
 | Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
 | Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks have passed, its required reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
+
+The tables say what each level answers for. What the supervisor spends its time on is the level
+above them: it talks with Jun, carries the requests he approves down to the parents, decides which
+parent takes which project, answers the midpoint check when he asks for one, collects what the
+parents report, and writes the initiative's record. The work it never takes is divided by name
+rather than left to the pair below it. The child implements, verifies and resolves the review on
+its own pull request; the parent accepts that delivery against the issue's criteria and performs
+the merge; the supervisor tests each reported project outcome against the initiative's finish
+condition and stops there. Holding no goal of its own narrows none of that: inside an execution
+approval still in force it moves the approved work and resumes the responsible parent, which is
+what [the midpoint check](../../crw-status/references/midpoint-check.md) already describes.
 
 A ready batch means several separate children, not several issues assigned to one child, and the
 same holds a level up: several ready projects mean several parents. Each level reads the level
@@ -408,9 +439,14 @@ establishing the new one.
 
 Approvals and limits travel down without widening. The user's restrictions, approvals, settings and
 pause or cancel hold in the scope they were given, and being linked to a level above is neither an
-expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)). A
-supervisor's or a parent's coordination goal is its own, and neither is mixed with a child's
-implementation FSM.
+expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)).
+The role decides what goal a task opens, never the other way round. A supervisor opens none and
+runs no automatic loop, and a child keeps its own goal and its implementation loop. What a project
+parent opens is not this section's fact to hold: it is the decision
+[Start policy](../../crw-run/references/start-policy.md#roles-and-the-goal-each-one-opens) records,
+that record has already changed once, and it is read there rather than remembered. A coordination
+goal that does exist is its own and is never mixed with a child's implementation FSM, and an absent
+goal says what a task is waiting on rather than which role it is.
 
 This contract fixes the roles; it does not establish how a supervisor is instantiated. A task
 becomes a supervisor only by an explicit designation naming the initiative, and an initiative link
@@ -707,6 +743,10 @@ Keep task titles under the existing Korean title convention, and keep user-facin
 reports and Linear records in Korean unless explicitly requested otherwise. This
 language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
+Name the three levels the same way in both registers. A Korean report or record calls them 감독 세션,
+부모 세션 and 자식 세션, spelled out where prose first introduces the role and shortened to 감독, 부모
+and 자식 after that or in a one-line label, while the English instruction keeps the role words those
+records are keyed on. They are one role in two registers, so neither version needs a gloss.
 
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the pair the role policy declares for the child role, with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. That pair is read from the declared policy at the time of the call under [Execution settings by role](#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
