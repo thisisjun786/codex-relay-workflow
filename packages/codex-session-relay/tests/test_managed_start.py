@@ -63,7 +63,9 @@ class Host:
     def read_goal_status(self, task):
         return "paused" if self.paused else None
 
-    def send_message(self, request, task, message, settings, *, before_start=None):
+    def send_message(self, request, task, message, settings, *, before_start=None,
+                     guard_rpc_requests=0):
+        assert guard_rpc_requests == 10
         self.sent += 1
         receipt = {"status": "accepted", "threadId": task, "turnId": "business", "requestId": request}
         self.operations[request] = receipt
@@ -225,6 +227,24 @@ class ManagedEntry(RelayTestCase):
         self.assertEqual(self.start.run(self.request)["reason"], "creation_unknown")
         self.assertEqual(self.start.run(self.request)["reason"], "creation_unknown")
         self.assertEqual((self.host.created, self.host.sent), (1, 0))
+
+    def test_registered_child_can_receive_revisions_but_an_unrelated_task_cannot(self):
+        from codex_session_relay.scope import assert_assignment_delivery, ScopeError
+        result = self.start.run(self.request)
+        relation = self.registry.get(result["relationshipId"])
+        self.assertEqual(relation["authorizedScope"]["allowedRecipients"], [PARENT, "child-new"])
+        assert_assignment_delivery(relation, kind="revision_request", recipient_task_id="child-new")
+        assert_assignment_delivery(relation, kind="completion_event", recipient_task_id=PARENT)
+        with self.assertRaises(ScopeError):
+            assert_assignment_delivery(relation, kind="revision_request", recipient_task_id="unrelated")
+        self.assertEqual(self.request["allowedRecipients"], [PARENT])
+        self.assertEqual(self.start.run(self.request)["state"], "admitted")
+
+    def test_child_recipient_is_not_added_twice_when_already_declared(self):
+        self.request["allowedRecipients"].append("child-new")
+        result = self.start.run(self.request)
+        relation = self.registry.get(result["relationshipId"])
+        self.assertEqual(relation["authorizedScope"]["allowedRecipients"], [PARENT, "child-new"])
 
     def test_retry_with_a_replaced_ledger_cannot_create_another_child(self):
         self.host.creation_status = "outcome_unknown"
@@ -444,6 +464,31 @@ class ManagedEntry(RelayTestCase):
         self.assertNotIn("error", found)
         self.assertEqual(found["result"]["code"], "recipient_paused")
 
+    def test_host_guard_budget_covers_both_full_listings_and_final_reads(self):
+        import asyncio
+        from codex_session_relay.managed import HOST_READY_RPC_REQUESTS
+        calls, pages = [], {True: 0, False: 0}
+
+        class Rpc:
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/list":
+                    archived = params["archived"]
+                    pages[archived] += 1
+                    page = pages[archived]
+                    return {"data": [{"id": "child-new"}] if not archived and page == 4 else [],
+                            "nextCursor": str(page) if page < 4 else None}
+                if method == "thread/goal/get":
+                    return {"goal": None}
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}, "canAcceptDirectInput": True}}
+                raise AssertionError(method)
+
+        self.assertIsNone(asyncio.run(self.start._host_ready(Rpc(), "child-new")))
+        self.assertEqual(pages, {True: 4, False: 4})
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(HOST_READY_RPC_REQUESTS, len(calls))
+
     def test_cli_missing_worker_is_refused_without_creating_the_missing_store(self):
         import subprocess
         import sys
@@ -505,7 +550,8 @@ class ManagedEntry(RelayTestCase):
                     return {"thread": {"id": task, "status": {"type": "idle"}, "canAcceptDirectInput": True}}
                 raise AssertionError(method)
         changes = {"parent_task_id": "replacement-parent", "child_host_id": "other-host",
-                   "artifact_roots": json.dumps(["/other-scope"])}
+                   "artifact_roots": json.dumps(["/other-scope"]),
+                   "allowed_recipients": json.dumps([PARENT])}
         for column, value in changes.items():
             with self.subTest(column=column):
                 previous = self.store.one("SELECT * FROM relationships WHERE relationship_id=?",

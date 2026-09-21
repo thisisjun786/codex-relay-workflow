@@ -297,6 +297,9 @@ The entry reserves the issue before asking the bridge to create a standby task. 
 the returned task and turn to the marker, registry, criteria and settings before sending the
 business prompt. The standby prompt does no implementation work. A missing or mismatching live
 worker policy refuses before creation; a later refusal retains the same task for recovery.
+Registration adds that retained child's ID to the declared recipients so the parent can
+return revision requests to its own child. Replay and pre-start checks verify this derived
+list; it does not authorize messages to an unrelated task.
 The internal bridge uses the caller's snapshotted execution policy. Managed admission pins
 its operation ledger to the explicit `--state` directory, independently of environment defaults.
 The ledger's resolved path, device and inode are part of the request fingerprint and are

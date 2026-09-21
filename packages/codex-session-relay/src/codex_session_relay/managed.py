@@ -23,6 +23,8 @@ BOOTSTRAP = (
 )
 MAX_REQUEST_BYTES = 256_000
 MAX_PROMPT = 90_000
+MAX_HOST_CHECK_PAGES = 4
+HOST_READY_RPC_REQUESTS = 2 * MAX_HOST_CHECK_PAGES + 2
 
 
 def _object(value, required, optional=(), *, at):
@@ -389,7 +391,7 @@ class ManagedStart:
             parent=Endpoint(parent["taskId"], parent["hostId"], cwd=parent["settings"]["cwd"]),
             child=Endpoint(task, request["child"]["hostId"], cwd=workspace, cxc_session=task),
             issue_key=request["issueKey"], artifact_roots=request["artifactRoots"],
-            allowed_recipients=request["allowedRecipients"], scope_ref=request["scopeRef"],
+            allowed_recipients=self._recipients(task), scope_ref=request["scopeRef"],
             dispatch_request_id=identity["dispatch_request_id"], dispatch_turn_id=standby,
             project_key=request.get("projectKey"), managed_request_id=request["requestId"],
         )
@@ -423,7 +425,8 @@ class ManagedStart:
             return self.result("refused", "business", readiness["reason"])
         self.adapter.require_ledger(self._ledger_identity)
         sent = self.adapter.send_message(identity["dispatch_request_id"], task, self._packet(),
-                                         settings, before_start=self._before_start)
+                                         settings, before_start=self._before_start,
+                                         guard_rpc_requests=HOST_READY_RPC_REQUESTS)
         return self._business_result(sent)
 
     def _recover_standby(self, creation, settings):
@@ -473,7 +476,8 @@ class ManagedStart:
 
             self.adapter.require_ledger(self._ledger_identity)
             recovered = self.adapter.send_message(request_id, task, BOOTSTRAP, settings,
-                                                  before_start=before_start)
+                                                  before_start=before_start,
+                                                  guard_rpc_requests=HOST_READY_RPC_REQUESTS)
         if (not isinstance(recovered, dict) or recovered.get("status") != "accepted"
                 or recovered.get("threadId") != task
                 or not marker.valid_segment(recovered.get("turnId"))):
@@ -483,6 +487,14 @@ class ManagedStart:
         return {**creation, "status": "accepted", "turnId": recovered["turnId"],
                 "creationStatus": creation["status"], "standbyRecovery": recovered,
                 "recoveryRequestId": request_id}
+
+    def _recipients(self, child):
+        """Managed execution authorizes revisions to the same child it creates.
+
+        The caller cannot name an as-yet uncreated task. Preserve its declared recipients
+        and add only the retained creation identity, never an inferred replacement.
+        """
+        return list(dict.fromkeys([*self.request["allowedRecipients"], child]))
 
     def _registered_problem(self, *, complete=False):
         from .registry import load_settings
@@ -500,7 +512,7 @@ class ManagedStart:
                 record["child"]["hostId"] != self.request["child"]["hostId"] or
                 record["authorizedScope"] != {
                     "artifactRoots": self.request["artifactRoots"],
-                    "allowedRecipients": self.request["allowedRecipients"],
+                    "allowedRecipients": self._recipients(row["child_task_id"]),
                     "scopeRef": self.request["scopeRef"],
                 }):
             return "managed_scope_changed"
@@ -615,7 +627,7 @@ class ManagedStart:
             }
             if (any(row[key] != value for key, value in expected_scope.items()) or
                     json.loads(row["artifact_roots"]) != self.request["artifactRoots"] or
-                    json.loads(row["allowed_recipients"]) != self.request["allowedRecipients"]):
+                    json.loads(row["allowed_recipients"]) != self._recipients(task)):
                 return refuse("managed_scope_changed")
             generation = db.execute(
                 "SELECT dispatch_turn_id,dispatch_request_id FROM generations "
@@ -658,7 +670,7 @@ class ManagedStart:
         archived = None
         for archive_filter in (True, False):
             cursor = None
-            for _ in range(4):
+            for _ in range(MAX_HOST_CHECK_PAGES):
                 params = {"limit": 50, "archived": archive_filter, "useStateDbOnly": True}
                 if cursor:
                     params["cursor"] = cursor

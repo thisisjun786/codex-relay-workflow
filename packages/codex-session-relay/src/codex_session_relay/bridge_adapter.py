@@ -329,7 +329,7 @@ class BridgeHostAdapter:
 
     # ----------------------------------------------------------------- writes
 
-    def send_message(self, request_id: str, thread_id: str, message: str, settings=None, *, before_start=None) -> dict:
+    def send_message(self, request_id: str, thread_id: str, message: str, settings=None, *, before_start=None, guard_rpc_requests=0) -> dict:
         """Send under the authorized settings, or do not send.
 
         settings is required. The pinned bridge's own send resumes with {threadId, excludeTurns}
@@ -345,6 +345,11 @@ class BridgeHostAdapter:
         settings check already uses. The callable runs on this worker, so a host read uses the
         rpc it was given. Calling this adapter again from inside it would wait on the same
         worker and never return.
+
+        guard_rpc_requests counts the extra host calls before_start may make, not the three
+        the send already makes. Zero, the default, keeps the ordinary budget. A positive
+        integer widens only this submission. Anything else is refused here, before a worker
+        is asked to send.
         """
         if self._send is None:
             raise HostUnavailable("this adapter was built read-only, with no transport to send on")
@@ -353,7 +358,11 @@ class BridgeHostAdapter:
                 "a send requires the authorized task settings; refusing to resume with host"
                 " defaults"
             )
-        return self._send(request_id, thread_id, message, settings, before_start=before_start)
+        _require_guard_budget(guard_rpc_requests)
+        return self._send(
+            request_id, thread_id, message, settings,
+            before_start=before_start, guard_rpc_requests=guard_rpc_requests,
+        )
 
     def create_thread(self, request_id: str, **settings) -> dict:
         """Create one thread on the existing bridge, and retain its whole receipt.
@@ -445,6 +454,11 @@ class _Transport:
     RPC_STAGES_PER_REQUEST = 3
     # _guarded_send makes exactly these three: thread/read, thread/resume, turn/start.
     RPC_REQUESTS_PER_SEND = 3
+    # A managed pre-start guard may page thread/list four times for each archive filter,
+    # then read the goal and the thread once more. That is the largest callback this
+    # package currently makes. The number is a per-send argument, never a process setting:
+    # an ordinary send still declares zero and keeps RPC_REQUESTS_PER_SEND.
+    GUARD_RPC_REQUESTS_MAX = 10
     # The worst case a legitimately progressing send can reach. A send holding a live
     # connection throughout spends only three of these; the bound exists for the one that
     # does not.
@@ -534,7 +548,7 @@ class _Transport:
         while True:
             try:
                 (work, future, recipient, expires_at,
-                 withheld, replay) = self._inbox.get_nowait()
+                 withheld, replay, *rest) = self._inbox.get_nowait()
             except queue.Empty:
                 # No _stopping shortcut here. close() cannot set a flag and queue the sentinel
                 # in one step, so an idle worker could see the flag first and leave through
@@ -550,12 +564,15 @@ class _Transport:
             # released this loop, so the NEXT submission - a different recipient, a different
             # parent - waited out the abandoned send's whole RPC chain rather than its own.
             task = asyncio.ensure_future(
-                self._run(work, future, recipient, expires_at, withheld, replay)
+                self._run(
+                    work, future, recipient, expires_at, withheld, replay,
+                    execution_budget=rest[0] if rest else None,
+                )
             )
             inflight.add(task)
             task.add_done_callback(inflight.discard)
 
-    async def _run(self, work, future, recipient, expires_at, withheld, replay=None):
+    async def _run(self, work, future, recipient, expires_at, withheld, replay=None, execution_budget=None):
         """One submission, bounded twice: by its recipient's turn and by its own deadline."""
         import asyncio
         import time
@@ -614,14 +631,16 @@ class _Transport:
             # One budget per stage the bridge bounds separately - see RPC_STAGES_PER_SEND for
             # what they are. This exists to make the worst case FINITE, not to match any
             # caller: rpc.py awaits ws.send() OUTSIDE its response timeout, so without it a
-            # write that never drains would hold this recipient's turn forever. The caller is
-            # long gone by the time it fires, having given up at timeout + caller slack, so
-            # what this bound really decides is whether the bridge ledger ends up holding a
+            # write that never drains would hold this recipient's turn forever. The caller of
+            # an ordinary send is long gone by the time it fires, having given up at timeout
+            # plus caller slack. A guarded send waits for this same budget plus that slack.
+            # Either way, what the bound decides is whether the bridge ledger ends up holding a
             # real receipt for this request id or an uncertain one - which is what
             # reconciliation reads later. Cancellation reaches _guarded_send, which records
             # its own outcome_unknown receipt before re-raising.
             result = await asyncio.wait_for(
-                work(), self.timeout * self.RPC_STAGES_PER_SEND
+                work(),
+                self.timeout * self.RPC_STAGES_PER_SEND if execution_budget is None else execution_budget,
             )
         except BaseException as error:  # noqa: BLE001 - returned to the caller
             # Hand over the failure, but not this worker's own frame. The traceback starts at
@@ -749,12 +768,23 @@ class _Transport:
 
     # ------------------------------------------------------------- caller side
 
-    def _submit(self, work, *, recipient=None, withheld=None, replay=None):
+    def _submit(self, work, *, recipient=None, withheld=None, replay=None, rpc_requests=None):
         import time
 
         if not self.thread.is_alive():
             raise RuntimeError("the relay transport worker is not running")
-        budget = self.timeout + self._caller_slack
+        requests = self.RPC_REQUESTS_PER_SEND if rpc_requests is None else rpc_requests
+        # One timeout per reconnect and per request. Ordinary reads and the three-request
+        # send keep the historical caller budget: one timeout plus slack, shorter than the
+        # worker's nine-stage bound on purpose. A declared guard changes that. Its caller
+        # waits for every stage that submission may spend, plus the same slack, so it is
+        # still there when a slow valid guard finishes.
+        if requests == self.RPC_REQUESTS_PER_SEND:
+            execution_budget = self.timeout * self.RPC_STAGES_PER_SEND
+            budget = self.timeout + self._caller_slack
+        else:
+            execution_budget = self.timeout * self.RPC_STAGES_PER_REQUEST * requests
+            budget = execution_budget + self._caller_slack
         future = self._futures.Future()
         # The deadline travels WITH the submission. A caller that gives up leaves work whose
         # only remaining purpose would be to occupy its recipient, so waiting work that has
@@ -764,16 +794,18 @@ class _Transport:
             # acceptance ends - and therefore drained and answered - or refused outright.
             if not self._accepting:
                 raise RuntimeError("the relay transport is shutting down; nothing was sent")
-            self._inbox.put(
-                (work, future, recipient, time.monotonic() + budget, withheld, replay)
-            )
+            self._inbox.put((
+                work, future, recipient, time.monotonic() + budget, withheld, replay,
+                execution_budget,
+            ))
         return future.result(budget)
 
     def call(self, method, params):
         # No recipient key: reads must stay available while a send to some thread is stalled.
         return self._submit(lambda: self._state["rpc"].call(method, params))
 
-    def send(self, request_id, thread_id, message, settings, *, before_start=None):
+    def send(self, request_id, thread_id, message, settings, *, before_start=None, guard_rpc_requests=0):
+        _require_guard_budget(guard_rpc_requests)
         def withheld():
             return {
                 "requestId": request_id,
@@ -815,6 +847,7 @@ class _Transport:
             recipient=thread_id,
             withheld=withheld,
             replay=replay,
+            rpc_requests=self.RPC_REQUESTS_PER_SEND + guard_rpc_requests,
         )
 
     def create_thread(self, request_id, **settings):
@@ -840,7 +873,7 @@ class _Transport:
             self._accepting = False
         self._stopping = True
         future = self._futures.Future()
-        self._inbox.put((None, future, None, 0.0, None, None))
+        self._inbox.put((None, future, None, 0.0, None, None, None))
         try:
             future.result(self._drain_seconds + self.timeout + self._caller_slack)
         except Exception:  # noqa: BLE001 - the join below is the real answer
@@ -915,6 +948,21 @@ def _retryable(receipt):
     from codex_thread_bridge.ledger import RETRYABLE_STATUSES
 
     return isinstance(receipt, dict) and receipt.get("status") in RETRYABLE_STATUSES
+
+
+def _require_guard_budget(guard_rpc_requests):
+    """Refuse a budget that is not a bounded count of extra guard requests.
+
+    The check is local and has no host effect. A bool is rejected even though it is an
+    int, because True would silently buy one extra request. The ceiling is the largest
+    callback this package's managed guard actually makes.
+    """
+    if type(guard_rpc_requests) is int and 0 <= guard_rpc_requests <= _Transport.GUARD_RPC_REQUESTS_MAX:
+        return guard_rpc_requests
+    raise HostUnavailable(
+        "guard_rpc_requests must be an integer from 0 through"
+        f" {_Transport.GUARD_RPC_REQUESTS_MAX}; refusing before any send"
+    )
 
 
 async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *, before_start=None):

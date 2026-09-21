@@ -1788,3 +1788,164 @@ class ChildCreationUnderDeclaredPolicy(unittest.TestCase):
         started = [params for method, params in calls if method == "thread/start"]
         self.assertEqual(len(started), 1)
         self.assertEqual(started[0].get("model"), "gpt-5.4")
+
+
+class GuardedSendBudget(unittest.TestCase):
+    """A declared guard widens one submission; an ordinary send keeps both old bounds."""
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import shutil
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp(prefix="guard-budget-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _adapter(self, server):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        socket = Path(self.tmp) / "socket"
+        return BridgeHostAdapter(
+            str(socket),
+            timeout=0.2,
+            caller_slack=0.2,
+            app_server_factory=lambda canonical: server,
+            ledger_factory=lambda: (socket, Ledger(Path(self.tmp) / "operations.sqlite3")),
+        )
+
+    def _observe(self, adapter, seen):
+        import asyncio
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        real_wait_for = asyncio.wait_for
+        real_result = adapter._transport._futures.Future.result
+
+        async def observe_wait_for(awaitable, timeout):
+            seen["execution"] = timeout
+            return await real_wait_for(awaitable, timeout)
+
+        def observe_result(future, budget):
+            seen["caller"] = budget
+            return real_result(future, budget)
+
+        @contextmanager
+        def observed():
+            with patch.object(asyncio, "wait_for", observe_wait_for), patch.object(
+                adapter._transport._futures.Future, "result", observe_result,
+            ):
+                try:
+                    yield
+                finally:
+                    adapter.close()
+
+        return observed()
+
+    def test_a_declared_guard_widens_both_budgets_and_finishes(self):
+        from codex_session_relay.bridge_adapter import _Transport
+
+        calls = []
+
+        class Guarded:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "thread/list":
+                    return {"data": [{"id": "thread-1"}], "nextCursor": None}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-guarded"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            for _page in range(10):
+                await rpc.call("thread/list", {"limit": 1})
+            return None
+
+        adapter = self._adapter(Guarded())
+        stage = adapter._transport.timeout * _Transport.RPC_STAGES_PER_REQUEST
+        ordinary = stage * _Transport.RPC_REQUESTS_PER_SEND
+        execution = stage * (_Transport.RPC_REQUESTS_PER_SEND + 10)
+        seen = {}
+        with self._observe(adapter, seen):
+            receipt = adapter.send_message(
+                "send-guarded-budget", "thread-1", "hello", AUTHORIZED,
+                before_start=before_start, guard_rpc_requests=10,
+            )
+            self.assertEqual(seen["execution"], execution)
+            self.assertGreater(seen["execution"], ordinary)
+            self.assertEqual(seen["caller"], execution + adapter._transport._caller_slack)
+            self.assertGreater(seen["caller"], seen["execution"])
+        self.assertEqual(receipt["status"], "accepted")
+        self.assertEqual(receipt["turnId"], "turn-guarded")
+        self.assertEqual(calls.count("thread/list"), 10)
+
+    def test_an_ordinary_send_keeps_both_historical_budgets(self):
+        from codex_session_relay.bridge_adapter import _Transport
+
+        class Idle:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-ordinary"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Idle())
+        execution = adapter._transport.timeout * _Transport.RPC_STAGES_PER_SEND
+        caller = adapter._transport.timeout + adapter._transport._caller_slack
+        seen = {}
+        with self._observe(adapter, seen):
+            receipt = adapter.send_message("send-ordinary-budget", "thread-1", "hello", AUTHORIZED)
+            self.assertEqual(seen["execution"], execution)
+            self.assertEqual(seen["caller"], caller)
+            self.assertLess(seen["caller"], execution)
+        self.assertEqual(receipt["status"], "accepted")
+
+    def test_an_invalid_guard_budget_is_refused_before_any_send(self):
+        calls = []
+
+        class Untouched:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                raise AssertionError("an invalid budget reached the host")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Untouched())
+        self.addCleanup(adapter.close)
+        for budget in (-1, 11, True, 1.5, None, "10"):
+            with self.subTest(budget=budget):
+                with self.assertRaises(HostUnavailable) as raised:
+                    adapter.send_message(
+                        "send-bad-budget", "thread-1", "hello", AUTHORIZED,
+                        guard_rpc_requests=budget,
+                    )
+                self.assertIn("guard_rpc_requests", str(raised.exception))
+        self.assertEqual(calls, [])
+        self.assertIsNone(adapter.get_operation("send-bad-budget"))
