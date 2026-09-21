@@ -180,16 +180,22 @@ def decide(request):
     matched = "none"
     own = "[" + family + "]"
     bracketed = bracket_prefix(source)
-    if source.startswith(own):
-        # Built from the verified family rather than parsed, so a label that itself contains a
-        # closing bracket still recognises its own prefix. The reader below stops at the first
-        # "]", which for such a label is the wrong character.
-        rest = source[len(own):]
-        if not rest.strip():
-            # The whole title is this prefix. There is nothing to add to it.
+    # A prefix is this bracket alone, or this bracket separated from the body by whitespace.
+    # Built from the verified family rather than parsed, so a label holding a closing bracket
+    # still recognises its own prefix; the reader below stops at the first "]", which for such
+    # a label is the wrong character. The whitespace is what keeps the test from matching a
+    # longer label that merely begins the same way: with the family Core, "[Core]Beta] launch"
+    # opens with a different label and is somebody else's prefix, not a glued body.
+    if source == own:
+        # The whole title is this prefix. There is nothing to add to it.
+        return settle("unchanged", "already_prefixed", title=source, prefix=family,
+                      body="", matched="bracket_family")
+    if source.startswith(own) and source[len(own):][:1].isspace():
+        rest = source[len(own):].lstrip()
+        if not rest:
             return settle("unchanged", "already_prefixed", title=source, prefix=family,
                           body="", matched="bracket_family")
-        body = rest.lstrip()
+        body = rest
         matched = "bracket_family"
     elif bracketed:
         lexeme, inner, removed, rest = bracketed

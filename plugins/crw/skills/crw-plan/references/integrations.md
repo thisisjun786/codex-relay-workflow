@@ -105,8 +105,10 @@ part of the unverified state below, and ask instead of choosing. Never read the
 family from the repository, the working directory, the task's model or the Linear
 team key, which often spells the same word and is a different field.
 
-Apply the prefix once. A title already carrying this family keeps it, and a family
-name standing separably in front of the title is absorbed rather than repeated.
+Apply the prefix once. A title already carrying this family keeps it — that is this
+bracket alone, or this bracket separated from the body by a space, since a label may
+itself contain a bracket and a longer one can begin the same way — and a family name
+standing separably in front of the title is absorbed rather than repeated.
 Otherwise the body is left exactly as it is: a label joined to what follows it is
 part of the sentence, so the subject in `CRW를 설치형 …` and the issue code in
 `CRW-137 · …` are text rather than prefixes. A leading bracket that is not this
