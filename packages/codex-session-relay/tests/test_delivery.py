@@ -488,6 +488,28 @@ class DeactivatedAssignment(DeliveryTestCase):
             "whatever set that time had its own reason",
         )
 
+    def test_a_backoff_extended_after_the_row_was_read_still_wins(self):
+        """The comparison belongs in the statement, not against a pre-read value.
+
+        Two overlapping refusals: the second one read its row before the first extended the
+        retry time. Resolving that in Python would overwrite the extension with a stale earlier
+        deadline and let a resumed delivery retry sooner than the newest backoff allows.
+        """
+        _relationship, event_id = self.queued_event()
+        self.registry.set_status(self._rid, "cancelled", actor="user")
+        stale = self.registry.get(self._rid)
+        far = self.clock.now() + 100000
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET next_eligible_at = ? WHERE event_id = ?",
+                (far, event_id),
+            )
+        self.delivery._withhold_inactive(event_id, stale, self.clock.now(), attempts=0)
+        self.assertEqual(
+            self.delivery_row(event_id)["next_eligible_at"], far,
+            "the later deadline committed in between must survive",
+        )
+
     def test_a_superseded_assignment_is_left_to_the_supersession_path(self):
         """Deactivated, but permanently, so it is not this withhold's business.
 

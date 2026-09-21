@@ -756,7 +756,6 @@ class DeliveryService:
             # that terminal. They keep their existing behaviour until that is decided.
             return self._withhold_inactive(
                 event_id, relationship, now, attempts=row["attempt_count"],
-                not_before=row["next_eligible_at"],
             )
         if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
             return None
@@ -1053,8 +1052,7 @@ class DeliveryService:
             if row["state"] != DEFERRED_BUSY:
                 self.store.journal("delivery_deferred_busy", event_id, at=self.clock.iso())
 
-    def _withhold_inactive(self, event_id: str, relationship, now: float, *, attempts: int,
-                           not_before=None):
+    def _withhold_inactive(self, event_id: str, relationship, now: float, *, attempts: int):
         """An assignment status a person set stops the delivery here, with the reason kept.
 
         Deliberately NOT a hold_reason: paused, cancelled and archived are exactly the statuses
@@ -1066,17 +1064,20 @@ class DeliveryService:
         The status is re-checked inside the write. Between the caller's read and this statement
         the relationship can be resumed, and holding an active assignment's delivery for a whole
         recheck interval on a stale reading is the one way this could delay real work.
+
+        The retry time is resolved in the statement for the same reason. An existing backoff is
+        never brought forward - whatever set it, a busy recipient or a rate limit, had its own
+        reason - and comparing against a value read before the transaction would let a caller
+        overwrite an extension another one committed in between. The row's own current value is
+        the one that wins, read under the write.
         """
         status = relationship["status"]
         when = now + self.policy.lifecycle_recheck_seconds
-        if not_before is not None and not_before > when:
-            # Never brings an existing backoff forward. Whatever set that time - a busy
-            # recipient, a rate limit - had its own reason, and recording this status is not
-            # a reason to retry sooner than it asked.
-            when = not_before
         with self.store.transaction() as db:
             cursor = db.execute(
-                "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"
+                "UPDATE deliveries SET state = ?,"
+                "       next_eligible_at = MAX(?, COALESCE(next_eligible_at, 0)),"
+                "       updated_at = ?"
                 " WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?"
                 "   AND EXISTS (SELECT 1 FROM relationships r"
                 "                WHERE r.relationship_id = deliveries.relationship_id"
