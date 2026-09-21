@@ -133,7 +133,11 @@ def read_record(lines):
         name = undecorate(name)
         qualified = QUALIFIED.match(name)
         if qualified and qualified.group("field") in FIELDS:
-            if qualified.group("note").strip().lower() == HISTORY:
+            # The whole canonical string, not a normalised note. The contract makes this
+            # spelling load-bearing, so accepting a case or spacing variant here would let this
+            # checker pass a record that an exact consumer rejects - two readers, two policies,
+            # which is the failure this script exists to prevent.
+            if name == f"{qualified.group('field')} ({HISTORY})":
                 continue
             found.setdefault(qualified.group("field"), []).append(
                 f"unreadable qualifier ({qualified.group('note').strip()})"
@@ -219,6 +223,14 @@ SELFTEST = (
     # An invented qualifier is not a way to hide a current value from the reader.
     ("a qualifier this reader does not know",
      ["run_mode: goal-free-run", "run_mode (previous): loop",
+      "observation_path: event-driven-idle"], False),
+    # Case and spacing are part of the spelling, because a variant this checker accepts and an
+    # exact consumer rejects is two readers restoring two policies from one record.
+    ("history marked in the wrong case",
+     ["run_mode: goal-free-run", "run_mode (SUPERSEDED): loop",
+      "observation_path: event-driven-idle"], False),
+    ("history marked with extra spacing",
+     ["run_mode: goal-free-run", "run_mode ( superseded ): loop",
       "observation_path: event-driven-idle"], False),
 )
 
