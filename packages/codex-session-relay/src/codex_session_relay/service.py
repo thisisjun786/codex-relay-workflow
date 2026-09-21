@@ -32,6 +32,8 @@ PRODUCTION, ISOLATED = "production", "isolated"
 
 DAEMON_LOCK = "daemon.lock"
 DAEMON_RECORD = "daemon.json"
+WORKER_POLICY = "worker-policy.json"
+WORKER_POLICY_LIMIT = 65536
 SERVICE_INTENT = "service.json"
 DAEMON_LOG = "daemon.log"
 STOP_REQUEST = "stop.request"
@@ -457,6 +459,130 @@ class RelayService:
             "startedAt": _now(), "restarts": 0, "consecutiveFailures": 0, "lastExit": None,
             "nextRestartAt": None,
         }
+
+    def publish_worker_policy(self, policy: dict) -> dict:
+        """Written by the bounded worker, never by a diagnostic caller or supervisor.
+
+        daemon.json belongs to the supervisor. A separate atomic receipt avoids overwriting
+        its workerPid while it registers a newly spawned worker. Readers refuse that short
+        registration race until the two records actually agree.
+        """
+        record = self.record() or {}
+        pid = os.getpid()
+        if record.get("pid") not in (pid, os.getppid()) or not record.get("token"):
+            raise ValueError("worker policy publication needs this process's service run")
+        info = self.selection.db_path.stat()
+        payload = {
+            "schemaVersion": 1, "policy": policy, "observedAt": _now(),
+            "worker": {"pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id()},
+            "service": {
+                key: record.get(key) for key in (
+                    "token", "pid", "startTicks", "installationId", "stateDir",
+                    "socketPath", "storeId", "scopeRoot", "scopeAuthority",
+                )
+            },
+        }
+        payload["service"].update(dbDevice=info.st_dev, dbInode=info.st_ino)
+        path = self.selection.path / WORKER_POLICY
+        temporary = path.with_name(f".{path.name}.{pid}.{uuid.uuid4().hex}")
+        try:
+            with temporary.open("x", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return payload
+
+    def read_worker_policy(self) -> dict:
+        """Read the currently serving worker's snapshot without opening or repairing a Store.
+
+        This is evidence between cooperating same-user processes, not authentication against
+        a process permitted to forge their files. No lock is held across a later host call.
+        """
+        def absent(reason):
+            return {"observed": False, "reason": reason, "policy": None}
+
+        try:
+            record = self.record()
+            path = self.selection.path / WORKER_POLICY
+            with path.open("rb") as handle:
+                raw = handle.read(WORKER_POLICY_LIMIT + 1)
+            if len(raw) > WORKER_POLICY_LIMIT:
+                return absent("worker_policy_unreadable")
+            receipt = json.loads(raw)
+            if not isinstance(record, dict) or not isinstance(receipt, dict):
+                return absent("worker_policy_unreadable")
+            if type(receipt.get("schemaVersion")) is not int or receipt["schemaVersion"] != 1:
+                return absent("worker_policy_version_unknown")
+            worker, run = receipt.get("worker"), receipt.get("service")
+            if not isinstance(worker, dict) or not isinstance(run, dict):
+                return absent("worker_policy_unreadable")
+            if not isinstance(receipt.get("policy"), dict):
+                return absent("worker_policy_unreadable")
+            if (type(record.get("pid")) is not int or record["pid"] <= 0
+                    or type(record.get("startTicks")) is not int or record["startTicks"] < 0
+                    or (record.get("workerPid") is not None and
+                        (type(record["workerPid"]) is not int or record["workerPid"] <= 0))):
+                return absent("worker_policy_process_mismatch")
+            expected_pid = record.get("workerPid") or record.get("pid")
+            expected_ticks = record.get("workerStartTicks") if record.get("workerPid") else record.get("startTicks")
+            if (type(expected_pid) is not int or expected_pid <= 0
+                    or type(expected_ticks) is not int or expected_ticks < 0
+                    or type(worker.get("pid")) is not int
+                    or type(worker.get("startTicks")) is not int
+                    or worker.get("pid") != expected_pid
+                    or worker.get("startTicks") != expected_ticks):
+                return absent("worker_policy_process_mismatch")
+            if (not record.get("bootId") or worker.get("bootId") != record["bootId"]
+                    or record["bootId"] != boot_id()):
+                return absent("worker_policy_boot_mismatch")
+            identity = {key: record.get(key) for key in (
+                "token", "pid", "startTicks", "installationId", "stateDir",
+                "socketPath", "storeId", "scopeRoot", "scopeAuthority",
+            )}
+            info = self.selection.db_path.stat()
+            identity.update(dbDevice=info.st_dev, dbInode=info.st_ino)
+            if (run != identity or not record.get("token") or not self.store_id
+                    or record.get("storeId") != self.store_id
+                    or record.get("installationId") != self.installation_id
+                    or record.get("stateDir") != str(self.selection.path)
+                    or record.get("socketPath") != self.socket_path
+                    or record.get("scopeRoot") != str(self.scope.root)
+                    or record.get("scopeAuthority") != self.scope.authority):
+                return absent("worker_policy_service_mismatch")
+            process = ProcessHandle(expected_pid)
+            try:
+                if (not process.usable or not process.alive()
+                        or process_state(expected_pid) in ("T", "t", "Z", "X", "x")
+                        or start_ticks(expected_pid) != expected_ticks):
+                    return absent("worker_policy_process_unavailable")
+                locks = [self.selection.path / DAEMON_LOCK]
+                scope_record = None
+                if self.socket_path:
+                    scope_record = self.scope.read(self.socket_path)
+                    if (not isinstance(scope_record, dict)
+                            or any(scope_record.get(key) != record.get(key) for key in (
+                                "token", "pid", "startTicks", "bootId", "storeId",
+                                "installationId", "stateDir", "socketPath",
+                            ))):
+                        return absent("worker_policy_scope_mismatch")
+                    locks.append(self.scope.root / f"{self.scope.key(self.socket_path)}.lock")
+                for lock in locks:
+                    if not _existing_lock_held(lock):
+                        return absent("worker_policy_lock_unheld")
+                current = self.selection.db_path.stat()
+                if (record != self.record()
+                        or (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino)
+                        or (self.socket_path and scope_record != self.scope.read(self.socket_path))
+                        or not process.alive() or start_ticks(expected_pid) != expected_ticks
+                        or process_state(expected_pid) in ("T", "t", "Z", "X", "x")):
+                    return absent("worker_policy_observation_changed")
+            finally:
+                process.close()
+            return {"observed": True, "reason": None, "policy": receipt["policy"],
+                    "worker": worker, "service": run, "observedAt": receipt.get("observedAt")}
+        except (OSError, ValueError, TypeError):
+            return absent("worker_policy_unreadable")
 
     def ownership(self, record=None):
         """ours | foreign | unverifiable | none, decided through a real process handle."""
@@ -1445,6 +1571,9 @@ def owned_service(service: RelayService, *, allow_isolated: bool = False, token=
             "this service is not enabled; running it would ignore the owner's intent",
         )
     supervised = adopt_lock_fd is not None
+    if not supervised and token is None:
+        # Foreground runs need the same per-run identity as supervised workers.
+        token = uuid.uuid4().hex
     with SingleInstance(service.selection.path, adopt_fd=adopt_lock_fd):
         claim = {"ok": True, "reason": None}
         if service.socket_path and not supervised:
@@ -1483,3 +1612,19 @@ class ServiceRefused(Exception):
         super().__init__(detail or reason)
         self.reason = reason
         self.detail = detail
+
+
+def _existing_lock_held(path) -> bool:
+    """Only contention is evidence of ownership; do not create a missing lock file."""
+    with open(path, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            after = os.stat(path)
+            return (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino)
+        else:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            return False

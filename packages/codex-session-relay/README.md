@@ -190,6 +190,195 @@ held, so another client could change a thread between the check and the turn.
 A sandbox type with no `ThreadResumeParams.sandbox` mode, such as `externalSandbox`, is refused as
 `unsupported_sandbox_type` rather than approximated with a mode that means something else.
 
+### The worker's own policy
+
+The policy THIS process resolves and the policy the serving worker resolved are two separate
+processes' snapshots. The worker's snapshot is what send-time approval is decided from: it records
+the pairs the process that actually delivers a turn will approve. It is not an observation of what
+a delivered turn ran on. A daemon worker publishes its own snapshot when it starts, and `doctor`
+reads it back:
+
+    codex-session-relay doctor
+
+The report carries `workerPolicy` (the live worker's snapshot, or the exact reason there is none),
+`callerWorkerAgreement` (`same`, `different` or `unknown` between this CLI's snapshot and the
+worker's), and `rolePolicy` (this CLI's own). Without `--require-worker-policy` these are
+diagnostics: doctor exits 0 even when the worker is unobserved or mismatched, because describing is
+its job and gating is not.
+
+To make readiness a gate, name the pair each role must run on. The value is a JSON list of
+`{role, model, reasoningEffort}` objects, inline or as `@path`, and only fixed parent/child pairs
+are supported:
+
+    codex-session-relay doctor \
+      --require-worker-policy '[{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]'
+    codex-session-relay doctor --require-worker-policy @/path/to/requirements.json
+
+doctor then exits 2, carrying the whole diagnosis plus `workerReadiness`, whenever the live
+worker's snapshot is missing, stale, a different digest, or does not declare the requested pair.
+A configured caller never substitutes for the worker's own snapshot: a worker that published an
+unresolved policy is refused as `worker_policy_unconfigured` no matter what the caller resolved.
+Malformed JSON or an unreadable `@path` is a usage error (exit 4). A valid JSON document that is
+not a list of `{role, model, reasoningEffort}` objects - a wrong type or an empty list - is
+refused (exit 2) as `worker_policy_requirements_invalid`, and a role outside the fixed
+parent/child pairs above as `worker_policy_role_unsupported`.
+
+This is a point-in-time readiness observation. `managed-start` consumes a fresh observation
+before creation and again before business dispatch. The receipt is evidence between cooperating
+same-user processes, not authentication; source tests do not establish installed-host behavior.
+
+### Recoverable managed start
+
+Use the managed entry when creating a new issue assignment. Supply a complete, immutable request
+and explicit store, socket and marker paths:
+
+    codex-session-relay --state /absolute/relay-state --socket /absolute/app-server.sock \
+      managed-start --request @/absolute/request.json --marker-root /absolute/markers
+
+The request schema is `managed-start/1`. Required fields are `schema`, `requestId`, `issueKey`,
+`parent`, `child`, `artifactRoots`, `allowedRecipients`, `criteria`, `criteriaSource`,
+`baselineRevision`, `scopeRef` and `prompt`; `projectKey` is optional. `parent` carries `taskId`,
+`hostId` and `settings`; `child` carries `hostId`, `title` and `settings`. Settings use the
+existing full settings record, including environments, approval policy and sandbox. Each
+criterion carries its `id`, `title` and boolean `required`. Unknown fields are refused. Both
+roles must have explicit permitted pairs, the parent must be an allowed recipient, and this
+local entry requires the same host, approval `never`, and existing absolute workspace paths.
+It does not select remote environments or approximate an unsupported sandbox.
+
+Here is a request shape for a local workspace. Replace the task/host identities, existing
+paths, baseline and issue criteria with observations from your own authorized assignment.
+The role pairs below are examples; read your host's declared
+[role policy](#the-role-a-task-holds) rather than copying them as defaults.
+
+```json
+{
+  "schema": "managed-start/1",
+  "requestId": "example-42-attempt-1",
+  "issueKey": "EXAMPLE-42",
+  "parent": {
+    "taskId": "observed-parent-task", "hostId": "observed-local-host",
+    "settings": {
+      "model": "devin/swe-2", "reasoningEffort": "max",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "cwd": "/workspace/project", "runtimeWorkspaceRoots": ["/workspace/project"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/project",
+                        "runtimeWorkspaceRoots": ["/workspace/project"]}]
+    }
+  },
+  "child": {
+    "hostId": "observed-local-host", "title": "EXAMPLE-42 · Implement the assigned change",
+    "settings": {
+      "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/issue-42",
+                        "runtimeWorkspaceRoots": ["/workspace/issue-42"]}]
+    }
+  },
+  "artifactRoots": ["/workspace/issue-42"],
+  "allowedRecipients": ["observed-parent-task"],
+  "criteria": [{"id": "c1", "title": "The agreed behavior is verified", "required": true}],
+  "criteriaSource": "issue:EXAMPLE-42", "baselineRevision": "observed-revision",
+  "scopeRef": "issue:EXAMPLE-42", "prompt": "The complete authorized assignment goes here."
+}
+```
+
+Identifiers, source/scope references, baseline and prompt are nonblank strings. Roots and
+recipients are nonempty string arrays; criteria is a nonempty object array. `projectKey`, when
+used, is a nonblank project identifier. `requestId` is at most 128 characters and `prompt` at
+most 90,000; the complete JSON is at most 256,000 UTF-8 bytes. The full settings shape is
+described under [authorized execution settings](#authorized-execution-settings). A permitted
+pair is the exact model and reasoning effort declared for that role by the execution policy;
+both the caller and live worker must report the same policy digest.
+
+The entry reserves the issue before asking the bridge to create a standby task. It then binds
+the returned task and turn to the marker, registry, criteria and settings before sending the
+business prompt. The standby prompt does no implementation work. A missing or mismatching live
+worker policy refuses before creation; a later refusal retains the same task for recovery.
+Registration adds that retained child's ID to the declared recipients so the parent can
+return revision requests to its own child. Replay and pre-start checks verify this derived
+list; it does not authorize messages to an unrelated task.
+The internal bridge uses the caller's snapshotted execution policy. Managed admission pins
+its operation ledger to the explicit `--state` directory, independently of environment defaults.
+The ledger's resolved path, device and inode are part of the request fingerprint and are
+rechecked before host mutations. Replacing that file refuses recovery rather than creating
+another child from an empty ledger.
+
+Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
+rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
+bridge's retained operation, never retried under a new identity. A still-running standby returns
+`incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
+`admitted` means the business turn was dispatched, not that the child claimed it, that its hook
+fired, or that its issue passed review. Those remain separately observed facts.
+If naming failed after a verified task was created and the bridge recorded that no first turn
+was attempted, retry resumes that same task with a separately retained standby operation.
+The original failed creation receipt is preserved. An unknown or attempted first turn does not
+qualify for this recovery; its effects still need reconciliation.
+
+    codex-session-relay --state /absolute/relay-state managed-show --request-id <id>
+
+The retained request exposes its stage, fingerprint, revision and known identities, alongside
+the last admission observation. `managed-release --request-id <id> --fingerprint <hash>
+--revision <revision> --reason <reason>` releases only a reservation that has never been armed
+for creation. Its tombstone prevents reuse. An armed or attached request cannot be released by
+timeout or by assuming a missing response meant nothing happened.
+
+In `managed-show` JSON, read `request.request_fingerprint`, `request.revision` and
+`request.state`; only `state: "reserved"` is releasable. A released request stays dead: a later
+authorized attempt uses a new request id after checking that the issue has no other owner.
+`lastObservation` carries the last `state`, `stage`, `reason` and known dispatch identities.
+An absent or unreadable store is reported through `readable`/`detail`, not as proof of absence.
+
+A completed admission also carries `selectors` (`state`, `markerRoot`, `workspace`) derived from the
+request identity. `reportingArgv` is present only when both `businessTurnId` and `childTaskId` are
+known. It is a list of arguments for a later manual `reporting-show`, with the global `--state`
+before the subcommand. An unknown turn or child omits that list; the result does not invent one.
+Running it does not wake a parent, write a queue, or publish a new report.
+
+| Observation | Recovery |
+| --- | --- |
+| `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
+| worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
+| paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
+| creation or business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
+| request fingerprint conflict | Recover the original input and selectors; never overwrite them to force a replay. |
+
+Before the business turn, authorization is checked again after resume. A known paused, archived,
+busy or unreadable recipient is withheld. An external UI change can still race the final host
+read and `turn/start`: the host offers no atomic conditional start. Raw bridge calls are outside
+this managed admission boundary. Malformed JSON requests exit 4; missing CLI arguments follow
+argparse's exit 2 on stderr. Refused or incomplete admission
+exits 2; admitted requests exit 0. Transport failures retain the existing host-error behavior.
+
+### Exact-turn reporting observation
+
+`reporting-show` is a direct, manual, offline diagnosis of one already selected turn. It reads the
+marker and the named store and prints JSON. It does not open a socket, call the host, wake a
+parent, write a queue, or publish a report. Global `--state` is required and comes before the
+subcommand, the same shape as `reportingArgv`:
+
+    codex-session-relay --state /absolute/relay-state \
+      reporting-show --marker-root /absolute/markers --workspace /absolute/workspace \
+      --assignment <assignment> --session <session> --turn <turn>
+
+The answer uses schema `reporting-observation/1`. `reportingState` may be `unreported`,
+`reported`, `in_progress`, `unmanaged` (no selected marker), or `unmeasured`. A completed diagnosis, including `unmeasured`, exits 0.
+Malformed identity arguments exit 4. Missing required flags follow argparse and exit 2 on stderr.
+An absent store stays absent and is reported as missing evidence, not as a created database and
+not as proof that nothing happened.
+
+A Stop observation by itself is not a terminal assignment. `stopObservation` keeps that warning;
+`terminalObservation` comes only from a persisted settlement for the same relationship, child and
+turn. When that settlement is missing, the state is `unmeasured` with reason
+`host_terminal_unobserved`. Evidence that cannot be read, or that conflicts, stays `unmeasured`
+with its reason; it is not rewritten as success or absence. `relationshipStatus` is the stored
+status, including `paused` or `cancelled`, and does not wake the owner.
+
+This section describes the source command. An installed relay exposes `reporting-show` only after
+that version is installed and measured. Source tests do not establish installed-host behavior.
+
 ## Commands
 
 Global options come BEFORE the subcommand:
@@ -199,6 +388,9 @@ Global options come BEFORE the subcommand:
 | Command | Purpose |
 |---|---|
 | `register` | register a parent/child relationship with its authorized scope |
+| `managed-start` | reserve, create a standby, register and dispatch one recoverable assignment |
+| `managed-show` / `managed-release` | inspect a retained start; release only an unarmed reservation |
+| `reporting-show` | offline exact-turn reporting diagnosis; reads, never wakes or writes a report |
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
@@ -228,7 +420,7 @@ Global options come BEFORE the subcommand:
 | `status` | observable delivery, acknowledgement and verification state |
 | `show` | the full record for one event: receipt, manifest, attempts, sent bytes, verdict |
 | `daemon` | run the bounded reconciliation and delivery loop |
-| `doctor` | environment and capability check |
+| `doctor` | environment and capability check; optional `--require-worker-policy` readiness gate |
 
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
@@ -365,6 +557,7 @@ bound; whoever operates the host owns whether it is correct for that machine.
     Description=Codex session relay
     [Service]
     Environment=RELAY_SOCKET=%h/.codex/app-server-control/app-server-control.sock
+    Environment=CODEX_THREAD_BRIDGE_EXECUTION_POLICY=%h/.codex/execution-policy.json
     ExecStart=%h/.local/bin/codex-session-relay --socket ${RELAY_SOCKET} daemon --deadline 3600
     Restart=always
     RestartSec=5
@@ -373,6 +566,12 @@ bound; whoever operates the host owns whether it is correct for that machine.
 
 The deadline plus `Restart=always` is deliberate: the process is bounded, and the supervisor is what
 makes it continuous. Where a user manager is unavailable, run the same command in the foreground.
+
+The execution policy is declared in the unit's own environment, not an interactive shell profile:
+the worker resolves it in its own process at start, and a variable exported only in a shell leaves
+the serving worker with no policy at all. After editing the policy file, restart the service (the
+snapshot is republished at startup), run `doctor --require-worker-policy` with the same variable
+set, and treat a matching digest as the recheck before relying on readiness.
 
 ## How invocation actually becomes automatic
 

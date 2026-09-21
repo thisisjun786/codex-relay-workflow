@@ -1,14 +1,16 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors under the project parent's own native goal. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors. The project parent holds no goal by default: it ends its turn when only waiting remains and a delivered relay event resumes it. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop only where the user explicitly wants a parent goal, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator: one parent per project, one child per issue. Follow the shared
+as its coordinator: this task is that project's parent, one parent per project and
+one child per issue. Follow the shared
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
-including standalone issues and explicit current-task work. Where the initiative above this
+which fixes those three names and the ids they are recorded under and covers
+standalone issues and explicit current-task work. Where the initiative above this
 project has an execution supervisor, it verifies this parent's reported outcome and instructs this
 task, never this task's children; where it has none, nothing changes. An explicit designation
 naming an initiative is handled one level up, through
@@ -17,10 +19,10 @@ belongs rather than assuming it belongs here. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
-Run owns project execution, including newly ready successors within the agreed scope.
-[crw-loop](../crw-loop/SKILL.md) owns the parent goal's lifecycle and the host-driven
-continuation on that same execution, and the role policy makes that goal the default rather than
-a separate request; it does not enlarge Run's project scope.
+Run owns project execution, including newly ready successors within the agreed scope, and by
+default it runs with no parent goal: the parent ends its turn when only waiting remains and a
+delivered relay event brings it back. [crw-loop](../crw-loop/SKILL.md) owns the lifecycle of a
+parent goal where the user explicitly asked for one; it does not enlarge Run's project scope.
 Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
 and review work. A child whose effective workflow is CXC Loop loads the installed
 `codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
@@ -46,12 +48,13 @@ their results, and admit newly ready in-scope issues as capacity opens. The firs
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
 future backlog additions, another project's work or replacing another parent.
 
-The parent goal's lifecycle and unattended host continuation belong to `crw-loop`, and the role
-policy makes that goal the project parent's default rather than an opt-in, so an ordinary project
-execution request establishes it through that lifecycle instead of running goal-free. Inside an
-authorized Loop, Run returns progress and pending obligations to the same Loop owner without
-creating another goal. An explicit no-goal or read-only limit still wins, and existing scope and
-authorization survive skill routing.
+An ordinary project execution request opens no goal. The parent waits idle and is resumed by the
+delivery path, on the readiness recorded under
+[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting). A parent goal exists
+only where the user asked for one, and its lifecycle belongs to `crw-loop`; inside such a Loop,
+Run returns progress and pending obligations to the same Loop owner without creating another goal.
+An explicit no-goal or read-only limit agrees with the default and bars only that explicit Loop,
+and existing scope and authorization survive skill routing.
 
 An initiative link by itself is not a target. Where a request merely cites one, resolve the
 project actually being executed under the shared target rules: the link is context and it rebinds
@@ -79,8 +82,8 @@ still govern each action, including task creation and goal activation.
   prerequisites, then launch only that batch.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
-  The parent goal's lifecycle and host-driven continuation belong to `crw-loop`, and the role
-  policy makes that goal the default.
+  The parent holds no goal by default and is resumed by the delivery path; the lifecycle of a
+  goal the user explicitly asked for belongs to `crw-loop`.
 - **Supervise an initiative:** bind the initiative, fix its approved project set and completion
   boundary, and carry it through those projects' existing parents. Issue planning and issue
   execution stay with each parent.
@@ -116,8 +119,10 @@ Otherwise continue until the agreed scope is delivered, the user stops, a resour
 limit is reached, or no authorized progress is possible. An empty ready queue while
 children run calls for bounded observation; a blocked issue does not stop independent
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
-not a claim that the first batch completed the request. Run alone promises no automatic
-future wake-up, and a standalone status-only request wakes nothing. A checkpoint inside
+not a claim that the first batch completed the request. Where the recorded `observation_path`
+is `event-driven-idle`, the parent yields the turn and the delivery path resumes it on a real
+child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
+future wake-up. A standalone status-only request wakes nothing under either. A checkpoint inside
 an authorized ongoing initiative is not that request: it is handed to the responsible
 parent and handled there as a resume of the authorized run, which re-evaluates outstanding
 child results, pending decision requests, cleared blockers and empty execution slots, then
@@ -139,9 +144,10 @@ already uses, and the evidence that it landed is that child's changed revision r
 acknowledgement. Return the outcome to the peer from here: a child never answers another project's
 parent, and no peer reads this project's child for its answer.
 
-[crw-loop](../crw-loop/SKILL.md) owns the parent host goal and its continuation across turns,
-and the role policy makes that goal the default rather than something a request must ask for.
-Returning from Run hands control back to that same owner. Explicit pause/no-goal limits still win, and existing
+[crw-loop](../crw-loop/SKILL.md) owns a parent host goal and its continuation across turns where
+the user explicitly asked for one; by default there is none and the delivery path is what returns
+the parent. Returning from Run hands control back to that owner where a Loop is running.
+Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
 avoid a guard. A parent holding its own goal does not alter child CXC defaults.
 
@@ -202,7 +208,7 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, under the parent's own native goal per the role policy; host restrictions and an explicit no-goal limit still apply |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, with no parent goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
 | Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task bound to a different scope, while the initiative's own existing supervisor is the task that continues; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
@@ -499,11 +505,12 @@ by; the standing cap and its precedence are in
 [Default parent start policy](../crw-plan/references/integrations.md#default-parent-start-policy).
 
 The first thing settled is the role, because it decides what this task opens: an initiative
-management task runs without a native goal or an automatic loop, a project parent creates or
-reuses its own goal for the approved project scope, and an issue child creates or reuses its own
-goal and keeps its CXC Loop. Record the role beside the goal state with its objective and approved
-scope, the hook compatibility, the observation path, and whether the approval policy in force can
-carry the callback this run depends on.
+management task runs without a native goal or an automatic loop, a project parent opens no goal
+either and is resumed by the delivery path, and an issue child creates or reuses its own goal and
+keeps its CXC Loop. Record the role beside the recorded mode and observation path, the approved
+scope, the hook compatibility, and whether the approval policy in force can carry the callback this
+run depends on. Where a parent does hold a goal because one was requested, record its objective and
+state beside those.
 
 Editing these instructions does not alter a turn that already loaded them, but where an installation
 links this checkout a later read of them loads the edited text, so a run spanning sessions can
@@ -652,7 +659,7 @@ Describe evidence separately:
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
 | Candidate ready to hand over | The child's handoff record: pull request and head, the verified base, the declared required checks and the runs by id and attempt, the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
-| Parent runs its own goal loop | That task's own active goal and goalplan, read back under its own identity. Parents and children each own one; a parent operating without a goal is an explicitly authorized fallback rather than the default, and is recorded as the choice it is |
+| Parent runs its own goal loop | That task's own active goal, read back under its own identity, where a Loop was explicitly requested. A parent operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |

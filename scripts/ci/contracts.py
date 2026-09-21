@@ -15,6 +15,10 @@ CHECKS = (
     # compatibility definition cannot drift away from the source it describes.
     ("runtime", "scripts/runtime_install.py",
      "scripts/crw_runtime/components.json", ["verify-definition"]),
+    # The two closed-vocabulary start-policy fields are checked against the table that
+    # declares them, so the checker and the contract cannot drift apart unnoticed.
+    ("start policy", "plugins/crw/skills/crw-run/scripts/start_policy.py",
+     "plugins/crw/skills/crw-run/references/start-policy.md", ["selftest"]),
 )
 
 

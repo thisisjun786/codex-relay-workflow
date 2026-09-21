@@ -24,7 +24,9 @@ the user asked for one, and is not a required section otherwise.
 ## Connect the workflow
 
 Read [Integrations](../crw-plan/references/integrations.md) for canonical documents, connector
-access, the supervisor, parent and child roles, and which operation owns what. Reuse the
+access and which operation owns what, and
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope)
+for the three roles and the names a Korean report gives them. Reuse the
 evidence-first, short-brief form of installed `catchup` for the writing itself, without inheriting
 its assumption that the reader has been away: the same form serves a routine midpoint check.
 Use `readchk` when the request bundles several questions or its referent is unclear, and resolve

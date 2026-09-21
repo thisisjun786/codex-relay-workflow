@@ -92,7 +92,17 @@ see the two disagree instead of the later one quietly winning.
 
 ### The managed start sequence
 
-Run in this order. The determination comes FIRST, before anything exists, because that is the
+For new assignments, prefer the relay's `managed-start` entry when that installed version exposes
+it. It owns pre-creation reservation, standby creation, registration and business dispatch as one
+recoverable operation; see the [request and recovery contract](../../../../../packages/codex-session-relay/README.md#recoverable-managed-start).
+Use the same request id, exact request contents and state/socket/marker paths when recovering.
+A refused or incomplete result is not permission to create a replacement. `admitted` means
+dispatch only: the child's claim, actual hook firing, receipt and parent judgment still need
+their own evidence. Verify the installed command surface before selecting it; source presence
+does not make an older installed relay support it.
+
+The lower-level sequence below remains available for supported explicit coordination and
+documents the existing owners. Run in this order. The determination comes FIRST, because that is the
 step whose absence left the question unasked; running the lookup first against the wrong path is
 what creates an empty store and reports a real assignment as absent.
 
@@ -114,6 +124,44 @@ managed START only: an offline `emit` stages and a staged receipt has no deliver
 through the fake host instead. Note that the doc and the test are not yet compared automatically —
 keep them in step by hand when either changes.
 
+## Managed execution boundaries
+
+A healthy delivery worker is one prerequisite for a managed assignment, not an assignment.
+`managed-start` sequences the [managed start](#the-managed-start-sequence) owners with a durable
+issue reservation and retained bridge receipts. The lower-level calls remain separate;
+`doctor --require-worker-policy` alone neither runs admission nor prevents raw task creation.
+The managed entry rechecks authorization after resume, but an external UI change can race its
+last read and turn start. Do not describe that observation as an atomic host permission guard.
+The source package's [exact-turn reporting observation](../../../../../packages/codex-session-relay/README.md#exact-turn-reporting-observation)
+is a separate manual diagnosis: `reporting-show` reads one named turn offline. A Stop observation
+alone is not a terminal assignment, and missing or unreadable evidence stays unknown rather than
+success. The command does not wake a parent, write a queue, or publish a report. Source presence
+does not mean the installed relay exposes it.
+
+The durable owners are separate:
+
+| Boundary | Owner | Evidence it supplies |
+| --- | --- | --- |
+| Dispatch intent and task correlation | [intent.py](../../../../../packages/codex-session-relay/src/codex_session_relay/intent.py) | Published intent, creation observations, identity binding and relationship reference |
+| Authorized assignment and execution | [registry.py](../../../../../packages/codex-session-relay/src/codex_session_relay/registry.py) and [criteria.py](../../../../../packages/codex-session-relay/src/codex_session_relay/criteria.py) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
+| Actual worker policy | [service.py](../../../../../packages/codex-session-relay/src/codex_session_relay/service.py) and [rolepolicy.py](../../../../../packages/codex-session-relay/src/codex_session_relay/rolepolicy.py) | The serving process's policy snapshot and point-in-time readiness |
+| Child's declared result and observed turn ending | [receipts.py](../../../../../packages/codex-session-relay/src/codex_session_relay/receipts.py) | Staged versus final result, or failure/interruption/ordinary turn end |
+| Stop-time omission | [guard.py](../../../../../packages/codex-session-relay/src/codex_session_relay/guard.py) | Bounded missing-declaration/receipt observations, never an invented result |
+| Delivery, acknowledgement and judgment | [delivery.py](../../../../../packages/codex-session-relay/src/codex_session_relay/delivery.py) and [ack.py](../../../../../packages/codex-session-relay/src/codex_session_relay/ack.py) | Separate queued, dispatched, received and judged states |
+
+A registered generation can still lack its first dispatch anchor. Receipt intake refuses it
+until an exact turn is bound. The [live-trial startup order](../../../../../docs/live-trial.md#the-order)
+materializes a standby turn before business dispatch; that host preparation is not completion
+evidence. An unknown creation or dispatch response must be reconciled against its retained
+bridge operation rather than retried with a new request id.
+
+An ordinary turn end without a child receipt is not success. The Stop guard records omissions
+only for the assignment and session it can establish, and its bounded holds do not guarantee
+that an agent will submit a report. Raw bridge calls are not themselves intercepted by the
+guard. Tasks without a managed marker remain outside its observation. The worker's send-time
+policy and lifecycle checks remain
+necessary even when an earlier readiness check passed.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
@@ -121,13 +169,18 @@ verifying, and whichever process delivers all read one store; a mismatched `--st
 they do not see each other.
 
 There are TWO selectors and they are set separately. `--state` chooses the relay's own store, and
-falls back to `state_dir()` when omitted. The adapter's ledger, which is where duplicate
-suppression and delivery recovery live, always comes from `state_dir()`: it reads
+falls back to `state_dir()` when omitted. For ordinary delivery commands, the adapter's ledger,
+which is where duplicate suppression and delivery recovery live, comes from `state_dir()`: it reads
 `CODEX_SESSION_RELAY_STATE`, and otherwise `$XDG_STATE_HOME/codex-session-relay` or
 `~/.local/state/codex-session-relay/<endpoint hash>`. So passing only `--state` moves the store
 and leaves the ledger behind. Measured: `--state /tmp/assigned` reported that store while the
 adapter's root resolved under `~/.local/state`. Recovery then reads a ledger that never saw the
 attempts, so it can miss one or repeat a delivery.
+
+`managed-start` pins its ledger to its required explicit `--state` instead. Its request
+fingerprint includes the observed ledger path, device and inode, and mutation boundaries
+revalidate that identity. A retry after ledger replacement refuses. This exception does not
+change the shared environment requirement for the delivery worker and other socket commands.
 
 Set both to the same resolved absolute path, before any command that reaches the socket:
 
@@ -151,8 +204,10 @@ for that assignment rather than relocated into one.
 
 ## Who runs what
 
-Exactly five commands reach the App Server and need `--socket`: `deliver`, `reconcile`, `recover`,
-`daemon` and `verify-acks`. Every other command works from the store alone. Where a task cannot
+Commands that require the App Server and `--socket` include `managed-start`, `deliver`,
+`reconcile`, `recover`, `daemon` and `verify-acks`. Inspect `doctor`
+`actorReachability.hostRequiredCommands` for the installed command inventory;
+`reporting-show` reads only the explicitly selected marker and store. Where a task cannot
 reach the socket, it uses the store-only subset and a host-capable process owns delivery.
 
 `ack` sits between the two. It does not REQUIRE a socket, which is why it is not in that list, but
@@ -405,6 +460,20 @@ exits 0 with an empty list, which is a different answer.
 
 For the per-delivery phase of a delivery that exists, and for pending intents across the whole
 store, `status` remains the reader; this command does not restate its vocabulary.
+
+These readers are also what a parent runs on entry rather than only when something looks wrong.
+[OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path) makes that a contract: a parent
+woken from idle re-reads its own outstanding work instead of acting on the payload that woke it,
+which is what carries the events that arrived while it was mid-turn. There is no recipient-scoped
+reader that answers it in one call, so the parent reaches it by relationship — the project's
+outstanding assignments, then each relationship's dispositions and status.
+
+One state these readers surface deserves naming, because it looks like waiting and is not. A
+delivery that exhausts its attempt budget is held, and a held delivery is excluded from
+eligibility: it is not retried again, and no supported command clears the hold. Its recovery is a
+fresh execution generation, which creates a new delivery rather than reviving the held one. Read
+`holdReason` beside the delivery state before concluding that a quiet assignment is merely slow,
+and where a parent was never woken at all, nothing surfaces this automatically.
 
 ## The four readers a candidate pass also uses
 

@@ -152,6 +152,19 @@ class Host:
         path = self.home / "crw-completion-hook.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
+    def untouched(self):
+        """The raw bytes of the two files a refused run must not have moved.
+
+        Parsed documents compare equal across a rewrite that reorders keys or changes spacing,
+        and "nothing was taken away" is a claim about the files rather than about their meaning.
+        None for an absent file, so a retire that moved one is a difference rather than a crash.
+        """
+        out = {}
+        for name in ("crw-completion-hook.json", "hooks.json"):
+            path = self.home / name
+            out[name] = path.read_bytes() if path.is_file() else None
+        return out
+
     def record(self):
         path = self.home / "crw-bridge-mcp.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
@@ -323,6 +336,95 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         after = host.settings()
         for field in ("markerRoot", "dbPath", "journalRoot", "mode"):
             self.assertEqual(after[field], before[field], field)
+
+    def test_a_migrated_host_gets_the_fallback_launcher_too(self):
+        """Devin review: this command writes the same settings, so it owes the same fallback.
+
+        Without it a migrated host ends with plugin-owned settings and one candidate again, and
+        the first package replacement during an open turn lands back in the loop CRW-178 closes.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        placed = Path(host.home) / _completion.LAUNCHER_NAME
+        self.assertFalse(placed.exists())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"])[:700])
+        self.assertTrue(placed.is_file(), json.dumps(answer["results"])[:700])
+        self.assertEqual(placed.read_bytes(),
+                         (ROOT / _completion.LAUNCHER_SOURCE).read_bytes())
+        step = [item for item in answer["results"] if item["step"] == "stable launcher install"]
+        self.assertEqual(len(step), 1, json.dumps(answer["results"])[:700])
+        self.assertIn(step[0]["outcome"], ("settled", "already_done"))
+
+    def test_a_dry_run_migration_places_no_launcher(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        code, answer = host.transition()
+        self.assertEqual(code, 0, json.dumps(answer["results"])[:700])
+        self.assertFalse((Path(host.home) / _completion.LAUNCHER_NAME).exists())
+        step = [item for item in answer["results"] if item["step"] == "stable launcher install"]
+        self.assertEqual([item["outcome"] for item in step], ["would_change"])
+
+
+    def test_a_held_launcher_lock_stops_the_sequence_before_the_settings(self):
+        """A busy launcher must not let the rest of the sequence run without it.
+
+        transition() owns the Busy handler: it names the step that was running and marks every
+        later step not reached. Answering busy inside the step instead would hand the main loop
+        an ordinary result it does not break on.
+
+        The step runs first, ahead of everything destructive, so a refusal leaves the host
+        exactly as it was. Placed after the retire and the standdown it did the opposite: the
+        settings were archived and the manual registration removed with nothing to put them
+        back, which is a worse host than the one the command started with.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion, hostrecord as _hostrecord
+
+        host = self.ready()
+        launcher = Path(host.home) / _completion.LAUNCHER_NAME
+        lock = Path(str(launcher) + _hostrecord.LOCK_SUFFIX)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("99999999", encoding="utf-8")
+        self.addCleanup(lambda: lock.exists() and lock.unlink())
+        untouched_before = host.untouched()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
+        self.assertEqual(outcomes.get("stable launcher install"), "busy",
+                         json.dumps(answer["results"])[:700])
+        for later in ("settings retire", "hook standdown", "settings install"):
+            self.assertEqual(outcomes.get(later), "not_reached", later)
+        self.assertFalse(launcher.exists())
+        self.assertEqual(host.untouched(), untouched_before)
+
+    def test_a_foreign_launcher_stops_the_sequence_before_anything_is_taken_away(self):
+        """The same ordering question asked with a refusal instead of a contended lock."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        launcher = Path(host.home) / _completion.LAUNCHER_NAME
+        foreign = "not ours\n"
+        launcher.write_text(foreign, encoding="utf-8")
+        untouched_before = host.untouched()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
+        self.assertEqual(outcomes.get("stable launcher install"), "refused",
+                         json.dumps(answer["results"])[:700])
+        for later in ("settings retire", "hook standdown", "settings install"):
+            self.assertEqual(outcomes.get(later), "not_reached", later)
+        self.assertEqual(launcher.read_text(encoding="utf-8"), foreign)
+        self.assertEqual(host.untouched(), untouched_before)
 
     def test_the_retired_settings_and_record_are_kept_not_deleted(self):
         host = self.ready()
@@ -1185,7 +1287,13 @@ class TheFindingsFromReview(TransitionCase):
         fixed.unlink()
         host.install_plugin()
         snapshot = inventory.snapshot(host.home, repo_root=ROOT)
-        self.assertEqual(steps.ORDER[0][0], "settings retire")
+        # The invariant this case is about is the retire running before the standdown, not
+        # the retire being first overall: the non-destructive launcher step now precedes
+        # both so that a refusal there takes nothing away.
+        order = [name for name, _ in steps.ORDER]
+        self.assertLess(order.index("settings retire"), order.index("hook standdown"))
+        self.assertLess(order.index("stable launcher install"),
+                        order.index("settings retire"))
         self.assertEqual(steps.settings_retire(snapshot, {}, apply=True)["outcome"], "settled")
         # Stopped here: the registration is still in place and the archive is already in the home.
         recovered, name = inventory.newest_retired(host.home)
@@ -2519,8 +2627,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertIn("the same surface, once each", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -2561,8 +2668,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_command_that_only_mentions_the_launcher_is_not_running_it(self):
@@ -2689,8 +2795,8 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("python3-does-not-exist", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_watched_path_is_locked_across_the_removal_too(self):
@@ -2901,10 +3007,8 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("/definitely/missing/python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("/definitely/missing/python3", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_cached_command_that_runs_the_launcher_twice_is_refused(self):
