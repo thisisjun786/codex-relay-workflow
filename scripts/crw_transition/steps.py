@@ -29,6 +29,10 @@ WOULD = "would_change"
 REFUSED = "refused"
 BUSY = "busy"
 NOT_REACHED = "not_reached"
+# The surface was acted on and is live again anyway, because something outside this run put
+# back what it had just retired. Deliberately not SETTLED: settled is read as "stopped", and a
+# host whose settings reappeared is a host whose adapter can be called again.
+LIVE_AGAIN = "live_again"
 
 # The launchers this package ships, named rather than globbed. Adding a launcher means adding it
 # here; adding an ordinary helper under wiring/ must not appear here, because everything in this
@@ -2386,18 +2390,33 @@ STOP_CLAIMS = (
     ("bridge record", "new bridge starts, because the packaged launcher has no record to read"),
 )
 
+# What remove claims on top of those. Its own set, because disable deliberately deletes nothing:
+# it stops calls by retiring the settings and leaves the fallback where it is, so listing that
+# file among the surfaces disable did not stop would report a step that was never its to run.
+#
+# remove does run it, and it runs it AFTER the settings are retired. A supported installer
+# writing the settings back in between leaves the earlier claim true of a host that no longer
+# exists, and this is the step positioned to notice.
+REMOVE_CLAIMS = STOP_CLAIMS + (
+    ("stable launcher", "the fallback the declaration reaches when the version cache is gone"),
+)
 
-def stop_claims(results):
+
+def stop_claims(results, claims=STOP_CLAIMS):
     """The stop claims split by what this run actually did to each surface.
 
     settled and already_done are both true of the host now: one because this run moved the record,
     the other because there was none there to move. would_change is what an --apply would do and
     nothing more. Every other outcome leaves the surface live, and the reason travels with it
     rather than being left for a reader to infer from the step list.
+
+    The claim set is a parameter because the two callers own different surfaces, and a claim
+    about a step its caller never runs reads as a surface left live rather than as one nobody
+    asked about.
     """
     answers = {item["step"]: item for item in results}
     stopped, projected, live = [], [], []
-    for step, claim in STOP_CLAIMS:
+    for step, claim in claims:
         item = answers.get(step)
         if item is None:
             live.append(claim + " -- NOT stopped: " + step + " did not run")
@@ -2492,6 +2511,10 @@ def launcher_remove(host, options, *, apply=False):
     answer = _answer(step, SETTLED, "removed " + str(path), applied=True, wrote=True,
                      **observed())
     if answer["settingsPresent"]:
+        # The launcher is gone and the settings are back, so the packaged copy under the current
+        # version cache can answer a Stop again. Reporting settled here would put this surface in
+        # the stopped list and say the opposite of what the host now does.
+        answer["outcome"] = LIVE_AGAIN
         answer["detail"] += ("; the settings are present again at " + str(settings)
                              + ", so a supported installer wrote them back around this run and"
                              " new adapter invocations are NOT stopped")

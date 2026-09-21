@@ -2422,17 +2422,25 @@ def cmd_hook(args):
             # stops it from ending quietly.
             observed = completion.launcher_state(codex_home,
                                                  ROOT / completion.LAUNCHER_SOURCE)
-            lost = args.apply and placement is not None \
-                and placement["outcome"] in (completion.LAUNCHER_PLACED,
-                                             completion.LAUNCHER_UNCHANGED) \
-                and observed["kind"] != "file"
+            # Gone, or there and not what this run put there. A concurrent installer from another
+            # revision leaves a regular file at the same path, and a check that only asks whether
+            # SOMETHING is there reports this run's fallback installed while the bytes belong to
+            # a different checkout.
+            settled = placement["outcome"] in (completion.LAUNCHER_PLACED,
+                                               completion.LAUNCHER_UNCHANGED) \
+                if placement is not None else False
+            lost = args.apply and settled \
+                and (observed["kind"] != "file"
+                     or observed["digest"] != placement["sourceDigest"])
             emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
                   "settings": settings, "hookFile": str(path), "result": None,
                   "registrations": [], "launcher": placement, "launcherObserved": observed,
-                  "error": ("the fallback launcher is no longer at " + observed["launcher"]
-                            + " (" + str(observed["kind"]) + "); something removed it while"
-                            " this run was writing, so this host has no fallback despite the"
-                            " settings being installed") if lost else None,
+                  "error": ("the fallback launcher at " + observed["launcher"] + " is not the"
+                            " one this run installed (kind " + str(observed["kind"])
+                            + ", digest " + str(observed["digest"]) + ", expected "
+                            + str(placement["sourceDigest"]) + "); something replaced or removed"
+                            " it while this run was writing, so the fallback this receipt would"
+                            " have claimed is not what this host holds") if lost else None,
                   "note": ("Settings written; no registration was made and the hook file was"
                            " not touched. The " + completion.OWNER_PLUGIN + " owner registers"
                            " this event through the plugin package's own manifest, so install"

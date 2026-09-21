@@ -235,6 +235,12 @@ exit 1, which the host reads as an ordinary failure rather than as a hold. Once 
 been read it owns that Stop: the second one is not tried, because a launcher that raised after
 doing half its work has already acted on the turn.
 
+A launcher that exits non-zero deliberately is reported the same way. The launcher's own
+contract is to exit 0 on every path, so a copy that breaks it is saying something, and turning
+that into a success would hide the one failure it went out of its way to report. It surfaces as
+exit 1 rather than as the code the launcher chose, because 2 is the blocking code and no path
+through this declaration may produce it.
+
 Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
 one re-trust per installed hook identity. Trust is keyed to the declaration content and not to
 the version path, so an update that leaves the command alone keeps its trust.

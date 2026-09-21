@@ -249,7 +249,9 @@ def cmd_disable(args):
 def cmd_remove(args):
     host = host_of(args)
     results = steps.remove(host, options_of(args), apply=bool(args.apply))
-    claims = steps.stop_claims(results)
+    # remove's own claim set: it is the command that runs the stable-launcher step, and disable
+    # is not, so the fallback is a surface only this caller can answer for.
+    claims = steps.stop_claims(results, steps.REMOVE_CLAIMS)
     emit({"command": "remove", "applied": bool(args.apply), "results": results,
           "stops": claims["stopped"],
           "wouldStop": claims["wouldStop"],

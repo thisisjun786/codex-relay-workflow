@@ -1282,6 +1282,35 @@ class DeclaredStopCommandTest(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout), (0, b'{"decision": "block"}'))
         self.assertIn("turn_id", seen.read_text(encoding="utf-8"))
 
+    def test_a_launcher_that_exits_nonzero_is_reported_not_swallowed(self):
+        """Devin review: an explicit failure must not become a success.
+
+        The launcher's own contract is to exit 0 on every path. A copy that breaks it is saying
+        something, and the bootstrap converting that into 0 would hide exactly the failure the
+        launcher went out of its way to report. It is reported as 1 rather than as the code the
+        launcher chose, because 2 is the host's blocking code and no path here may produce it.
+        """
+        for code in (1, 3, 2):
+            with self.subTest(code=code):
+                cache = self.root / ("cache-%d" % code) / "0.4.0"
+                self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
+                           "raise SystemExit(%d)\n" % code)
+                home = self.root / ("home-%d" % code)
+                home.mkdir(parents=True, exist_ok=True)
+                self.plant(home / "crw-stop-hook.py", "FALLBACK")
+                done, ran = self.fire(cache, home)
+                self.assertEqual(ran, ["PACKAGED"])
+                self.assertEqual(done.returncode, 1)
+
+    def test_a_launcher_that_exits_zero_explicitly_is_still_a_success(self):
+        cache = self.root / "cache-ok" / "0.4.0"
+        self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED", "raise SystemExit(0)\n")
+        home = self.root / "home-ok"
+        home.mkdir(parents=True, exist_ok=True)
+        done, ran = self.fire(cache, home)
+        self.assertEqual((done.returncode, ran), (0, ["PACKAGED"]))
+
+
     def test_the_declaration_stays_within_the_timeout_the_host_clamps(self):
         self.assertLessEqual(self.timeout, plugin.HOOK_TIMEOUT_SECONDS)
 
@@ -1454,6 +1483,22 @@ class StableLauncherRemovalTest(unittest.TestCase):
         completion.place_launcher(self.path, self.SOURCE, apply=True)
         (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
         answer = self.remove(apply=True)
-        self.assertEqual(answer["outcome"], self.steps.SETTLED)
+        # Not settled: settled is read as "stopped", and a host whose settings came back can be
+        # called again through the packaged copy. The file was still removed, and the detail says so.
+        self.assertEqual(answer["outcome"], self.steps.LIVE_AGAIN)
+        self.assertFalse(self.path.exists())
         self.assertTrue(answer["settingsPresent"])
         self.assertIn("are NOT stopped", answer["detail"])
+
+    def test_a_surface_that_came_back_is_not_listed_as_stopped(self):
+        """Devin review: the aggregate claim has to agree with the host, not with an earlier step."""
+        completion.place_launcher(self.path, self.SOURCE, apply=True)
+        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
+        claims = self.steps.stop_claims([self.remove(apply=True)], self.steps.REMOVE_CLAIMS)
+        self.assertFalse(any("fallback" in claim for claim in claims["stopped"]))
+        self.assertTrue(any("fallback" in claim for claim in claims["stillLive"]))
+
+    def test_disable_never_claims_the_fallback_it_does_not_touch(self):
+        """disable stops calls and deletes nothing, so the fallback is not its surface to report."""
+        claims = self.steps.stop_claims([])
+        self.assertFalse(any("fallback" in claim for claim in claims["stillLive"]))
