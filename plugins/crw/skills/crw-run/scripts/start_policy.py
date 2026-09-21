@@ -31,7 +31,8 @@ import sys
 CONTRACT = Path(__file__).resolve().parents[1] / "references" / "start-policy.md"
 FIELDS = ("run_mode", "observation_path")
 CELL = re.compile(r"`([^`]+)`")
-DECORATION = "`'\"*_ "
+BULLET = re.compile(r"^[-*+]\s+")
+WRAPPERS = ("`", '"', "'", "*", "_")
 PUNCTUATION = ".,;"
 
 
@@ -80,15 +81,24 @@ def load():
 
 
 def undecorate(value):
-    """Take markdown decoration and trailing punctuation off a value.
+    """Take balanced markdown wrappers and trailing punctuation off a value.
 
-    Repeated until nothing more comes off, because the two interleave: `loop`, ends with
-    punctuation outside a backtick, and one pass in either order leaves the other behind.
+    Only a wrapper that opens and closes with the same character comes off. An unmatched marker
+    is not formatting this can see through: `loop_` is not `loop`, and turning it into one
+    would be the approximation the contract forbids a consumer to make.
+
+    Wrappers and punctuation interleave — `loop`, closes its backtick before the comma — so this
+    alternates until nothing more comes off.
     """
-    previous = None
-    while previous != value:
-        previous = value
-        value = value.strip().strip(DECORATION).rstrip(PUNCTUATION)
+    value = value.strip()
+    changed = True
+    while changed:
+        changed = False
+        trimmed = value.rstrip(PUNCTUATION).strip()
+        if trimmed != value:
+            value, changed = trimmed, True
+        if len(value) > 2 and value[0] == value[-1] and value[0] in WRAPPERS:
+            value, changed = value[1:-1].strip(), True
     return value
 
 
@@ -105,7 +115,7 @@ def read_record(lines):
     """
     found = {}
     for line in lines:
-        text = line.strip().lstrip("-*").strip()
+        text = BULLET.sub("", line.strip())
         if ":" not in text:
             continue
         name, _, value = text.partition(":")
@@ -166,6 +176,10 @@ SELFTEST = (
     ("a transitional record", ["run_mode: goal-free-run", "observation_path: blocked"], True),
     ("backticked and bulleted", ["- `run_mode`: `loop`", "- `observation_path`: `active-observation`"], True),
     ("decorated with trailing punctuation", ["`run_mode`: `loop`,", "`observation_path`: `blocked`."], True),
+    ("bold markdown", ["- **run_mode**: **loop**", "- **observation_path**: **blocked**"], True),
+    ("an unmatched marker", ["run_mode: loop_", "observation_path: blocked"], False),
+    ("a mismatched pair", ["run_mode: *loop_", "observation_path: blocked"], False),
+    ("a decorated field name", ["run_mode: loop", "observation_path_: blocked"], False),
     ("the same value stated twice", ["run_mode: loop", "observation_path: blocked", "run_mode: loop"], True),
     ("a stale pair above a current one", ["run_mode: goal-free-run", "observation_path: event-driven-idle", "run_mode: blocked", "observation_path: blocked"], False),
     ("parent G", ["run_mode: relay_only", "observation_path: relay"], False),
