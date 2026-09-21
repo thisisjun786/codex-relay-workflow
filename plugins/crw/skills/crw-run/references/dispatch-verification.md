@@ -212,8 +212,10 @@ workflow instead. The absence of a goalplan here is the instruction being follow
 Judging it as L0 or L1 is the mirror-image error to N4, and a non-PR audit child's
 execution mode is settled by its own assignment rather than by this default.
 
-**C3 — a parent coordination goal. Not a class; a different role.** A project parent holds
-a native goal for the agreed scope and no CXC implementation goalplan or FSM. That is the
+**C3 — a parent coordinating without a goal. Not a class; a different role.** A project parent
+holds no native goal by default and no CXC implementation goalplan or FSM either, and is resumed by
+the delivery path rather than by a goal. Where an explicit Loop was requested it holds a native
+goal for the agreed scope and still no goalplan or FSM. Either way that is the
 parent's defined shape, not an unarmed child. The role that requires both is the
 issue-owning implementation child.
 

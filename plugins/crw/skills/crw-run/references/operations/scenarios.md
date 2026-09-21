@@ -555,31 +555,34 @@ resume requirement; do not reset the FSM, edit phases or report a new loop as ar
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
 and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
 
-## S25 Run and Loop share project scope; the parent goal is the role default
+## S25 Run and Loop share project scope; the parent holds no goal by default
 
 Observed: the user submits Run with a project link. A and B are ready; C depends on A. In another
 run the user submits Loop explicitly for the agreed A/B/C scope and its goal/hook preflight passes.
 In a third the request carries an explicit no-goal limit.
 
-Clauses: OPS-8.1, OPS-9.2; operation selection belongs to
+Clauses: OPS-8.1, OPS-8.5, OPS-9.2; operation selection belongs to
 [crw-run](../../../crw-run/SKILL.md), goal ownership to
 [crw-loop](../../../crw-loop/SKILL.md), and the role default to
 [Start policy](../start-policy.md).
 
 Action: all three record A/B/C as the agreed project scope and A/B as the initial ready batch. When
 A's prerequisite delivery is verified and available, each can start C without waiting for B if
-capacity permits. The first two both hold the project parent's own goal, because the role policy
-makes it the default: what the explicit Loop submission adds is the entry, not the goal. The third
-runs goal-free only because the limit says so, and only where the request separately authorizes the
-work to proceed without one; absent that authorization its mode is blocked and no child is created.
-An explicitly limited A/B batch excludes C in every mode. After compaction or a resume request the
+capacity permits. The first and third are the same mode and reach it differently: the default opens
+no parent goal, and the explicit no-goal limit asks for what the default already does, so it
+subtracts nothing and is recorded as a limit the run happened to satisfy. The second holds a goal
+because the user asked for one, and what the explicit Loop submission adds is that goal rather than
+the entry. None of the three is blocked for lack of a goal, because none of the three needs one to
+proceed. An explicitly limited A/B batch excludes C in every mode. After compaction or a resume the
 run recovers the project scope and continues C rather than asking for a new batch authorization,
-restoring the recorded start policy instead of adjudicating it again. A goal's continuation is the
-bounded Stop nudge that start policy records, so no mode promises an unattended wake-up.
+restoring the recorded start policy instead of adjudicating it again. The first and third promise
+an unattended wake only where their readiness facts hold and otherwise keep bounded observation;
+the second reaches idle only after its bounded Stop budget releases, at a turn per block.
 Dispatch-only Run may hand off pending children; status-only Run reads without waking them.
 
 Preserved: one project parent, existing issue children and PRs, requested batch/merge limits, child
-CXC defaults, an explicit no-goal limit, and the difference between parent and child goal authority.
+CXC defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
+between parent and child goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
 
@@ -594,7 +597,8 @@ Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
 
 Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
 goal and resolve its specific resume/conflict/read requirement; do not create over it.
-No-goal prevents activation, and Run is used only if separately covered by the request.
+No-goal prevents this Loop's activation and nothing else: the run continues as the ordinary
+goal-free default, which needs no separate authorization, and no child is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
 record the supported host fix, without disabling hooks or faking PABCD. In the compatible
 active run, continue independent ready work; do not mark the whole goal blocked on a
@@ -810,3 +814,37 @@ action.
 Preserved: the real owner in every case, the previous task's permissions staying with it, the goal
 and the turn as separate states, the current reading's precedence over an older record, and
 authorized work continuing without title control.
+
+## S36 A goal-free parent waits idle, and four things go wrong with its queue
+
+Observed: a project parent holds no goal and has yielded idle with every readiness fact recorded.
+Four things then happen to its assignments. One child's completion receipt is delivered twice, the
+second time after the parent has already recorded a verdict on it. A second child's correction
+arrives as a later generation while an earlier event on the same relationship was never applied. A
+third child's receipt is delivered while the parent is mid-turn on an earlier wake. And a fourth
+delivery is claimed each time the parent briefly reads idle, only for the transport to return busy,
+until that delivery exhausts its attempt budget and is held. Separately the service restarts
+mid-flight, and a fifth parent on the same store has its goal paused by the user.
+
+Clauses: OPS-8.5 for the wake path, OPS-8.1 for the readiness that permitted idle, OPS-8.2 for the
+paused recipient and the busy one, OPS-7.3 for attribution across parents.
+
+Action: the duplicate is reconciled against the recorded verdict and never judged again, because
+its relationship, generation, revision and event id are the ones already settled. The later
+generation is applied in generation order, and the earlier unapplied event is recorded as
+superseded with that fact stated rather than dropped silently; the per-relationship marker advances
+only behind what was durably applied. The receipt arriving mid-turn is not lost: it waits and is
+picked up by the drain the parent runs on its next entry, which reads outstanding work rather than
+the payload that woke it. The held delivery is the terminal case, and it is reported as one: the
+parent's drain reads held rows as well as pending ones, names the hold, and recovers it through a
+fresh execution generation from the child rather than by reviving the row. Where nothing wakes the
+parent at all, that detection does not happen automatically on the installed runtime, and the
+report says so instead of implying a watcher nobody installed. The restart re-reads unsettled rows
+and in-flight leases before attempting anything new, and re-judges nothing already settled. The
+paused parent receives nothing and is not resumed, its deliveries waiting without consuming any
+budget. Each event settles against its own registered parent throughout.
+
+Preserved: every recorded verdict, the earlier event's visibility as superseded rather than as
+never-existing, the distinction between a send accepted and a turn that ran and an acknowledgement
+and an applied change, the paused recipient's protection, the other parent's assignments, and the
+honesty of reporting a terminal hold as terminal rather than as pending.

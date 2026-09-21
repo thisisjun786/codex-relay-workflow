@@ -749,6 +749,13 @@ class RelayDaemon:
                 continue
             if record["deliveryState"] in (HELD_UNCERTAIN, DEFERRED_BUSY, WITHHELD_PRE_SEND):
                 struggling.add(parent)
+            if record.get("withheldReason"):
+                # Looked at, decided and persisted. Counting it as skipped would let a tick
+                # that actually withheld a delivery still report itself quiet, and a tick's
+                # own quiet flag is part of the evidence a parent reads before it agrees to
+                # wait idle on this service.
+                report.deferred += 1
+                continue
             if record.get("sendAttempted") == "no":
                 # Suppressed before any transport call. Counting it as delivered reports a
                 # delivery that never reached the recipient, which is the opposite of what

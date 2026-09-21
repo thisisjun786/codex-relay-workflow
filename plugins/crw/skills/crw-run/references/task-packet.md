@@ -682,6 +682,15 @@ says, so read the level first and the fields second:
 - The observation each setting was read at, so the recipient compares the values against its own
   host instead of adopting them, and settles an unsupported one under
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution).
+- Where the block travels to a parent rather than to an issue child, the recorded `run_mode` and
+  `observation_path` — spelled as the literals
+  [Start policy](start-policy.md#what-is-settled-and-what-is-recorded-with-it) declares, because a
+  paraphrase will not restore — with the readiness facts behind an `event-driven-idle` one, and the event
+  state still outstanding: which relationships are owed a result, the last generation and revision
+  applied, and any delivery observed holding terminally. A goal-free parent that ended its turn
+  because only waiting remained cannot tell, on restart, whether that was a decision or an
+  interruption, and these are the fields that answer it. Without them the parent either resumes
+  work that already has an owner or waits for an event that was already handled.
 
 What the block carries about those records is their location and identity, never their
 contents. The plan, the ledger, the phase and the goal belong to the task and to its own
@@ -765,7 +774,17 @@ needed to resume:
   this is the outstanding-items field a checkpoint reads, not a growing transcript. Raw reader
   payloads stay in private receipts.
 - Where a relay holds the assignment: relationship id, current generation, current
-  revision, assignment state, and the synchronisation jobs still owed.
+  revision, assignment state, and the synchronisation jobs still owed. Beside each, the last
+  generation and revision this parent actually applied, which advances only behind a durable
+  apply, and any delivery observed holding terminally, which is the one state no retry revisits.
+- The recorded start policy this run is operating under: `run_mode` and `observation_path` with
+  the pairing they form, and for `event-driven-idle` the readiness facts behind it or the one that
+  was missing. This is what a parent waking from idle reads before it does anything else, and what
+  a restart reads to know whether ending the turn was a decision or an interruption.
+- What remains outstanding at the moment the turn ends: the scope not yet dispatched, the
+  relationships and children still owed a result, the unresolved verdicts, and the PR and head each
+  one stands on. A parent that ends its turn when only waiting remains is relying on this record
+  entirely, so a field left stale here is indistinguishable from work nobody owes.
 - Per direct agreement with a peer parent: the request and reply ids, the counterpart parent and
   its project, the agreed area and base revision, whether the agreement is still conditional and
   on what, and whether a follow-up owner has explicitly accepted. Beside it keep what is still
