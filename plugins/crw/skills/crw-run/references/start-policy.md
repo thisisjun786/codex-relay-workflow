@@ -81,9 +81,14 @@ project's scope or a child count.
 as one of the literals declared above. A paraphrase is not a restorable record: these two are the
 keys the pairing matrix is checked against and the keys a later session restores from, so a value
 that reads correctly but is spelled differently is a record the next reader cannot match, and the
-restore it was written for silently becomes a fresh adjudication. Two parents reading this file on
-2026-09-21 wrote `goal_free` and `relay_only` for values declared `goal-free-run` and
-`event-driven-idle`, which is the failure this sentence exists to prevent.
+restore it was written for silently becomes a fresh adjudication.
+
+Stating that has not been enough. Three readers of this file on 2026-09-21 wrote `relay_only`,
+`goal_free` and `run_only` for `run_mode`, and `relay` for `observation_path` every time. The
+third read this paragraph and still paraphrased. So a consumer of a start-policy record should
+expect approximations in the wild and match tolerantly, while a producer writes the literal; and
+whatever finally fixes this is not a sentence asking for care, which has now been measured not to
+work.
 
 Every field carries three more things, because a field without them cannot be restored later:
 nobody reading it can tell what it was allowed to survive.
