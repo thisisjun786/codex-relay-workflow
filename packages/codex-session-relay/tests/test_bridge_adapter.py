@@ -1395,9 +1395,7 @@ class ThreadCreationAndPreStartGuard(unittest.TestCase):
         import shutil
         import tempfile
 
-        self.tmp = tempfile.mkdtemp(
-            prefix="admission-", dir="/scratch/crw/two-project-completion/admission/transport",
-        )
+        self.tmp = tempfile.mkdtemp(prefix="admission-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.cwd = tempfile.mkdtemp(prefix="cwd-", dir=self.tmp)
 
