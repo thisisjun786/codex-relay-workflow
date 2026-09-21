@@ -75,7 +75,8 @@ OFFLINE_COMMANDS = (
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
-    "merge-turn-unknown", "merge-turn-withdraw", "region-followup",
+    "merge-turn-unknown", "merge-turn-withdraw", "merge-turn-acknowledge",
+    "region-followup",
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
     "slot-release", "slot-reserve", "usage-observe",
@@ -770,7 +771,13 @@ def cmd_merge_turn_request(services, args) -> dict:
 
 def cmd_merge_turn_ready(services, args) -> dict:
     return services.merge_turn.declare_ready(
-        args.turn, actor=args.actor, ready=args.ready, candidate_head=args.head)
+        args.turn, actor=args.actor, ready=args.ready, candidate_head=args.head,
+        cause=args.cause or "")
+
+
+def cmd_merge_turn_acknowledge(services, args) -> dict:
+    return services.merge_turn.acknowledge_grant(
+        args.turn, actor=args.actor, grant=args.grant, evidence=args.evidence)
 
 
 def cmd_merge_turn_attest(services, args) -> dict:
@@ -823,6 +830,11 @@ def cmd_merge_turn_show(services, args) -> dict:
     if args.turn:
         return _with_enforcement(services, services.merge_turn.turn(args.turn) or {
             "ok": False, "reason": "unregistered_scope", "turnId": args.turn})
+    if args.parent_task:
+        return _with_enforcement(
+            services,
+            {"parentTaskId": args.parent_task,
+             "claims": services.merge_turn.outstanding(args.parent_task)})
     return _with_enforcement(
         services, services.merge_turn.target(args.repository, args.base_ref))
 
@@ -3092,10 +3104,26 @@ def build_parser() -> argparse.ArgumentParser:
     turn_ready.add_argument("--turn", required=True)
     turn_ready.add_argument("--actor", required=True)
     turn_ready.add_argument("--head", help="restating a different head resets readiness")
+    turn_ready.add_argument("--cause",
+                            help="what changed. A head this package can notice for itself; a"
+                                 " base that moved and a finding that arrived it cannot, so"
+                                 " they are stated here and recorded either way")
     readiness = turn_ready.add_mutually_exclusive_group(required=True)
     readiness.add_argument("--ready", dest="ready", action="store_true")
     readiness.add_argument("--not-ready", dest="ready", action="store_false")
     turn_ready.set_defaults(handler=cmd_merge_turn_ready)
+
+    turn_ack = subparsers.add_parser("merge-turn-acknowledge")
+    turn_ack.add_argument("--turn", required=True)
+    turn_ack.add_argument("--actor", required=True)
+    turn_ack.add_argument("--grant", required=True,
+                          help="the grant id you read. Compared against this tenure's own, so"
+                               " a grant that was returned while you were away is refused"
+                               " here rather than acted on")
+    turn_ack.add_argument("--evidence", required=True,
+                          help="what you read. A bare acknowledgement is the remembered"
+                               " message this replaces")
+    turn_ack.set_defaults(handler=cmd_merge_turn_acknowledge)
 
     turn_attest = subparsers.add_parser("merge-turn-attest")
     turn_attest.add_argument("--turn", required=True)
@@ -3174,6 +3202,10 @@ def build_parser() -> argparse.ArgumentParser:
     turn_show.add_argument("--turn")
     turn_show.add_argument("--repository")
     turn_show.add_argument("--base-ref")
+    turn_show.add_argument("--parent-task",
+                           help="every live claim one task holds, across targets. What a"
+                                " parent that just restarted can ask with the only identifier"
+                                " it still has")
     turn_show.set_defaults(handler=cmd_merge_turn_show)
 
     slot_reserve = subparsers.add_parser("slot-reserve")
