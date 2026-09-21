@@ -222,6 +222,13 @@ On the reading branch the actions section says so and is empty. On the checkpoin
 each parent contacted, what was sent, and what was observed afterwards. Nothing is described as
 handled unless this call performed it, and a request that was accepted is not a result.
 
+A midpoint check is a question somebody asked, which is a different path from the automatic
+notices a parent sends upward. Those are held to a completion, a new real block and a decision
+only Jun can make, so the channel being quiet is not a reason to answer this with less: the
+suppression is of unsolicited turns, not of answers. What each form carries and what the five
+delivery states mean are in
+[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
+
 ## Cases
 
 ### M1 One supervision, several parents, mixed task states
