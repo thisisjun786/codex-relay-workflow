@@ -193,23 +193,33 @@ def decide(request):
         matched = "bracket_family"
     elif bracketed:
         lexeme, inner, removed, rest = bracketed
+        disposition = request.get("bracket_disposition")
+        named = disposition.get("bracket") if isinstance(disposition, dict) else None
+        if (isinstance(named, str) and named.startswith("[") and named.endswith("]")
+                and source.startswith(named)):
+            # An obsolete family may hold a closing bracket too, and the reader above stops at
+            # the first one. A caller can see the whole bracket, so a disposition naming it
+            # exactly is taken over the reader's guess; otherwise replacing it would remove a
+            # fragment and leave the rest of somebody's label in the body.
+            lexeme = named
+            rest = source[len(named):]
+            removed = named + rest[: len(rest) - len(rest.lstrip())]
+            rest = rest.lstrip()
         if not rest.strip():
             # A bracket alone that is not this family names nothing that could survive a
             # decision, so there is no title to propose either way.
             return settle("withhold", "foreign_prefix", title=observed,
                           requires=["a title body beside " + lexeme])
-        disposition = request.get("bracket_disposition")
-        action = None
-        if isinstance(disposition, dict) and disposition.get("bracket") == lexeme:
-            action = disposition.get("action")
+        action = disposition.get("action") if named == lexeme else None
         if action not in BRACKET_ACTIONS:
             # A bracket that is not this family may be an obsolete family or the user's own
             # words. Nothing here can tell those apart, and stacking a second bracket to
             # avoid deciding would put two classifications on one title. A disposition
             # naming some other bracket is not an answer about this one.
             return settle("withhold", "foreign_prefix", title=observed,
-                          requires=["bracket_disposition naming " + lexeme
-                                    + " as body or replace"])
+                          requires=["bracket_disposition naming the leading bracket as it "
+                                    "appears in the title, read here as " + lexeme
+                                    + ", as body or replace"])
         if action == "replace":
             stripped, body = removed, rest
             matched = "bracket_replaced"
