@@ -1138,8 +1138,9 @@ class DeclaredStopCommandTest(unittest.TestCase):
     into it. Replacing the package removes that directory whole, and python3 exits 2 for a
     missing script -- the number the hook protocol reads as "block this turn". Measured on the
     real incident: one removed directory, eleven repeated Stop prompts in one turn and eight in
-    a second task's turn, and neither able to end; an isolated reproduction of the same manoeuvre
-    produced thirty-seven in one turn. So these cases drive the ACTUAL declared command through
+    a second task's turn, and neither turn able to end until a compatibility path was restored;
+    an isolated reproduction of the same manoeuvre produced thirty-seven in one turn. So these
+    cases drive the ACTUAL declared command through
     a shell, the way the host runs it, rather than asserting anything about its text.
     """
 

@@ -1403,7 +1403,8 @@ already resolved into it. Installing a version removes the previous cache direct
 update landing while a task still holds that command leaves it naming a file that is gone, and
 `python3` exits 2 for a missing script — the hook protocol’s blocking code. Measured on the
 user's host: eleven repeated Stop prompts in one turn of one task and eight in a turn of a
-second, and neither able to finish. An isolated reproduction produced thirty-seven in one turn.
+second, and neither turn able to finish until a compatibility path was restored. An isolated
+reproduction produced thirty-seven in one turn.
 [Plugin packaging](plugin-packaging.md#the-cache-lifetime) owns the full reference table and the
 supported range; what belongs here is who writes the file and what that writer refuses.
 

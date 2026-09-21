@@ -16,8 +16,9 @@ usage error, so there is no argument parser here and nothing imported that has o
 It is not reached directly. The declaration runs a fixed bootstrap that opens the first of two
 candidates it can read: this file under the version cache, and a copy the runtime installer
 places at <CODEX_HOME>/crw-stop-hook.py. The cache copy comes first so the current version
-always wins and a stale copy can never outrank it; the installed copy exists for the one case
-the cache cannot answer, which is a plugin update landing in the middle of a turn. The turn's
+always wins and a stale copy can never outrank it; the installed copy exists for what the cache
+cannot answer, which is a task still holding a command into a version that has been replaced,
+with nothing measured showing a later turn of that task resolving it afresh. The turn's
 hook command is fixed when the turn starts, so a cache directory removed underneath it leaves
 an absolute path to a file that is gone, and python3 exits 2 for a missing script -- the same
 number the hook protocol reads as "block this turn". That collision is what turned one missing

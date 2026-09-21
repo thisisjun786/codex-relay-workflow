@@ -221,7 +221,8 @@ a later turn of the same task resolving it afresh. `python3` exits **2** for a
 missing script, and 2 is the hook protocol’s blocking code, so the host feeds the error back
 to the model and fires Stop again. Measured on the user's host: one removed directory, eleven
 repeated Stop prompts in a single turn of one task and eight in a single turn of a second, and
-neither able to finish until interrupted by hand. An isolated reproduction of the same manoeuvre
+neither turn able to finish while that path was absent. Both completed once a compatibility path
+was restored there, at 06:35:13Z and 06:35:59Z. An isolated reproduction of the same manoeuvre
 produced thirty-seven in one turn.
 
 So the declaration names two candidates and opens the first one it can read:
