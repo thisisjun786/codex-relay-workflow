@@ -9,8 +9,10 @@ stay in [bridge.md](bridge.md) and [relay.md](relay.md).
 Every measured observation must carry its date, client and version, because a
 published default or a feature stage can change between builds. The measurements
 reported below were taken on 2026-09-15 against Codex 0.154.0, on a remote-SSH Linux
-host whose desktop client was not inspectable from that host. Record your own
-environment beside your result.
+host from which no layer of that desktop client was read: not its bundle, not its
+profile, not its screen. Record your own environment beside your result, and name the
+layers you reached and the ones you did not, rather than one inspectable-or-not verdict
+for the whole client.
 
 Re-run the probe rather than inheriting a verdict, but only when the current scope
 authorizes what it does: this procedure creates and resumes tasks, writes and pushes,
@@ -54,7 +56,9 @@ keep each one inside what it can actually establish.
   only evidence that the scan missed.
 - Neither layer is the rendered screen. A claim about what the user sees in the client
   needs the screen itself, which needs screen-capture permission on that machine.
-  Without it, record the surface as unverified and name the missing permission.
+  Without it, mark the screen-dependent claims unverified and name the missing
+  permission. Confidence is per layer, not per surface: a bundle or profile finding
+  that was already established keeps it when the screen turns out to be unreachable.
 
 ## Distinguish the identifiers
 
@@ -70,10 +74,19 @@ authoritative. Measured on this host on 2026-09-22, across 372 unarchived thread
 working directory is a worktree of one repository: 314 carry the branch the checkout is
 really on, 53 carry an empty branch, and 5 carry something that is not a branch at all -
 a file path, `HEAD`, or a raw short sha - while git in that same worktree reports the
-correct branch. Read the branch from the checkout, not from the thread record, and when
-a client feature keys on that stored branch, say so: it inherits this unreliability, and
-for those threads it will find nothing or the wrong thing no matter how the feature is
-configured.
+correct branch. When a client feature keys on that stored branch, say so: it inherits
+this unreliability, and for those threads it will find nothing or the wrong thing no
+matter how the feature is configured.
+
+How to read the branch depends on what step 5 recorded about HEAD, and the two cases do
+not share a rule. On an attached checkout, git is the authority: take the branch from
+the checkout and judge the stored value against it. On a detached one, which is what a
+managed worktree produces, git has no current branch to give and deriving one from it
+would destroy the identity the Setting preservation verdict consumes. There, keep the
+requested source branch you recorded before creation as the subject, compare the stored
+metadata against that request, and verify the checked-out commit separately as its own
+fact. Metadata that is missing or that contradicts the request is unverified, never a
+branch invented from the checkout.
 
 ## Probe procedure
 
