@@ -142,6 +142,14 @@ class Fake:
         start = (page - 1) * size
         return self._ok({"total_count": len(items), key: items[start:start + size]})
 
+    def _array(self, target, items):
+        """A bare array endpoint, paginated the way the forge really paginates one."""
+        query = self._query(target)
+        size = int(query.get("per_page", 100))
+        page = int(query.get("page", 1))
+        start = (page - 1) * size
+        return self._ok(list(items)[start:start + size])
+
     # --------------------------------------------------------------------- REST
 
     def _rest(self, target):
@@ -163,8 +171,8 @@ class Fake:
                 answer = self.rules_sequence[
                     min(self.rules_reads, len(self.rules_sequence) - 1)]
                 self.rules_reads += 1
-                return self._ok(answer)
-            return self._ok(self.rules)
+                return self._array(target, answer)
+            return self._array(target, self.rules)
         if path.endswith("/actions/runs"):
             return self._page(target, self.runs, "workflow_runs")
         if "/actions/runs/" in path and path.endswith("/jobs"):
@@ -911,3 +919,41 @@ class AGateSetCanMoveBetweenTheRecordAndTheRestatement(unittest.TestCase):
         record.pop("requiredProviders")
         self.assertIn(forge.GATES_MOVED,
                       [one.code for one in forge.restate_problems(HEAD, record, snapshot)])
+
+
+class TheBranchRulesAreAListLikeAnyOther(unittest.TestCase):
+    """The one connection that was not routed through the enumerator, which is the whole subject.
+
+    Read with a single request, the effective-rules endpoint silently answers with its first
+    page. A gate declared by a later ruleset is then absent from the required set, and the
+    candidate missing that gate reports ready - the originating defect, in the list that decides
+    what "required" even means.
+    """
+
+    @staticmethod
+    def noise(count):
+        return [{"type": "deletion", "ruleset_id": index} for index in range(count)]
+
+    def test_a_required_gate_on_the_second_page_is_still_required(self):
+        rules = self.noise(100) + REQUIRED_DEV_GATE
+        fake = Fake(threads=threads(1), rules=rules, runs=[], jobs={}, checks=[])
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["handoff"]["requiredDeclared"], ["dev-gate"])
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertIn(mergeevidence.CHECKS_STALE, codes(snapshot))
+
+    def test_a_rules_read_that_runs_out_of_budget_declares_nothing(self):
+        # Refusing to declare is the point: a prefix of the rules is not the rules, and a
+        # required set built from one is missing exactly the gate nobody read.
+        rules = self.noise(400) + REQUIRED_DEV_GATE
+        fake = Fake(threads=threads(1), rules=rules, **green_run())
+        snapshot = collect(fake, page_budget=2)
+        self.assertEqual(snapshot["verdict"], forge.UNKNOWN)
+        self.assertIn(forge.TRUNCATED, codes(snapshot))
+        self.assertIs(snapshot["handoff"]["requiredDeclared"], mergeevidence.UNDECLARED)
+
+    def test_the_rules_connection_is_recorded_like_the_others(self):
+        fake = Fake(threads=threads(1), **green_run())
+        named = [one["connection"] for one in collect(fake)["connections"]]
+        self.assertIn("effective branch rules", named)
+

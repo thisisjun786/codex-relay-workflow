@@ -345,6 +345,36 @@ def rest_step(forge, path, key, where, **params):
     return step
 
 
+def rest_array_step(forge, path, where, **params):
+    """A page of a REST endpoint that answers with a bare array.
+
+    The effective-rules endpoint is one of these, and it is paginated like any other. Read with a
+    single request it silently returns the first page, so a required check declared by a later
+    ruleset simply is not in the required set - and a candidate missing that gate reports ready.
+    That is this module's own subject arriving in the one connection that was not routed through
+    the enumerator.
+
+    Its completion evidence is weaker than the others' and the snapshot says so rather than
+    glossing it: a bare array declares no total to count against, and its entries carry no
+    identifier, so the only end-of-list evidence is a final page shorter than the page size. A
+    forge repeating a full page forever runs into the page budget and is reported truncated,
+    which is unknown rather than an answer.
+    """
+
+    def step(token):
+        page = int(token or 1)
+        items = forge.rest(path, where, page=page, per_page=forge.page_size, **params)
+        if items is None:
+            items = []
+        if not isinstance(items, list):
+            raise Unreadable(where, "the " + where + " endpoint answered with a "
+                             + type(items).__name__ + " where a list was expected")
+        following = str(page + 1) if len(items) >= forge.page_size else None
+        return items, None, following
+
+    return step
+
+
 def cursor_step(forge, document, where, path, **variables):
     """A page of a GraphQL connection, reached by cursor."""
 
@@ -783,7 +813,7 @@ def _checks(forge, owner, name, head, problems, connections):
     return entries, detail, superseded
 
 
-def _gates(forge, owner, name, base_ref, problems):
+def _gates(forge, owner, name, base_ref, problems, connections=None):
     """What this branch actually requires, and the difference between empty and unknown.
 
     The endpoint is the effective-rules one rather than branch protection, because ordinary read
@@ -830,11 +860,27 @@ def _gates(forge, owner, name, base_ref, problems):
             problems.append(Problem(UNREADABLE, error.detail))
         return gates
     try:
-        rules = forge.rest(root + "/rules/branches/" + quote(reference, safe="/"),
-                           "the effective branch rules")
+        read = enumerate_connection(
+            "effective branch rules",
+            rest_array_step(forge, root + "/rules/branches/" + quote(reference, safe="/"),
+                            "the effective branch rules"),
+            # Positional, because these entries carry no identifier of their own. A composite of
+            # the rule's contents would report two genuinely identical rules as a duplicate, and
+            # a false refusal is not a better failure than a weak one that is declared.
+            lambda rule: None, budget=forge.page_budget)
     except Unreadable as error:
         problems.append(Problem(UNREADABLE, error.detail))
         return gates
+    read.identifiers = [str(index) for index in range(len(read.items))]
+    if connections is not None:
+        connections.append(read.record())
+    truncating = [one for one in read.problems if one.code != DUPLICATED]
+    problems.extend(truncating)
+    if truncating or not read.complete:
+        # A prefix of the rules is not the rules. Read short, a gate declared by a later page is
+        # simply absent from the required set and the candidate missing it reports ready.
+        return gates
+    rules = read.items
     contexts = []
     integrations = {}
     for rule in rules or []:
@@ -975,6 +1021,17 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
                                     " path afterwards are what bound the window"},
             "pinned": pinned,
             "reread": reread,
+            # Said in the payload, not only in a docstring. A caller who pastes this handoff
+            # into a completion report on a candidate that HAS threads gets it refused by the
+            # receipt contract, which demands a judged disposition for every thread that was
+            # seen - and learning that from a refusal is a worse way to find out.
+            "handoffGuidance": "this handoff carries the observed half of a completion report:"
+                               " the review coverage, the checks, the required gates, the draft"
+                               " flag and the base it was verified against. threadDispositions,"
+                               " criterionEvidence and limitations are left empty because they"
+                               " are judgements rather than observations; a candidate whose"
+                               " threads were seen needs a judged disposition for each of them"
+                               " before the report is submitted",
             "gates": gates,
             "supersededRuns": superseded or [],
             "connections": connections,
@@ -1003,7 +1060,7 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
     findings = findings + discussion
     reviews = [one for one in discussion if one.get("kind") == "review"]
     checks, detail, superseded = _checks(forge, owner, name, str(head), problems, connections)
-    gates = _gates(forge, owner, name, pinned.get("baseRef"), problems)
+    gates = _gates(forge, owner, name, pinned.get("baseRef"), problems, connections)
 
     reread = None
     graded = pinned
