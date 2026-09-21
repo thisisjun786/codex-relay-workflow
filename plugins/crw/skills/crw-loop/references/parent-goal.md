@@ -47,28 +47,38 @@ The recorded mode says which of these actually holds, in the words it will be re
 
 | Recorded mode | What it means |
 | --- | --- |
-| `loop` | A native parent goal is active under this lifecycle. |
-| `goal-free-run` | No parent goal. Run carries the agreed scope, and no automatic resume is claimed or proven. |
-| `blocked` | Activation is blocked and no substitute is approved. No child is created. |
+| `goal-free-run` | The project parent default. No parent goal. Run carries the agreed scope. What brings the parent back is recorded separately in `observation_path`, because this field answers only whether a goal exists. |
+| `loop` | A native parent goal is active under this lifecycle, because the user explicitly asked for one. |
+| `blocked` | The parent can neither hold a goal it needs nor proceed without one. No child is created. |
 
-A goal-free substitute is recorded and reported as `goal-free-run`. It is never reported as a Loop,
-and it never carries a claim of unattended continuation. Where preflight blocks activation and the
-request does not separately cover goal-free Run, the mode is `blocked`, the unresolved blocker is
-cited against the issue that owns it, and no child is created first. For the goal and Stop-hook
-conflict that issue is [CRW-29](https://linear.app/jun786/issue/CRW-29); its resolution is what
-clears the blocker, and until it is recorded there the blocker still stands.
+`goal-free-run` is the default rather than a substitute, and it is never reported as a Loop. It
+does carry a claim of unattended continuation, but only the conditional one the readiness facts in
+[Start policy](../../crw-run/references/start-policy.md#before-a-parent-may-wait-idle) establish:
+where those facts hold the parent waits idle and a delivered event resumes it, and where they do
+not it keeps bounded observation and claims nothing. Where an explicit Loop was requested, its goal
+cannot activate, and the user declines the default in its place, the mode is `blocked`, the
+unresolved blocker is cited against the issue that owns it, and no child is created first. For the
+goal and Stop-hook conflict that issue is [CRW-29](https://linear.app/jun786/issue/CRW-29); its
+resolution is what clears the blocker, and until it is recorded there the blocker still stands.
 
 Disabling a hook, replaying hook events, manufacturing CXC evidence and force-completing an
 existing goal are forbidden above. They are also not offered to the user as options, because
 presenting one as a choice is how it becomes an approved plan.
 
-Since the 2026-09-20 role decision a project parent creates or reuses its own goal for the approved
-project scope as its default, while still building no CXC goalplan or FSM and never fabricating a
-source change to close it. Its continuation is the bounded Stop nudge recorded below, not a durable
-loop. That supersedes the temporary arrangement
-in which a parent ran goal-free unless a Loop was separately requested, and it carries activation
-authority for a parent already running. It opens no goal on a completed project or an unapproved
-backlog item, and an explicit user no-goal limit is a different thing that still wins.
+Since CRW-165's decision of 2026-09-21 a project parent opens no native goal by default. It waits
+idle with no goal and a delivered relay event resumes it, while still building no CXC goalplan or
+FSM. That supersedes the 2026-09-20 role decision, under which the parent created or reused its own
+goal as the default and its continuation was the bounded Stop nudge recorded below.
+
+Both superseded steps are kept rather than deleted, because a reader meeting a parent that still
+holds a goal has to tell a carried-over arrangement from a current answer. The order was: a parent
+ran goal-free unless a Loop was separately requested; then the parent goal became the default; now
+the parent is goal-free again, with the difference that this time the waiting is carried by a
+delivery path with recorded readiness rather than by nothing at all.
+
+A goal still exists where the user explicitly asks for one. It opens on no completed project and no
+unapproved backlog item, it never closes on a fabricated source change, and an explicit user
+no-goal limit now agrees with the default rather than fighting it.
 
 Preflight above classifies a hook that routes an active native goal into CXC implementation phases
 as a compatibility blocker. For the measured goal-idle behaviour that rule is narrowed rather than
@@ -112,6 +122,42 @@ An incompatible budget guard is a reported conflict, not a reason to discard the
 Record the returned identity/status where available and verify the objective and
 active status. Wording in a document is not a created goal. Do not call `cxc loop init`
 or enter PABCD merely to support this parent goal. Child CXC setup remains separate.
+
+## Retiring a goal a parent already holds
+
+A parent created before the 2026-09-21 decision may still hold an active goal. It is carried over
+rather than wrong, and it is retired at a boundary rather than switched off mid-flight.
+
+What decides the procedure is that the relay reads goal status as an input to deliverability.
+`codex_session_relay.lifecycle` treats `paused`, `usageLimited` and `budgetLimited` as blocking,
+so a delivery for a paused recipient is withheld with `recipient_paused`. An absent goal, an active
+one, a blocked one and a completed one are all deliverable when the task is idle.
+
+| Goal state | Ends its turn cleanly | Deliverable when idle | Use |
+| --- | --- | --- | --- |
+| absent | yes, there is no active goal for the Stop hook to block on | yes | the default every new parent starts in |
+| `active` | no, the Stop behaviour blocks first and spends a turn per block | yes | a carried-over Loop, until its scope boundary |
+| `blocked` | yes | yes | an interim, only where the host's own threshold is genuinely met |
+| `paused` | yes | **no** | a real user stop, and never a migration step |
+
+**Pausing is not the transition.** It looks like the supported move and it is the one that strands
+the parent: every event for its assignments is withheld, nothing wakes it, and the assignment goes
+quiet without anything reporting a fault. The pause guard is correct and stays exactly as it is —
+it protects a task a person deliberately stopped — and it is simply not the tool for this.
+
+So the supported routes are these, and no other. A parent whose agreed scope is genuinely delivered
+completes its goal honestly and starts goal-free the next time. A parent mid-scope keeps its active
+goal, runs as `loop`, and pays the Stop cost until that boundary. A parent may record `blocked`
+where the host's actual threshold is met, which both ends its turn and stays deliverable, but that
+is an interim carrying a reason and an ending condition rather than a destination, because a parent
+waiting on a dispatched child is working as designed and calling that blocked misinforms whoever
+reads it next.
+
+Where a parent is found already paused, nothing here resumes it: that is a human decision under
+[OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents).
+Its pending relationships are preserved, its withheld deliveries wait rather than expire, and the
+report names the paused state, the relationships waiting on it, and the exact resume the user has
+to perform.
 
 ## Repeat, complete or recover
 

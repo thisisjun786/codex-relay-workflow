@@ -286,9 +286,10 @@ nobody reported.
 | The project and the record | completed, and a dependency recorded as blocking | Linear and the supervision record |
 
 Label every reading with its register before anything acts on it. The fourth register is the one a
-restart is most likely to skip, and it is what makes the second readable: a project parent's goal
-is the role default under [Start policy](start-policy.md), so an absent goal is not a resting state
-on its own. Read it against the recorded mode — `goal-free-run` accounts for it, `loop` makes it a
+restart is most likely to skip, and it is what makes the second readable: a project parent holds no
+goal by default under [Start policy](start-policy.md), so an absent goal is the ordinary resting
+state rather than a finding. Read it against the recorded mode — `goal-free-run` accounts for it,
+`loop` makes it a
 finding, and `blocked` means no child should exist yet. Where a record exists, restore it and
 re-adjudicate only the fields whose conditions have changed. Where none is found, that is unknown
 rather than proof none was written: a record can also be partial or damaged, and adjudicating from

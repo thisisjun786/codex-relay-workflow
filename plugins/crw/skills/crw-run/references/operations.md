@@ -772,23 +772,27 @@ evidence and has none here.
 ### OPS-8.1 Parent continuation and waiting
 
 Select the waiting mode from the parent's requested workflow and observed host capability.
-A project parent executes the agreed project scope, including successors, under its own native
-goal, which the role policy makes the default. [crw-loop](../../crw-loop/SKILL.md) owns that
-goal's lifecycle and any supported host-continuation path on the same execution scope, so an
-ordinary project execution request establishes the goal there; establishing it settles nothing
-about whether a continuation was observed. A CXC parent follows its installed lifecycle. A run
-proceeds without a goal only where the start policy records `goal-free-run`, and that record
-needs the request to authorize the mode. An explicit no-goal or read-only limit bars the goal
-without supplying that authorization, exactly as unavailable goal support does; absent it the
-mode is `blocked`.
-Goal/Stop hook compatibility must pass the Loop's preflight before activation. In active observation mode, keep the
+A project parent executes the agreed project scope, including successors, and by default it holds
+no native goal: it ends its turn when nothing but waiting remains and a delivered relay event
+starts the next one. [crw-loop](../../crw-loop/SKILL.md) owns the lifecycle of a goal where the
+user explicitly asked for one, and holding a goal settles nothing about whether a continuation was
+observed. A CXC parent follows its installed lifecycle. The start policy records the two answers
+separately: `run_mode` says whether a goal exists and `observation_path` says what brings the
+parent back. An explicit no-goal or read-only limit agrees with the default and bars only an
+explicit Loop; `blocked` is for a parent that can neither hold a goal it needs nor proceed.
+Goal/Stop hook compatibility must pass the Loop's preflight before activating a goal that was
+actually requested. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
 ready work within that operation. Neither Run nor Loop stops just because the first
 ready batch finished when scoped successors remain. Explicit batch/dispatch-only limits
-still apply. A child assignment or active child goal does not arm the parent's Loop. Do not
-end the parent turn expecting a Stop hook or a relay to restart it; neither is guaranteed by
-these instructions. If the host releases the turn, preserve recovery evidence and report the
-interruption without calling the run complete.
+still apply. A child assignment or active child goal does not arm the parent's Loop.
+
+Ending the parent turn is the default once, and only once, every readiness fact in
+[Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle) holds. Short of
+that, do not end the parent turn expecting a Stop hook or a relay to restart it: a Stop hook is
+never a resume path for this, and an unverified relay is a guess. Never end it on an observation
+failure, where the assigned turn's state is unknown. If the host releases the turn, preserve
+recovery evidence and report the interruption without calling the run complete.
 
 Treat observation success separately from the observed work outcome. A successful
 read may find running, completed, failed or interrupted work; a wait timeout may
@@ -830,12 +834,17 @@ A coordinator can still instruct an active task through the turn-guarded steer p
 which delivers an instruction and produces no receipt, acknowledgement or verdict. Keep the two
 apart, and never let a steer stand in for a gate the relay still owes.
 
-A CRW coordinator may select event-driven idle handoff instead of active observation only
-when the registered assignment, live delivery service and supported parent-resume path have
-been verified for its operating scope. A package installation, capability flag or staged receipt
-alone does not establish that path. An explicitly chosen CXC parent must also satisfy its
-installed waiting rules; this clause does not override them. Otherwise use bounded observation through the transport's
-own wait during the authorized run. A timeout leaves the work running: refresh observations and
+A CRW coordinator selects event-driven idle handoff by default, and may do so only when every
+readiness fact in [Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle)
+holds for its operating scope: the registered assignment, a delivery service whose ticks are
+actually progressing, this parent's own reachability including its goal status, delivery coverage
+for every disposition it waits on, and a wake already observed on this scope. A package
+installation, capability flag or staged receipt alone establishes none of them. An explicitly
+chosen CXC parent must also satisfy its
+installed waiting rules; this clause does not override them. Short of those facts use bounded
+observation through the transport's
+own wait during the authorized run, recording which fact was missing rather than the fallback
+alone. A timeout leaves the work running: refresh observations and
 wait again within the requested delivery boundary rather than claiming completion, resending
 the prompt or creating another child. A dispatch-only Run may return an explicit pending-work
 handoff without claiming automatic resumption. If no
@@ -881,6 +890,19 @@ interrupts a peer or changes its goal. A paused, cancelled or archived
 task is never automatically resumed to receive a delivery: the delivery waits and is reported as
 waiting, and resuming that task is a human decision. Automatic resumption would restart work the
 user deliberately stopped, which is the one outcome nobody can undo by retrying.
+
+Goal status is an input to deliverability rather than only a report of the recipient's intent. The
+installed relay's lifecycle observation treats `paused`, `usageLimited` and `budgetLimited` as
+blocking and withholds the delivery with `recipient_paused` or its sibling reason. An absent goal,
+an active one, a blocked one and a completed one are all deliverable once the task itself reads
+idle, and a task whose runtime is active is `busy` whatever its goal says.
+
+Two consequences follow and neither is optional. A coordinator never pauses its own goal to end a
+turn or to migrate a mode, because that revokes its own reachability and leaves it waiting for
+events the service is deliberately withholding. And the pause guard is never weakened, worked
+around or annotated away to make a delivery land: it exists so that a task a person stopped stays
+stopped, and a coordinator that needs to stop waiting has honest states available that keep it
+reachable.
 
 An explicit stop is two steps and two claims. Pause the goal through the supported status-only
 pause, then re-read the active turn and steer it to finish safely, because pausing a goal does not
@@ -944,6 +966,61 @@ assignments and concurrent deliveries that were actually exercised, by what meth
 with the observed fairness and latency. Anything beyond that is `unmeasured`. A design that intends
 to scale further is proposed implementation and is labelled as such, never reported as installed
 behaviour.
+
+### OPS-8.5 The goal-free parent's wake path
+
+A parent that waits idle is trusting a queue, a service and a recipient observation it cannot see
+while it sleeps. These are the rules that make that trust checkable.
+
+**The queue is the truth; a wake is only a hint.** On every entry — woken, resumed after a
+compaction, or restarted — the parent re-reads its own outstanding work rather than acting on the
+payload that woke it. That is what carries events which arrived while it was mid-turn, and it is
+why an event delivered during an active window is not lost. It is a latency and completeness
+measure, not the delivery guarantee; the guarantee is the service's own retry below.
+
+**Identity and duplicates.** An event is identified by its relationship, generation, revision and
+event id. A second arrival of the same identity is reconciled against the verdict already recorded
+and is never judged a second time. A correction is a new generation whose first receipt names no
+predecessor, which is what distinguishes it from a redelivery.
+
+**Order.** Apply by generation and then revision, never by arrival time. A later generation does
+not silently retire an earlier event that was never applied: the earlier one is recorded as
+superseded, with that fact stated, so a reader can tell a skipped event from a handled one. The
+parent's per-relationship marker advances only after an event is durably applied, so the marker can
+never step over something received and not acted on.
+
+**Delivery, acknowledgement and verdict are three states.** A send the transport accepted is not a
+turn that ran, a turn that ran is not an acknowledgement, an acknowledgement is not an applied
+change, and none of them is an accepted result. A parent that woke and has not yet acknowledged has
+settled nothing, and its report says so.
+
+**Two busy paths behave oppositely and are never reported as one.** Where the recipient is observed
+active before the delivery is claimed, the attempt is deferred without being consumed and the row
+is re-observed on later ticks indefinitely; a parent that simply stays active keeps its deliveries.
+Where the recipient observed idle, the delivery was claimed, and the transport then returned busy,
+an attempt **is** consumed. Only the second path approaches the busy cap.
+
+**The retry budget is finite and its exhaustion is terminal.** On the last permitted busy attempt
+the delivery is held, and a held row is excluded from eligibility. No supported command clears that
+hold, so the delivery is never retried again. This is the concrete form of "the queue still has
+items and nobody wakes the parent", and it is a real state rather than a hypothetical one.
+
+**Detecting and recovering it.** The detector is the parent's own drain on entry, which reads held
+rows rather than only pending ones, plus any authorized operator reading the same records. The
+owner is the parent that owns the assignment. The recovery is a fresh execution generation, because
+the held row itself cannot be revived: the child re-emits and a new delivery is created. Where the
+parent is not woken at all, nothing detects this automatically on the currently installed runtime,
+and that gap is reported as the named limitation it is rather than covered by an assurance nobody
+can keep.
+
+**Restart.** On service restart, start-up recovery re-reads unsettled rows and in-flight leases
+before anything new is attempted. On parent restart, the parent drains before it acts. Neither
+re-judges a settled event, and neither re-sends a send whose outcome is merely unknown: an
+uncertain send is reconciled by reading the store, never repeated under a new id.
+
+**Protected recipients are not a failure mode.** A paused, cancelled or archived recipient has its
+delivery withheld and waiting under OPS-8.2, without consuming the budget above, and no part of
+this clause resumes it.
 
 ## OPS-9 Delivery, review and merge
 

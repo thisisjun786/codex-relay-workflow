@@ -765,7 +765,17 @@ needed to resume:
   this is the outstanding-items field a checkpoint reads, not a growing transcript. Raw reader
   payloads stay in private receipts.
 - Where a relay holds the assignment: relationship id, current generation, current
-  revision, assignment state, and the synchronisation jobs still owed.
+  revision, assignment state, and the synchronisation jobs still owed. Beside each, the last
+  generation and revision this parent actually applied, which advances only behind a durable
+  apply, and any delivery observed holding terminally, which is the one state no retry revisits.
+- The recorded start policy this run is operating under: `run_mode` and `observation_path` with
+  the pairing they form, and for `event-driven-idle` the readiness facts behind it or the one that
+  was missing. This is what a parent waking from idle reads before it does anything else, and what
+  a restart reads to know whether ending the turn was a decision or an interruption.
+- What remains outstanding at the moment the turn ends: the scope not yet dispatched, the
+  relationships and children still owed a result, the unresolved verdicts, and the PR and head each
+  one stands on. A parent that ends its turn when only waiting remains is relying on this record
+  entirely, so a field left stale here is indistinguishable from work nobody owes.
 - Per direct agreement with a peer parent: the request and reply ids, the counterpart parent and
   its project, the agreed area and base revision, whether the agreement is still conditional and
   on what, and whether a follow-up owner has explicitly accepted. Beside it keep what is still
