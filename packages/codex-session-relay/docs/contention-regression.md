@@ -119,6 +119,9 @@ What each one waits on:
 - `test_service.py` starts real subprocesses and polls `time.monotonic` until one
   holds the lock, and runs one real worker for a single short segment outside the
   scripted clock.
+- `test_worker_policy.py` starts real policy publishers holding service locks and
+  waits on their publication pipe. It stops and replaces those processes to test
+  whether a retained policy receipt still names the current worker.
 - `test_operational_scale.py` spawns one real replacement worker.
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
@@ -237,7 +240,7 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
 weigh them, and the ones that reach their value down a single path. Every place the suite
 measures something with either folded kind is listed, keyed by the assertion's own text, with
-a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 66 measured
+a verdict written beside it. Today that reads 48 booleans as 10 / 29 / 9, and 66 measured
 places. Those counts, and the per-module case counts in the landed table above, are read back
 out of this file and compared against the suite, so a number here that went stale fails there.
 

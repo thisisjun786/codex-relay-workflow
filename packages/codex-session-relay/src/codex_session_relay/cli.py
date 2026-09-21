@@ -21,7 +21,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker, restoration
+from . import guard, intent, marker, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -1864,6 +1864,20 @@ def cmd_doctor(services, args) -> dict:
     # side and can be laid against each other. The bridge's own digest is not fetched; the
     # report names where to read it.
     report["rolePolicy"] = _role_policy_report(services)
+    report["workerPolicy"] = _service_for(services).read_worker_policy()
+    caller = rolepolicy.snapshot_record()
+    worker = report["workerPolicy"].get("policy") or {}
+    report["callerWorkerAgreement"] = (
+        "same" if caller.get("digest") and worker == caller else
+        "different" if caller.get("digest") and worker.get("digest") else "unknown"
+    )
+    requested = getattr(args, "require_worker_policy", None)
+    if requested is not None:
+        try:
+            requirements = _settings_json(requested)
+        except (OSError, ValueError, TypeError) as error:
+            raise SystemExit2(f"invalid worker policy requirements: {error}", EXIT_USAGE) from error
+        report["workerReadiness"] = rolepolicy.worker_readiness(report["workerPolicy"], requirements)
 
     # The other half of OPS-3.4's conjunction, on request. Answered from the same file the
     # probe measured, so a coordinator gets one answer instead of joining two commands and
@@ -1880,10 +1894,11 @@ def cmd_doctor(services, args) -> dict:
     )
     asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
     report.update(comparison)
-    if asked and comparison["sameStore"] != "proven":
+    if (asked and comparison["sameStore"] != "proven") or (
+            requested is not None and not report["workerReadiness"]["ready"]):
         # A caller that asked whether this is the same store and got no proof must not read
-        # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
-        # is that a different database is never reported as healthy.
+        # exit 0 as yes. Complete every requested reading before choosing the exit, so
+        # a worker-policy refusal cannot hide the issue/store/nonce observations.
         raise PayloadExit(report, EXIT_REFUSED)
     if issue_key and report["issue"]["readable"] and report["issue"]["storeAgreement"] != "same":
         # Same criterion, one level down, and unproven is refused exactly as a mismatch is:
@@ -1937,6 +1952,12 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
                 services.store, services.registry, services.intake, services.delivery,
                 services.ack, services.reconciler, services.adapter, clock=services.clock,
             )
+            try:
+                service.publish_worker_policy(rolepolicy.snapshot_record())
+            except OSError as error:
+                # Missing health evidence withholds new managed admissions; it must not stop
+                # this worker's existing queue recovery or non-role-bound deliveries.
+                service.store_journal_note(f"worker policy receipt unavailable: {error}")
             reports = daemon.run(
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
@@ -2823,6 +2844,10 @@ def build_parser() -> argparse.ArgumentParser:
     service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")
+    doctor.add_argument(
+        "--require-worker-policy",
+        help="JSON list (or @file) of {role,model,reasoningEffort}; refuse unless the live worker matches",
+    )
     doctor.add_argument("--expect-store", help="the store id another participant reported")
     doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
     doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")

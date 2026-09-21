@@ -190,6 +190,43 @@ held, so another client could change a thread between the check and the turn.
 A sandbox type with no `ThreadResumeParams.sandbox` mode, such as `externalSandbox`, is refused as
 `unsupported_sandbox_type` rather than approximated with a mode that means something else.
 
+### The worker's own policy
+
+The policy THIS process resolves and the policy the serving worker resolved are two separate
+processes' snapshots. The worker's snapshot is what send-time approval is decided from: it records
+the pairs the process that actually delivers a turn will approve. It is not an observation of what
+a delivered turn ran on. A daemon worker publishes its own snapshot when it starts, and `doctor`
+reads it back:
+
+    codex-session-relay doctor
+
+The report carries `workerPolicy` (the live worker's snapshot, or the exact reason there is none),
+`callerWorkerAgreement` (`same`, `different` or `unknown` between this CLI's snapshot and the
+worker's), and `rolePolicy` (this CLI's own). Without `--require-worker-policy` these are
+diagnostics: doctor exits 0 even when the worker is unobserved or mismatched, because describing is
+its job and gating is not.
+
+To make readiness a gate, name the pair each role must run on. The value is a JSON list of
+`{role, model, reasoningEffort}` objects, inline or as `@path`, and only fixed parent/child pairs
+are supported:
+
+    codex-session-relay doctor \
+      --require-worker-policy '[{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]'
+    codex-session-relay doctor --require-worker-policy @/path/to/requirements.json
+
+doctor then exits 2, carrying the whole diagnosis plus `workerReadiness`, whenever the live
+worker's snapshot is missing, stale, a different digest, or does not declare the requested pair.
+A configured caller never substitutes for the worker's own snapshot: a worker that published an
+unresolved policy is refused as `worker_policy_unconfigured` no matter what the caller resolved.
+Malformed JSON or an unreadable `@path` is a usage error (exit 4). A valid JSON document that is
+not a list of `{role, model, reasoningEffort}` objects - a wrong type or an empty list - is
+refused (exit 2) as `worker_policy_requirements_invalid`, and a role outside the fixed
+parent/child pairs above as `worker_policy_role_unsupported`.
+
+This is a point-in-time readiness observation, not managed admission: starting a managed workload
+on this evidence is later work. The receipt is evidence between cooperating same-user processes,
+not authentication, and no installed host has been verified against any of it.
+
 ## Commands
 
 Global options come BEFORE the subcommand:
@@ -228,7 +265,7 @@ Global options come BEFORE the subcommand:
 | `status` | observable delivery, acknowledgement and verification state |
 | `show` | the full record for one event: receipt, manifest, attempts, sent bytes, verdict |
 | `daemon` | run the bounded reconciliation and delivery loop |
-| `doctor` | environment and capability check |
+| `doctor` | environment and capability check; optional `--require-worker-policy` readiness gate |
 
 Every command prints JSON. Exit 0 success, 2 a refusal with a machine-readable `reason`, 3 a host
 problem, 4 usage.
@@ -365,6 +402,7 @@ bound; whoever operates the host owns whether it is correct for that machine.
     Description=Codex session relay
     [Service]
     Environment=RELAY_SOCKET=%h/.codex/app-server-control/app-server-control.sock
+    Environment=CODEX_THREAD_BRIDGE_EXECUTION_POLICY=%h/.codex/execution-policy.json
     ExecStart=%h/.local/bin/codex-session-relay --socket ${RELAY_SOCKET} daemon --deadline 3600
     Restart=always
     RestartSec=5
@@ -373,6 +411,12 @@ bound; whoever operates the host owns whether it is correct for that machine.
 
 The deadline plus `Restart=always` is deliberate: the process is bounded, and the supervisor is what
 makes it continuous. Where a user manager is unavailable, run the same command in the foreground.
+
+The execution policy is declared in the unit's own environment, not an interactive shell profile:
+the worker resolves it in its own process at start, and a variable exported only in a shell leaves
+the serving worker with no policy at all. After editing the policy file, restart the service (the
+snapshot is republished at startup), run `doctor --require-worker-policy` with the same variable
+set, and treat a matching digest as the recheck before relying on readiness.
 
 ## How invocation actually becomes automatic
 

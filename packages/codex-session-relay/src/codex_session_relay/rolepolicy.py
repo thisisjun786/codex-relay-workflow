@@ -51,12 +51,16 @@ class Unresolved:
     the policy and restarting resumes every held delivery with nothing lost.
     """
 
-    def __init__(self, detail: str):
+    def __init__(self, detail: str, *, public_detail="execution policy could not be resolved"):
         self.detail = detail
+        self.public_detail = public_detail
         self.digest = None
 
     def __bool__(self):
         return False
+
+    def summary(self) -> dict:
+        return {"state": "unresolved", "digest": None, "roles": {}, "detail": self.public_detail}
 
 
 class Declared:
@@ -72,6 +76,10 @@ class Declared:
     def expectation(self, role):
         return self._policy.role_expectation(role)
 
+    def summary(self) -> dict:
+        return {"state": "declared", "digest": self.digest,
+                "roles": self._policy.summary()["roles"], "detail": None}
+
     def exception_covers(self, name, *, role, model, reasoning_effort, cwd):
         return self._policy.exception_covers(
             name, role=role, model=model, reasoning_effort=reasoning_effort, cwd=cwd
@@ -79,6 +87,56 @@ class Declared:
 
 
 _SNAPSHOT: list = []
+
+
+def snapshot_record() -> dict:
+    """Public evidence from the same process snapshot that checks actual deliveries."""
+    return declared().summary()
+
+
+def worker_readiness(observation, requirements, *, policy=None) -> dict:
+    """A point-in-time pair check, not an authorization or a reservation to start work.
+
+    Only fixed parent/child roles are supported here. Exception directories and a supervisor's
+    chosen settings are intentionally not in the public worker summary, so neither can be
+    established by comparing it. The send-time checks remain authoritative.
+    """
+    caller = declared() if policy is None else policy
+
+    def refused(reason):
+        return {"ready": False, "reason": reason, "digest": None}
+
+    if not isinstance(requirements, list) or not requirements:
+        return refused("worker_policy_requirements_invalid")
+    for item in requirements:
+        if (not isinstance(item, dict)
+                or set(item) != {"role", "model", "reasoningEffort"}
+                or any(not isinstance(value, str) or not value.strip() for value in item.values())):
+            return refused("worker_policy_requirements_invalid")
+        if item["role"] not in ("parent", "child"):
+            return refused("worker_policy_role_unsupported")
+    if not observation.get("observed"):
+        return refused(observation.get("reason") or "worker_policy_unobserved")
+    worker = observation.get("policy")
+    if not isinstance(worker, dict) or worker.get("state") != "declared":
+        return refused("worker_policy_unconfigured")
+    if not caller:
+        return refused("caller_policy_unconfigured")
+    if not caller.digest or worker.get("digest") != caller.digest:
+        return refused("worker_policy_digest_mismatch")
+    # A digest string alone is not proof of the adjacent payload. Compare the public reading
+    # too, so a corrupt receipt cannot mix one version's digest with another version's roles.
+    if worker != caller.summary():
+        return refused("worker_policy_summary_mismatch")
+    for item in requirements:
+        expected = caller.expectation(item["role"])
+        if expected is None or expected.expectation != "pair":
+            return refused("worker_policy_role_unsupported")
+        if (item["model"], item["reasoningEffort"]) != (
+            expected.model, expected.reasoning_effort,
+        ):
+            return refused("worker_policy_pair_mismatch")
+    return {"ready": True, "reason": None, "digest": caller.digest}
 
 
 def reset() -> None:
@@ -111,18 +169,21 @@ def _resolve(environ) -> "Declared | Unresolved":
     configured = (environ.get(ENVIRONMENT_VARIABLE) or "").strip()
     if not configured:
         return Unresolved(
-            f"{ENVIRONMENT_VARIABLE} is not set in this process, so no role policy can be read"
+            f"{ENVIRONMENT_VARIABLE} is not set in this process, so no role policy can be read",
+            public_detail="execution policy environment is not configured in this process",
         )
     try:
         from codex_thread_bridge.execution import ExecutionPolicy, ExecutionPolicyError
     except ImportError as error:  # pragma: no cover - exercised by the import-failure test
-        return Unresolved(f"the execution policy parser is unavailable: {error}")
+        return Unresolved(f"the execution policy parser is unavailable: {error}",
+                          public_detail="execution policy parser is unavailable")
     try:
         policy = ExecutionPolicy.from_file(configured)
     except ExecutionPolicyError as error:
-        return Unresolved(str(error))
+        return Unresolved(str(error), public_detail="configured execution policy is unreadable or invalid")
     if not policy.declares_roles:
-        return Unresolved("this host's execution policy declares no roles")
+        return Unresolved("this host's execution policy declares no roles",
+                          public_detail="execution policy declares no roles")
     return Declared(policy, policy.summary().get("digest"))
 
 

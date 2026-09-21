@@ -46,6 +46,7 @@ REAL_TIME_MODULES = (
     "test_operational_scale.py",
     "test_service.py",
     "test_stop_adapter.py",
+    "test_worker_policy.py",
     "test_wp1_regressions.py",
 )
 
@@ -267,6 +268,7 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("report.py", None, "_may_have_reached", "function"),
     ("scope.py", None, "acquire", "function"),
     ("scope.py", None, "still_held", "function"),
+    ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
     ("transport.py", "TransportFacts", "retry_safe", "field"),
