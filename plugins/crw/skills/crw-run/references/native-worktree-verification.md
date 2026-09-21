@@ -26,7 +26,7 @@ recording any availability claim.
 
 | Surface | Who performs creation | Reachable from inside a task |
 |---|---|---|
-| Desktop client worktree flow | The ChatGPT desktop app, from the new chat composer | No. Client-side and not inspectable from a remote host |
+| Desktop client worktree flow | The ChatGPT desktop app, from the new chat composer | No for creation. Partly inspectable: see the client-inspection boundary below |
 | Model-visible app tools | Whatever dynamic tools the host exposes to the running model | Only when that namespace is actually exposed |
 | App Server thread protocol | The backend that accepts thread creation and resume | Yes, and its generated schema is checkable |
 | CLI experimental feature | The local Codex binary under an experimental flag | Yes, when the flag is passed for that invocation |
@@ -35,6 +35,26 @@ An absent tool namespace is an exposure limit. A schema without a field is a
 statement about that protocol version. Neither one proves the product lacks the
 feature. Confirm product capability against the official documentation, and mark
 anything the access path cannot reach as unverified rather than absent.
+
+## The client-inspection boundary
+
+A desktop client is not a single yes or no. When the machine running it is reachable
+and that access is authorized, three of its layers are readable without touching the
+screen: the installed bundle and its version, the client profile that the app writes,
+and the account or enrollment records that tie the client to a host. Use them, and
+keep each one inside what it can actually establish.
+
+- The bundle proves which code shipped in that build, including a feature's settings
+  keys, storage keys and the gate that guards it. It never proves the feature is on
+  for this account, because the gate value is decided elsewhere.
+- The profile proves what that profile produced, at the moment it was read. A missing
+  storage key means that profile holds nothing for that feature now; it is not proof
+  that the feature is disabled, and it says nothing about another machine's profile.
+  Validate the scan with a control string that must be present, or an empty result is
+  only evidence that the scan missed.
+- Neither layer is the rendered screen. A claim about what the user sees in the client
+  needs the screen itself, which needs screen-capture permission on that machine.
+  Without it, record the surface as unverified and name the missing permission.
 
 ## Distinguish the identifiers
 
