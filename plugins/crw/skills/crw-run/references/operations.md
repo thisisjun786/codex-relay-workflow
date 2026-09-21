@@ -1030,6 +1030,20 @@ Record the real reason beside it in the coordination record until a reason exist
 and read a recovery generation's stated reason as the closest available word rather than as what
 occurred.
 
+**A service that cannot decide is not a service that is down.** Separately from the cap above, a
+delivery can be refused before any send because the service process cannot evaluate it. One such
+refusal has been observed: `operation: settings_check` with `error_code:
+role_policy_unconfigured`, where the process delivering has no readable role policy and therefore
+refuses rather than guessing at an authorization. It is one cause among several that produce
+`withheld_pre_send`, and it is identified by those two fields rather than by the state alone.
+
+It is worth naming because of how it looks from outside: the service is running, its ticks
+progress, the recipient is idle and reachable, both parties' settings read usable, and nothing
+arrives. That is indistinguishable from a healthy parent with nothing waiting for it unless the
+failure record is read. Its recovery is also unlike the cap's — the refusal is retry-safe, so
+making the configuration readable and restarting the service resumes the existing delivery with
+nothing lost and no new generation needed.
+
 **Restart.** On service restart, start-up recovery re-reads unsettled rows and in-flight leases
 before anything new is attempted. On parent restart, the parent drains before it acts. Neither
 re-judges a settled event, and neither re-sends a send whose outcome is merely unknown: an

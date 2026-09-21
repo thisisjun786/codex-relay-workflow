@@ -200,7 +200,12 @@ one that is usually skipped.
    and OPS-7.3.
 2. The delivery service for this operating scope is running **and its ticks are progressing**. A
    PID and an `enabled` service are not tick progress, and a manual tick is not unattended
-   delivery.
+   delivery. Ticks progressing is also not the same as sends being permitted: read the store's
+   current failure records for this scope, and treat any applicable service-side pre-send refusal
+   as a readiness failure even while the loop runs normally. Their absence does not satisfy this
+   on its own — a store with nothing queued has no failures to show — so positive evidence comes
+   from a delivery that actually went out on this path, or from checking the identity of the
+   configuration the service is deciding under.
 3. This parent is reachable as a recipient. That covers the approval policy in force, and it also
    covers this parent's own goal status, which
    [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) records as an input
@@ -211,9 +216,11 @@ one that is usually skipped.
    that cannot is not covered by a completion-only observation, and the parent either keeps
    `active-observation` for that one or requires the child to emit under it.
 5. An unattended idle-to-turn wake has already been observed on this same operating scope, App
-   Server instance, store and socket, service instance, approval policy, transport revision and
-   disposition class — by this parent on an earlier run, or by a separate probe recipient that
-   proved it first.
+   Server instance, store and socket, service instance, approval policy, role-policy identity,
+   transport revision and disposition class — by this parent on an earlier run, or by a separate
+   probe recipient that proved it first. The role policy belongs in that list because the service
+   decides authorization under whichever one its own process can read, so a wake observed under a
+   different one is evidence about a different configuration.
 
 Fact 5 is written that way because the obvious version is circular: a parent cannot observe its
 own first wake without first yielding idle on the strength of the observation it has not made. A
