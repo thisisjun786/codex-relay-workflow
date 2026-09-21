@@ -325,3 +325,15 @@ class Reporting(GuardTestCase):
             (folder / (str(n) + ".json")).write_text("{}")
         (folder / "bad-link").symlink_to(Path(self.tmp) / "foreign")
         self.assertEqual(self.read()["reportingState"], "unreported")
+
+    def test_ignored_identity_subdirectories_cannot_exhaust_evidence_budget(self):
+        relation = self.managed()
+        self.evaluate()
+        self.settle(relation)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        for folder in (directory / "attempts" / "ignored-subdirectory",
+                       directory / "claims" / CHILD / "ignored-subdirectory"):
+            folder.mkdir(parents=True)
+            for n in range(omitted.MAX_FACTS + 1):
+                (folder / (str(n) + ".json")).write_text("{}")
+        self.assertEqual(self.read()["reportingState"], "unreported")

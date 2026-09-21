@@ -84,20 +84,30 @@ def _confined_facts(directory, root, session, turn):
     for name in marker.SINGLE_FACTS.values():
         checked(directory / name)
     checked(directory / "dispositions" / session / (turn + ".json"))
-    pending = [directory / name for name in marker.NUMBERED_FACTS]
-    pending += [directory / "claims", directory / "hook" / session / turn]
     count = 0
-    while pending:
-        current = pending.pop()
-        if checked(current) is None:
-            continue
-        for entry in current.iterdir():
+
+    def entries(folder, pattern=None, only=None):
+        nonlocal count
+        checked(folder)
+        paths, readable = marker.listing(folder, pattern, only=only)
+        if not readable:
+            raise Unmeasured("marker_listing_unreadable")
+        for path in paths:
+            if pattern and path.name.startswith("."):
+                continue
             count += 1
             if count > MAX_FACTS:
                 raise Unmeasured("marker_history_limit")
-            metadata = checked(entry)
-            if metadata and stat.S_ISDIR(metadata.st_mode):
-                pending.append(entry)
+            yield path
+
+    for name in marker.NUMBERED_FACTS:
+        for path in entries(directory / name, "*.json"):
+            checked(path)
+    for claim_dir in entries(directory / "claims", only=marker.DIRECTORIES):
+        checked(claim_dir / marker.CLAIM_FILE)
+    for path in entries(directory / "hook" / session / turn, "*.json"):
+        if path.name != guard.HOLD_FILE:
+            checked(path)
 
 
 def _stops(directory, session, turn):
