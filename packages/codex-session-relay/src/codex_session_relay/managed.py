@@ -252,13 +252,15 @@ class ManagedStart:
 
     def result(self, state, stage, reason=None, **observed):
         row = self.row or {}
+        business = observed.get("businessTurnId")
+        child = row.get("child_task_id")
         result = {
             "schema": SCHEMA, "requestId": self.request["requestId"],
             "state": state, "stage": stage, "reason": reason,
             "assignmentId": self.assignment,
             "relationshipId": row.get("relationship_id"),
             "executionGeneration": row.get("execution_generation"),
-            "childTaskId": row.get("child_task_id"),
+            "childTaskId": child,
             "standbyTurnId": row.get("standby_turn_id"),
             "creationRequestId": self.identity["create_request_id"],
             "businessRequestId": self.identity["dispatch_request_id"],
@@ -266,8 +268,23 @@ class ManagedStart:
             "reservationState": row.get("state"),
             "reservationRevision": row.get("revision"),
             "recovery": "Retry only this same complete request; do not create a replacement.",
+            "selectors": {
+                "state": str(self.store.path.parent),
+                "markerRoot": self.identity["marker_root"],
+                "workspace": self.identity["workspace"],
+            },
             **observed,
         }
+        if marker.valid_segment(business) and marker.valid_segment(child):
+            result["reportingArgv"] = [
+                "--state", str(result["selectors"]["state"]),
+                "reporting-show",
+                "--marker-root", result["selectors"]["markerRoot"],
+                "--workspace", result["selectors"]["workspace"],
+                "--assignment", self.assignment,
+                "--session", child,
+                "--turn", business,
+            ]
         # Diagnostics do not authorize another host effect. Persist no business prompt.
         with self.store.transaction():
             self.store.journal("managed_start_observed", self.request["requestId"],

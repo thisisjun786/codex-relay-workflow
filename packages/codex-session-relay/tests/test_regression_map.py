@@ -45,6 +45,7 @@ REAL_TIME_MODULES = (
     "test_management_cli.py",
     "test_managed_start.py",
     "test_operational_scale.py",
+    "test_reporting_cli.py",
     "test_service.py",
     "test_stop_adapter.py",
     "test_worker_policy.py",

@@ -85,10 +85,27 @@ class ManagedEntry(RelayTestCase):
     def test_same_request_recovers_one_child_one_business_turn(self):
         first = self.start.run(self.request)
         self.assertEqual(first["state"], "admitted")
+        self.assertEqual(set(first["selectors"]), {"state", "markerRoot", "workspace"})
+        self.assertTrue(Path(first["selectors"]["state"]).is_absolute())
+        argv = first["reportingArgv"]
+        from codex_session_relay.cli import build_parser
+        namespace = build_parser().parse_args(argv)
+        self.assertEqual(namespace.command, "reporting-show")
+        self.assertEqual(namespace.state, first["selectors"]["state"])
+        self.assertEqual(namespace.turn, first["businessTurnId"])
+        self.assertEqual(namespace.session, first["childTaskId"])
+        self.assertEqual(namespace.assignment, first["assignmentId"])
         second = self.start.run(self.request)
         self.assertEqual(second["businessTurnId"], first["businessTurnId"])
         self.assertEqual((self.host.created, self.host.sent), (1, 1))
         self.assertEqual(second["childClaim"], "not_observed")
+
+    def test_a_result_without_a_business_turn_carries_no_reporting_argv(self):
+        self.observation = {"observed": False, "reason": "worker_policy_unconfigured"}
+        refused = self.start.run(self.request)
+        self.assertNotIn("businessTurnId", refused)
+        self.assertNotIn("reportingArgv", refused)
+        self.assertEqual(set(refused["selectors"]), {"state", "markerRoot", "workspace"})
 
     def test_crash_after_business_send_replays_its_receipt_without_another_turn(self):
         with patch("codex_session_relay.admission.admit_explicitly", side_effect=RuntimeError("caller died")):

@@ -316,3 +316,8 @@ avoid. The reuse column is where that judgement is recorded, not where it is enf
 `test_managed_start.py` uses subprocess CLI checks and one bounded worker thread to
 verify the post-resume guard on its actual thread boundary. Its other scenarios
 use a fake host and real SQLite/marker stores; they do not establish live hooks.
+
+`test_reporting_cli.py` starts the real CLI in bounded subprocesses. Its
+read-only and usage-exit evidence spends wall time; it does not contact a live
+App Server or prove installed hook firing. `test_omitted.py` uses persisted
+fixture Stop and settlement records with an injected observation time.

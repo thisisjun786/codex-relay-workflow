@@ -319,6 +319,12 @@ authorized attempt uses a new request id after checking that the issue has no ot
 `lastObservation` carries the last `state`, `stage`, `reason` and known dispatch identities.
 An absent or unreadable store is reported through `readable`/`detail`, not as proof of absence.
 
+A completed admission also carries `selectors` (`state`, `markerRoot`, `workspace`) derived from the
+request identity. `reportingArgv` is present only when both `businessTurnId` and `childTaskId` are
+known. It is a list of arguments for a later manual `reporting-show`, with the global `--state`
+before the subcommand. An unknown turn or child omits that list; the result does not invent one.
+Running it does not wake a parent, write a queue, or publish a new report.
+
 | Observation | Recovery |
 | --- | --- |
 | `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
@@ -334,6 +340,33 @@ this managed admission boundary. Malformed JSON requests exit 4; missing CLI arg
 argparse's exit 2 on stderr. Refused or incomplete admission
 exits 2; admitted requests exit 0. Transport failures retain the existing host-error behavior.
 
+### Exact-turn reporting observation
+
+`reporting-show` is a direct, manual, offline diagnosis of one already selected turn. It reads the
+marker and the named store and prints JSON. It does not open a socket, call the host, wake a
+parent, write a queue, or publish a report. Global `--state` is required and comes before the
+subcommand, the same shape as `reportingArgv`:
+
+    codex-session-relay --state /absolute/relay-state \
+      reporting-show --marker-root /absolute/markers --workspace /absolute/workspace \
+      --assignment <assignment> --session <session> --turn <turn>
+
+The answer uses schema `reporting-observation/1`. `reportingState` may be `unreported`,
+`reported`, `in_progress`, `unmanaged` (no selected marker), or `unmeasured`. A completed diagnosis, including `unmeasured`, exits 0.
+Malformed identity arguments exit 4. Missing required flags follow argparse and exit 2 on stderr.
+An absent store stays absent and is reported as missing evidence, not as a created database and
+not as proof that nothing happened.
+
+A Stop observation by itself is not a terminal assignment. `stopObservation` keeps that warning;
+`terminalObservation` comes only from a persisted settlement for the same relationship, child and
+turn. When that settlement is missing, the state is `unmeasured` with reason
+`host_terminal_unobserved`. Evidence that cannot be read, or that conflicts, stays `unmeasured`
+with its reason; it is not rewritten as success or absence. `relationshipStatus` is the stored
+status, including `paused` or `cancelled`, and does not wake the owner.
+
+This section describes the source command. An installed relay exposes `reporting-show` only after
+that version is installed and measured. Source tests do not establish installed-host behavior.
+
 ## Commands
 
 Global options come BEFORE the subcommand:
@@ -345,6 +378,7 @@ Global options come BEFORE the subcommand:
 | `register` | register a parent/child relationship with its authorized scope |
 | `managed-start` | reserve, create a standby, register and dispatch one recoverable assignment |
 | `managed-show` / `managed-release` | inspect a retained start; release only an unarmed reservation |
+| `reporting-show` | offline exact-turn reporting diagnosis; reads, never wakes or writes a report |
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |

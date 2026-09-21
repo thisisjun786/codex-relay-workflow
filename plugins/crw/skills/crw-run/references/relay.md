@@ -132,6 +132,11 @@ issue reservation and retained bridge receipts. The lower-level calls remain sep
 `doctor --require-worker-policy` alone neither runs admission nor prevents raw task creation.
 The managed entry rechecks authorization after resume, but an external UI change can race its
 last read and turn start. Do not describe that observation as an atomic host permission guard.
+The source package's [exact-turn reporting observation](../../../../../packages/codex-session-relay/README.md#exact-turn-reporting-observation)
+is a separate manual diagnosis: `reporting-show` reads one named turn offline. A Stop observation
+alone is not a terminal assignment, and missing or unreadable evidence stays unknown rather than
+success. The command does not wake a parent, write a queue, or publish a report. Source presence
+does not mean the installed relay exposes it.
 
 The durable owners are separate:
 

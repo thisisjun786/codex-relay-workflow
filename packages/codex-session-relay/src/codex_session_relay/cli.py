@@ -71,7 +71,7 @@ OFFLINE_COMMANDS = (
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
     # Read-only, offline, and constructs no Store at all.
-    "dispositions-show", "managed-show", "managed-release",
+    "dispositions-show", "managed-show", "managed-release", "reporting-show",
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
@@ -347,6 +347,34 @@ def cmd_managed_show(services, args) -> dict:
 def cmd_managed_release(services, args) -> dict:
     return services.registry.release_unstarted(args.request_id, args.fingerprint,
                                                args.revision, args.reason)
+
+
+def cmd_reporting_show(services, args) -> dict:
+    """Read one exact turn's reporting observation and write nothing.
+
+    The projection owns the diagnosis. This command only checks that every selector was named,
+    refuses a store it would have to guess, and prints the completed observation, including an
+    unmeasured one. A missing store stays missing: omitted.observe is given the selection and
+    never a Store.
+    """
+    if services.selection.source != "flag":
+        raise SystemExit2("reporting-show requires explicit --state", EXIT_USAGE)
+    if services.socket_path:
+        raise SystemExit2("reporting-show does not take --socket", EXIT_USAGE)
+    from . import omitted
+
+    try:
+        return omitted.observe(
+            services.selection,
+            root=args.marker_root,
+            workspace=args.workspace,
+            assignment=args.assignment,
+            session=args.session,
+            turn=args.turn,
+            now=services.clock.iso(),
+        )
+    except ValueError as error:
+        raise SystemExit2(str(error), EXIT_USAGE) from error
 
 
 def cmd_register(services, args) -> dict:
@@ -2468,6 +2496,14 @@ def build_parser() -> argparse.ArgumentParser:
     managed_release.add_argument("--revision", required=True, type=int)
     managed_release.add_argument("--reason", required=True)
     managed_release.set_defaults(handler=cmd_managed_release)
+
+    reporting_show = subparsers.add_parser("reporting-show")
+    reporting_show.add_argument("--marker-root", required=True)
+    reporting_show.add_argument("--workspace", required=True)
+    reporting_show.add_argument("--assignment", required=True)
+    reporting_show.add_argument("--session", required=True)
+    reporting_show.add_argument("--turn", required=True)
+    reporting_show.set_defaults(handler=cmd_reporting_show)
 
     register = subparsers.add_parser("register")
     register.add_argument("--parent-task", required=True)
