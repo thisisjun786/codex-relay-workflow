@@ -168,6 +168,14 @@ Where nothing differs, the recorded values are restored and the run continues. W
 differs, only the affected field is adjudicated again, under the same precedence, and the
 superseded value is kept beside what changed.
 
+That second entry is written `run_mode (superseded)` or `observation_path (superseded)`, and the
+spelling is load-bearing rather than cosmetic. A closed-vocabulary field is unreadable when the
+record states it twice with two different values, because picking by position is how two
+consumers restore two different policies from one record. History would look exactly like that
+ambiguity, so it has to be marked as history. A known field under any other qualifier is
+unreadable too: an invented word is not a way to keep a second current value out of the reader's
+sight.
+
 A field is adjudicated again when an installed component's version, path or digest differs from the
 recorded one; when the hook registration or its observed rule differs; when the permission profile
 or the exposed tool set differs; when the operating scope differs; when the App Server has

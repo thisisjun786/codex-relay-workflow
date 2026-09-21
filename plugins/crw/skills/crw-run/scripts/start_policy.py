@@ -34,6 +34,12 @@ CELL = re.compile(r"`([^`]+)`")
 BULLET = re.compile(r"^[-*+]\s+")
 WRAPPERS = ("`", '"', "'", "*", "_")
 PUNCTUATION = ".,;"
+# A superseded value is kept beside the current one when a field is re-adjudicated, so the
+# record legitimately holds the same field twice. The contract spells that second entry
+# `field (superseded)`, and this is the only qualifier this reader accepts: anything else
+# on a known field is a form it cannot read rather than one it quietly drops.
+QUALIFIED = re.compile(r"^(?P<field>[a-z_]+)\s*\((?P<note>[^)]*)\)$")
+HISTORY = "superseded"
 
 
 class ContractError(RuntimeError):
@@ -112,6 +118,11 @@ def read_record(lines):
     Every occurrence is kept rather than the first. A record that states one field twice with
     two different values is ambiguous, and picking by position is exactly how two consumers
     restore two different policies from one record.
+
+    The one exception is the history the re-adjudication clause requires. A field written
+    `run_mode (superseded)` is the value that was replaced, not a second current one, so it is
+    skipped. A known field under any OTHER qualifier is reported rather than skipped, because
+    silently dropping it is how a current value would hide behind a word this reader invented.
     """
     found = {}
     for line in lines:
@@ -120,6 +131,14 @@ def read_record(lines):
             continue
         name, _, value = text.partition(":")
         name = undecorate(name)
+        qualified = QUALIFIED.match(name)
+        if qualified and qualified.group("field") in FIELDS:
+            if qualified.group("note").strip().lower() == HISTORY:
+                continue
+            found.setdefault(qualified.group("field"), []).append(
+                f"unreadable qualifier ({qualified.group('note').strip()})"
+            )
+            continue
         if name not in FIELDS:
             continue
         found.setdefault(name, []).append(undecorate(value))
@@ -188,6 +207,19 @@ SELFTEST = (
     ("parent J", ["run_mode: relay_only", "observation_path: relay"], False),
     ("a parked parent given a running parent's path", ["run_mode: blocked", "observation_path: event-driven-idle"], False),
     ("nothing recorded", ["scope: this-run"], False),
+    # The re-adjudication clause keeps the replaced value beside the new one, so a record that
+    # obeyed the contract used to fail this check as "two values, unreadable".
+    ("a re-adjudicated field keeping its history",
+     ["run_mode: goal-free-run", "run_mode (superseded): loop",
+      "observation_path: event-driven-idle"], True),
+    ("history on both fields",
+     ["run_mode: goal-free-run", "run_mode (superseded): loop",
+      "observation_path: event-driven-idle", "observation_path (superseded): active-observation"],
+     True),
+    # An invented qualifier is not a way to hide a current value from the reader.
+    ("a qualifier this reader does not know",
+     ["run_mode: goal-free-run", "run_mode (previous): loop",
+      "observation_path: event-driven-idle"], False),
 )
 
 
