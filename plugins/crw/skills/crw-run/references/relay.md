@@ -114,6 +114,37 @@ managed START only: an offline `emit` stages and a staged receipt has no deliver
 through the fake host instead. Note that the doc and the test are not yet compared automatically —
 keep them in step by hand when either changes.
 
+## Managed execution boundaries
+
+A healthy delivery worker is one prerequisite for a managed assignment, not an assignment.
+The [managed start sequence](#the-managed-start-sequence) separately declares an intent,
+creates a task, registers its relationship and canonical criteria, and reads the result back.
+These calls are still sequenced by the caller. Passing `doctor --require-worker-policy`
+does not run them or prevent a caller from starting a task outside that sequence.
+
+The durable owners are separate:
+
+| Boundary | Owner | Evidence it supplies |
+| --- | --- | --- |
+| Dispatch intent and task correlation | [intent.py](../../../../../packages/codex-session-relay/src/codex_session_relay/intent.py) | Published intent, creation observations, identity binding and relationship reference |
+| Authorized assignment and execution | [registry.py](../../../../../packages/codex-session-relay/src/codex_session_relay/registry.py) and [criteria.py](../../../../../packages/codex-session-relay/src/codex_session_relay/criteria.py) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
+| Actual worker policy | [service.py](../../../../../packages/codex-session-relay/src/codex_session_relay/service.py) and [rolepolicy.py](../../../../../packages/codex-session-relay/src/codex_session_relay/rolepolicy.py) | The serving process's policy snapshot and point-in-time readiness |
+| Child's declared result and observed turn ending | [receipts.py](../../../../../packages/codex-session-relay/src/codex_session_relay/receipts.py) | Staged versus final result, or failure/interruption/ordinary turn end |
+| Stop-time omission | [guard.py](../../../../../packages/codex-session-relay/src/codex_session_relay/guard.py) | Bounded missing-declaration/receipt observations, never an invented result |
+| Delivery, acknowledgement and judgment | [delivery.py](../../../../../packages/codex-session-relay/src/codex_session_relay/delivery.py) and [ack.py](../../../../../packages/codex-session-relay/src/codex_session_relay/ack.py) | Separate queued, dispatched, received and judged states |
+
+A registered generation can still lack its first dispatch anchor. Receipt intake refuses it
+until an exact turn is bound. The [live-trial startup order](../../../../../docs/live-trial.md#the-order)
+materializes a standby turn before business dispatch; that host preparation is not completion
+evidence. An unknown creation or dispatch response must be reconciled against its retained
+bridge operation rather than retried with a new request id.
+
+An ordinary turn end without a child receipt is not success. The Stop guard records omissions
+only for the assignment and session it can establish, and its bounded holds do not guarantee
+that an agent will submit a report. Direct bridge calls and tasks without a managed marker
+remain outside that observation. The worker's send-time policy and lifecycle checks remain
+necessary even when an earlier readiness check passed.
+
 ## One shared state directory
 
 Every process in one assignment must pass the same `--state`. The child emitting, the parent
