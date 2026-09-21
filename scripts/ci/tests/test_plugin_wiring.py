@@ -13,6 +13,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1125,3 +1126,334 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         self.assertNotEqual(emitted.get("outcome"), "internal_error")
         self.assertIn("could not be read", emitted["detail"])
         self.assertEqual(self.config(), before)
+
+
+# ------------------------------------------------- the declaration that outlives the cache
+
+
+class DeclaredStopCommandTest(unittest.TestCase):
+    """CRW-178. The command a turn holds must survive its version cache being replaced.
+
+    A plugin hook command is fixed when the turn starts, with the plugin root already resolved
+    into it. Replacing the package removes that directory whole, and python3 exits 2 for a
+    missing script -- the number the hook protocol reads as "block this turn". Measured on the
+    real incident: one removed directory, 74 repeated Stop prompts, and a turn that could not
+    end. So these cases drive the ACTUAL declared command through a shell, the way the host
+    runs it, rather than asserting anything about its text.
+    """
+
+    DECLARATION = ROOT / "plugins/crw/wiring/hooks/stop-recording-completion.json"
+    PAYLOAD = b'{"hook_event_name": "Stop", "session_id": "s", "turn_id": "t"}'
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
+        document = json.loads(self.DECLARATION.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        self.command = entry["command"]
+        self.timeout = entry["timeout"]
+        self.witness = self.root / "witness.txt"
+
+    def plant(self, path, tag, body="raise SystemExit(0)\n"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("open(%r, 'a').write(%r + chr(10))\n%s" % (str(self.witness), tag, body),
+                        encoding="utf-8")
+
+    def fire(self, plugin_root, codex_home, command=None, with_root=True):
+        if self.witness.exists():
+            self.witness.unlink()
+        environment = {"PATH": os.environ["PATH"], "CODEX_HOME": str(codex_home)}
+        if with_root:
+            environment["PLUGIN_ROOT"] = str(plugin_root)
+        done = subprocess.run(["/bin/sh", "-lc", command or self.command], input=self.PAYLOAD,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+        ran = self.witness.read_text(encoding="utf-8").split() if self.witness.exists() else []
+        # The one number that must never appear, whatever else happened.
+        self.assertNotEqual(done.returncode, 2,
+                            "the blocking exit code escaped: " + repr(done.stderr[:200]))
+        return done, ran
+
+    def homes(self):
+        """An ordinary home, and one whose path carries a space, a quote and a dollar."""
+        plain = self.root / "plain home"
+        awkward = self.root / "it's $HOME really"
+        for home in (plain, awkward):
+            home.mkdir(parents=True, exist_ok=True)
+        return plain, awkward
+
+    def test_the_packaged_copy_runs_while_the_cache_is_there(self):
+        """The current version always wins, so an older fallback can never outrank it."""
+        cache = self.root / "cache" / "0.4.0"
+        self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED")
+        for home in self.homes():
+            self.plant(home / "crw-stop-hook.py", "FALLBACK")
+            done, ran = self.fire(cache, home)
+            self.assertEqual((done.returncode, ran), (0, ["PACKAGED"]), str(home))
+            self.assertEqual(done.stdout, b"")
+
+    def test_the_fallback_answers_when_the_cache_was_replaced_mid_turn(self):
+        """The incident itself: the path the turn holds is gone before the turn ends."""
+        gone = self.root / "cache" / "0.3.0-removed"
+        for home in self.homes():
+            self.plant(home / "crw-stop-hook.py", "FALLBACK")
+            done, ran = self.fire(gone, home)
+            self.assertEqual((done.returncode, ran), (0, ["FALLBACK"]), str(home))
+            self.assertEqual((done.stdout, done.stderr), (b"", b""))
+
+    def test_neither_candidate_releases_the_turn_in_silence(self):
+        """A host with the package and no runtime has nothing to run and loses nothing.
+
+        This is the case the old declaration turned into a termination loop, and it is not a
+        blanket suppression: the launcher's own contract is already that a Stop it cannot judge
+        is a Stop it releases. What sat outside that contract was the interpreter failing to
+        open its own argument, and that is what this closes.
+        """
+        gone = self.root / "cache" / "0.3.0-removed"
+        home = self.root / "empty home"
+        home.mkdir()
+        done, ran = self.fire(gone, home)
+        self.assertEqual((done.returncode, ran, done.stdout, done.stderr), (0, [], b"", b""))
+
+    def test_a_candidate_that_fails_while_running_is_reported_and_not_retried(self):
+        """Read failure and run failure are different, and only the first may fall through.
+
+        A launcher that raises after doing half its work has already acted on this Stop, so
+        running the fallback as well would process one Stop twice. The error surfaces instead,
+        as exit 1, which the host reads as an ordinary failure rather than as a hold.
+        """
+        cache = self.root / "cache" / "0.4.0"
+        self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
+                   "raise OSError(13, 'after side effects')\n")
+        home = self.root / "home"
+        home.mkdir()
+        self.plant(home / "crw-stop-hook.py", "FALLBACK")
+        done, ran = self.fire(cache, home)
+        self.assertEqual(ran, ["PACKAGED"])
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"OSError", done.stderr)
+
+    def test_a_truncated_launcher_is_reported_rather_than_run(self):
+        cache = self.root / "cache" / "0.4.0"
+        (cache / "wiring").mkdir(parents=True)
+        (cache / "wiring" / "crw_stop_hook.py").write_text("def (\n", encoding="utf-8")
+        home = self.root / "home"
+        home.mkdir()
+        done, ran = self.fire(cache, home)
+        self.assertEqual((done.returncode, ran), (1, []))
+        self.assertIn(b"SyntaxError", done.stderr)
+
+    def test_a_directory_at_either_candidate_is_stepped_over(self):
+        cache = self.root / "cache" / "0.4.0"
+        (cache / "wiring" / "crw_stop_hook.py").mkdir(parents=True)
+        home = self.root / "home"
+        home.mkdir()
+        (home / "crw-stop-hook.py").mkdir()
+        done, ran = self.fire(cache, home)
+        self.assertEqual((done.returncode, ran, done.stdout), (0, [], b""))
+
+    def test_an_unexpanded_plugin_root_falls_through_rather_than_failing(self):
+        """A host that does not substitute the variable leaves the literal text behind."""
+        home = self.root / "home"
+        home.mkdir()
+        self.plant(home / "crw-stop-hook.py", "FALLBACK")
+        done, ran = self.fire(None, home, with_root=False)
+        self.assertEqual((done.returncode, ran), (0, ["FALLBACK"]))
+
+    def test_the_real_launcher_still_answers_through_the_declaration(self):
+        """Not a stub: the packaged launcher, reached the way the host reaches it."""
+        cache = self.root / "cache" / "0.4.0"
+        (cache / "wiring").mkdir(parents=True)
+        shutil.copyfile(ROOT / "plugins/crw/wiring/crw_stop_hook.py",
+                        cache / "wiring" / "crw_stop_hook.py")
+        home = self.root / "home"
+        home.mkdir()
+        adapter = home / "adapter.py"
+        seen = home / "seen.txt"
+        adapter.write_text("import sys\n"
+                           "open(%r, 'a').write(sys.stdin.read())\n"
+                           "sys.stdout.write('{\"decision\": \"block\"}')\n" % str(seen),
+                           encoding="utf-8")
+        (home / "crw-completion-hook.json").write_text(json.dumps(
+            {"configVersion": 1, "event": "Stop", "owner": "plugin", "mode": "observe",
+             "timeoutSeconds": 5, "adapterInterpreter": sys.executable,
+             "adapterEntryPoint": str(adapter)}), encoding="utf-8")
+        done, _ = self.fire(cache, home)
+        self.assertEqual((done.returncode, done.stdout), (0, b'{"decision": "block"}'))
+        self.assertIn("turn_id", seen.read_text(encoding="utf-8"))
+
+    def test_the_declaration_stays_within_the_timeout_the_host_clamps(self):
+        self.assertLessEqual(self.timeout, plugin.HOOK_TIMEOUT_SECONDS)
+
+
+class LauncherContractVersionTest(unittest.TestCase):
+    """An installed fallback outlives the package that wrote it, so it may meet a later contract."""
+
+    LAUNCHER = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
+        self.seen = self.home / "seen.txt"
+        self.adapter = self.home / "adapter.py"
+        self.adapter.write_text("open(%r, 'a').write('ran')\n" % str(self.seen),
+                                encoding="utf-8")
+
+    def fire(self, **overrides):
+        document = {"configVersion": 1, "event": "Stop", "owner": "plugin", "mode": "observe",
+                    "timeoutSeconds": 5, "adapterInterpreter": sys.executable,
+                    "adapterEntryPoint": str(self.adapter)}
+        document.update(overrides)
+        for key in [name for name, value in document.items() if value is None]:
+            del document[key]
+        (self.home / "crw-completion-hook.json").write_text(json.dumps(document),
+                                                            encoding="utf-8")
+        done = subprocess.run([sys.executable, str(self.LAUNCHER)], input="{}",
+                              capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+        return done, self.seen.exists()
+
+    def test_the_contract_it_implements_is_acted_on(self):
+        done, ran = self.fire()
+        self.assertEqual((done.returncode, ran), (0, True))
+
+    def test_settings_written_before_the_key_existed_are_still_acted_on(self):
+        done, ran = self.fire(configVersion=None)
+        self.assertEqual((done.returncode, ran), (0, True))
+
+    def test_a_contract_it_does_not_implement_is_stood_down_from(self):
+        """A copy left by an older install does nothing rather than guess at a later document."""
+        done, ran = self.fire(configVersion=2)
+        self.assertEqual((done.returncode, done.stdout, done.stderr, ran), (0, "", "", False))
+
+    def test_the_marker_it_carries_is_the_one_the_installer_looks_for(self):
+        self.assertIn(completion.LAUNCHER_MARKER, self.LAUNCHER.read_text(encoding="utf-8"))
+
+
+class StableLauncherPlacementTest(unittest.TestCase):
+    """Who may write the fallback, and what it refuses to write over."""
+
+    SOURCE = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
+        self.path = completion.launcher_path(self.home)
+
+    def place(self, **kwargs):
+        return completion.place_launcher(self.path, self.SOURCE, **kwargs)
+
+    def test_a_dry_run_writes_nothing_and_says_what_it_would_do(self):
+        answer = self.place()
+        self.assertEqual(answer["outcome"], completion.LAUNCHER_WOULD_PLACE)
+        self.assertFalse(answer["applied"])
+        self.assertFalse(self.path.exists())
+
+    def test_applying_installs_the_bytes_this_checkout_ships_and_reads_them_back(self):
+        answer = self.place(apply=True)
+        self.assertEqual(answer["outcome"], completion.LAUNCHER_PLACED)
+        self.assertEqual(self.path.read_bytes(), self.SOURCE.read_bytes())
+        self.assertEqual(answer["digest"], answer["sourceDigest"])
+
+    def test_a_second_run_changes_nothing(self):
+        self.place(apply=True)
+        self.assertEqual(self.place(apply=True)["outcome"], completion.LAUNCHER_UNCHANGED)
+
+    def test_a_file_without_the_marker_is_left_exactly_where_it_is(self):
+        """Ownership, not provenance: what it proves is that CRW put a launcher here."""
+        self.path.write_text("not ours\n", encoding="utf-8")
+        answer = self.place(apply=True)
+        self.assertEqual(answer["outcome"], completion.LAUNCHER_FOREIGN)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "not ours\n")
+
+    def test_a_symlink_is_reported_by_kind_and_never_followed(self):
+        target = self.home / "elsewhere.py"
+        target.write_text("someone else\n", encoding="utf-8")
+        self.path.symlink_to(target)
+        answer = self.place(apply=True)
+        self.assertEqual(answer["outcome"], completion.LAUNCHER_NOT_A_FILE)
+        self.assertEqual(answer["kind"], "symlink")
+        self.assertTrue(self.path.is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "someone else\n")
+
+    def test_a_directory_is_refused_rather_than_replaced(self):
+        self.path.mkdir()
+        answer = self.place(apply=True)
+        self.assertEqual((answer["outcome"], answer["kind"]),
+                         (completion.LAUNCHER_NOT_A_FILE, "directory"))
+        self.assertTrue(self.path.is_dir())
+
+    def test_a_packaged_source_that_cannot_be_read_places_nothing(self):
+        answer = completion.place_launcher(self.path, self.home / "absent.py", apply=True)
+        self.assertEqual(answer["outcome"], completion.LAUNCHER_SOURCE_MISSING)
+        self.assertFalse(self.path.exists())
+
+    def test_the_state_reader_separates_the_marker_from_the_digest(self):
+        self.place(apply=True)
+        state = completion.launcher_state(self.home, self.SOURCE)
+        self.assertEqual((state["kind"], state["carriesMarker"], state["matchesCheckout"]),
+                         ("file", True, True))
+        self.path.write_text(self.SOURCE.read_text(encoding="utf-8") + "# drift\n",
+                             encoding="utf-8")
+        drifted = completion.launcher_state(self.home, self.SOURCE)
+        self.assertTrue(drifted["carriesMarker"])
+        self.assertFalse(drifted["matchesCheckout"])
+
+
+class StableLauncherRemovalTest(unittest.TestCase):
+    """Removal takes only the file it put there, and says what the host held afterwards."""
+
+    SOURCE = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw178-")))
+        self.path = completion.launcher_path(self.home)
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+        self.steps = steps
+        self.host = {"codexHome": str(self.home)}
+
+    def remove(self, **kwargs):
+        return self.steps.launcher_remove(self.host, {}, **kwargs)
+
+    def test_nothing_there_is_already_done(self):
+        self.assertEqual(self.remove(apply=True)["outcome"], self.steps.ALREADY)
+
+    def test_a_dry_run_removes_nothing(self):
+        completion.place_launcher(self.path, self.SOURCE, apply=True)
+        self.assertEqual(self.remove()["outcome"], self.steps.WOULD)
+        self.assertTrue(self.path.is_file())
+
+    def test_the_file_it_installed_is_the_file_it_removes(self):
+        completion.place_launcher(self.path, self.SOURCE, apply=True)
+        answer = self.remove(apply=True)
+        self.assertEqual(answer["outcome"], self.steps.SETTLED)
+        self.assertFalse(self.path.exists())
+
+    def test_a_file_without_the_marker_is_refused(self):
+        self.path.write_text("not ours\n", encoding="utf-8")
+        answer = self.remove(apply=True)
+        self.assertEqual(answer["outcome"], self.steps.REFUSED)
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "not ours\n")
+
+    def test_a_symlink_is_refused_and_its_target_is_untouched(self):
+        target = self.home / "elsewhere.py"
+        target.write_text("someone else\n", encoding="utf-8")
+        self.path.symlink_to(target)
+        answer = self.remove(apply=True)
+        self.assertEqual(answer["outcome"], self.steps.REFUSED)
+        self.assertIn("symlink", answer["detail"])
+        self.assertTrue(target.is_file())
+
+    def test_settings_written_back_around_the_run_are_reported_not_hidden(self):
+        """Two files, two locks. The race is not prevented here; it is made impossible to miss."""
+        completion.place_launcher(self.path, self.SOURCE, apply=True)
+        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
+        answer = self.remove(apply=True)
+        self.assertEqual(answer["outcome"], self.steps.SETTLED)
+        self.assertTrue(answer["settingsPresent"])
+        self.assertIn("are NOT stopped", answer["detail"])

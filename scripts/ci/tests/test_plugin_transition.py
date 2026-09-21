@@ -2519,8 +2519,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertIn("the same surface, once each", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
@@ -2561,8 +2560,7 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_command_that_only_mentions_the_launcher_is_not_running_it(self):
@@ -2689,8 +2687,8 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("python3-does-not-exist", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_watched_path_is_locked_across_the_removal_too(self):
@@ -2901,10 +2899,8 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("/definitely/missing/python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
-        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
-                      answer["results"][0]["detail"])
+        self.assertIn("/definitely/missing/python3", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_cached_command_that_runs_the_launcher_twice_is_refused(self):

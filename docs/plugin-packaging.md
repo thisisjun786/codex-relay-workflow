@@ -187,6 +187,88 @@ install the plugin again: a cached version changes only on installation, and a t
 already running keeps the package its session started with.
 
 
+## The cache lifetime
+
+Installing a version replaces the cache directory whole. `codex plugin add` removes the
+previous version directory, and so does a rollback to an earlier one. Anything a running
+session still points into that directory stops resolving at that moment, and the question for
+each declared surface is whether its reference outlives the directory it names.
+
+| Reference | Bound to the cache | What a replacement does to it | Owner |
+| --- | --- | --- | --- |
+| Stop launcher, first candidate | Yes | Falls through to the second candidate | This package |
+| Stop launcher, second candidate at `<CODEX_HOME>/crw-stop-hook.py` | No | Nothing | `runtime_install.py hook --owner plugin` |
+| Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | The same command |
+| Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `runtime_install.py install` |
+| Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
+| MCP start `cwd` and `args` | Yes | A server already running survives, because it has already replaced itself with the installed bridge. A restart inside that session fails | The host |
+| Skill reads | Yes | The read fails at the moment it is made | The host |
+
+Two of those this package can answer for and two it cannot, and the difference is a host rule
+rather than a preference. A hook command goes through a shell, so it can be written to resolve
+its own program at run time. An MCP `command` must be a bare executable name or a contained
+`./` path, and its `cwd` must be a contained `./` path, `${PLUGIN_ROOT}` or `${PLUGIN_DATA}`;
+skills are read by the host from the directory the manifest names. Neither can be pointed
+outside the version cache by anything this package declares.
+
+### Why the Stop hook is declared as a bootstrap
+
+A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
+the whole turn reuses that string — including every Stop re-fire. Replace the package while a
+turn is open and the command names a file that no longer exists. `python3` exits **2** for a
+missing script, and 2 is the hook protocol’s blocking code, so the host feeds the error back
+to the model and fires Stop again. Measured on a real host: one removed directory, the same
+error 74 times in one turn, and a task that could not finish until it was interrupted by hand.
+
+So the declaration names two candidates and opens the first one it can read:
+
+1. `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` — the packaged copy. Always the current version, so a
+   fallback left by an older install can never outrank it.
+2. `<CODEX_HOME>/crw-stop-hook.py` — the copy `runtime_install.py` places. Reached only when
+   the first one is already gone.
+
+If neither can be opened it exits 0 and prints nothing. That is not error suppression: the
+launcher’s own contract has always been that a Stop it cannot judge is a Stop it releases, and
+the one failure outside that contract was the interpreter failing to open its own argument.
+A candidate that opens and then fails while running is a different thing and is reported, as
+exit 1, which the host reads as an ordinary failure rather than as a hold. Once a candidate has
+been read it owns that Stop: the second one is not tried, because a launcher that raised after
+doing half its work has already acted on the turn.
+
+Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
+one re-trust per installed hook identity. Trust is keyed to the declaration content and not to
+the version path, so an update that leaves the command alone keeps its trust.
+
+### The supported range
+
+| When the update lands | Stop | MCP restart | Skill reads |
+| --- | --- | --- | --- |
+| Between turns | Safe: the next turn resolves everything afresh | Safe | Safe |
+| During a turn | Safe: the second candidate answers | **Still fails** | **Still fails** |
+
+The second row is the honest limit. This package cannot move those two references off the
+cache, so an update during an open turn is avoided rather than survived.
+
+### Updating safely
+
+1. Check that no turn is open.
+2. Run `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --apply`
+   first, so the fallback is current before the directory it backs up can disappear.
+3. Run `codex plugin add crw@<marketplace>`.
+4. Re-trust the hook once if its command changed.
+5. Keep the previous version directory until nothing references it, then release it.
+
+Preserving that directory is an operator step. `codex plugin add` removes it and this
+repository does not own that command, so nothing here can hold it open.
+`python3 scripts/plugin_transition.py swap-state` reports what a replacement actually left,
+and that is what to read before releasing a preserved copy.
+
+A host carrying temporary compatibility files — an old cache path kept alive by hand after an
+update went wrong — needs a record of its own, kept with the task record outside this
+repository. Record the path, who made it, why, the condition under which it may be removed, and
+the command that shows whether anything still references it. Such a file is a repair, not a
+guarantee that the next update will be survivable.
+
 ## Update and roll back
 
 The cache keeps one version per plugin, and installing a new version replaces the

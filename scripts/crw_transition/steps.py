@@ -30,6 +30,11 @@ REFUSED = "refused"
 BUSY = "busy"
 NOT_REACHED = "not_reached"
 
+# The launchers this package ships, named rather than globbed. Adding a launcher means adding it
+# here; adding an ordinary helper under wiring/ must not appear here, because everything in this
+# tuple is compared byte for byte and a mismatch refuses a transition.
+LAUNCHERS = ("wiring/crw_stop_hook.py", "wiring/crw_bridge_mcp.py")
+
 # Steps that changed something are reported apart from steps that found nothing to do, because
 # "converged" and "did the work" are different answers and a rerun has to be able to say which.
 DONE = (SETTLED, ALREADY)
@@ -662,12 +667,20 @@ def _declared(root, repo_root):
                     # the expansion that makes ${PLUGIN_ROOT} a path: python3 '${PLUGIN_ROOT}/...'
                     # tokenises exactly like the declaration this package ships and starts
                     # nothing, because the literal directory does not exist.
+                    #
+                    # The matcher and the timeout are appended to BOTH shapes. They used to ride
+                    # only on the readable one, which was harmless while every declared command
+                    # resolved to a file. It stopped being harmless when the Stop hook became a
+                    # python3 -c bootstrap: an unreadable command carried neither field, so a
+                    # cache that changed only the matcher or only the timeout compared equal and
+                    # was accepted as the replacement. Those are exactly the two replacements
+                    # that do not replace.
                     events.setdefault(event, []).append(
                         (shape + " as written " + repr(written.strip())
-                         + " matcher=" + repr((group or {}).get("matcher"))
-                         + " timeout=" + repr((hook or {}).get("timeout"))) if shape else
-                        ("a command this cannot read: "
-                         + repr(written)))
+                         if shape else
+                         "a command this cannot read, as written " + repr(written))
+                        + " matcher=" + repr((group or {}).get("matcher"))
+                        + " timeout=" + repr((hook or {}).get("timeout")))
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
@@ -767,15 +780,38 @@ def launcher_complaints(repo_root, cache_version):
     of the plugin root -- the same test same_adapter makes of a registered adapter. A launcher the
     cache carries and this checkout does not is reported rather than skipped, since it is a program
     a declaration names and nothing here can vouch for.
+
+    The declared set alone is no longer enough. The Stop hook is declared as a python3 -c
+    bootstrap, and _resolve deliberately answers None for -c because what follows it is source
+    text rather than a file. That is the right answer for the parser and the wrong amount of
+    coverage here, so the comparison takes the union of the scripts the declarations name and
+    LAUNCHERS, the launchers this package actually ships. LAUNCHERS is written out rather than
+    globbed: a glob would take a future non-executable helper under wiring/ for a launcher and
+    refuse a transition over a file nothing runs.
     """
     ours = Path(repo_root) / "plugins" / "crw"
     events, servers, unread = _declared(cache_version, repo_root)
     found, seen = [], set()
+    census = []
     for value in [item for values in events.values() for item in values] + list(servers.values()):
+        # The unreadable-command marker is recognised on the VALUE, not on what is left after a
+        # word is taken off the front of it. "a command this cannot read: ..." loses its leading
+        # "a " to the split below, so a test for that prefix on the remainder never matched and
+        # the marker sentence itself was carried forward as though it were a script path. That
+        # went unnoticed while every declared command resolved; declaring the Stop hook as a
+        # python3 -c bootstrap makes it the ordinary case.
+        if value.startswith("a command this cannot read"):
+            continue
         script = value.split(" as written ")[0].split(" ", 1)[-1] if " " in value else None
-        if not script or script in seen or script.startswith("a command this cannot read"):
+        if not script or script in seen:
             continue
         seen.add(script)
+        census.append(script)
+    for script in LAUNCHERS:
+        if script not in seen:
+            seen.add(script)
+            census.append(script)
+    for script in census:
         cached, mine = Path(cache_version) / script, ours / script
         try:
             same = mine.is_file() and cached.is_file() \
@@ -2388,8 +2424,78 @@ def remove(host, options, *, apply=False):
                                " are: removing them now would take the skills from an install"
                                " this command did not disable"))
         return results
+    results.append(launcher_remove(host, options, apply=apply))
     results.append(skill_unlink(host, options, apply=apply))
     return results
+
+
+def launcher_remove(host, options, *, apply=False):
+    """Delete the fallback Stop launcher this repository installed, and only that file.
+
+    Ours means it carries completion.LAUNCHER_MARKER. That marker is a claim of ownership and
+    not of provenance: it says CRW put a launcher at this path, not who ran the command. A file
+    without it is somebody else's and is left where it is; a symlink or a directory is reported
+    by kind and never followed, because removing through a link deletes a file nobody named.
+
+    This runs after the settings are retired, so the only window it can leave is a launcher with
+    no settings, and that combination stands down in silence. The reverse order would leave
+    settings whose fallback is gone, which looks installed and is not.
+
+    The marker is proved twice: once to answer the caller, once inside the lock immediately
+    before the unlink, so a file replaced during the run is not deleted as though it were still
+    ours. The lock is on this path alone. What the run cannot prevent is the settings being
+    written again around it, so the answer reports what the settings path held afterwards rather
+    than claiming new invocations are stopped on the strength of its own earlier step.
+    """
+    step = "stable launcher"
+    home = Path(host["codexHome"])
+    path = completion.launcher_path(home)
+    settings = home / completion.CONFIG_NAME
+
+    def observed():
+        return {"settingsPath": str(settings), "settingsPresent": settings.exists()}
+
+    kind = completion.launcher_kind(path)
+    if kind == "absent":
+        return _answer(step, ALREADY, "there is nothing at " + str(path), **observed())
+    if kind != "file":
+        return _answer(step, REFUSED, "the launcher path holds a " + kind + ", so it is not"
+                       " this command's to remove and it is not followed", **observed())
+    try:
+        found = path.read_bytes()
+    except OSError as error:
+        return _answer(step, REFUSED, "the launcher at " + str(path) + " could not be read ("
+                       + type(error).__name__ + ": " + str(error) + "), so it is left alone",
+                       **observed())
+    if completion.LAUNCHER_MARKER.encode("utf-8") not in found:
+        return _answer(step, REFUSED, "the file at " + str(path) + " does not carry "
+                       + completion.LAUNCHER_MARKER + ", so it is not this command's to remove",
+                       **observed())
+    if not apply:
+        return _answer(step, WOULD, "would remove " + str(path), **observed())
+    try:
+        with hostrecord.Locked(path):
+            if completion.launcher_kind(path) != "file":
+                return _answer(step, REFUSED, "the launcher path changed after it was read, so"
+                               " nothing was removed", **observed())
+            again = path.read_bytes()
+            if completion.LAUNCHER_MARKER.encode("utf-8") not in again:
+                return _answer(step, REFUSED, "the file at " + str(path) + " was replaced while"
+                               " this ran and no longer carries the marker, so it was left",
+                               **observed())
+            path.unlink()
+    except hostrecord.Busy as error:
+        return _answer(step, BUSY, str(error), **observed())
+    except OSError as error:
+        return _answer(step, REFUSED, "the launcher could not be removed ("
+                       + type(error).__name__ + ": " + str(error) + ")", **observed())
+    answer = _answer(step, SETTLED, "removed " + str(path), applied=True, wrote=True,
+                     **observed())
+    if answer["settingsPresent"]:
+        answer["detail"] += ("; the settings are present again at " + str(settings)
+                             + ", so a supported installer wrote them back around this run and"
+                             " new adapter invocations are NOT stopped")
+    return answer
 
 
 def swap_state(host, options):
