@@ -1311,6 +1311,28 @@ class DeclaredStopCommandTest(unittest.TestCase):
         self.assertEqual((done.returncode, ran), (0, ["PACKAGED"]))
 
 
+    def test_system_exit_codes_follow_the_interpreter_not_their_truthiness(self):
+        """Devin review: SystemExit.code is not restricted to integers.
+
+        CPython exits 0 only for None and an integer zero, and False is an integer zero. Every
+        other object, including a falsey one like '' or 0.0, exits 1. Testing truthiness would
+        call those two a success and hide a launcher that failed on purpose.
+        """
+        successes = ("None", "0", "False")
+        failures = ("1", "3", "2", "''", "0.0", "'boom'", "[]")
+        for literal in successes + failures:
+            with self.subTest(code=literal):
+                cache = self.root / ("c-" + str(abs(hash(literal)))) / "0.4.0"
+                self.plant(cache / "wiring" / "crw_stop_hook.py", "PACKAGED",
+                           "raise SystemExit(%s)\n" % literal)
+                home = self.root / ("h-" + str(abs(hash(literal))))
+                home.mkdir(parents=True, exist_ok=True)
+                done, ran = self.fire(cache, home)
+                self.assertEqual(ran, ["PACKAGED"])
+                self.assertEqual(done.returncode, 0 if literal in successes else 1,
+                                 "SystemExit(%s) was mapped to %d" % (literal, done.returncode))
+
+
     def test_the_declaration_stays_within_the_timeout_the_host_clamps(self):
         self.assertLessEqual(self.timeout, plugin.HOOK_TIMEOUT_SECONDS)
 
@@ -1497,6 +1519,27 @@ class StableLauncherRemovalTest(unittest.TestCase):
         claims = self.steps.stop_claims([self.remove(apply=True)], self.steps.REMOVE_CLAIMS)
         self.assertFalse(any("fallback" in claim for claim in claims["stopped"]))
         self.assertTrue(any("fallback" in claim for claim in claims["stillLive"]))
+
+    def test_a_surface_that_came_back_makes_the_command_exit_nonzero(self):
+        """Devin review: shell automation reads the exit status, not the JSON.
+
+        live_again means the file really was removed and the surface is callable again anyway.
+        A zero here would let a cleanup script carry on against a host where the adapter can
+        still be reached, so it gets its own status rather than being folded into a refusal.
+        """
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import plugin_transition
+
+        completion.place_launcher(self.path, self.SOURCE, apply=True)
+        (self.home / completion.CONFIG_NAME).write_text("{}", encoding="utf-8")
+        answer = self.remove(apply=True)
+        self.assertEqual(answer["outcome"], self.steps.LIVE_AGAIN)
+        self.assertEqual(plugin_transition.verdict([answer]), plugin_transition.EXIT_INCOMPLETE)
+        self.assertNotEqual(plugin_transition.EXIT_INCOMPLETE, plugin_transition.EXIT_OK)
+        # settled alone still exits zero, so the new status is not a blanket nonzero.
+        settled = dict(answer, outcome=self.steps.SETTLED)
+        self.assertEqual(plugin_transition.verdict([settled]), plugin_transition.EXIT_OK)
+
 
     def test_disable_never_claims_the_fallback_it_does_not_touch(self):
         """disable stops calls and deletes nothing, so the fallback is not its surface to report."""

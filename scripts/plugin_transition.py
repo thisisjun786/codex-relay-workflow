@@ -46,6 +46,11 @@ def completion_event():
 # The same three the runtime installer uses, so a caller reading both does not have to learn two
 # meanings for one number.
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
+# A fourth answer, for the same reason runtime_install.py declares one: "nothing happened" and
+# "it happened and did not stay in effect" are two results and one status cannot carry both.
+# A step that removed its file and then found the surface live again is not a refusal -- bytes
+# were removed -- and it is not success either, because the operation did not remain done.
+EXIT_INCOMPLETE = 3
 
 
 def emit(document):
@@ -166,10 +171,17 @@ def verdict(results):
     itself into the refusals: the surface IS stopped and something was left behind that another
     cooperating writer will trip over, and an operator who reads only the exit code has to learn
     that from it.
+
+    And live_again is nonzero on its own status. It means this run did what it was asked and
+    something put the surface back around it, so an operator reading only the exit code would
+    otherwise run the next cleanup step against a host where the adapter is callable again.
+    Reported apart from a refusal because bytes really were removed.
     """
     if any(item["outcome"] in (steps.REFUSED, steps.BUSY) for item in results) \
             or any(item.get("lockCleanupFailed") for item in results):
         return EXIT_REFUSED
+    if any(item["outcome"] == steps.LIVE_AGAIN for item in results):
+        return EXIT_INCOMPLETE
     return EXIT_OK
 
 

@@ -241,6 +241,11 @@ that into a success would hide the one failure it went out of its way to report.
 exit 1 rather than as the code the launcher chose, because 2 is the blocking code and no path
 through this declaration may produce it.
 
+Which exits count as success follows the interpreter rather than the code's truthiness.
+`SystemExit.code` is not restricted to integers: CPython exits 0 only for `None` and an integer
+zero, and every other object exits 1 even when it is falsey. An empty string and `0.0` are
+therefore failures, and the declaration treats them as failures.
+
 Changing the command text changes the hook’s `trusted_hash`, so an update that changes it needs
 one re-trust per installed hook identity. Trust is keyed to the declaration content and not to
 the version path, so an update that leaves the command alone keeps its trust.
