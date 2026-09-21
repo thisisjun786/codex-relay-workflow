@@ -52,17 +52,33 @@ declaration is the double fire this exists to prevent, whoever created it.
 ## The order, and the two windows
 
     preflight
-    1 retire the settings the registration names
-    2 remove the registration that runs our adapter
-    3 write the plugin-owned settings, recording the adapter under the destination pointer
-    4 retire the user-owned bridge record
-    5 remove the config.toml table
-    6 write the plugin-owned bridge record
-    7 remove the CRW-owned skill links
+    1 place the fallback Stop launcher this host will need
+    2 retire the settings the registration names
+    3 remove the registration that runs our adapter
+    4 write the plugin-owned settings, recording the adapter under the destination pointer
+    5 retire the user-owned bridge record
+    6 remove the config.toml table
+    7 write the plugin-owned bridge record
+    8 remove the CRW-owned skill links
 
-Part of that order is forced, and the forced part is what prevents doubles: the registration
+Step 1 goes first because it is the only step here that takes nothing away and the only one that
+can refuse on a condition outside this command: a file at the stable launcher path that is not
+ours, or another run holding its lock. Placed after the retire and the standdown, such a refusal
+left the host with its settings archived and its manual registration removed and nothing to put
+them back, which is a worse host than the one the command started with. First, it refuses before
+anything has been taken.
+
+It is here at all because this command writes the same plugin-owned settings
+`runtime_install.py hook --owner plugin` writes. A migration that stopped at the settings would
+leave the package's Stop declaration with one candidate again, and the first package replacement
+during an open turn would land back in the loop that declaration exists to avoid. See
+[the fallback launcher](runtime-install.md#the-fallback-launcher-and-why-this-command-places-it)
+for what it refuses and who removes it, and [the cache lifetime](plugin-packaging.md#the-cache-lifetime)
+for why a second candidate is needed at all.
+
+The rest of that order is forced, and the forced part is what prevents doubles: the registration
 goes before the new settings, the old settings go before the new ones, and the table goes before the
-plugin record. Steps 4 to 6 are held under the same ownership lock `register-mcp` takes, because a
+plugin record. Steps 5 to 7 are held under the same ownership lock `register-mcp` takes, because a
 user-owned registration landing in the middle would put the record back and leave the host with no
 bridge.
 
@@ -84,12 +100,12 @@ where it found nothing to archive and where every document it did find already n
 Every step decides from the host as it stands at that step, not from the snapshot the run opened
 with. The bridge surface is re-read inside the ownership lock, the hook file is re-read and its
 registrations re-proved inside the hook lock, the bridge table's span and its proof are re-derived
-before a byte is removed, and the skills directory is inventoried again at step 7 and once more
+before a byte is removed, and the skills directory is inventoried again at step 8 and once more
 after it. That last one is a weaker guarantee than the other two and is named as such: the
 directory has no lock, so a link arriving during the removals is reported rather than prevented,
 and the run refuses instead of reporting success over it.
 
-Step 7 removes nothing until every link it would remove has been proved, and then proves each one
+Step 8 removes nothing until every link it would remove has been proved, and then proves each one
 again in the moment before it is unlinked. Neither pass is a lock. The first stops a refusal from
 leaving half a manual installation behind; the second stops a link replaced during the removals
 from being deleted as though it were still ours, and narrows that window to the gap between a

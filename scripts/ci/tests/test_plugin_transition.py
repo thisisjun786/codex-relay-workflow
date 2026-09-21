@@ -152,6 +152,19 @@ class Host:
         path = self.home / "crw-completion-hook.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
+    def untouched(self):
+        """The raw bytes of the two files a refused run must not have moved.
+
+        Parsed documents compare equal across a rewrite that reorders keys or changes spacing,
+        and "nothing was taken away" is a claim about the files rather than about their meaning.
+        None for an absent file, so a retire that moved one is a difference rather than a crash.
+        """
+        out = {}
+        for name in ("crw-completion-hook.json", "hooks.json"):
+            path = self.home / name
+            out[name] = path.read_bytes() if path.is_file() else None
+        return out
+
     def record(self):
         path = self.home / "crw-bridge-mcp.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
@@ -381,8 +394,7 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text("99999999", encoding="utf-8")
         self.addCleanup(lambda: lock.exists() and lock.unlink())
-        before = host.settings()
-        hooks_before = host.hooks_document()
+        untouched_before = host.untouched()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
         outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
@@ -391,8 +403,7 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         for later in ("settings retire", "hook standdown", "settings install"):
             self.assertEqual(outcomes.get(later), "not_reached", later)
         self.assertFalse(launcher.exists())
-        self.assertEqual(host.settings(), before)
-        self.assertEqual(host.hooks_document(), hooks_before)
+        self.assertEqual(host.untouched(), untouched_before)
 
     def test_a_foreign_launcher_stops_the_sequence_before_anything_is_taken_away(self):
         """The same ordering question asked with a refusal instead of a contended lock."""
@@ -404,8 +415,7 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         launcher = Path(host.home) / _completion.LAUNCHER_NAME
         foreign = "not ours\n"
         launcher.write_text(foreign, encoding="utf-8")
-        before = host.settings()
-        hooks_before = host.hooks_document()
+        untouched_before = host.untouched()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
         outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
@@ -414,8 +424,7 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         for later in ("settings retire", "hook standdown", "settings install"):
             self.assertEqual(outcomes.get(later), "not_reached", later)
         self.assertEqual(launcher.read_text(encoding="utf-8"), foreign)
-        self.assertEqual(host.settings(), before)
-        self.assertEqual(host.hooks_document(), hooks_before)
+        self.assertEqual(host.untouched(), untouched_before)
 
     def test_the_retired_settings_and_record_are_kept_not_deleted(self):
         host = self.ready()

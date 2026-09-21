@@ -1393,6 +1393,45 @@ malformed. The adapter's budget is checked against the registered timeout at the
 because that is the one value whose meaning needs both files: a budget the host's timeout does
 not exceed lets the host kill the adapter before it records why it did not answer.
 
+
+### The fallback launcher, and why this command places it
+
+With `--owner plugin` this command also writes `crw-stop-hook.py` beside those settings, and it
+writes it **before** them. That file is the second candidate the package’s Stop declaration
+opens, and it exists because a hook command is fixed when a turn starts, with the plugin root
+already resolved into it. Installing a version removes the previous cache directory whole, so an
+update landing mid-turn leaves that turn’s command naming a file that is gone, and `python3`
+exits 2 for a missing script — the hook protocol’s blocking code. Measured on a real host: the
+same missing-file error 74 times in one turn, and a task that could not finish.
+[Plugin packaging](plugin-packaging.md#the-cache-lifetime) owns the full reference table and the
+supported range; what belongs here is who writes the file and what that writer refuses.
+
+| Question | Answer |
+| --- | --- |
+| Which command writes it | This one, with `--owner plugin`. `plugin_transition.py transition` writes it too, because it installs the same plugin-owned settings and would otherwise leave a host with the settings and no fallback |
+| In what order | Launcher first. A launcher with no settings stands down in silence; settings whose fallback was never placed look installed and are not |
+| What it refuses | A file that does not carry the launcher marker, and anything that is not a regular file. A symlink is reported by kind and never followed, because replacing through one writes to a file this command was never given |
+| What the marker proves | That CRW put a launcher at that path. Not who ran the command, and not that the bytes are intact. The digest is reported beside it for the second question |
+| How it is replaced | Temp file and `os.replace`, then read back, with the kind and the marker re-judged under the lock immediately before the write |
+| Which command removes it | `plugin_transition.py remove`, under the launcher’s own lock and only while the marker is still there |
+| What `disable` does to it | Nothing. `disable` stops new calls by retiring the settings and deletes no bytes |
+
+The two files take separate locks and there is deliberately no lock spanning them. Widening one
+means reworking a write path that is already proven, and it is not needed: every state the pair
+can be left in is harmless. A launcher alone stands down. Settings alone are what the host had
+before this file existed. What an interleaving can still do is make a receipt wrong, so the run
+reads both paths back at the end and reports `launcherObserved` and `settingsObserved` — what the
+host held, not what the run intended — and exits `3` when either half is missing, changed, or no
+longer what it wrote. That status is the same fourth answer `install` uses: not a refusal,
+because bytes really were written, and not success, because the result did not stay in effect.
+
+A plugin-owned budget is capped at `completion.MAX_PLUGIN_GUARD_SECONDS`, the launcher ceiling
+minus its margin. The launcher waits `min(timeoutSeconds + 2, 9)`, so a budget above 7 collapses
+the margin it exists to keep and the launcher’s deadline arrives while the adapter is still
+writing the record of its own timeout. That bound lived in the transition alone until this
+launcher became something every plugin host depends on; it now sits with the validation both
+writers share, and the transition aliases it rather than keeping a second copy.
+
 ### Who registers the hook
 
 The plugin package declares this hook as well, and a host holding both registrations runs both
