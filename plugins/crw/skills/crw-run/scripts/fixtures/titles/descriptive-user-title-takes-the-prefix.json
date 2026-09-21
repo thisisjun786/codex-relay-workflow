@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "none",
+    "reason": "prefix_added",
+    "title": "[CRW] 설치·3단계 운영 마무리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "설치·3단계 운영 마무리",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "descriptive"
+  },
+  "note": "The default written into the rule: a title the user described rather than fixed keeps its wording as the body and takes the prefix in front of it. This is the one case still awaiting confirmation, so the fixture records the current answer rather than implying it is settled.",
+  "subcommand": "decide"
+}

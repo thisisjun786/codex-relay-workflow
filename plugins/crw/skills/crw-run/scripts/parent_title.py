@@ -43,13 +43,18 @@ ROLES = ("parent", "supervisor", "child")
 USER_TITLE = ("none", "descriptive", "fixed")
 BRACKET_ACTIONS = ("body", "replace")
 READBACK = ("verified", "mismatch", "unread")
+# Several inputs reach one decision: a title with no prefix, one already carrying this family,
+# and one whose foreign bracket was kept or replaced all end at the same return. Naming the
+# structural branch keeps the fixture denominator from counting them as one covered case.
+MATCHES = ("none", "bracket_family", "bracket_body", "bracket_replaced", "bare_label")
 
 
 class RequestError(ValueError):
     """The request could not be read as a decision request."""
 
 
-def settle(decision, reason, title=None, prefix=None, body=None, stripped=None, requires=None):
+def settle(decision, reason, title=None, prefix=None, body=None, stripped=None, requires=None,
+           matched=None):
     """One decision, named the same way every caller and every fixture names it."""
     return {
         "decision": decision,
@@ -58,6 +63,7 @@ def settle(decision, reason, title=None, prefix=None, body=None, stripped=None, 
         "prefix": prefix,
         "body": body,
         "stripped": stripped,
+        "matched": matched,
         "requires": list(requires or ()),
     }
 
@@ -148,8 +154,9 @@ def decide(request):
                       requires=["user_title as one of " + ", ".join(USER_TITLE)])
     if user_title == "fixed":
         # The user fixed this exact string, or forbade the rename. Presentation rules do not
-        # outrank that.
-        return settle("unchanged", "user_fixed_title", title=observed, body=observed)
+        # outrank that. The title returned is the source, so a task being created with a fixed
+        # title still gets one back rather than a null.
+        return settle("unchanged", "user_fixed_title", title=source, body=source)
 
     candidates = _names(request, "family_candidates")
     project_labels = _names(request, "project_labels")
@@ -166,11 +173,13 @@ def decide(request):
 
     stripped = None
     body = source
+    matched = "none"
     bracketed = bracket_prefix(source)
     if bracketed:
         token, inner, rest = bracketed
         if inner == family:
             body = rest
+            matched = "bracket_family"
         else:
             disposition = request.get("bracket_disposition")
             action = None
@@ -185,16 +194,22 @@ def decide(request):
                                         + " as body or replace"])
             if action == "replace":
                 stripped, body = token, rest
+                matched = "bracket_replaced"
+            else:
+                matched = "bracket_body"
     else:
         bare = bare_prefix(source, family)
         if bare:
             stripped, body = bare
+            matched = "bare_label"
 
     title = "[" + family + "] " + body
     if observed is not None and title == observed:
-        return settle("unchanged", "already_prefixed", title=title, prefix=family, body=body)
+        return settle("unchanged", "already_prefixed", title=title, prefix=family, body=body,
+                      matched=matched)
     reason = "prefix_replaced" if stripped else "prefix_added"
-    return settle("apply", reason, title=title, prefix=family, body=body, stripped=stripped)
+    return settle("apply", reason, title=title, prefix=family, body=body, stripped=stripped,
+                  matched=matched)
 
 
 def classify_readback(requested, observed):
@@ -273,7 +288,7 @@ def command_replay(args):
         return 1
 
     failures = []
-    reached_reasons, reached_readback = set(), set()
+    reached_reasons, reached_readback, reached_matches = set(), set(), set()
     for path, fixture in fixtures:
         name = path.name
         subcommand = fixture.get("subcommand", "decide")
@@ -288,6 +303,8 @@ def command_replay(args):
                 failures.append(f"{name}: request rejected: {error}")
                 continue
             reached_reasons.add(got["reason"])
+            if got["matched"] is not None:
+                reached_matches.add(got["matched"])
         elif subcommand == "readback":
             payload = fixture.get("input") or {}
             got = {"readback": classify_readback(payload.get("requested_title"),
@@ -302,6 +319,7 @@ def command_replay(args):
 
     missing = sorted(set(reachable_reasons()) - reached_reasons)
     missing_readback = sorted(set(READBACK) - reached_readback)
+    missing_matches = sorted(set(MATCHES) - reached_matches)
 
     print(f"Replayed {len(fixtures)} title fixtures against their recorded expectations.")
     for failure in failures:
@@ -310,12 +328,14 @@ def command_replay(args):
         print("No fixture reaches: " + ", ".join(missing), file=sys.stderr)
     if missing_readback:
         print("No fixture reaches readback: " + ", ".join(missing_readback), file=sys.stderr)
+    if missing_matches:
+        print("No fixture reaches the branch: " + ", ".join(missing_matches), file=sys.stderr)
     print("Replay compares this module with its fixtures. It is not evidence that any title "
           "was written, displayed or read back on a host.")
 
     if failures:
         return 1
-    if (missing or missing_readback) and not args.allow_unreached:
+    if (missing or missing_readback or missing_matches) and not args.allow_unreached:
         return 1
     return 0
 
@@ -348,4 +368,3 @@ if __name__ == "__main__":
     except OSError as exc:
         print(f"Title check failed: {exc}. Nothing was written.", file=sys.stderr)
         raise SystemExit(3)
-
