@@ -435,6 +435,32 @@ def test_a_rendered_acceptance_field_cannot_be_unbounded(field):
     assert caught.value.reason is RefusalReason.MALFORMED_RECEIPT
 
 
+@pytest.mark.parametrize("value", ["x" * 4000, "a1b2c3d" + chr(10) + "and the recheck"])
+def test_a_disposition_nothing_renders_keeps_the_evidence_it_always_took(value):
+    """The guards belong to what is rendered, not to every field that could be.
+
+    Only an acceptance renders addressedBy into a confirmation line, so bounding and
+    single-lining it for every disposition made the recorder stricter than the renderer and
+    refused a `fixed` whose commit reference was long or spanned lines. Nothing renders that
+    value, it recorded fine before, and refusing it was a regression rather than a guard.
+    """
+    recorded = report._check_handoff(_ready_handoff(threadDispositions=[{
+        "threadId": "t1", "disposition": "fixed", "evidence": "fixed and rechecked",
+        "addressedBy": value,
+    }]), 12, HEAD, BASE, "ready_for_review")
+    assert recorded["threadDispositions"][0]["addressedBy"] == value.strip()
+
+
+def test_an_unrendered_thread_identifier_is_not_bounded_either():
+    """Same rule, same reason: the identifier is only rendered for an acceptance."""
+    long_id = "PRRT_" + "x" * 4000
+    recorded = report._check_handoff(_ready_handoff(
+        reviewCoverage=_clean_review(totalCount=1, threadsSeen=[long_id]),
+        threadDispositions=[{"threadId": long_id, "disposition": "duplicate",
+                             "evidence": "the defect itself is gone, verified on this head"}],
+    ), 12, HEAD, BASE, "ready_for_review")
+    assert recorded["threadDispositions"][0]["threadId"] == long_id
+
 def test_the_room_for_confirmations_shrinks_as_the_other_unelidable_fields_grow():
     """A fixed reserve answered the wrong question.
 

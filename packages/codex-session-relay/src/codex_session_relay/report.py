@@ -1958,12 +1958,7 @@ def _check_dispositions(entries, review):
                 RefusalReason.MALFORMED_RECEIPT,
                 "each thread disposition names the review thread it is about",
             )
-        # Bounded and single-lined because these three are spliced into the acceptance
-        # confirmations the parent reads. Before they were rendered, a newline in one was
-        # merely ugly storage; now it adds a line to the protocol, which is the splice
-        # `_single_line` exists to refuse.
-        identifier = _bounded(_single_line(identifier.strip(), "a thread identifier"),
-                              "a thread identifier", LABEL_MAX)
+        identifier = identifier.strip()
         if identifier in judged:
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
@@ -1981,9 +1976,6 @@ def _check_dispositions(entries, review):
         note = _single_line(_required(item.get("evidence"), "a disposition evidence"),
                             "a disposition evidence")
         addressed = item.get("addressedBy")
-        if isinstance(addressed, str) and addressed.strip():
-            addressed = _bounded(_single_line(addressed.strip(), "a disposition addressedBy"),
-                                 "a disposition addressedBy", LABEL_MAX)
         if disposition == "fixed" and not (isinstance(addressed, str) and addressed.strip()):
             raise ReceiptRefused(
                 RefusalReason.MERGE_REVIEW_INCOMPLETE,
@@ -2022,6 +2014,17 @@ def _check_dispositions(entries, review):
                              "a follow-up owner", LABEL_MAX)
             trigger = _bounded(_single_line(trigger.strip(), "a reopen trigger"),
                                "a reopen trigger", LABEL_MAX)
+            # Normalised HERE, because only an acceptance renders these into the confirmation
+            # lines the parent reads. A newline in a rendered value does not wrap, it adds a
+            # line to the protocol, which is the splice `_single_line` exists to refuse.
+            # Applying the same rule to every disposition made the recorder stricter than the
+            # renderer: a `fixed` whose addressedBy is long or multiline is rendered nowhere
+            # and recorded fine before this change, so refusing it was a regression rather
+            # than a guard. Charge what is rendered, exactly as the budget accounting does.
+            identifier = _bounded(_single_line(identifier, "a thread identifier"),
+                                  "a thread identifier", LABEL_MAX)
+            addressed = _bounded(_single_line(addressed.strip(), "a disposition addressedBy"),
+                                 "a disposition addressedBy", LABEL_MAX)
         elif owner is not None or trigger is not None:
             # Only an acceptance leaves a residue somebody owns. Letting these ride along on
             # a fix would make "there is a follow-up" stop meaning anything.
