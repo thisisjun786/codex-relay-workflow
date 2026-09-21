@@ -319,31 +319,6 @@ relay command at all.
 Whether a given creation path honours an additional writable root on the current Codex version is
 `unmeasured` and is checked rather than assumed.
 
-### OPS-3.6 A separate store is not a separate scope
-
-Pointing a run at its own state directory isolates records and nothing else. The operating scope,
-the App Server and daemon ownership are unaffected by it, and a store created somewhere else still
-resolves the shared scope authority by default. An evidence run that assumes otherwise is sharing
-arbitration with the scope's real service while believing it is alone.
-
-Isolating the scope is a separate, explicit act: the scope directory is overridden and the daemon
-is started with the flag that permits an isolated authority. Both directories must be private to
-the owner, because a group- or world-writable scope directory is refused rather than downgraded.
-The isolated authority still reaches the host through the same App Server socket, so sharing a
-socket and sharing a scope are different facts and only the second is what arbitration turns on.
-
-An isolated authority is its own operating scope rather than an exception to having one, so
-OPS-4.1 applies inside it unchanged: exactly one service runs there, and a second start is refused
-on that store's own lock. What isolation buys is a scope of one's own, never permission to run two.
-
-Measured on this host on 2026-09-21: with the scope override and that flag, the service reported an
-isolated authority under the run's own scope root, registered its scope record there, ran its
-bounded ticks and released, while the production service kept its own lock throughout and no record
-of the isolated run appeared in the shared scope root. A concurrent second start against the same
-isolated store was refused. Bounded ticks on an empty store are tick progress and not delivery
-progress; what an isolated scope establishes about delivery, wake and acknowledgement is
-`unmeasured` until assignments and real recipients are in it.
-
 ## OPS-4 The shared service
 
 ### OPS-4.1 Ownership is the operating scope, not a parent
@@ -368,17 +343,10 @@ A bounded run of that service is not an exception to this. Where a parent starts
 under its own tick or deadline bound, what it started is still the scope's one service for as long
 as it runs, serving whatever assignments are in the store rather than only that parent's. Letting
 it reach its own bound is a process end under OPS-4.3; ending it early is the prohibited act,
-however short the bound was and however finished that parent's own work is. This speaks about the
-shared scope: under an isolated authority established per OPS-3.6 the same rule holds within that
-scope, over that store's own assignments. The only daemon a run
-owns outright is one running under an isolated authority established per OPS-3.6, which carries
-nobody else's assignments; that one it cleans up with the rest of its evidence. A test or evidence
-store under OPS-3.2 does not by itself confer that ownership, because state selection and scope
-selection are independent: without the scope override such a daemon is the shared scope's service,
-whatever store it reads. Letting any daemon reach a configured bound is a process end under
-OPS-4.3 and is never the prohibited act; stopping one early is, and it is permitted only for a
-daemon owned outright under this paragraph. A report says which of the two it was rather than
-leaving a reader to infer it. Whether the scope
+however short the bound was and however finished that parent's own work is. The only daemon a run
+owns outright is one attached to an OPS-3.2 test or evidence store, which is not the scope's store
+and carries nobody else's assignments; that one it cleans up with the rest of its evidence, and a
+report says which of the two it was rather than leaving a reader to infer it. Whether the scope
 should run a supervised service of its own instead is arbitration under OPS-4.6, and proposed.
 
 The MCP server process is a separate case: Codex spawns and restarts it from its registration, not
