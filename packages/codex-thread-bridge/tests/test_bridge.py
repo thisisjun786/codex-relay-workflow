@@ -1041,6 +1041,125 @@ async def test_capabilities_keep_bridge_exposure_and_host_support_apart(bridge, 
     assert not any(name.startswith("turn/") for name, _ in fake.calls)
 
 
+# --- CRW-21: a constant must not be readable as a measurement ---------------------------------
+
+
+async def test_capabilities_reports_only_flags_about_this_bridge(bridge, fake_server):
+    """The block answers one question: what does THIS bridge implement.
+
+    Its shape is part of that answer. Every value is a bool, so the block stays consumable as a
+    map of flags, and the sentence saying what the map is stands beside it rather than in it.
+    """
+    reported = await bridge.capabilities()
+    assert set(reported["capabilities"]) == {
+        "createThread",
+        "sendMessage",
+        "listReadWait",
+        "goalRead",
+        "bridgeManagedWorktrees",
+        "projectImport",
+        "clientSideToolsAndApprovals",
+    }
+    assert all(isinstance(flag, bool) for flag in reported["capabilities"].values())
+    assert reported["capabilitiesNote"]
+
+
+@pytest.mark.parametrize("gone", ["desktopManagedWorktrees", "desktopProjectRegistry", "goalSet"])
+async def test_capabilities_stops_answering_what_it_never_asked(bridge, fake_server, gone):
+    """Absent, rather than false or null.
+
+    Two of these were questions about the connected host that nothing ever asked, and the false
+    was read downstream as "this host cannot". The third said this bridge does not set a goal
+    while it calls thread/goal/set to pause one; exposure answers that pair precisely. Null
+    would fix none of it: null is falsy in both languages this response is read from, so the
+    careless reading survives intact, and this payload already spends null on
+    routeToOriginalApprover for a route that is known not to exist. So the key is gone, and
+    there is nothing left here to quote.
+    """
+    reported = await bridge.capabilities()
+    assert gone not in reported["capabilities"]
+
+
+async def test_an_unasked_question_carries_a_sentence_and_never_a_value(bridge, fake_server):
+    """The class invariant: nothing in this block can be read as an answer.
+
+    A value of any type would be one, which is how the original false came to stand for a
+    measurement. Each entry is a sentence, and each names what this bridge does instead, so the
+    missing answer cannot be filled in from the silence around it.
+    """
+    reported = await bridge.capabilities()
+    questions = reported["hostNotProbed"]
+    assert set(questions) == {"desktopManagedWorktrees", "desktopProjectRegistry"}
+    for answer in questions.values():
+        assert isinstance(answer, str) and not isinstance(answer, bool)
+        assert answer.startswith("Not asked.")
+    assert "bridgeManagedWorktrees" in questions["desktopManagedWorktrees"]
+    assert "projectImport" in questions["desktopProjectRegistry"]
+    assert reported["hostNotProbedNote"]
+
+
+async def test_a_consumer_can_tell_measured_from_assumed_using_only_the_response(
+    bridge, fake_server
+):
+    """What the issue asks for, read off the payload with nothing imported from the source.
+
+    A test that consults the same table the response was built from proves only that one table
+    was used twice. So the partition is taken from the response alone, and no block anywhere in
+    it offers a value for a question the unanswered block holds.
+    """
+    reported = await bridge.capabilities()
+    answered = set(reported["capabilities"])
+    unanswered = set(reported["hostNotProbed"])
+    assert answered and unanswered
+    assert not answered & unanswered
+    for block in ("capabilities", "exposure", "hostSupport"):
+        assert not set(reported[block]) & unanswered
+
+
+async def test_capabilities_asks_the_connected_host_nothing(bridge, fake_server):
+    """No probe is made, so nothing reported here can be a measurement of host capability.
+
+    initialize is the connection itself and initialized is the notification completing it.
+    Anything else would be this tool asking a question it then reports an answer to.
+    """
+    fake, _ = fake_server
+    await bridge.capabilities()
+    assert [name for name, _ in fake.calls if name not in {"initialize", "initialized"}] == []
+
+
+async def test_two_host_facing_answers_disagree_on_one_connection(bridge, fake_server):
+    """Each is evaluated against the server actually connected, so neither is a constant.
+
+    The fake declares 0.153.4. That IS the build the Desktop-visibility reading was taken on,
+    and it is NOT the build the steer and pause paths were tested against, nor the one the
+    approval-preservation reading came from. One connection, three derived answers, and they do
+    not agree: a written-down constant could not manage that.
+    """
+    reported = await bridge.capabilities()
+    assert reported["desktopVisibility"]["observedOn"] == "codex-cli 0.153.4"
+    assert reported["desktopVisibility"]["sameVersionConnected"] is True
+    assert reported["hostSupport"]["state"] == "unknown_host_version"
+    assert reported["approvals"]["preservationObserved"]["sameVersionConnected"] is False
+
+
+async def test_a_tested_host_never_comes_to_cover_an_unanswered_question(bridge, fake_server):
+    """hostSupport.state is about versions, and it stops there.
+
+    On the tested build it reads "tested", the strongest thing this tool says about any host.
+    The questions nobody asked are untouched by it: they are unanswered on every version,
+    including that one, which is why they sit outside the block that state belongs to.
+    """
+    fake, _ = fake_server
+    fake.user_agent = "fake Codex/0.154.0"
+    reported = await bridge.capabilities()
+    assert reported["hostSupport"]["state"] == "tested"
+    assert set(reported["hostNotProbed"]) == {"desktopManagedWorktrees", "desktopProjectRegistry"}
+    assert all(isinstance(answer, str) for answer in reported["hostNotProbed"].values())
+    # The dated readings moved the other way on the same connection, which is the point.
+    assert reported["approvals"]["preservationObserved"]["sameVersionConnected"] is True
+    assert reported["desktopVisibility"]["sameVersionConnected"] is False
+
+
 # --- CRW-4: pausing a goal, which is not the same as stopping a turn --------------------------
 
 

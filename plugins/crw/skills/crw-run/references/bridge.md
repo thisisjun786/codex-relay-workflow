@@ -19,6 +19,11 @@ be established inside the created task, not inferred from this capability list.
 
 What this bridge exposes and what the host supports are two different facts, and
 `get_capabilities` reports them in separate `exposure` and `hostSupport` blocks.
+There is a third answer, which is no answer: `hostNotProbed` lists the host
+questions this tool never asks, as sentences rather than values, so a reader cannot
+take a written-down constant for something the bridge measured. Two of those were
+booleans until CRW-21, and `desktopManagedWorktrees: false` was read as a host
+limit that nothing had established. Never quote an absent answer as a negative one.
 A tool missing from the list is a statement about the bridge only: the host
 protocol has `turn/interrupt` and a turn queue, and this bridge withholds both on
 purpose. `hostSupport` names the version these paths were built against and the

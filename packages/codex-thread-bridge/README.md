@@ -52,7 +52,7 @@ API key is needed; the existing App Server owns its authentication and model usa
 
 | Tool | Behavior |
 | --- | --- |
-| `get_capabilities` | Connect and report server identity and bridge limitations |
+| `get_capabilities` | Connect, report what this bridge implements, and list the host questions it does not ask |
 | `create_thread` | Create one durable session in an existing directory; optionally name it and send its initial prompt |
 | `create_worktree_thread` | Create a locked, retained bridge-managed Git worktree at an explicit commit and start a task; no Desktop-managed lifecycle |
 | `send_message_to_thread` | Resume an explicitly selected idle thread under stated settings, then send one message |
@@ -468,12 +468,31 @@ pausing a goal does not stop a turn already in flight. To stop
 work, pause the goal, re-read the active turn, and steer that turn to finish
 safely. "Goal paused" and "turn stopped" stay separate claims.
 
-`get_capabilities` answers two different questions separately. `exposure` is what
-this bridge offers. `hostSupport` names the host version these paths were built
-against and the server actually connected; when they disagree it reports
-`unknown_host_version` rather than letting this tool list stand in for a statement
-about that host. A `-32601` means the connected host lacks that method, not that
-the capability is missing everywhere, and it never triggers a fallback.
+`get_capabilities` keeps separate questions separate. `capabilities` is a map of
+flags about this bridge and nothing else, and `capabilitiesNote` says so beside it.
+`exposure` is what this bridge offers. `hostSupport` names the host version these
+paths were built against and the server actually connected; when they disagree it
+reports `unknown_host_version` rather than letting this tool list stand in for a
+statement about that host. A `-32601` means the connected host lacks that method,
+not that the capability is missing everywhere, and it never triggers a fallback.
+
+`hostNotProbed` holds the questions this tool does not answer. No capability probe
+is performed, so its entries are sentences rather than values and there is nothing
+there to read as true or false. Two of them were booleans once, and
+`desktopManagedWorktrees: false` was read downstream as "this host cannot manage
+worktrees", which nothing had measured: the signal that would answer it is a host
+feature flag rather than an App Server method, so this transport never sees it, and
+a flag switched off is not a capability that is absent. Those keys are gone rather
+than nulled, because null is falsy in both languages this response is read from and
+would have left that reading intact. `goalSet` went with them for a different
+reason: this bridge does call `thread/goal/set`, to pause a goal, and `exposure`
+already answers that pair precisely as `goalObjectiveWrite` and `goalPause`.
+
+A reading taken once, on one named build, is reported as one. `desktopVisibility`
+and `approvals.preservationObserved` each carry the version they were observed on,
+the server actually connected, and `sameVersionConnected` comparing the two. That
+comparison is the only measured value in either; the observation itself is what was
+seen then, on the build named, and this call does not re-establish it.
 
 ## Desktop compatibility
 
@@ -486,8 +505,10 @@ guesses Desktop project identities.
 Verify the actual Desktop listing and UI for each launch. An empty session may
 not appear until it receives an initial prompt. Existing-checkout visibility has
 been demonstrated. `create_worktree_thread` implements **bridge-managed Git
-worktrees**, with explicit ownership and manual cleanup. Desktop-managed worktree
-creation is not supported. Bridge-managed isolated creation, follow-up messaging,
+worktrees**, with explicit ownership and manual cleanup. This bridge exposes no
+Desktop-managed worktree creation, which is a statement about this bridge; whether
+a connected host offers one of its own is listed unanswered in `hostNotProbed`.
+Bridge-managed isolated creation, follow-up messaging,
 Desktop project listing, manual Desktop continuation and preservation passed
 live checks on 0.153.4. Retention evidence covers the observed run.
 No archive/delete, general shell-execution or Goal-setting tool is exposed.
@@ -495,9 +516,10 @@ No archive/delete, general shell-execution or Goal-setting tool is exposed.
 The bridge targets the public/experimental API shape observed in 0.153.4. It
 uses experimental paginated reads and fails with the actual API error on
 incompatible servers. Tool discovery and Desktop visibility require a separate
-installed-MCP acceptance test. The inspected App Server protocol exposes creation
-in an existing directory, but no worktree-creation method; isolated launches use
-local Git preparation followed by `thread/start`.
+installed-MCP acceptance test. The App Server protocol as inspected on 0.153.4
+exposes creation in an existing directory and no worktree-creation method, which
+is a reading of that build rather than a probe of whatever server is connected;
+isolated launches use local Git preparation followed by `thread/start`.
 
 ## Isolated launches
 
