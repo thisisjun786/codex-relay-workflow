@@ -291,6 +291,7 @@ FOLD_FREE_BOOLEANS = (
     ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
+    ("store.py", None, "in_transaction", "function"),
 )
 
 # A write context naming a declared boolean that is not one of the producer forms above. All
@@ -1084,6 +1085,22 @@ FAULT_SITES = (
      " inside _claim, with an empty send list as the independent check. The reserved capacity"
      " is in that subset too, so the empty-table checks cannot pass for a reservation that was"
      " never written"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_relationship_commit_leaves_no_settings_behind", "helper",
+     "relationships",
+     "cmd_register composes its writes into ONE transaction, so naming either table reaches"
+     " the same interval; the predicate is what makes the case say which end of it it is"
+     " about. This one kills at the relationship write and asserts authorized_settings was"
+     " in the same set, which is the direction that already held before CRW-173 and is kept"
+     " so neither order can pass this file alone"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_settings_commit_leaves_no_relationship_behind", "helper",
+     "authorized_settings",
+     "the interval CRW-173 is about. Before the fix this predicate reached the SECOND of two"
+     " transactions and the relationship was already committed; the case asserts"
+     " relationships was in the interrupted set, so it fails again the moment the two writes"
+     " come apart rather than only reporting an empty store, which a registration that never"
+     " started would also produce"),
     ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
      "relationships",
      "register() runs three transactions and this name held only because the relationship"
