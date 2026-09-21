@@ -21,13 +21,15 @@ from codex_session_relay.transport import WITHHELD_PRE_SEND
 from .support import CHILD, PARENT, DeliveryTestCase, task_settings
 
 # The pair the project parent runs on. It moved from devin/swe-2 at max to xai/grok-4.6 at
-# xhigh on 2026-09-21, and moving it was an edit to the policy file and a restart: no pair is
-# written in code, so nothing here had to change except the fixture that names one.
-PARENT_MODEL = "xai/grok-4.6"
-PARENT_EFFORT = "xhigh"
-# What it ran on before. Kept as a fixture proving a superseded pair is refused for its role
-# like any other wrong pair, not carried as a second answer the checks still accept.
-SUPERSEDED_PARENT = ("devin/swe-2", "max")
+# xhigh on 2026-09-21 and was restored to devin/swe-2 at max later the same day. Each move was
+# an edit to the policy file and a restart: no pair is written in code, so nothing here had to
+# change except the fixture that names one.
+PARENT_MODEL = "devin/swe-2"
+PARENT_EFFORT = "max"
+# The interim pair, superseded the same day. Kept as a fixture proving a superseded pair is
+# refused for its role like any other wrong pair, not carried as a second answer the checks
+# still accept.
+SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
 
 POLICY = {
     "roles": {
@@ -104,11 +106,15 @@ class PolicyResolution(unittest.TestCase):
         self.assertEqual(resolved.expectation("child").reasoning_effort, "xhigh")
         self.assertIsNone(resolved.expectation("supervisor").model)
         self.assertIsNotNone(resolved.digest)
-        # The two roles happen to share an effort NAME under different models, which is not what
-        # makes the comparison work: the superseded parent pair is the case where they differ.
+        # The comparison is exact equality on the whole pair, so whether two roles happen to
+        # share a name is never what makes it work. Since the restore they differ in model and
+        # effort both, and it is the superseded parent pair that now carries the child's effort
+        # name under a different model.
         self.assertNotEqual(resolved.expectation("parent").model,
                             resolved.expectation("child").model)
         self.assertNotEqual(SUPERSEDED_PARENT[1], PARENT_EFFORT)
+        self.assertEqual(SUPERSEDED_PARENT[1],
+                         resolved.expectation("child").reasoning_effort)
 
 
 class DeliveryUnderARolePolicy(DeliveryTestCase):
@@ -149,8 +155,14 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         The record is staged raw, which is how it arises in life: it was written before the
         policy said anything about this role, and going through the recorder now would be
         refused at registration by the very check this one backs up.
+
+        It differs from the parent pair by MODEL alone. Before the restore the default fixture
+        pair happened to do that; holding the property on purpose is what keeps this case
+        proving the model half of the comparison and not only the effort half.
         """
-        _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
+        _relationship, event_id = self.queued_event(
+            settings=task_settings("/parent", reasoningEffort=PARENT_EFFORT),
+        )
         self.assertIsNone(self.attempt(event_id))
         self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
         self.assertEqual(self.adapter.settings_seen, [])
@@ -196,9 +208,10 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
     def test_the_pair_this_role_used_to_run_on_is_recognised_as_superseded(self):
         """A pair change costs a file edit, and the old pair stops being an answer.
 
-        The parent moved from devin/swe-2 at max to xai/grok-4.6 at xhigh. A record still
-        carrying the former is stale for its role in exactly the way any other wrong pair is,
-        and it is kept here as a fixture rather than as an alternative that still passes.
+        The parent was restored to devin/swe-2 at max, leaving xai/grok-4.6 at xhigh behind. A
+        record still carrying the interim pair is stale for its role in exactly the way any
+        other wrong pair is, and it is kept here as a fixture rather than as an alternative
+        that still passes.
         """
         from pathlib import Path
 
@@ -305,11 +318,16 @@ class TheRoleATaskWasCreatedAsAndTheOneItIsBoundTo(DeliveryTestCase):
 
         Recording it and letting the send-time check catch it later would offer "re-record" as
         the recovery, which here would write one side's answer over the other.
+
+        Like the stale-record case, the pair differs from the parent's by MODEL alone, so this
+        is the registration-path case that proves check_binding compares the model and not only
+        the effort.
         """
         self._bind("parent", "PROJ-1", PARENT)
         with self.assertRaises(RegistrationError) as raised:
             record_settings(
-                self.store, self.clock, PARENT, task_settings("/parent"),
+                self.store, self.clock, PARENT,
+                task_settings("/parent", reasoningEffort=PARENT_EFFORT),
                 source="creation_result", role="parent",
             )
         self.assertEqual(raised.exception.reason, RefusalReason.ROLE_BINDING_MISMATCH)
