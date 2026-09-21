@@ -27,12 +27,14 @@ separate questions, answered separately by status().
 """
 
 import errno
+import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import time
 import uuid
@@ -104,6 +106,19 @@ REGISTERED_TIMEOUT_SECONDS = 10
 # would have explained the timeout, and then releases the turn saying nothing. Mirrored in
 # plugins/crw/wiring/crw_stop_hook.py, which cannot import this module.
 LAUNCHER_CEILING_SECONDS = 9
+# The margin that launcher keeps between its own deadline and the adapter's budget, mirrored
+# from the same file. The two numbers only mean something together: the launcher waits
+# min(timeoutSeconds + MARGIN, CEILING), so a budget above CEILING - MARGIN collapses the margin
+# the launcher exists to keep, and the launcher's deadline then arrives while the adapter is
+# still writing the record of its own timeout.
+#
+# This bound used to live only in scripts/crw_transition/steps.py, which meant the transition
+# refused such a document and runtime_install.py hook --owner plugin accepted it. That was
+# tolerable while the packaged launcher was reached only through the cache; it is not now that
+# the same command installs the fallback every plugin host depends on, so the bound moved here,
+# where both writers already validate.
+LAUNCHER_MARGIN_SECONDS = 2
+MAX_PLUGIN_GUARD_SECONDS = LAUNCHER_CEILING_SECONDS - LAUNCHER_MARGIN_SECONDS
 
 # The largest budget any of these checks will entertain. Compared against rather than converted,
 # because an arbitrary-precision integer cannot always become a float: math.isfinite raises
@@ -320,6 +335,35 @@ CONFIG_WRITE_OUTCOMES = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE, 
 # list kept equal by hand.
 CONFIG_SETTLED = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE)
 
+# The copy of the packaged launcher this command installs beside these settings, and why it
+# exists at all. A plugin-declared hook command is fixed when a turn starts, with the version
+# cache path already resolved into it. Replacing the package removes that directory whole, so a
+# turn still running holds an absolute path to a file that is gone -- and python3 exits 2 for a
+# missing script, which is the number the hook protocol reads as "block this turn". One removed
+# directory therefore became a termination loop rather than one silent miss.
+#
+# The declaration opens the cache copy first and this one only when the cache copy cannot be
+# opened. That ordering matters: the cache copy is always the current version, so this copy can
+# never outrank it, and the only moment it is reached is the moment the cache cannot answer.
+LAUNCHER_NAME = "crw-stop-hook.py"
+LAUNCHER_SOURCE = "plugins/crw/wiring/crw_stop_hook.py"
+# Mirrored from that file, which cannot import this module. It marks the file as CRW's to
+# replace and establishes nothing else: not who wrote it, and not that its bytes are whole. The
+# digest reported beside it answers the second question; nothing answers the first.
+LAUNCHER_MARKER = "crw-stop-hook/1"
+
+LAUNCHER_PLACED = "launcher_placed"
+LAUNCHER_UNCHANGED = "launcher_unchanged"
+LAUNCHER_WOULD_PLACE = "launcher_would_place"
+LAUNCHER_FOREIGN = "launcher_foreign"
+LAUNCHER_NOT_A_FILE = "launcher_not_a_file"
+LAUNCHER_UNREADABLE = "launcher_unreadable"
+LAUNCHER_SOURCE_MISSING = "launcher_source_missing"
+LAUNCHER_APPLIED_UNVERIFIED = "launcher_applied_unverified"
+LAUNCHER_CHANGED_UNDERNEATH = "launcher_changed_underneath"
+# The outcomes that leave a usable fallback, so a caller gates on one name rather than a list.
+LAUNCHER_SETTLED = (LAUNCHER_PLACED, LAUNCHER_UNCHANGED, LAUNCHER_WOULD_PLACE)
+
 # What status() answers with when it did not ask. Distinct from an absence, which is an answer.
 NOT_READ = "not_read"
 
@@ -480,13 +524,16 @@ def complaints(document):
                                " this repository's adapter, so the install records it here")
         budget = document.get("timeoutSeconds")
         if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
-                and budget >= LAUNCHER_CEILING_SECONDS:
-            # The packaged launcher sits between the host and the adapter and caps its own
-            # deadline here, so a guard budget at or above that ceiling lets the launcher kill
-            # the adapter first and release the turn without the record that explains it.
-            found.append("timeoutSeconds must be under " + str(LAUNCHER_CEILING_SECONDS)
+                and budget > MAX_PLUGIN_GUARD_SECONDS:
+            # The packaged launcher waits min(budget + MARGIN, CEILING). Refusing only at the
+            # ceiling let 8 through, and at 8 the launcher's own deadline is 9 while the adapter
+            # is still allowed 8: the margin is gone, the launcher kills the adapter first, and
+            # the turn is released without the record that explains it.
+            found.append("timeoutSeconds must not exceed " + str(MAX_PLUGIN_GUARD_SECONDS)
                          + " when owner is " + OWNER_PLUGIN + ", because the packaged launcher"
-                         " caps its own deadline there and has to outlast the adapter it runs")
+                         " waits the budget plus " + str(LAUNCHER_MARGIN_SECONDS) + "s capped at "
+                         + str(LAUNCHER_CEILING_SECONDS) + "s and has to outlast the adapter"
+                         " it runs")
     budget = document.get("timeoutSeconds")
     if budget is not None and not usable_seconds(budget):
         found.append("timeoutSeconds must be a positive number of seconds, at most "
@@ -1312,6 +1359,160 @@ def _cell(value, evidence, **extra):
     answer = {"value": value, "evidence": evidence}
     answer.update(extra)
     return answer
+
+
+def launcher_path(codex_home):
+    """Beside the settings, for the same reason the settings live where they do.
+
+    The packaged bootstrap derives this path from CODEX_HOME and nothing else, so both sides
+    compute it identically instead of agreeing about a value.
+    """
+    return Path(codex_home) / LAUNCHER_NAME
+
+
+def launcher_kind(path):
+    """What is actually at that path, without following anything.
+
+    lstat rather than exists(), because the symlink is the case that matters: replacing through
+    one writes to wherever it points, which is a file this command was never given.
+    """
+    try:
+        mode = os.lstat(str(path)).st_mode
+    except FileNotFoundError:
+        return "absent"
+    except OSError as error:
+        return "unreadable (" + type(error).__name__ + ")"
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISREG(mode):
+        return "file"
+    return "other"
+
+
+def place_launcher(path, source, *, apply=False):
+    """Install the fallback launcher, and never over something that is not ours.
+
+    Ours means the file carries the marker. That is a claim of ownership, not of provenance: it
+    says CRW put a launcher here, not who ran the command and not that the bytes are intact. So
+    the answer carries both digests, and a caller comparing them learns what the marker cannot
+    tell it.
+
+    The decision is taken twice and only the second one is acted on, the way write_configuration
+    does it: the first reading answers the caller, the second happens under the lock, and a file
+    that moved in between is reported rather than written over.
+
+    The lock covers this path only. There is deliberately no lock spanning this file and the
+    settings. Widening one means reworking a write path that is already proven, and it is not
+    needed: every state the two files can be left in is harmless. A launcher with no settings
+    stands down, and settings with no launcher are what the host had before this file existed.
+    What an interleaving can still do is make a receipt wrong, and the caller closes that by
+    reading both paths back at the end rather than by holding a wider lock.
+    """
+    path, source = Path(path), Path(source)
+    answer = {"launcher": str(path), "source": str(source), "outcome": None, "applied": False,
+              "wrote": False, "kind": None, "digest": None, "sourceDigest": None}
+    try:
+        wanted = source.read_bytes()
+    except OSError as error:
+        answer["outcome"] = LAUNCHER_SOURCE_MISSING
+        answer["detail"] = ("the packaged launcher could not be read at " + str(source) + " ("
+                            + type(error).__name__ + ": " + str(error) + "), so nothing was"
+                            " placed")
+        return answer
+    answer["sourceDigest"] = hashlib.sha256(wanted).hexdigest()
+
+    def judge():
+        kind = launcher_kind(path)
+        if kind == "absent":
+            return kind, None, None
+        if kind != "file":
+            return kind, None, LAUNCHER_NOT_A_FILE
+        try:
+            return kind, path.read_bytes(), None
+        except OSError:
+            return kind, None, LAUNCHER_UNREADABLE
+
+    kind, found, refusal = judge()
+    answer["kind"] = kind
+    if refusal == LAUNCHER_NOT_A_FILE:
+        answer["outcome"] = refusal
+        answer["detail"] = ("the launcher path holds a " + kind + "; this command does not"
+                            " follow it and does not replace it")
+        return answer
+    if refusal == LAUNCHER_UNREADABLE:
+        answer["outcome"] = refusal
+        answer["detail"] = "a file is there and its bytes could not be read, so it is left alone"
+        return answer
+    if found is not None:
+        answer["digest"] = hashlib.sha256(found).hexdigest()
+        if found == wanted:
+            answer["outcome"] = LAUNCHER_UNCHANGED
+            answer["detail"] = "the launcher this checkout ships is already installed"
+            return answer
+        if LAUNCHER_MARKER.encode("utf-8") not in found:
+            answer["outcome"] = LAUNCHER_FOREIGN
+            answer["detail"] = ("a file is already there and it does not carry "
+                                + LAUNCHER_MARKER + ", so it is not this command's to replace")
+            return answer
+    if not apply:
+        answer["outcome"] = LAUNCHER_WOULD_PLACE
+        answer["detail"] = "would install the launcher; nothing was written"
+        return answer
+    with hostrecord.Locked(path):
+        again_kind, again, again_refusal = judge()
+        if again_kind != kind or again != found or again_refusal is not None:
+            answer["kind"] = again_kind
+            answer["outcome"] = LAUNCHER_CHANGED_UNDERNEATH
+            answer["detail"] = ("the launcher path changed after it was read, so nothing was"
+                                " written; rerun to decide against the file as it now stands")
+            return answer
+        hostrecord.atomic_write(path, wanted.decode("utf-8"))
+        try:
+            back = path.read_bytes()
+        except OSError:
+            back = None
+    answer["applied"] = True
+    answer["wrote"] = True
+    answer["kind"] = launcher_kind(path)
+    answer["digest"] = hashlib.sha256(back).hexdigest() if back is not None else None
+    if back != wanted:
+        answer["outcome"] = LAUNCHER_APPLIED_UNVERIFIED
+        answer["detail"] = ("the launcher was written and could not be read back as written, so"
+                            " the fallback cannot be claimed to be installed")
+        return answer
+    answer["outcome"] = LAUNCHER_PLACED
+    answer["detail"] = "installed the launcher this checkout ships"
+    return answer
+
+
+def launcher_state(codex_home, source):
+    """What is at the fallback path now, for a command that writes nothing.
+
+    Reported beside the settings rather than merged into them. An installed fallback says a turn
+    whose cache was replaced has something to run; it says nothing about whether the hook is
+    registered, trusted, or has ever fired.
+    """
+    path = launcher_path(codex_home)
+    state = {"launcher": str(path), "kind": launcher_kind(path), "digest": None,
+             "sourceDigest": None, "matchesCheckout": None, "carriesMarker": None}
+    try:
+        state["sourceDigest"] = hashlib.sha256(Path(source).read_bytes()).hexdigest()
+    except OSError:
+        state["sourceDigest"] = None
+    if state["kind"] != "file":
+        return state
+    try:
+        found = path.read_bytes()
+    except OSError:
+        state["kind"] = "unreadable"
+        return state
+    state["digest"] = hashlib.sha256(found).hexdigest()
+    state["carriesMarker"] = LAUNCHER_MARKER.encode("utf-8") in found
+    state["matchesCheckout"] = (state["sourceDigest"] is not None
+                                and state["digest"] == state["sourceDigest"])
+    return state
 
 
 def resource_key(path):
