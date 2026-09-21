@@ -193,7 +193,7 @@ def review_problems(review):
     return problems
 
 
-def checks_problems(head_sha, required, checks, *, require_declared=False):
+def checks_problems(head_sha, required, checks, *, require_declared=False, providers=None):
     """Present, successful, on this head, and at the highest attempt submitted for its run.
 
     The attempt rule matters because a rerun is how a red check becomes green: accepting any
@@ -215,6 +215,20 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     list still means nothing is required, on either side; the distinction is between not having
     looked and having looked.
 
+    `providers` carries the identity a branch rule can bind a context to. GitHub's required
+    status checks name an integration as well as a context, and matching on the name alone
+    accepts a namesake from anywhere: the branch requires `dev-gate` from app 42, app 42 never
+    runs, app 99 publishes a successful `dev-gate`, and the gate opens on a check nobody
+    required. Where a provider is declared, only an entry from that provider answers for the
+    context - and an entry from another one is not the required check, so its failure does not
+    block either. Omitted, nothing changes: a caller that did not read the integration out of
+    the rule has not learnt anything about it.
+
+    Each context maps to the LIST of integrations required for it, because two rulesets can bind
+    one context to two different apps and both of them are then required. Mapping a context to a
+    single provider let the second rule overwrite the first, and one app's success satisfied a
+    gate the other app never ran.
+
     Assumes shape_problems already passed. Run it first.
     """
     if require_declared and required is UNDECLARED:
@@ -226,6 +240,24 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
             " none")]
     checks = list(checks or [])
     required = list(required or [])
+    # Defensive rather than trusting: a caller handing this a list or a string would otherwise
+    # raise out of a predicate whose whole contract is to return problems instead of exceptions.
+    declared = {}
+    if isinstance(providers, dict):
+        for context, wanted in providers.items():
+            if isinstance(wanted, (list, tuple, set, frozenset)):
+                names = sorted({str(one) for one in wanted if str(one).strip()})
+            elif wanted is None or not str(wanted).strip():
+                names = []
+            else:
+                names = [str(wanted)]
+            if names:
+                declared[str(context)] = names
+
+    def answers_for(entry, name):
+        """Whether this entry is the check the branch named, provider and all."""
+        wanted = declared.get(name)
+        return wanted is None or str(entry.get("provider") or "") in wanted
 
     def stale(detail):
         return [Problem(CHECKS_STALE, detail)]
@@ -260,7 +292,9 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
         # A conclusion is only binding for a check the caller declared required. An
         # optional lint failing alongside a green dev-gate is not a reason to refuse a
         # merge, and refusing it made the declared set mean nothing.
-        if str(entry.get("name", "")) in required and entry.get("conclusion") != "success":
+        if (str(entry.get("name", "")) in required
+                and answers_for(entry, str(entry.get("name", "")))
+                and entry.get("conclusion") != "success"):
             return stale_at("required check " + repr(entry.get("name")) + " (run " + repr(run)
                             + ") concluded " + repr(entry.get("conclusion"))
                             + " on its newest attempt", run)
@@ -268,11 +302,31 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
         str(entry.get("name", "")) for entry in checks
         if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
         and entry.get("conclusion") == "success"
+        and answers_for(entry, str(entry.get("name", "")))
     }
+    # A context bound to two integrations needs a success from EACH of them, not one success
+    # from whichever happened to run.
+    answered = {
+        (str(entry.get("name", "")), str(entry.get("provider") or "")) for entry in checks
+        if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
+        and entry.get("conclusion") == "success"
+    }
+    unanswered = [
+        (name, one) for name in required for one in declared.get(name, [])
+        if (name, one) not in answered
+    ]
+    if unanswered:
+        return stale_at(
+            "these required checks have no successful run from the integration the branch rule"
+            " names: " + repr([name + " (integration " + one + ")" for name, one in unanswered]),
+            unanswered[0][0])
     missing = [name for name in required if name not in present]
     if missing:
-        return stale_at("these checks were declared required and are not present and"
-                        " successful in the restated set: " + repr(missing), missing[0])
+        return stale_at(
+            "these checks were declared required and are not present and successful in the"
+            " restated set" + (" from the provider the branch rule names" if any(
+                name in declared for name in missing) else "") + ": " + repr(missing),
+            missing[0])
     if not required and not present:
         # With nothing declared required, the set still has to contain something green on
         # this head; otherwise an all-red restatement would pass for want of a rule.
@@ -281,7 +335,8 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     return []
 
 
-def handoff_problems(head_sha, review, checks, required=UNDECLARED):
+def handoff_problems(head_sha, review, checks, required=UNDECLARED, *, providers=None,
+                     reviews=None):
     """Everything a child-side record must satisfy, in the order that keeps it honest.
 
     Shape first, and nothing else when shape fails. The semantic rules read values with `str`
@@ -295,4 +350,147 @@ def handoff_problems(head_sha, review, checks, required=UNDECLARED):
     if malformed:
         return malformed
     return (review_problems(review)
-            + checks_problems(head_sha, required, checks, require_declared=True))
+            + review_state_problems(reviews)
+            + checks_problems(head_sha, required, checks, require_declared=True,
+                              providers=providers))
+
+
+CHANGES_REQUESTED = "review_changes_requested"
+
+
+def review_state_problems(reviews):
+    """A reviewer who asked for changes and has not since said otherwise.
+
+    This is not content triage and deliberately reads nothing a reviewer wrote. A submitted
+    review carries a formal STATE, and CHANGES_REQUESTED is a mechanical fact about the pull
+    request in the same way a failing check is: the forge itself will hold the merge for it.
+    Enumerating reviews and then grading none of them left a candidate with an outstanding
+    changes-requested review reading as ready, which is the gap between collecting evidence and
+    using it.
+
+    Latest per author, because a reviewer who asked for changes and then approved has answered
+    their own review, and the older state is history rather than an open request.
+    """
+    latest = {}
+    for entry in reviews or ():
+        if not isinstance(entry, dict):
+            continue
+        author = str(entry.get("author") or "")
+        state = str(entry.get("state") or "").upper()
+        if state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            # COMMENTED and PENDING say nothing about whether the reviewer is waiting on a
+            # change, so they neither block nor clear an earlier request.
+            continue
+        when = str(entry.get("submittedAt") or "")
+        if author not in latest or when >= latest[author][0]:
+            latest[author] = (when, state)
+    asking = sorted(author for author, (_when, state) in latest.items()
+                    if state == "CHANGES_REQUESTED")
+    if not asking:
+        return []
+    return [Problem(
+        CHANGES_REQUESTED,
+        "these reviewers asked for changes and have not since approved or dismissed their own"
+        " review: " + ", ".join(repr(one) for one in asking))]
+
+
+#: The candidate itself, which is not the same question as its review or its checks. A pull
+#: request can carry a fully enumerated review and a green required gate and still be unmergeable:
+#: closed, conflicted, or blocked by the forge's own rules. Those facts had no home, so a caller
+#: that read only the two predicates above could assemble a complete record about something nobody
+#: could merge. They live here rather than in the observer for the reason everything else here
+#: does: one place decides readiness, and an observer that also decided it would drift from this
+#: one while both stayed green.
+CANDIDATE_NOT_OPEN = "candidate_not_open"
+CANDIDATE_DRAFT = "candidate_draft"
+CANDIDATE_CONFLICTED = "candidate_conflicted"
+CANDIDATE_BLOCKED = "candidate_blocked"
+CANDIDATE_BEHIND = "candidate_behind"
+CANDIDATE_UNKNOWN = "candidate_unknown"
+
+#: What the forge's merge-state values mean here. Written as a table rather than as a chain of
+#: ifs because the dangerous entry is the one nobody wrote: an unrecognised value has to be
+#: UNKNOWN, and a forge that adds a state next year must not acquire a passing one by default.
+#:
+#: Two states deliberately do NOT refuse on their own. UNSTABLE says something non-passing exists
+#: on the head; it does not say the thing is required, and checks_problems above exists precisely
+#: to let an optional lint fail beside a green required gate. Refusing UNSTABLE would contradict
+#: that rule from inside the same module. BEHIND is the same shape: being behind the base blocks
+#: only where the branch declares a strict required-status-checks policy, which is why it is
+#: passed in rather than assumed.
+CLEAN_MERGE_STATES = ("clean", "has_hooks", "unstable")
+
+
+def draft_problems(is_draft):
+    """A draft is not a candidate, said once.
+
+    The receipt contract refuses a draft handoff and so does the collector, and for a while each
+    said it in its own words. Two spellings of one rule is how the rule starts meaning two things,
+    so the sentence lives here and both callers raise it.
+    """
+    if not is_draft:
+        return []
+    return [Problem(
+        CANDIDATE_DRAFT,
+        "the pull request is still a draft, so the review it reports was never actually "
+        "requested; mark it ready for review before handing it over")]
+
+
+def candidate_problems(candidate, *, strict_base=False):
+    """Is this pull request a thing that could be merged at all?
+
+    Separate from the review and the checks because the next action is different again: a closed
+    candidate is not waiting for anything, a conflicted one needs a rebase or a merge, and a
+    merge state the forge has not finished computing needs only to be asked again.
+
+    `strict_base` comes from the branch's own declared rules rather than from a guess, because
+    "behind the base" is a refusal in a repository that requires branches to be current and is
+    merely a fact in one that does not.
+    """
+    if not isinstance(candidate, dict):
+        return [Problem(MALFORMED,
+                        "the candidate is an object stating state, isDraft and mergeStateStatus,"
+                        " not a " + type(candidate).__name__)]
+    problems = []
+    state = str(candidate.get("state") or "").lower()
+    if candidate.get("merged"):
+        problems.append(Problem(CANDIDATE_NOT_OPEN,
+                                "this pull request is already merged, so there is nothing left to"
+                                " hand over"))
+    elif state and state != "open":
+        problems.append(Problem(CANDIDATE_NOT_OPEN,
+                                "this pull request is " + repr(state) + ", not open"))
+    elif not state:
+        problems.append(Problem(CANDIDATE_UNKNOWN,
+                                "the candidate does not say whether it is open"))
+    problems.extend(draft_problems(candidate.get("isDraft")))
+    status = str(candidate.get("mergeStateStatus") or "").lower()
+    if status in CLEAN_MERGE_STATES:
+        pass
+    elif status == "dirty":
+        problems.append(Problem(CANDIDATE_CONFLICTED,
+                                "the candidate does not merge cleanly into its base"))
+    elif status == "blocked":
+        problems.append(Problem(CANDIDATE_BLOCKED,
+                                "the forge reports this candidate blocked by its own branch"
+                                " rules, so something it requires is not satisfied yet"))
+    elif status == "behind":
+        if strict_base:
+            problems.append(Problem(CANDIDATE_BEHIND,
+                                    "the candidate is behind its base and this branch requires"
+                                    " branches to be current before merging"))
+    elif status == "draft":
+        # Reached only when the forge says draft and the record's own isDraft did not, which is a
+        # disagreement worth reporting rather than resolving in favour of either side.
+        if not candidate.get("isDraft"):
+            problems.append(Problem(CANDIDATE_DRAFT,
+                                    "the forge reports this candidate as a draft although the"
+                                    " record says it is not"))
+    else:
+        problems.append(Problem(
+            CANDIDATE_UNKNOWN,
+            "the forge reports merge state " + repr(candidate.get("mergeStateStatus"))
+            + ", which is not a state this rule recognises; an unrecognised merge state is"
+            " unknown rather than clean, because a forge that adds one must not acquire a"
+            " passing verdict by default"))
+    return problems
