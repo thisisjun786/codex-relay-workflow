@@ -178,11 +178,16 @@ Execution:
   that result rather than summarising it: a handoff record naming the pull request, the head
   it is about, the base you verified, the check runs by id and attempt, the review coverage
   you actually read, and a judged disposition for every thread you saw. Resolving a thread is
-  a button; `fixed`, `not_applicable`, `duplicate`, `already_resolved` and `disputed` are
-  judgments, and `fixed` names the commit that did it. If a required check has not passed or
-  a mandatory review has not finished, that is BLOCKED and is reported as blocked. Do not
-  report completion with a note about what is still open, because the note is what gets
-  skimmed past.
+  a button; `fixed`, `accepted`, `not_applicable`, `duplicate`, `already_resolved` and
+  `disputed` are judgments. `fixed` names the commit that did it and `accepted` names the
+  parent decision that accepted it and the follow-up it left. Fix what blocks under
+  [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact), propose
+  the rest instead of granting your own acceptance, and never record `fixed` or
+  `not_applicable` for a defect that is real and still there: the gate counting unresolved
+  threads measures the button, so clearing it with a judgment nobody reached buys a green
+  badge with a false record. If a required check has not passed or a mandatory review has
+  not finished, that is BLOCKED and is reported as blocked. Do not report completion with a
+  note about what is still open, because the note is what gets skimmed past.
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
@@ -271,10 +276,15 @@ Return:
   the check names this branch declares required, the check runs as
   `{runId, name, headSha, conclusion, attempt}`, the review coverage as
   `{hasNextPage, pagesRead, totalCount, threadsSeen, unresolved}`, a judged disposition with
-  evidence for every thread in `threadsSeen`, your per-criterion evidence, and the
-  limitations that remain. State every field: an absent one used to read as satisfied, so a
-  record that said nothing passed every check. The parent restates these values immediately
-  before merging rather than collecting them again, which is why they are yours to produce.
+  evidence for every thread in `threadsSeen`, where an `accepted` one also names the parent
+  decision behind it in `addressedBy`, its `followUpOwner`, and the `reopenTrigger` that
+  brings it back. Those last two are separate fields because they are separate facts: one
+  string naming an owner and saying nothing about what reopens the finding is a waiver
+  wearing a follow-up's name. Then your per-criterion evidence and the limitations that
+  remain. State every field: an absent one used to read as satisfied, so a record that said
+  nothing passed every check. The parent restates these values immediately before merging
+  rather than collecting them again, which is why they are yours to produce, and it confirms
+  each acceptance against a decision it actually made.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 - Proposed changes to a Linear record, returned rather than written: the document or issue ID,
   the revision you read, the reason, the smallest sufficient change and its evidence.
