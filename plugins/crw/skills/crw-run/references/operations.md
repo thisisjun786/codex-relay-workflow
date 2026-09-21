@@ -701,6 +701,15 @@ issues hold no registered assignment simply has none, which is a fact about the 
 gap for a parent to close on its own initiative. An assignment another parent registered is read
 and never adopted, for the same reason: the lookup names its owner, and that owner is the answer.
 
+Recording a role for a task is a second act with a consequence, and it is not the same act as
+making that role checkable. A recipient with no role binding is delivered to without a role check;
+a recipient that has one is checked against the role policy the **delivering process** can read,
+and a process that can read none refuses before sending rather than guessing. So a binding written
+without that policy being declared where the service will read it stops delivery to that recipient
+while both conditions hold. Write them together, and treat the binding as incomplete until the
+process that delivers can resolve the policy it now requires. The failure this produces, and its
+recovery, are in [OPS-8.5](#ops-85-the-goal-free-parents-wake-path).
+
 ### OPS-7.2 Never route on a display name or a working directory
 
 A display name, an issue title, a branch name and a working directory are all mutable, all
@@ -1043,6 +1052,14 @@ arrives. That is indistinguishable from a healthy parent with nothing waiting fo
 failure record is read. Its recovery is also unlike the cap's — the refusal is retry-safe, so
 making the configuration readable and restarting the service resumes the existing delivery with
 nothing lost and no new generation needed.
+
+Observed on one store on 2026-09-21. Its two role bindings were written at 07:43Z; every
+acknowledged delivery it holds was settled at or before 06:35Z, and the one delivery afterwards to
+a role-bound recipient was refused this way. The timeline corroborates rather than proves — those
+earlier deliveries all predate the bindings, so they were never candidates for the check. What the
+claim rests on is the branch itself: no binding skips the check, a binding requires the policy, and
+an unreadable policy refuses. The practical shape is a dated regression, from recording bindings
+without declaring the policy alongside them, which is the pairing OPS-7.1 now states.
 
 **Restart.** On service restart, start-up recovery re-reads unsettled rows and in-flight leases
 before anything new is attempted. On parent restart, the parent drains before it acts. Neither
