@@ -324,6 +324,41 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         for field in ("markerRoot", "dbPath", "journalRoot", "mode"):
             self.assertEqual(after[field], before[field], field)
 
+    def test_a_migrated_host_gets_the_fallback_launcher_too(self):
+        """Devin review: this command writes the same settings, so it owes the same fallback.
+
+        Without it a migrated host ends with plugin-owned settings and one candidate again, and
+        the first package replacement during an open turn lands back in the loop CRW-178 closes.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        placed = Path(host.home) / _completion.LAUNCHER_NAME
+        self.assertFalse(placed.exists())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"])[:700])
+        self.assertTrue(placed.is_file(), json.dumps(answer["results"])[:700])
+        self.assertEqual(placed.read_bytes(),
+                         (ROOT / _completion.LAUNCHER_SOURCE).read_bytes())
+        step = [item for item in answer["results"] if item["step"] == "stable launcher install"]
+        self.assertEqual(len(step), 1, json.dumps(answer["results"])[:700])
+        self.assertIn(step[0]["outcome"], ("settled", "already_done"))
+
+    def test_a_dry_run_migration_places_no_launcher(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        code, answer = host.transition()
+        self.assertEqual(code, 0, json.dumps(answer["results"])[:700])
+        self.assertFalse((Path(host.home) / _completion.LAUNCHER_NAME).exists())
+        step = [item for item in answer["results"] if item["step"] == "stable launcher install"]
+        self.assertEqual([item["outcome"] for item in step], ["would_change"])
+
+
     def test_the_retired_settings_and_record_are_kept_not_deleted(self):
         host = self.ready()
         host.transition("--apply")

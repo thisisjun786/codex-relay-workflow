@@ -2422,31 +2422,50 @@ def cmd_hook(args):
             # stops it from ending quietly.
             observed = completion.launcher_state(codex_home,
                                                  ROOT / completion.LAUNCHER_SOURCE)
-            # Gone, or there and not what this run put there. A concurrent installer from another
-            # revision leaves a regular file at the same path, and a check that only asks whether
-            # SOMETHING is there reports this run's fallback installed while the bytes belong to
-            # a different checkout.
+            # BOTH halves, read back at the end. The launcher and the settings are written under
+            # separate locks, so either can be taken away between its own write and this point,
+            # and a receipt that checked only one would report an installation the host does not
+            # have. For the launcher: gone, or there and not what this run put there, because a
+            # concurrent installer from another revision leaves a regular file at the same path.
+            # For the settings: retired by a concurrent removal, which leaves a declared hook
+            # that finds nothing to act on and stands down on every Stop in silence.
             settled = placement["outcome"] in (completion.LAUNCHER_PLACED,
                                                completion.LAUNCHER_UNCHANGED) \
                 if placement is not None else False
-            lost = args.apply and settled \
+            launcher_lost = args.apply and settled \
                 and (observed["kind"] != "file"
                      or observed["digest"] != placement["sourceDigest"])
+            back = reading.read_json(configuration, "the completion hook configuration")
+            settings_now = {"configuration": str(configuration), "state": back.state,
+                            "matchesWanted": bool(back.usable and back.value == wanted)}
+            settings_lost = args.apply and not settings_now["matchesWanted"]
+            reasons = []
+            if launcher_lost:
+                reasons.append("the fallback launcher at " + observed["launcher"] + " is not the"
+                               " one this run installed (kind " + str(observed["kind"])
+                               + ", digest " + str(observed["digest"]) + ", expected "
+                               + str(placement["sourceDigest"]) + ")")
+            if settings_lost:
+                reasons.append("the settings at " + str(configuration) + " are no longer the ones"
+                               " this run wrote (reading " + str(back.state) + "), so the"
+                               " declared hook has nothing to act on and stands down on every"
+                               " Stop")
+            lost = bool(reasons)
             emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
                   "settings": settings, "hookFile": str(path), "result": None,
                   "registrations": [], "launcher": placement, "launcherObserved": observed,
-                  "error": ("the fallback launcher at " + observed["launcher"] + " is not the"
-                            " one this run installed (kind " + str(observed["kind"])
-                            + ", digest " + str(observed["digest"]) + ", expected "
-                            + str(placement["sourceDigest"]) + "); something replaced or removed"
-                            " it while this run was writing, so the fallback this receipt would"
-                            " have claimed is not what this host holds") if lost else None,
+                  "settingsObserved": settings_now,
+                  "error": ("; ".join(reasons) + ". Something changed this host while the run was"
+                            " writing, so what this receipt would have claimed is not what the"
+                            " host holds") if lost else None,
                   "note": ("Settings written; no registration was made and the hook file was"
                            " not touched. The " + completion.OWNER_PLUGIN + " owner registers"
                            " this event through the plugin package's own manifest, so install"
                            " that package to register it. Written, registered and observed to"
                            " have fired stay three separate claims. launcherObserved is what"
-                           " both paths held after the writes, not what this run intended.")})
+                           " the launcher path held after the writes and settingsObserved is"
+                           " what the settings path held, neither of them what this run"
+                           " intended.")})
             return EXIT_INCOMPLETE if lost else EXIT_OK
     else:
         command = args.hook_command

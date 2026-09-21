@@ -1479,6 +1479,33 @@ def settings_install(host, options, *, apply=False, previous=None):
                    applied=written.get("applied"))
 
 
+def launcher_install(host, options, *, apply=False):
+    """Place the fallback Stop launcher, as part of the migration and not only beside it.
+
+    This command writes the same plugin-owned settings runtime_install.py hook writes, through
+    settings_install, so a host migrated here would otherwise end with the settings and no
+    fallback: the declaration would have one candidate again, and the first package replacement
+    during an open turn would land back in the loop this whole change exists to close.
+
+    Before settings install, for the reason that ordering exists everywhere else here: a launcher
+    with no settings stands down in silence, while settings whose fallback was never placed look
+    installed and are not. A refusal here therefore stops the sequence with the host unchanged.
+    """
+    step = "stable launcher install"
+    path = completion.launcher_path(Path(host["codexHome"]))
+    source = Path(host["repoRoot"]) / completion.LAUNCHER_SOURCE
+    try:
+        placed = completion.place_launcher(path, source, apply=apply)
+    except hostrecord.Busy as error:
+        return _answer(step, BUSY, str(error))
+    outcome = placed["outcome"]
+    settled = SETTLED if outcome == completion.LAUNCHER_PLACED else (
+        ALREADY if outcome == completion.LAUNCHER_UNCHANGED else (
+            WOULD if outcome == completion.LAUNCHER_WOULD_PLACE else REFUSED))
+    return _answer(step, settled, placed.get("detail"), launcher=placed,
+                   applied=placed.get("applied"), wrote=placed.get("wrote"))
+
+
 def mcp_record_retire(host, options, *, apply=False):
     """Retire the user-owned record, because owner is part of what makes a record the same one."""
     record = host["mcp"].get("record")
@@ -1885,6 +1912,7 @@ def skill_unlink(host, options, *, apply=False):
 # against absent settings -- it releases in silence and records nothing -- and no window in which
 # two adapters run, because the plugin-owned settings are still not installed.
 ORDER = (("settings retire", settings_retire), ("hook standdown", hook_standdown),
+         ("stable launcher install", launcher_install),
          ("settings install", settings_install), ("mcp record retire", mcp_record_retire),
          ("mcp table standdown", mcp_table_standdown),
          ("mcp record install", mcp_record_install), ("skill unlink", skill_unlink))
