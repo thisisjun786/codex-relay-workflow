@@ -86,6 +86,37 @@ class ReplayGuard(unittest.TestCase):
                                                 encoding="utf-8")
             self.assertEqual(run(["replay", "--fixtures", bad, "--allow-unreached"]).returncode, 1)
 
+    def _without(self, directory, drop):
+        """Copy the shipped fixtures into @directory, leaving out the ones @drop selects."""
+        kept = 0
+        for path in FIXTURES.glob("*.json"):
+            fixture = json.loads(path.read_text(encoding="utf-8"))
+            if drop(fixture):
+                continue
+            shutil.copy(path, Path(directory) / path.name)
+            kept += 1
+        self.assertGreater(kept, 0)
+
+    def test_each_guard_fails_when_its_own_cases_are_removed(self):
+        """A coverage guard nobody has seen fail is indistinguishable from one that passes all.
+
+        Each case drops exactly the fixtures that reach one value and asserts replay names it.
+        """
+        cases = (
+            (lambda f: f.get("expected", {}).get("reason") == "foreign_prefix",
+             "No fixture reaches: foreign_prefix"),
+            (lambda f: f.get("expected", {}).get("matched") == "bare_label",
+             "No fixture reaches the branch: bare_label"),
+            (lambda f: f.get("expected", {}).get("readback") == "unread",
+             "No fixture reaches readback: unread"),
+        )
+        for drop, expected in cases:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as partial:
+                self._without(partial, drop)
+                result = run(["replay", "--fixtures", partial])
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(expected, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

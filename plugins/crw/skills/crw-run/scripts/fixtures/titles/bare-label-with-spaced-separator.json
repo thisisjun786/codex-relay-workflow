@@ -1,6 +1,7 @@
 {
   "expected": {
     "decision": "apply",
+    "matched": "bare_label",
     "reason": "prefix_replaced",
     "stripped": "CRW · ",
     "title": "[CRW] 플러그인 전환"

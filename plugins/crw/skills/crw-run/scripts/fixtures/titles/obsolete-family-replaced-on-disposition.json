@@ -1,6 +1,7 @@
 {
   "expected": {
     "decision": "apply",
+    "matched": "bracket_replaced",
     "reason": "prefix_replaced",
     "stripped": "[AAS] ",
     "title": "[CRW] 전략 스윕 운영"
@@ -9,7 +10,7 @@
     "binding_verified": true,
     "bracket_disposition": {
       "action": "replace",
-      "bracket": "[AAS] "
+      "bracket": "[AAS]"
     },
     "family_candidates": [
       "CRW"
@@ -22,6 +23,6 @@
     "summary": null,
     "user_title": "none"
   },
-  "note": "With fresh linkage confirmed, that exact bracket is removed and the current family applied.",
+  "note": "With fresh linkage confirmed, that exact bracket is removed and the current family applied. The caller names [AAS]; the whitespace the strip consumed is reported back rather than demanded up front.",
   "subcommand": "decide"
 }

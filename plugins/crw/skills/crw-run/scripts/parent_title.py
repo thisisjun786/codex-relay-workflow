@@ -33,8 +33,9 @@ import re
 import sys
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "titles"
-# A leading bracket is a prefix only when something follows it.
-BRACKET = re.compile(r"^\[([^\]]*)\]\s*")
+# A leading bracket is a prefix whether or not anything follows it: "[CRW]" on its own is
+# already this family's prefix, and adding a second one would break idempotence.
+BRACKET = re.compile(r"^(\[([^\]]*)\])(\s*)")
 # A bare label counts as a separable prefix only when whitespace surrounds the separator.
 # Without that rule "CRW-137 · 제목" reads as the label CRW followed by "-", and the issue code
 # loses its number.
@@ -85,14 +86,17 @@ def _names(request, key):
 
 
 def bracket_prefix(title):
-    """Return (token, inner, body) when the title opens with a bracketed prefix."""
+    """Return (lexeme, inner, removed, body) when the title opens with a bracketed prefix.
+
+    The lexeme is the bracket alone, which is what a caller sees and therefore what a
+    disposition names. The whitespace after it is kept in @removed so that stripping stays
+    exact without making the caller reproduce an invisible trailing space.
+    """
     match = BRACKET.match(title)
     if not match:
         return None
-    body = title[match.end():]
-    if not body:
-        return None
-    return match.group(0), match.group(1), body
+    lexeme, inner, gap = match.group(1), match.group(2), match.group(3)
+    return lexeme, inner, lexeme + gap, title[match.end():]
 
 
 def bare_prefix(title, family):
@@ -126,7 +130,7 @@ def decide(request):
 
     role = _text(request, "role")
     if role not in ROLES:
-        return settle("invalid", "malformed_request",
+        return settle("invalid", "malformed_role",
                       requires=["role as one of " + ", ".join(ROLES)])
     if role != "parent":
         # The prefix names the project parent. A child keeps ISSUE-ID · title and a supervision
@@ -150,7 +154,7 @@ def decide(request):
 
     user_title = request.get("user_title", "none")
     if user_title not in USER_TITLE:
-        return settle("invalid", "malformed_request",
+        return settle("invalid", "malformed_user_title",
                       requires=["user_title as one of " + ", ".join(USER_TITLE)])
     if user_title == "fixed":
         # The user fixed this exact string, or forbade the rename. Presentation rules do not
@@ -176,24 +180,34 @@ def decide(request):
     matched = "none"
     bracketed = bracket_prefix(source)
     if bracketed:
-        token, inner, rest = bracketed
+        lexeme, inner, removed, rest = bracketed
+        if inner == family and not rest.strip():
+            # The whole title is this prefix. There is nothing to add to it.
+            return settle("unchanged", "already_prefixed", title=source, prefix=family,
+                          body="", matched="bracket_family")
+        if inner != family and not rest.strip():
+            # A bracket alone that is not this family names nothing that could survive a
+            # decision, so there is no title to propose either way.
+            return settle("withhold", "foreign_prefix", title=observed,
+                          requires=["a title body beside " + lexeme])
         if inner == family:
             body = rest
             matched = "bracket_family"
         else:
             disposition = request.get("bracket_disposition")
             action = None
-            if isinstance(disposition, dict) and disposition.get("bracket") == token:
+            if isinstance(disposition, dict) and disposition.get("bracket") == lexeme:
                 action = disposition.get("action")
             if action not in BRACKET_ACTIONS:
                 # A bracket that is not this family may be an obsolete family or the user's own
                 # words. Nothing here can tell those apart, and stacking a second bracket to
-                # avoid deciding would put two classifications on one title.
+                # avoid deciding would put two classifications on one title. A disposition
+                # naming some other bracket is not an answer about this one.
                 return settle("withhold", "foreign_prefix", title=observed,
-                              requires=["bracket_disposition naming " + token
+                              requires=["bracket_disposition naming " + lexeme
                                         + " as body or replace"])
             if action == "replace":
-                stripped, body = token, rest
+                stripped, body = removed, rest
                 matched = "bracket_replaced"
             else:
                 matched = "bracket_body"
@@ -207,9 +221,11 @@ def decide(request):
     if observed is not None and title == observed:
         return settle("unchanged", "already_prefixed", title=title, prefix=family, body=body,
                       matched=matched)
-    reason = "prefix_replaced" if stripped else "prefix_added"
-    return settle("apply", reason, title=title, prefix=family, body=body, stripped=stripped,
-                  matched=matched)
+    if stripped:
+        return settle("apply", "prefix_replaced", title=title, prefix=family, body=body,
+                      stripped=stripped, matched=matched)
+    return settle("apply", "prefix_added", title=title, prefix=family, body=body,
+                  stripped=stripped, matched=matched)
 
 
 def classify_readback(requested, observed):
