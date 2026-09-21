@@ -73,8 +73,10 @@ count of zero is the value that OPENS the merge gate, so a truncated page reads 
 a pass: sixty of sixty-three threads with nothing unresolved among the sixty once
 reported "0 unresolved" about a candidate with three open threads and a P1 among
 them. Every connection the verdict rests on - threads, reviews, comments, check
-runs, workflow runs, jobs, statuses - carries the same obligation, because a second
-required check on page two is exactly as invisible as the sixty-first thread was.
+runs, workflow runs, jobs, statuses and the branch's own effective rules - carries
+the same obligation, because a second required check on page two is exactly as
+invisible as the sixty-first thread was, and a required gate declared by a ruleset
+on a later page is missing from the very set that decides what "required" means.
 
 `codex-session-relay merge-evidence --repository owner/name --pull-request N`
 performs that reading and returns the record: it enumerates each connection until
@@ -86,6 +88,16 @@ truncated page, a permission error or a head that moved is reported as stale or
 unknown and never as green or zero. Its `handoff` is the record a completion report
 carries; the dispositions and the criterion evidence stay yours to judge, and it
 never resolves a thread.
+
+Three distinctions it makes that a reading by hand usually does not. A check is
+identified by its workflow run and job name rather than by its name, so two runs
+publishing one gate on a head are both binding and a run that REPLACED another -
+a re-run, or a cancellation when new CI starts - does not block the run that
+replaced it. A required context bound to an integration is answered only by that
+integration, so a namesake from another app neither satisfies the gate nor blocks
+it. And a submitted review whose state is CHANGES_REQUESTED refuses on its own,
+while a summary comment is collected and never graded, because whether prose
+describes a defect is a triage judgement and not an observation.
 
 Keep completed, running, not run/disabled, unavailable/error, and stale evidence
 distinct. A completion label without identifiable revision/scope does not prove
