@@ -1582,3 +1582,54 @@ class StableLauncherRemovalTest(unittest.TestCase):
         """disable stops calls and deletes nothing, so the fallback is not its surface to report."""
         claims = self.steps.stop_claims([])
         self.assertFalse(any("fallback" in claim for claim in claims["stillLive"]))
+
+class PluginGuardBudgetTest(unittest.TestCase):
+    """The budget a plugin-owned document may record, enforced where both writers validate.
+
+    The packaged launcher waits min(timeoutSeconds + MARGIN, CEILING). Refusing only at the
+    ceiling let 8 through, and at 8 the launcher deadline is 9 while the adapter is still
+    allowed 8: the margin is gone and the launcher kills the adapter in the middle of writing
+    the record of its own timeout. The bound lived in the transition only, so
+    runtime_install.py hook --owner plugin accepted a document the transition refused.
+    """
+
+    def document(self, budget):
+        return {"configVersion": 1, "event": "Stop", "owner": "plugin", "mode": "observe",
+                "timeoutSeconds": budget, "adapterInterpreter": "/usr/bin/python3",
+                "adapterEntryPoint": "/opt/crw/bin/crw-completion-hook",
+                "relayExecutable": "/opt/crw/bin/codex-session-relay",
+                "markerRoot": "/opt/crw/marker"}
+
+    def test_the_bound_is_the_ceiling_minus_the_margin(self):
+        self.assertEqual(completion.MAX_PLUGIN_GUARD_SECONDS,
+                         completion.LAUNCHER_CEILING_SECONDS
+                         - completion.LAUNCHER_MARGIN_SECONDS)
+        self.assertEqual(completion.MAX_PLUGIN_GUARD_SECONDS, 7)
+
+    def test_a_budget_that_collapses_the_margin_is_refused(self):
+        for budget in (8, 8.5, 9, 10):
+            with self.subTest(budget=budget):
+                found = completion.complaints(self.document(budget))
+                self.assertTrue([item for item in found if "timeoutSeconds" in item],
+                                "budget %r was accepted: %r" % (budget, found))
+
+    def test_a_budget_that_keeps_the_margin_is_accepted(self):
+        for budget in (1, 5, 7):
+            with self.subTest(budget=budget):
+                found = completion.complaints(self.document(budget))
+                self.assertEqual([item for item in found if "timeoutSeconds" in item], [],
+                                 "budget %r was refused" % budget)
+
+    def test_the_transition_and_the_installer_share_one_bound(self):
+        """They disagreed before: one refused 8 and the other wrote it."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        self.assertEqual(steps.MAX_GUARD_SECONDS, completion.MAX_PLUGIN_GUARD_SECONDS)
+        self.assertEqual(steps.LAUNCHER_MARGIN_SECONDS, completion.LAUNCHER_MARGIN_SECONDS)
+
+    def test_the_launcher_mirrors_the_same_two_numbers(self):
+        """The launcher cannot import this module, so the numbers are asserted to agree."""
+        source = (ROOT / "plugins/crw/wiring/crw_stop_hook.py").read_text(encoding="utf-8")
+        self.assertIn("MAX_SECONDS = " + str(completion.LAUNCHER_CEILING_SECONDS), source)
+        self.assertIn("MARGIN_SECONDS = " + str(completion.LAUNCHER_MARGIN_SECONDS), source)

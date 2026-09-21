@@ -360,12 +360,16 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
 
 
     def test_a_held_launcher_lock_stops_the_sequence_before_the_settings(self):
-        """Devin review: a busy launcher must not let the settings be written without it.
+        """A busy launcher must not let the rest of the sequence run without it.
 
         transition() owns the Busy handler: it names the step that was running and marks every
         later step not reached. Answering busy inside the step instead would hand the main loop
-        an ordinary result it does not break on, and the host would end with plugin-owned
-        settings and no fallback -- which is the combination the step exists to prevent.
+        an ordinary result it does not break on.
+
+        The step runs first, ahead of everything destructive, so a refusal leaves the host
+        exactly as it was. Placed after the retire and the standdown it did the opposite: the
+        settings were archived and the manual registration removed with nothing to put them
+        back, which is a worse host than the one the command started with.
         """
         import sys as _sys
         _sys.path.insert(0, str(ROOT / "scripts"))
@@ -377,20 +381,41 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text("99999999", encoding="utf-8")
         self.addCleanup(lambda: lock.exists() and lock.unlink())
+        before = host.settings()
+        hooks_before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
         outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
         self.assertEqual(outcomes.get("stable launcher install"), "busy",
                          json.dumps(answer["results"])[:700])
-        self.assertEqual(outcomes.get("settings install"), "not_reached",
-                         json.dumps(answer["results"])[:700])
+        for later in ("settings retire", "hook standdown", "settings install"):
+            self.assertEqual(outcomes.get(later), "not_reached", later)
         self.assertFalse(launcher.exists())
-        # No plugin-owned settings were written, which is the claim. The settings the retire
-        # step had already archived stay archived: that window belongs to the retire-first order
-        # and is the same for every step that refuses after it, not something this one adds.
-        landed = host.settings()
-        self.assertTrue(landed is None or landed.get("owner") != "plugin", landed)
+        self.assertEqual(host.settings(), before)
+        self.assertEqual(host.hooks_document(), hooks_before)
 
+    def test_a_foreign_launcher_stops_the_sequence_before_anything_is_taken_away(self):
+        """The same ordering question asked with a refusal instead of a contended lock."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion
+
+        host = self.ready()
+        launcher = Path(host.home) / _completion.LAUNCHER_NAME
+        foreign = "not ours\n"
+        launcher.write_text(foreign, encoding="utf-8")
+        before = host.settings()
+        hooks_before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
+        self.assertEqual(outcomes.get("stable launcher install"), "refused",
+                         json.dumps(answer["results"])[:700])
+        for later in ("settings retire", "hook standdown", "settings install"):
+            self.assertEqual(outcomes.get(later), "not_reached", later)
+        self.assertEqual(launcher.read_text(encoding="utf-8"), foreign)
+        self.assertEqual(host.settings(), before)
+        self.assertEqual(host.hooks_document(), hooks_before)
 
     def test_the_retired_settings_and_record_are_kept_not_deleted(self):
         host = self.ready()
@@ -1253,7 +1278,13 @@ class TheFindingsFromReview(TransitionCase):
         fixed.unlink()
         host.install_plugin()
         snapshot = inventory.snapshot(host.home, repo_root=ROOT)
-        self.assertEqual(steps.ORDER[0][0], "settings retire")
+        # The invariant this case is about is the retire running before the standdown, not
+        # the retire being first overall: the non-destructive launcher step now precedes
+        # both so that a refusal there takes nothing away.
+        order = [name for name, _ in steps.ORDER]
+        self.assertLess(order.index("settings retire"), order.index("hook standdown"))
+        self.assertLess(order.index("stable launcher install"),
+                        order.index("settings retire"))
         self.assertEqual(steps.settings_retire(snapshot, {}, apply=True)["outcome"], "settled")
         # Stopped here: the registration is still in place and the archive is already in the home.
         recovered, name = inventory.newest_retired(host.home)

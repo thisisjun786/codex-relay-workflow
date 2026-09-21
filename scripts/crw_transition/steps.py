@@ -43,15 +43,13 @@ LAUNCHERS = ("wiring/crw_stop_hook.py", "wiring/crw_bridge_mcp.py")
 # "converged" and "did the work" are different answers and a rerun has to be able to say which.
 DONE = (SETTLED, ALREADY)
 
-# The packaged launcher waits min(timeoutSeconds + MARGIN, MAX) seconds, with MARGIN 2 and MAX the
-# number completion.py calls LAUNCHER_CEILING_SECONDS. So a budget at the ceiling is not the
-# problem the ceiling was written for: every budget above MAX - MARGIN collapses the margin the
-# launcher exists to keep, and at 8.999 the launcher's deadline arrives first and discards the
-# record the adapter was in the middle of writing. What a plugin-owned document may record is
-# therefore the ceiling minus the margin, and this is where that is enforced, because the
-# validation the two adapters share lives in a module this branch does not own.
-LAUNCHER_MARGIN_SECONDS = 2
-MAX_GUARD_SECONDS = completion.LAUNCHER_CEILING_SECONDS - LAUNCHER_MARGIN_SECONDS
+# The packaged launcher waits min(timeoutSeconds + MARGIN, CEILING), so a budget above
+# CEILING - MARGIN collapses the margin the launcher exists to keep. This used to be enforced
+# here alone, which left runtime_install.py hook --owner plugin accepting a document this branch
+# would refuse. The bound now lives with the validation both writers share and these names are
+# aliases of it, so the two paths cannot drift apart again.
+LAUNCHER_MARGIN_SECONDS = completion.LAUNCHER_MARGIN_SECONDS
+MAX_GUARD_SECONDS = completion.MAX_PLUGIN_GUARD_SECONDS
 
 
 def stamp():
@@ -1914,8 +1912,14 @@ def skill_unlink(host, options, *, apply=False):
 # host with no completion hook. Retiring first costs a window in which the old registration runs
 # against absent settings -- it releases in silence and records nothing -- and no window in which
 # two adapters run, because the plugin-owned settings are still not installed.
-ORDER = (("settings retire", settings_retire), ("hook standdown", hook_standdown),
-         ("stable launcher install", launcher_install),
+# The launcher goes FIRST, ahead of everything that takes something away. It is the only
+# non-destructive step here and the only one that can refuse on a condition outside this command
+# -- a foreign file at the path, or another run holding its lock. Placed after the retire and the
+# standdown, such a refusal left the host with its settings archived and its manual registration
+# removed and nothing to restore them, which is a worse host than the one the command started
+# with. First, it refuses before anything is taken away.
+ORDER = (("stable launcher install", launcher_install),
+         ("settings retire", settings_retire), ("hook standdown", hook_standdown),
          ("settings install", settings_install), ("mcp record retire", mcp_record_retire),
          ("mcp table standdown", mcp_table_standdown),
          ("mcp record install", mcp_record_install), ("skill unlink", skill_unlink))

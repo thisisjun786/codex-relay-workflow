@@ -106,6 +106,19 @@ REGISTERED_TIMEOUT_SECONDS = 10
 # would have explained the timeout, and then releases the turn saying nothing. Mirrored in
 # plugins/crw/wiring/crw_stop_hook.py, which cannot import this module.
 LAUNCHER_CEILING_SECONDS = 9
+# The margin that launcher keeps between its own deadline and the adapter's budget, mirrored
+# from the same file. The two numbers only mean something together: the launcher waits
+# min(timeoutSeconds + MARGIN, CEILING), so a budget above CEILING - MARGIN collapses the margin
+# the launcher exists to keep, and the launcher's deadline then arrives while the adapter is
+# still writing the record of its own timeout.
+#
+# This bound used to live only in scripts/crw_transition/steps.py, which meant the transition
+# refused such a document and runtime_install.py hook --owner plugin accepted it. That was
+# tolerable while the packaged launcher was reached only through the cache; it is not now that
+# the same command installs the fallback every plugin host depends on, so the bound moved here,
+# where both writers already validate.
+LAUNCHER_MARGIN_SECONDS = 2
+MAX_PLUGIN_GUARD_SECONDS = LAUNCHER_CEILING_SECONDS - LAUNCHER_MARGIN_SECONDS
 
 # The largest budget any of these checks will entertain. Compared against rather than converted,
 # because an arbitrary-precision integer cannot always become a float: math.isfinite raises
@@ -511,13 +524,16 @@ def complaints(document):
                                " this repository's adapter, so the install records it here")
         budget = document.get("timeoutSeconds")
         if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
-                and budget >= LAUNCHER_CEILING_SECONDS:
-            # The packaged launcher sits between the host and the adapter and caps its own
-            # deadline here, so a guard budget at or above that ceiling lets the launcher kill
-            # the adapter first and release the turn without the record that explains it.
-            found.append("timeoutSeconds must be under " + str(LAUNCHER_CEILING_SECONDS)
+                and budget > MAX_PLUGIN_GUARD_SECONDS:
+            # The packaged launcher waits min(budget + MARGIN, CEILING). Refusing only at the
+            # ceiling let 8 through, and at 8 the launcher's own deadline is 9 while the adapter
+            # is still allowed 8: the margin is gone, the launcher kills the adapter first, and
+            # the turn is released without the record that explains it.
+            found.append("timeoutSeconds must not exceed " + str(MAX_PLUGIN_GUARD_SECONDS)
                          + " when owner is " + OWNER_PLUGIN + ", because the packaged launcher"
-                         " caps its own deadline there and has to outlast the adapter it runs")
+                         " waits the budget plus " + str(LAUNCHER_MARGIN_SECONDS) + "s capped at "
+                         + str(LAUNCHER_CEILING_SECONDS) + "s and has to outlast the adapter"
+                         " it runs")
     budget = document.get("timeoutSeconds")
     if budget is not None and not usable_seconds(budget):
         found.append("timeoutSeconds must be a positive number of seconds, at most "
