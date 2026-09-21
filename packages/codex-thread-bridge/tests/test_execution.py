@@ -81,12 +81,13 @@ def policy_for(directory):
 # cases assert the same thing the rest of this file does: not that an error was raised, but that
 # nothing was dispatched.
 
-PARENT_MODEL = "xai/grok-4.6"
-PARENT_EFFORT = "xhigh"
-# What the parent ran on before 2026-09-21. Kept because a superseded pair is not a second
-# valid answer, and because it is the case where the two roles' effort NAMES differ: the parent
-# and the child now happen to share one, which must not be what makes the check work.
-SUPERSEDED_PARENT = ("devin/swe-2", "max")
+PARENT_MODEL = "devin/swe-2"
+PARENT_EFFORT = "max"
+# What the parent ran on for part of 2026-09-21, before it was restored to the pair above. Kept
+# because a superseded pair is not a second valid answer, and because it is the case where a
+# name is shared across roles: it carries the child's effort under a different model, which
+# must not be what makes the check work.
+SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
 
 
 def roles_policy(directory=None, *, roles=None, allowed=True):
@@ -134,14 +135,18 @@ def test_a_word_that_is_not_a_role_is_refused_like_one_that_was_never_declared()
     ("role", "model", "effort", "field"),
     [
         # A parent on the child's pair: the exact shape of the observed failure, where both the
-        # presence and the allowlist questions answer yes.
+        # presence and the allowlist questions answer yes. Since the restore the two roles
+        # differ in model and in effort, so this row is wrong on both counts at once.
         ("parent", MODEL, EFFORT, "model"),
-        # The effort the parent ran on before 2026-09-21. The two roles now share the name
-        # xhigh, so a wrong-effort case has to use a name that really differs or it proves
-        # nothing about the comparison.
+        # Then one axis at a time. A wrong-effort case has to state a name that really differs
+        # from the role it names or it proves nothing about the comparison: for the parent that
+        # is the interim pair's xhigh, which the child still runs on, and for the child it is
+        # the parent's max. The last row holds the child's own effort so that only the model is
+        # wrong -- the coordinator's retry, which changed the model and kept the effort it
+        # already had.
         ("parent", PARENT_MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
-        ("child", MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
-        ("child", PARENT_MODEL, PARENT_EFFORT, "model"),
+        ("child", MODEL, PARENT_EFFORT, "reasoning_effort"),
+        ("child", PARENT_MODEL, EFFORT, "model"),
     ],
 )
 def test_a_pair_that_is_not_this_roles_pair_is_refused(role, model, effort, field):
@@ -156,8 +161,8 @@ def test_an_effort_name_belongs_to_its_model_and_never_stands_in_for_another():
 
     A coordinator whose send was withheld changed the model to the parent's and kept the previous
     effort. Both spellings load as themselves, and each is refused for the other's role. The pair
-    the parent ran on before 2026-09-21 is the one where the two names actually differ, so it is
-    the fixture this rule is checked against rather than an alternative still accepted.
+    the parent ran on in the interim is the one whose effort name differs from the restored one,
+    so it is the fixture this rule is checked against rather than an alternative still accepted.
     """
     superseded_model, superseded_effort = SUPERSEDED_PARENT
     policy = declared(roles={
@@ -167,7 +172,7 @@ def test_an_effort_name_belongs_to_its_model_and_never_stands_in_for_another():
     assert policy.summary()["roles"]["parent"]["reasoningEffort"] == PARENT_EFFORT
     assert policy.summary()["roles"]["child"]["reasoningEffort"] == superseded_effort
     assert PARENT_EFFORT != superseded_effort
-    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "xhigh"
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "max"
     with pytest.raises(ExecutionRefused):
         policy.authorize(PARENT_MODEL, superseded_effort, role="parent")
     with pytest.raises(ExecutionRefused):
