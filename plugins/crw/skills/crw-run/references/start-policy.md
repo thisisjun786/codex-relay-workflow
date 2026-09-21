@@ -96,9 +96,19 @@ reading and the field it was written in disagree, and two readers guessing indep
 restore two different policies from one record. Re-adjudicating is deterministic and leaves a
 record that says so; guessing is neither.
 
-That makes the failure loud rather than silent, which is the most this file can do about it.
-Whatever actually fixes the writing side is not a sentence asking for care, which has now been
-measured twice not to work.
+That is the correct rule and it is also not obeyed. A reader given a record containing
+`run_mode: relay_only` and asked what to do with it answered that the values were settled and
+would be restored and used as they stood. So the consumer side fails the same way the producer
+side does, and for the same reason: the field is reconstructed from what it appears to mean rather
+than checked against what is declared.
+
+Three interventions have now been measured on this one problem — asking for the literals in prose,
+offering them as a list to copy, and requiring a consumer to reject anything outside the set — and
+none of them changed a reader's behaviour. The rule above stays because it is what a correct
+implementation does, and because the alternative of tolerant matching is worse: with no alias
+table two readers restore two different policies from one record. But nothing in this file should
+be read as evidence that writing the rule down makes it happen. On this evidence these two fields
+need validation in code at the point they are written and read, and a document cannot supply it.
 
 Every field carries three more things, because a field without them cannot be restored later:
 nobody reading it can tell what it was allowed to survive.
