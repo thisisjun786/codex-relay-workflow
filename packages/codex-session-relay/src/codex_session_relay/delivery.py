@@ -33,7 +33,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from . import restoration, rolepolicy
+from . import envelope, restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
 )
@@ -368,6 +368,44 @@ class DeliveryService:
             return self._render_revision(row, record, request, report)
         return self._render_completion(row, record, request, report)
 
+    def envelope_context(self, row) -> dict:
+        """The two envelope fields this layer can read and the renderer cannot.
+
+        Who is sending lives on the relationship and which Linear project this belongs to
+        lives on the scope row, and report.py holds neither. Read here, once, from the same
+        store the delivery is already using.
+
+        Every failure degrades to an empty context rather than to an exception. This runs
+        inside the claim transaction, and a message that cannot name its sender is still a
+        message worth sending; the envelope prints unknown for what was not read, which is the
+        honest answer and is exactly what an unreadable row means.
+        """
+        try:
+            relationship = self.registry.get(row["relationship_id"])
+        except Exception:  # noqa: BLE001 - an unreadable relationship is an absence, not a fault
+            return {}
+        sender = (relationship["parent"] if row["kind"] == REVISION
+                  else relationship["child"]).get("taskId")
+        issue = relationship.get("issueKey")
+        project = None
+        try:
+            found = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                (row["relationship_id"],),
+            )
+            project = found["project_key"] if found is not None else None
+        except Exception:  # noqa: BLE001 - same reason
+            project = None
+        if project and issue:
+            scope = f"project {project}, issue {issue}"
+        elif issue:
+            scope = (f"issue {issue}; no project scope is recorded for this relationship")
+        else:
+            scope = None
+        return {"senderTaskId": sender,
+                "scope": scope or envelope.absent(
+                    envelope.UNKNOWN, "neither a project nor an issue scope was readable")}
+
     def _render_and_account(self, row, record, request, report=None):
         """The bytes, and what became of a declared restoration block in exactly those bytes.
 
@@ -385,7 +423,8 @@ class DeliveryService:
         findings = record.get("criteria") or []
         declared = restoration.declared(findings) is not None
         if report is not None:
-            composed = compose_revision(row, record, request, report)
+            composed = compose_revision(row, record, request, report,
+                                        context=self.envelope_context(row))
             return composed.text, (
                 restoration.project_survivors(findings, composed.survivors)
                 if declared else None
@@ -416,7 +455,8 @@ class DeliveryService:
         # this contract has none, so it renders what it has always rendered rather than being
         # dressed in a shape its own data cannot fill.
         if report is not None:
-            return render_completion(row, record, request, report)
+            return render_completion(row, record, request, report,
+                                     context=self.envelope_context(row))
         lines = [
             "[codex-session-relay] verification request",
             f"requestId: {request}",
@@ -473,7 +513,8 @@ class DeliveryService:
 
     def _render_revision(self, row, record, request, report=None) -> str:
         if report is not None:
-            return render_revision(row, record, request, report)
+            return render_revision(row, record, request, report,
+                                   context=self.envelope_context(row))
         lines = [
             "[codex-session-relay] revision request",
             f"requestId: {request}",
