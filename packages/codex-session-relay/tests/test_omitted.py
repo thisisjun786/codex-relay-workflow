@@ -174,7 +174,8 @@ class Reporting(GuardTestCase):
         target = Path(self.tmp) / "elsewhere.json"
         target.write_text('{}')
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        (directory / "escape").symlink_to(target)
+        (directory / "intent.json").unlink()
+        (directory / "intent.json").symlink_to(target)
         self.assertEqual(self.read()["reportingState"], "unmeasured")
 
     def test_changed_registry_during_read_does_not_mix_facts(self):
@@ -312,3 +313,15 @@ class Reporting(GuardTestCase):
         os.mkfifo(path)
         with patch.object(marker, "read_assignment", side_effect=AssertionError("must not open FIFO")):
             self.assertEqual(self.read()["reason"], "marker_not_regular")
+
+    def test_other_turn_history_cannot_suppress_selected_omission(self):
+        relation = self.managed()
+        self.evaluate()
+        self.settle(relation)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        folder = directory / "hook" / CHILD / "unrelated-turn"
+        folder.mkdir()
+        for n in range(omitted.MAX_FACTS + 1):
+            (folder / (str(n) + ".json")).write_text("{}")
+        (folder / "bad-link").symlink_to(Path(self.tmp) / "foreign")
+        self.assertEqual(self.read()["reportingState"], "unreported")

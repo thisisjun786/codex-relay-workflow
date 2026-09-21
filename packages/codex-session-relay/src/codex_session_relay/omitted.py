@@ -56,40 +56,48 @@ def _path(value):
     return Path(value).expanduser().resolve()
 
 
-def _confined_facts(directory, root):
-    """Bound and check the selected tree before the existing marker reader walks it.
+def _confined_facts(directory, root, session, turn):
+    """Check only identity facts and this turn's evidence before existing readers.
 
-    Same-user evidence is not authentication; these checks reject misplaced and
-    oversized records, not a concurrently malicious writer controlling the tree.
+    Other turns' Stop/disposition history is not consumed and cannot exhaust this
+    reading's budget. Shared claims/attempts/conflicts still establish identity.
+    Same-user evidence is not authentication against concurrent hostile writes.
     """
-    marker.confined(directory, root)
-    for ancestor in (directory, *directory.parents):
-        if ancestor == root:
-            break
-        if ancestor.is_symlink():
-            raise Unmeasured("marker_symlink")
-    pending, count = [directory], 0
+    def checked(path):
+        marker.confined(path, root)
+        for ancestor in (path, *path.parents):
+            if ancestor == root:
+                break
+            if ancestor.is_symlink():
+                raise Unmeasured("marker_symlink")
+        try:
+            metadata = path.stat()
+        except FileNotFoundError:
+            return None
+        if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):
+            raise Unmeasured("marker_not_regular")
+        if stat.S_ISREG(metadata.st_mode) and metadata.st_size > MAX_BYTES:
+            raise Unmeasured("marker_record_limit")
+        return metadata
+
+    checked(directory)
+    for name in marker.SINGLE_FACTS.values():
+        checked(directory / name)
+    checked(directory / "dispositions" / session / (turn + ".json"))
+    pending = [directory / name for name in marker.NUMBERED_FACTS]
+    pending += [directory / "claims", directory / "hook" / session / turn]
+    count = 0
     while pending:
         current = pending.pop()
-        try:
-            entries = current.iterdir()
-            for entry in entries:
-                count += 1
-                if count > MAX_FACTS:
-                    raise Unmeasured("marker_history_limit")
-                marker.confined(entry, root)
-                if entry.is_symlink():
-                    raise Unmeasured("marker_symlink")
-                metadata = entry.stat()
-                if stat.S_ISDIR(metadata.st_mode):
-                    pending.append(entry)
-                elif not stat.S_ISREG(metadata.st_mode):
-                    raise Unmeasured("marker_not_regular")
-                elif metadata.st_size > MAX_BYTES:
-                    raise Unmeasured("marker_record_limit")
-        except FileNotFoundError:
-            if current != directory:
-                raise Unmeasured("marker_changed_during_read")
+        if checked(current) is None:
+            continue
+        for entry in current.iterdir():
+            count += 1
+            if count > MAX_FACTS:
+                raise Unmeasured("marker_history_limit")
+            metadata = checked(entry)
+            if metadata and stat.S_ISDIR(metadata.st_mode):
+                pending.append(entry)
 
 
 def _stops(directory, session, turn):
@@ -237,7 +245,7 @@ def observe(selection, root, workspace, assignment, session, turn, now):
     try:
         root, workspace = _path(root), _path(workspace)
         directory = marker.assignment_dir(root, workspace, assignment)
-        _confined_facts(directory, root)
+        _confined_facts(directory, root, session, turn)
         facts, unreadable = marker.read_assignment(directory)
         if unreadable:
             raise Unmeasured("marker_unreadable")
