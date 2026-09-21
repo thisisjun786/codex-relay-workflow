@@ -937,6 +937,42 @@ CREATE TABLE IF NOT EXISTS edit_revision_marks (
     UNIQUE (repository, from_revision)
 );
 
+-- One managed admission request for one issue, on THIS physical store only. A new table
+-- rather than columns on relationships: CREATE TABLE IF NOT EXISTS reaches an existing
+-- store, and adding a column would not. The request keeps its own row through reserved,
+-- create_armed, attached and released so a crash can be read back without inventing a
+-- second database. Ownership of a live assignment stays on relationships; this row only
+-- holds the issue while it is still reserved or armed, which is what the partial unique
+-- index below enforces. A released row is a tombstone and must not be reused.
+CREATE TABLE IF NOT EXISTS managed_start_requests (
+    request_id              TEXT PRIMARY KEY,
+    issue_key               TEXT NOT NULL,
+    request_fingerprint     TEXT NOT NULL,
+    fingerprint_version     TEXT NOT NULL,
+    workspace               TEXT NOT NULL,
+    marker_root             TEXT NOT NULL,
+    socket_identity         TEXT NOT NULL,
+    create_request_id       TEXT NOT NULL,
+    dispatch_request_id     TEXT NOT NULL,
+    state                   TEXT NOT NULL,
+    revision                INTEGER NOT NULL,
+    child_task_id           TEXT,
+    standby_turn_id         TEXT,
+    relationship_id         TEXT,
+    execution_generation    INTEGER,
+    receipt_status          TEXT,
+    release_reason          TEXT,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS managed_start_requests_issue
+    ON managed_start_requests (issue_key, state);
+-- One pending admission per issue. Attached and released rows are retained and must not
+-- compete: attached ownership has already moved to the relationship, and released is the
+-- tombstone that forbids reusing that request id.
+CREATE UNIQUE INDEX IF NOT EXISTS managed_start_one_pending_issue
+    ON managed_start_requests (issue_key)
+    WHERE state IN ('reserved', 'create_armed');
 
 
 """

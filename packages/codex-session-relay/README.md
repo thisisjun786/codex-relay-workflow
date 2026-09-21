@@ -223,9 +223,116 @@ not a list of `{role, model, reasoningEffort}` objects - a wrong type or an empt
 refused (exit 2) as `worker_policy_requirements_invalid`, and a role outside the fixed
 parent/child pairs above as `worker_policy_role_unsupported`.
 
-This is a point-in-time readiness observation, not managed admission: starting a managed workload
-on this evidence is later work. The receipt is evidence between cooperating same-user processes,
-not authentication, and no installed host has been verified against any of it.
+This is a point-in-time readiness observation. `managed-start` consumes a fresh observation
+before creation and again before business dispatch. The receipt is evidence between cooperating
+same-user processes, not authentication; source tests do not establish installed-host behavior.
+
+### Recoverable managed start
+
+Use the managed entry when creating a new issue assignment. Supply a complete, immutable request
+and explicit store, socket and marker paths:
+
+    codex-session-relay --state /absolute/relay-state --socket /absolute/app-server.sock \
+      managed-start --request @/absolute/request.json --marker-root /absolute/markers
+
+The request schema is `managed-start/1`. Required fields are `schema`, `requestId`, `issueKey`,
+`parent`, `child`, `artifactRoots`, `allowedRecipients`, `criteria`, `criteriaSource`,
+`baselineRevision`, `scopeRef` and `prompt`; `projectKey` is optional. `parent` carries `taskId`,
+`hostId` and `settings`; `child` carries `hostId`, `title` and `settings`. Settings use the
+existing full settings record, including environments, approval policy and sandbox. Each
+criterion carries its `id`, `title` and boolean `required`. Unknown fields are refused. Both
+roles must have explicit permitted pairs, the parent must be an allowed recipient, and this
+local entry requires the same host, approval `never`, and existing absolute workspace paths.
+It does not select remote environments or approximate an unsupported sandbox.
+
+Here is a request shape for a local workspace. Replace the task/host identities, existing
+paths, baseline and issue criteria with observations from your own authorized assignment.
+The role pairs below are examples; read your host's declared
+[role policy](#the-role-a-task-holds) rather than copying them as defaults.
+
+```json
+{
+  "schema": "managed-start/1",
+  "requestId": "example-42-attempt-1",
+  "issueKey": "EXAMPLE-42",
+  "parent": {
+    "taskId": "observed-parent-task", "hostId": "observed-local-host",
+    "settings": {
+      "model": "devin/swe-2", "reasoningEffort": "max",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "cwd": "/workspace/project", "runtimeWorkspaceRoots": ["/workspace/project"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/project",
+                        "runtimeWorkspaceRoots": ["/workspace/project"]}]
+    }
+  },
+  "child": {
+    "hostId": "observed-local-host", "title": "EXAMPLE-42 · Implement the assigned change",
+    "settings": {
+      "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/issue-42",
+                        "runtimeWorkspaceRoots": ["/workspace/issue-42"]}]
+    }
+  },
+  "artifactRoots": ["/workspace/issue-42"],
+  "allowedRecipients": ["observed-parent-task"],
+  "criteria": [{"id": "c1", "title": "The agreed behavior is verified", "required": true}],
+  "criteriaSource": "issue:EXAMPLE-42", "baselineRevision": "observed-revision",
+  "scopeRef": "issue:EXAMPLE-42", "prompt": "The complete authorized assignment goes here."
+}
+```
+
+Identifiers, source/scope references, baseline and prompt are nonblank strings. Roots and
+recipients are nonempty string arrays; criteria is a nonempty object array. `projectKey`, when
+used, is a nonblank project identifier. `requestId` is at most 128 characters and `prompt` at
+most 90,000; the complete JSON is at most 256,000 UTF-8 bytes. The full settings shape is
+described under [authorized execution settings](#authorized-execution-settings). A permitted
+pair is the exact model and reasoning effort declared for that role by the execution policy;
+both the caller and live worker must report the same policy digest.
+
+The entry reserves the issue before asking the bridge to create a standby task. It then binds
+the returned task and turn to the marker, registry, criteria and settings before sending the
+business prompt. The standby prompt does no implementation work. A missing or mismatching live
+worker policy refuses before creation; a later refusal retains the same task for recovery.
+
+Retry the **same request with the same paths and contents**. A fingerprint mismatch refuses
+rather than rewriting the assignment; uncertain creation or delivery is reconciled against the
+bridge's retained operation, never retried under a new identity. A still-running standby returns
+`incomplete`; the caller may retry when it ends. This command does not install a retry scheduler.
+`admitted` means the business turn was dispatched, not that the child claimed it, that its hook
+fired, or that its issue passed review. Those remain separately observed facts.
+
+    codex-session-relay --state /absolute/relay-state managed-show --request-id <id>
+
+The retained request exposes its stage, fingerprint, revision and known identities, alongside
+the last admission observation. `managed-release --request-id <id> --fingerprint <hash>
+--revision <revision> --reason <reason>` releases only a reservation that has never been armed
+for creation. Its tombstone prevents reuse. An armed or attached request cannot be released by
+timeout or by assuming a missing response meant nothing happened.
+
+In `managed-show` JSON, read `request.request_fingerprint`, `request.revision` and
+`request.state`; only `state: "reserved"` is releasable. A released request stays dead: a later
+authorized attempt uses a new request id after checking that the issue has no other owner.
+`lastObservation` carries the last `state`, `stage`, `reason` and known dispatch identities.
+An absent or unreadable store is reported through `readable`/`detail`, not as proof of absence.
+
+| Observation | Recovery |
+| --- | --- |
+| `incomplete` / `standby_incomplete` | Wait for that standby to complete, then retry the same request. |
+| worker policy absent or mismatched | Restore the declared serving policy, verify its reading, retry the same request. |
+| paused/archived recipient, changed settings/scope/criteria | Preserve the hold; obtain the owning user's supported transition before retrying. |
+| creation or business outcome unknown | Inspect the retained bridge operation; keep the reservation and do not create a replacement. |
+| request fingerprint conflict | Recover the original input and selectors; never overwrite them to force a replay. |
+
+Before the business turn, authorization is checked again after resume. A known paused, archived,
+busy or unreadable recipient is withheld. An external UI change can still race the final host
+read and `turn/start`: the host offers no atomic conditional start. Raw bridge calls are outside
+this managed admission boundary. Malformed JSON requests exit 4; missing CLI arguments follow
+argparse's exit 2 on stderr. Refused or incomplete admission
+exits 2; admitted requests exit 0. Transport failures retain the existing host-error behavior.
 
 ## Commands
 
@@ -236,6 +343,8 @@ Global options come BEFORE the subcommand:
 | Command | Purpose |
 |---|---|
 | `register` | register a parent/child relationship with its authorized scope |
+| `managed-start` | reserve, create a standby, register and dispatch one recoverable assignment |
+| `managed-show` / `managed-release` | inspect a retained start; release only an unarmed reservation |
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |

@@ -60,6 +60,44 @@ def set_digest(entries) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def normalise_criteria(entries) -> list:
+    """The one shape a criteria set is stored in.
+
+    register replaces an existing set on purpose. ensure_registered refuses a different
+    one. Both have to decide "the same set" from the same ids, titles, required flags and
+    digest, or a replay that only differs by spacing would be stored as a change.
+    """
+    normalised, seen = [], set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise AckRefused(
+                RefusalReason.CRITERIA_UNREGISTERED,
+                "each criterion is an object with an id and a title",
+            )
+        identifier = finding_id(entry.get("id"))
+        title = str(entry.get("title") or "").strip()
+        if not identifier or not title:
+            raise AckRefused(
+                RefusalReason.CRITERIA_UNREGISTERED,
+                "each criterion needs a non-empty id and title",
+            )
+        if identifier in seen:
+            raise AckRefused(
+                RefusalReason.CRITERIA_UNREGISTERED,
+                f"duplicate criterion id {identifier!r}",
+            )
+        seen.add(identifier)
+        normalised.append(
+            {"id": identifier, "title": title, "required": bool(entry.get("required", True))}
+        )
+    if not normalised:
+        raise AckRefused(
+            RefusalReason.CRITERIA_UNREGISTERED,
+            "a criteria set needs at least one criterion",
+        )
+    return normalised
+
+
 def normalise_findings(criteria=None, findings=None) -> list:
     """One shape for what the CLI and the API both call findings.
 
@@ -154,53 +192,36 @@ class CriteriaService:
     # ------------------------------------------------------------- registration
 
     def register(self, relationship_id, entries, *, source_ref=None) -> dict:
-        normalised, seen = [], set()
-        for entry in entries:
-            identifier = finding_id(entry.get("id"))
-            title = str(entry.get("title") or "").strip()
-            if not identifier or not title:
-                raise AckRefused(
-                    RefusalReason.CRITERIA_UNREGISTERED,
-                    "each criterion needs a non-empty id and title",
-                )
-            if identifier in seen:
-                raise AckRefused(
-                    RefusalReason.CRITERIA_UNREGISTERED,
-                    f"duplicate criterion id {identifier!r}",
-                )
-            seen.add(identifier)
-            normalised.append(
-                {"id": identifier, "title": title, "required": bool(entry.get("required", True))}
-            )
-        if not normalised:
-            raise AckRefused(
-                RefusalReason.CRITERIA_UNREGISTERED,
-                "a criteria set needs at least one criterion",
-            )
+        normalised = normalise_criteria(entries)
         digest = set_digest(normalised)
         now = self.clock.iso()
         with self.store.transaction() as db:
-            db.execute(
-                "DELETE FROM canonical_criteria WHERE relationship_id = ?", (relationship_id,)
-            )
-            for entry in normalised:
-                db.execute(
-                    "INSERT INTO canonical_criteria (relationship_id, criterion_id, title,"
-                    " required, source_ref, set_digest, recorded_at) VALUES (?,?,?,?,?,?,?)",
-                    (
-                        relationship_id, entry["id"], entry["title"], int(entry["required"]),
-                        source_ref, digest, now,
-                    ),
+            self._replace_criteria(db, relationship_id, normalised, digest, source_ref, now)
+        return self._registration(relationship_id, normalised, digest, source_ref)
+
+    def ensure_registered(self, relationship_id, entries, *, source_ref=None) -> dict:
+        """Insert a managed set once. An exact replay is a no-op; a different set refuses.
+
+        register is the intentional replacement. This path is the one a recoverable admission
+        replays, so matching criteria, digest, source and mode must not delete the rows or
+        rewrite the journal, and a mismatch must not repair the stored set.
+        """
+        normalised = normalise_criteria(entries)
+        digest = set_digest(normalised)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            existing = self._locked_set(db, relationship_id)
+            if existing is None:
+                self._replace_criteria(
+                    db, relationship_id, normalised, digest, source_ref, now
                 )
-            self._write_mode(db, relationship_id, MANAGED, now)
-            self.store.journal(
-                "criteria_registered", relationship_id,
-                {"setDigest": digest, "count": len(normalised)}, at=now,
-            )
-        return {
-            "relationshipId": relationship_id, "setDigest": digest, "sourceRef": source_ref,
-            "criteria": normalised, "mode": MANAGED,
-        }
+            elif not self._same_registration(existing, normalised, digest, source_ref):
+                raise AckRefused(
+                    RefusalReason.CRITERIA_SET_CHANGED,
+                    f"criteria for {relationship_id!r} are already registered as "
+                    f"{existing['setDigest']}; ensure_registered does not replace them",
+                )
+        return self._registration(relationship_id, normalised, digest, source_ref)
 
     def get(self, relationship_id):
         rows = self.store.all(
@@ -234,6 +255,101 @@ class CriteriaService:
         with self.store.transaction() as db:
             self._write_mode(db, relationship_id, mode, now)
         return {"relationshipId": relationship_id, "mode": mode}
+
+    def _registration(self, relationship_id, criteria, digest, source_ref) -> dict:
+        return {
+            "relationshipId": relationship_id, "setDigest": digest, "sourceRef": source_ref,
+            "criteria": criteria, "mode": MANAGED,
+        }
+
+    def _same_registration(self, existing, criteria, digest, source_ref) -> bool:
+        # canonical_criteria is read back ordered by id. Equality is the set, not the order
+        # the caller happened to list it in; the returned list keeps that caller order.
+        stored_order = sorted(criteria, key=lambda entry: entry["id"])
+        return (
+            existing["criteria"] == stored_order
+            and existing["setDigest"] == digest
+            and existing["sourceRef"] == source_ref
+            and existing["mode"] == MANAGED
+        )
+
+    def _locked_set(self, db, relationship_id):
+        """The stored set, read inside the caller's write transaction.
+
+        BEGIN IMMEDIATE already reserves the write lock, so a second connection cannot
+        insert between this read and the decision to insert or refuse.
+        """
+        rows = db.execute(
+            "SELECT criterion_id, title, required, source_ref, set_digest, recorded_at"
+            " FROM canonical_criteria WHERE relationship_id = ? ORDER BY criterion_id",
+            (relationship_id,),
+        ).fetchall()
+        mode = db.execute(
+            "SELECT mode FROM verification_mode WHERE relationship_id = ?",
+            (relationship_id,),
+        ).fetchone()
+        if not rows and mode is None:
+            return None
+        criteria = [self._stored_criterion(row) for row in rows]
+        sources = {row["source_ref"] for row in rows}
+        digests = {row["set_digest"] for row in rows}
+        if (
+            not criteria
+            or mode is None
+            or mode["mode"] != MANAGED
+            or len(sources) != 1
+            or len(digests) != 1
+            or set_digest(criteria) not in digests
+        ):
+            # A set that does not agree with itself is not repaired into the caller's set.
+            raise AckRefused(
+                RefusalReason.CRITERIA_SET_CHANGED,
+                f"criteria for {relationship_id!r} are stored in a form ensure_registered "
+                "will not replace or repair",
+            )
+        return {
+            "criteria": criteria,
+            "setDigest": rows[0]["set_digest"],
+            "sourceRef": rows[0]["source_ref"],
+            "mode": mode["mode"],
+            "recordedAt": rows[0]["recorded_at"],
+        }
+
+    @staticmethod
+    def _stored_criterion(row) -> dict:
+        # SQLite will store an integer other than the 0/1 this writer inserts. bool(2) is
+        # True in Python, so accepting it would let a hand-edited row compare equal to a
+        # required criterion and replay as if it were the canonical set.
+        if row["required"] not in (0, 1):
+            raise AckRefused(
+                RefusalReason.CRITERIA_SET_CHANGED,
+                f"stored required flag for {row['criterion_id']!r} is not 0 or 1",
+            )
+        return {
+            "id": row["criterion_id"],
+            "title": row["title"],
+            "required": bool(row["required"]),
+        }
+
+    def _replace_criteria(self, db, relationship_id, criteria, digest, source_ref, now) -> None:
+        """Write one complete managed set. The caller already holds the store transaction."""
+        db.execute(
+            "DELETE FROM canonical_criteria WHERE relationship_id = ?", (relationship_id,)
+        )
+        for entry in criteria:
+            db.execute(
+                "INSERT INTO canonical_criteria (relationship_id, criterion_id, title,"
+                " required, source_ref, set_digest, recorded_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    relationship_id, entry["id"], entry["title"], int(entry["required"]),
+                    source_ref, digest, now,
+                ),
+            )
+        self._write_mode(db, relationship_id, MANAGED, now)
+        self.store.journal(
+            "criteria_registered", relationship_id,
+            {"setDigest": digest, "count": len(criteria)}, at=now,
+        )
 
     def _write_mode(self, db, relationship_id, mode, now) -> None:
         db.execute(

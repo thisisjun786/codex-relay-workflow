@@ -6,6 +6,7 @@ it while an unfiltered listing returns the exact same id.
 """
 
 import unittest
+import json
 
 from codex_session_relay.bridge_adapter import BridgeHostAdapter
 from codex_session_relay.hostadapter import HostUnavailable
@@ -455,7 +456,9 @@ class GuardedSettingsSeam(unittest.TestCase):
         from codex_session_relay.transport import WITHHELD_PRE_SEND, classify_operation_receipt
 
         self.assertNotIn("turn/start", self._methods(calls), "a turn was started anyway")
-        self.assertEqual(receipt["status"], "failed")
+        self.assertIn(receipt["status"], ("failed", "not_attempted", "outcome_unknown"))
+        if receipt["status"] != "failed":
+            raise AssertionError(json.dumps({k: receipt.get(k) for k in ("status", "error", "threadId", "settings", "rpcError")}, default=str)[:2000])
         self.assertEqual(receipt["rpcError"]["code"], code)
         self.assertIsNone(receipt.get("turnId"))
         facts = classify_operation_receipt(receipt)
@@ -1375,3 +1378,262 @@ class ShutdownCancellationSettlesItsDelivery(DeliveryTestCase):
         self.assertNotEqual(row["state"], "sending", "the delivery is still mid-send")
         self.assertIsNone(row["lease_owner"], "the lease outlived the process that took it")
         self.assertIsNone(row["lease_until"])
+
+
+class ThreadCreationAndPreStartGuard(unittest.TestCase):
+    """Creation and the optional pre-start guard, on the real worker and a real ledger.
+
+    The RPC is fake. The ledger is the pinned bridge's sqlite ledger, built on the worker, so
+    a retained thread id is a row rather than a stand-in. No socket is opened.
+    """
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        import shutil
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp(
+            prefix="admission-", dir="/scratch/crw/two-project-completion/admission/transport",
+        )
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.cwd = tempfile.mkdtemp(prefix="cwd-", dir=self.tmp)
+
+    def _adapter(self, server):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        self.ledger_path = Path(self.tmp) / "operations.sqlite3"
+
+        def ledger_factory():
+            return Path(self.tmp) / "socket", Ledger(self.ledger_path)
+
+        adapter = BridgeHostAdapter(
+            str(Path(self.tmp) / "socket"),
+            app_server_factory=lambda canonical: server,
+            ledger_factory=ledger_factory,
+            timeout=10,
+        )
+        self.addCleanup(adapter.close)
+        return adapter
+
+    def test_a_read_only_adapter_refuses_creation(self):
+        adapter = BridgeHostAdapter(call=lambda method, params: {})
+        with self.assertRaises(HostUnavailable) as raised:
+            adapter.create_thread(request_id="create-readonly", cwd=self.cwd)
+        self.assertIn("read-only", str(raised.exception))
+
+    def test_creation_keeps_one_stable_id_and_a_partial_failure_is_not_duplicated(self):
+        calls = []
+
+        class Creating:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                from codex_thread_bridge.effects import mark_sent
+
+                mark_sent(method)
+                calls.append(method)
+                if method == "thread/start":
+                    return {
+                        "thread": {
+                            "id": "thread-created-1",
+                        },
+                        "cwd": self_cwd,
+                        "approvalPolicy": "never",
+                        "model": "gpt-5.4",
+                        "reasoningEffort": "medium",
+                        "runtimeWorkspaceRoots": [self_cwd],
+                        "sandbox": {"type": "readOnly", "networkAccess": False},
+                    }
+                if method == "thread/name/set":
+                    from codex_thread_bridge.rpc import RpcError
+
+                    raise RpcError("thread/name/set", {
+                        "code": "naming_failed",
+                        "message": "naming failed after the shell existed",
+                    })
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        self_cwd = self.cwd
+        adapter = self._adapter(Creating())
+        receipt = adapter.create_thread(
+            "create-stable-1", cwd=self.cwd, title="bootstrap", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only",
+        )
+        self.assertEqual(receipt.get("threadId"), "thread-created-1", json.dumps(receipt, default=str)[:2500])
+        # Bridge._mutate records an RpcError-shaped failure as failed and keeps the shell.
+        # A bare exception after thread/start is outcome_unknown. Either way the id stays,
+        # and the same request does not create a second thread. This case is the named one:
+        # naming raised through the fake RPC as a normal exception, which the bridge saves
+        # as failed once the id is already on the receipt.
+        self.assertEqual(receipt["status"], "failed")
+        self.assertIn("thread-created-1", json.dumps(receipt))
+        retained = adapter.get_operation("create-stable-1")
+        self.assertEqual(retained["threadId"], "thread-created-1")
+        again = adapter.create_thread(
+            "create-stable-1", cwd=self.cwd, title="bootstrap", model="gpt-5.4",
+            reasoning_effort="medium", sandbox="read-only",
+        )
+        self.assertTrue(again.get("replayed"))
+        self.assertEqual(again["threadId"], "thread-created-1")
+        self.assertEqual(calls, ["thread/start", "thread/name/set"])
+
+    def test_a_pause_during_resume_starts_no_turn(self):
+        import asyncio
+        import threading
+
+        calls = []
+        resumed = threading.Event()
+        release = threading.Event()
+        goal = {"status": "active"}
+
+        class Resuming:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    resumed.set()
+                    await asyncio.to_thread(release.wait)
+                    return authorized_resume_response()
+                if method == "thread/goal/get":
+                    return {"goal": {"status": goal["status"]}}
+                if method == "turn/start":
+                    return {"turn": {"id": "must-not-start"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        adapter = self._adapter(Resuming())
+
+        async def before_start(rpc):
+            # The same worker client the send already holds. A second transport, or a
+            # synchronous call back into the adapter, would wait on this worker forever.
+            fresh = await rpc.call("thread/goal/get", {"threadId": "thread-1"})
+            if (fresh.get("goal") or {}).get("status") == "paused":
+                return {"code": "recipient_paused", "message": "paused during resume"}
+            return None
+
+        outcome = {}
+
+        def run():
+            outcome["receipt"] = adapter.send_message(
+                "send-paused-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+            )
+
+        caller = threading.Thread(target=run, daemon=True)
+        caller.start()
+        self.assertTrue(resumed.wait(5), "resume never started")
+        goal["status"] = "paused"
+        release.set()
+        caller.join(timeout=10)
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(outcome["receipt"]["status"], "not_attempted")
+        self.assertEqual(outcome["receipt"]["rpcError"]["code"], "recipient_paused")
+        self.assertNotIn("turn/start", calls)
+        self.assertIn("thread/goal/get", calls)
+        self.assertEqual(outcome["receipt"]["status"], "not_attempted")
+        self.assertIs(outcome["receipt"]["retrySafe"], True)
+        self.assertEqual(outcome["receipt"]["attemptedEffects"], [])
+        self.assertIn("resumed", outcome["receipt"])
+
+    def test_a_retained_acceptance_does_not_run_the_guard_or_send_again(self):
+        calls = []
+        guards = []
+
+        class Sending:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-kept-1"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            guards.append("ran")
+            self.assertTrue(hasattr(rpc, "call"))
+            return None
+
+        adapter = self._adapter(Sending())
+        first = adapter.send_message(
+            "send-kept-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        again = adapter.send_message(
+            "send-kept-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(first["status"], "accepted")
+        self.assertEqual(first["turnId"], "turn-kept-1")
+        self.assertTrue(again.get("replayed"))
+        self.assertEqual(again["turnId"], "turn-kept-1")
+        self.assertEqual(guards, ["ran"])
+        self.assertEqual(calls.count("turn/start"), 1)
+
+    def test_a_guard_refusal_retries_once_under_the_same_request(self):
+        calls = []
+        decision = {"refuse": True}
+
+        class Sending:
+            socket_path = None
+            info = {}
+
+            async def call(self, method, params):
+                calls.append(method)
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response()
+                if method == "turn/start":
+                    return {"turn": {"id": "turn-after-recovery"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        async def before_start(rpc):
+            if decision["refuse"]:
+                return {"code": "recipient_paused", "message": "paused before the business turn"}
+            return None
+
+        adapter = self._adapter(Sending())
+        refused = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(refused["status"], "not_attempted")
+        self.assertTrue(refused["retrySafe"])
+        self.assertEqual(refused["attemptedEffects"], [])
+        self.assertNotIn("turn/start", calls)
+        decision["refuse"] = False
+        accepted = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertEqual(accepted["status"], "accepted")
+        self.assertEqual(accepted["turnId"], "turn-after-recovery")
+        self.assertFalse(accepted.get("replayed"))
+        self.assertEqual(calls.count("turn/start"), 1)
+        replay = adapter.send_message(
+            "send-recover-1", "thread-1", "hello", AUTHORIZED, before_start=before_start,
+        )
+        self.assertTrue(replay.get("replayed"))
+        self.assertEqual(replay["turnId"], "turn-after-recovery")
+        self.assertEqual(calls.count("turn/start"), 1)

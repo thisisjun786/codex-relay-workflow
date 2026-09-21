@@ -43,6 +43,7 @@ REAL_TIME_MODULES = (
     "test_dispositions.py",
     "test_failure_recovery.py",
     "test_management_cli.py",
+    "test_managed_start.py",
     "test_operational_scale.py",
     "test_service.py",
     "test_stop_adapter.py",
@@ -222,6 +223,9 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
 #     production SQL into this module and fail it on an unrelated query edit.
 
 SUMMARIES = {
+    # Replay equality folds entries, digest, source and mode; public tests independently
+    # vary each input and assert that a stored set is preserved on refusal.
+    ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
     ("daemon.py", "TickReport", "quiet", "field"):
         ((False,), (("declaration default: True", 1),), ("notes", "skipped")),
     ("delivery.py", None, "_rate_limited", "function"):

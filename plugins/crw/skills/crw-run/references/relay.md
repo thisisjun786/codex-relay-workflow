@@ -92,7 +92,17 @@ see the two disagree instead of the later one quietly winning.
 
 ### The managed start sequence
 
-Run in this order. The determination comes FIRST, before anything exists, because that is the
+For new assignments, prefer the relay's `managed-start` entry when that installed version exposes
+it. It owns pre-creation reservation, standby creation, registration and business dispatch as one
+recoverable operation; see the [request and recovery contract](../../../../../packages/codex-session-relay/README.md#recoverable-managed-start).
+Use the same request id, exact request contents and state/socket/marker paths when recovering.
+A refused or incomplete result is not permission to create a replacement. `admitted` means
+dispatch only: the child's claim, actual hook firing, receipt and parent judgment still need
+their own evidence. Verify the installed command surface before selecting it; source presence
+does not make an older installed relay support it.
+
+The lower-level sequence below remains available for supported explicit coordination and
+documents the existing owners. Run in this order. The determination comes FIRST, because that is the
 step whose absence left the question unasked; running the lookup first against the wrong path is
 what creates an empty store and reports a real assignment as absent.
 
@@ -117,10 +127,11 @@ keep them in step by hand when either changes.
 ## Managed execution boundaries
 
 A healthy delivery worker is one prerequisite for a managed assignment, not an assignment.
-The [managed start sequence](#the-managed-start-sequence) separately declares an intent,
-creates a task, registers its relationship and canonical criteria, and reads the result back.
-These calls are still sequenced by the caller. Passing `doctor --require-worker-policy`
-does not run them or prevent a caller from starting a task outside that sequence.
+`managed-start` sequences the [managed start](#the-managed-start-sequence) owners with a durable
+issue reservation and retained bridge receipts. The lower-level calls remain separate;
+`doctor --require-worker-policy` alone neither runs admission nor prevents raw task creation.
+The managed entry rechecks authorization after resume, but an external UI change can race its
+last read and turn start. Do not describe that observation as an atomic host permission guard.
 
 The durable owners are separate:
 

@@ -46,7 +46,7 @@ EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 # caller should learn this from one command instead of from a failure halfway through.
 HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
-    "service restart", "verify-acks",
+    "service restart", "verify-acks", "managed-start",
 )
 # Every command that touches the managed marker and nothing else. Listed once so the store-selection
 # refusal and the doctor reachability report cannot drift apart.
@@ -71,7 +71,7 @@ OFFLINE_COMMANDS = (
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
     # Read-only, offline, and constructs no Store at all.
-    "dispositions-show",
+    "dispositions-show", "managed-show", "managed-release",
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
@@ -295,6 +295,58 @@ class PayloadExit(Exception):
 
 
 # --------------------------------------------------------------------- commands
+
+
+def cmd_managed_start(services, args) -> dict:
+    from .managed import ManagedStart, parse_request, MAX_REQUEST_BYTES
+
+    if not services.socket_path or services.selection.source != "flag":
+        raise SystemExit2("managed-start requires explicit --state and --socket", EXIT_USAGE)
+    try:
+        if args.request.startswith("@"):
+            with open(args.request[1:], "rb") as handle:
+                raw = handle.read(MAX_REQUEST_BYTES + 1)
+        else:
+            raw = args.request.encode("utf-8")
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise ValueError("managed request exceeds the byte limit")
+        request = parse_request(json.loads(raw))
+    except (ValueError, TypeError, OSError) as error:
+        raise SystemExit2(str(error), EXIT_USAGE) from error
+    # Read worker evidence without creating a missing store. A missing service must
+    # fail before reservation or task creation, and diagnostics stay available.
+    service = _service_for(services)
+    requirements = [{"role": role, "model": request[role]["settings"]["model"],
+                     "reasoningEffort": request[role]["settings"]["reasoningEffort"]}
+                    for role in ("parent", "child")]
+    readiness = rolepolicy.worker_readiness(service.read_worker_policy(), requirements)
+    if not readiness["ready"]:
+        raise PayloadExit({"schema": "managed-start/1", "state": "refused", "stage": "preflight",
+                           "requestId": request["requestId"], "reason": readiness["reason"]}, EXIT_REFUSED)
+    result = ManagedStart(services.store, services.clock, services.adapter,
+                          service.read_worker_policy, socket=services.socket_path,
+                          marker_root=args.marker_root, state_selector=args.state).run(request)
+    if result["state"] != "admitted":
+        raise PayloadExit(result, EXIT_REFUSED)
+    return result
+
+
+def cmd_managed_show(services, args) -> dict:
+    from .store import read_only_rows
+
+    observed = read_only_rows(services.selection,
+        "SELECT r.*, (SELECT detail FROM journal WHERE kind='managed_start_observed'"
+        " AND subject=r.request_id ORDER BY rowid DESC LIMIT 1) AS observation"
+        " FROM managed_start_requests r WHERE request_id=?", (args.request_id,))
+    row = observed["rows"][0] if observed["rows"] else None
+    last = row.pop("observation") if row else None
+    return {"request": row, "lastObservation": json.loads(last) if last else None,
+            "readable": observed["readable"], "detail": observed["detail"]}
+
+
+def cmd_managed_release(services, args) -> dict:
+    return services.registry.release_unstarted(args.request_id, args.fingerprint,
+                                               args.revision, args.reason)
 
 
 def cmd_register(services, args) -> dict:
@@ -2402,6 +2454,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--socket")
     parser.add_argument("--json", action="store_true", default=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    managed_start = subparsers.add_parser("managed-start")
+    managed_start.add_argument("--request", required=True, help="complete request JSON or @file")
+    managed_start.add_argument("--marker-root", required=True)
+    managed_start.set_defaults(handler=cmd_managed_start)
+    managed_show = subparsers.add_parser("managed-show")
+    managed_show.add_argument("--request-id", required=True)
+    managed_show.set_defaults(handler=cmd_managed_show)
+    managed_release = subparsers.add_parser("managed-release")
+    managed_release.add_argument("--request-id", required=True)
+    managed_release.add_argument("--fingerprint", required=True)
+    managed_release.add_argument("--revision", required=True, type=int)
+    managed_release.add_argument("--reason", required=True)
+    managed_release.set_defaults(handler=cmd_managed_release)
 
     register = subparsers.add_parser("register")
     register.add_argument("--parent-task", required=True)

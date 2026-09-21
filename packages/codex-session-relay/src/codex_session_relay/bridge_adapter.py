@@ -199,7 +199,7 @@ class BridgeHostAdapter:
 
     # ----------------------------------------------------------------- writes
 
-    def send_message(self, request_id: str, thread_id: str, message: str, settings=None) -> dict:
+    def send_message(self, request_id: str, thread_id: str, message: str, settings=None, *, before_start=None) -> dict:
         """Send under the authorized settings, or do not send.
 
         settings is required. The pinned bridge's own send resumes with {threadId, excludeTurns}
@@ -207,6 +207,14 @@ class BridgeHostAdapter:
         on this host that resume returned dangerFullAccess for a task created workspaceWrite with
         networkAccess false. Falling back to that path when settings are absent would reintroduce
         exactly the behaviour this guards, so absence is refused rather than defaulted.
+
+        before_start is optional and keyword-only. None leaves the existing sequence. When given,
+        it is an async callable of one argument, the worker's existing rpc, awaited after the
+        resumed settings have been verified and immediately before turn/start. None continues;
+        a dict with code and message refuses the turn through the same local refusal the
+        settings check already uses. The callable runs on this worker, so a host read uses the
+        rpc it was given. Calling this adapter again from inside it would wait on the same
+        worker and never return.
         """
         if self._send is None:
             raise HostUnavailable("this adapter was built read-only, with no transport to send on")
@@ -215,7 +223,22 @@ class BridgeHostAdapter:
                 "a send requires the authorized task settings; refusing to resume with host"
                 " defaults"
             )
-        return self._send(request_id, thread_id, message, settings)
+        return self._send(request_id, thread_id, message, settings, before_start=before_start)
+
+    def create_thread(self, request_id: str, **settings) -> dict:
+        """Create one thread on the existing bridge, and retain its whole receipt.
+
+        The pinned Bridge.create_thread already writes the real thread id before the title or
+        the first turn, and it keeps a failed known shell. This method only hands that call to
+        the worker that owns the ledger. It does not open a second RPC client or a second
+        ledger, and it does not invent a bootstrap of its own: the caller supplies the settings
+        Bridge.create_thread already accepts.
+        """
+        if self._send is None or self._transport is None:
+            raise HostUnavailable(
+                "this adapter was built read-only, with no transport to create a thread on"
+            )
+        return self._transport.create_thread(request_id, **settings)
 
     def close(self) -> None:
         """Shut the transport down: connection, ledger, loop and thread, in that order."""
@@ -606,7 +629,7 @@ class _Transport:
         # No recipient key: reads must stay available while a send to some thread is stalled.
         return self._submit(lambda: self._state["rpc"].call(method, params))
 
-    def send(self, request_id, thread_id, message, settings):
+    def send(self, request_id, thread_id, message, settings, *, before_start=None):
         def withheld():
             return {
                 "requestId": request_id,
@@ -632,7 +655,10 @@ class _Transport:
             retained = self._state["ledger"].lookup(
                 request_id, *_send_identity(thread_id, message)
             )
-            if retained is None:
+            if retained is None or _retryable(retained):
+                # None has never been seen. not_attempted began no business turn, so the same
+                # id continues into _guarded_send, where Ledger.begin re-arms it. Every other
+                # retained status is an answer and must not be replaced by a busy retry.
                 return None
             return {**retained, "replayed": True}
 
@@ -640,10 +666,17 @@ class _Transport:
             lambda: _guarded_send(
                 self._state["rpc"], self._state["ledger"],
                 request_id, thread_id, message, settings,
+                before_start=before_start,
             ),
             recipient=thread_id,
             withheld=withheld,
             replay=replay,
+        )
+
+    def create_thread(self, request_id, **settings):
+        """Delegate one creation to the pinned Bridge on this worker's ledger."""
+        return self._submit(
+            lambda: self._state["bridge"].create_thread(request_id, **settings)
         )
 
     def ledger_get(self, request_id):
@@ -728,7 +761,19 @@ def _send_identity(thread_id, message):
     return "send_message_to_thread", {"threadId": thread_id, "message": message}
 
 
-async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
+def _retryable(receipt):
+    """True only for the one ledger status that began no business turn.
+
+    Ledger.RETRYABLE_STATUSES is exactly {"not_attempted"}. A managed guard refusal is recorded
+    as that status so the same request id can be re-armed after an explicit recovery. Every other
+    retained status, including outcome_unknown from an interrupted RPC, stays terminal.
+    """
+    from codex_thread_bridge.ledger import RETRYABLE_STATUSES
+
+    return isinstance(receipt, dict) and receipt.get("status") in RETRYABLE_STATUSES
+
+
+async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *, before_start=None):
     """The bridge's send sequence, with the authorized settings actually carried.
 
     Mirrors codex_thread_bridge.bridge.Bridge._mutate rather than calling it, so the relay keeps
@@ -745,6 +790,14 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
 
     The receipt stays byte-compatible with the bridge's: top-level status and turnId, resumed,
     rpcError, and a method-prefixed error.
+
+    before_start, when supplied, is awaited as before_start(rpc) after the resume has been
+    verified and immediately before turn/start. rpc is the worker's existing client, so a
+    fresh host read does not open a second transport. The callback returns None to continue,
+    or a refusal dict with code and message. A caller that passes None, including every
+    existing call, keeps the previous sequence. The callback is not consulted on a retained
+    replay: the ledger already answered, and running the guard again would re-decide a send
+    that must not be repeated.
     """
     import asyncio
 
@@ -752,7 +805,7 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
 
     # Raises when the id was used with different arguments. That rejection is the point.
     retained = ledger.lookup(request_id, method, params)
-    if retained is not None:
+    if retained is not None and not _retryable(retained):
         return {**retained, "replayed": True}
     fresh, receipt = ledger.begin(request_id, method, params)
     if not fresh:
@@ -805,6 +858,25 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
                            f" {first.get('returned')!r}; message withheld",
             })
 
+        if before_start is not None:
+            # After the verified resume and before any turn. A pause that appears during the
+            # resume is visible here; one that appears after this await and before the host
+            # accepts turn/start is not, because the host has no conditional start.
+            decision = await before_start(rpc)
+            if decision is not None:
+                if not isinstance(decision, dict) or "code" not in decision or "message" not in decision:
+                    refusal = _Refusal("turn/start", {
+                        "code": "managed_guard_invalid",
+                        "message": "the pre-start guard returned neither None nor a refusal",
+                    })
+                else:
+                    refusal = _Refusal("turn/start", {
+                        "code": decision["code"],
+                        "message": decision["message"],
+                    })
+                refusal.retryable = True
+                raise refusal
+
         # No overrides. turn/start would accept the full policy, the effort and the environments,
         # but its response defines only turn, so anything bound here could never be read back and
         # an accepted receipt would be calling an unverifiable binding a success. The resume above
@@ -818,11 +890,23 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
         receipt["turnId"] = turn["turn"]["id"]
         receipt["status"] = "accepted"
     except _Refusal as error:
-        receipt.update(status="failed", error=str(error), rpcError=error.error)
+        if getattr(error, "retryable", False):
+            # No business turn was started. Resume evidence stays on the receipt; the status is
+            # the ledger's only re-armable one, so the same request can proceed after recovery.
+            receipt.update(
+                status="not_attempted",
+                retrySafe=True,
+                attemptedEffects=[],
+                error=str(error),
+                rpcError=error.error,
+            )
+        else:
+            receipt.update(status="failed", error=str(error), rpcError=error.error)
     except RpcError as error:
         receipt.update(status="failed", error=str(error), rpcError=getattr(error, "error", None))
     except asyncio.CancelledError:
         # Cancelled after a start may already have delivered. Unknown, never non-delivery.
+        # Deliberately not retrySafe: an interrupted RPC is not a guard refusal.
         ledger.save({**receipt, "status": "outcome_unknown"})
         raise
     except Exception as error:  # noqa: BLE001 - recorded, then classified by the transport
