@@ -682,6 +682,13 @@ says, so read the level first and the fields second:
 - The observation each setting was read at, so the recipient compares the values against its own
   host instead of adopting them, and settles an unsupported one under
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution).
+- Where the block travels to a parent rather than to an issue child, the recorded `run_mode` and
+  `observation_path` with the readiness facts behind an `event-driven-idle` one, and the event
+  state still outstanding: which relationships are owed a result, the last generation and revision
+  applied, and any delivery observed holding terminally. A goal-free parent that ended its turn
+  because only waiting remained cannot tell, on restart, whether that was a decision or an
+  interruption, and these are the fields that answer it. Without them the parent either resumes
+  work that already has an owner or waits for an event that was already handled.
 
 What the block carries about those records is their location and identity, never their
 contents. The plan, the ledger, the phase and the goal belong to the task and to its own

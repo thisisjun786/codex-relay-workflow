@@ -406,6 +406,20 @@ exits 0 with an empty list, which is a different answer.
 For the per-delivery phase of a delivery that exists, and for pending intents across the whole
 store, `status` remains the reader; this command does not restate its vocabulary.
 
+These readers are also what a parent runs on entry rather than only when something looks wrong.
+[OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path) makes that a contract: a parent
+woken from idle re-reads its own outstanding work instead of acting on the payload that woke it,
+which is what carries the events that arrived while it was mid-turn. There is no recipient-scoped
+reader that answers it in one call, so the parent reaches it by relationship — the project's
+outstanding assignments, then each relationship's dispositions and status.
+
+One state these readers surface deserves naming, because it looks like waiting and is not. A
+delivery that exhausts its attempt budget is held, and a held delivery is excluded from
+eligibility: it is not retried again, and no supported command clears the hold. Its recovery is a
+fresh execution generation, which creates a new delivery rather than reviving the held one. Read
+`holdReason` beside the delivery state before concluding that a quiet assignment is merely slow,
+and where a parent was never woken at all, nothing surfaces this automatically.
+
 ## The four readers a candidate pass also uses
 
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>

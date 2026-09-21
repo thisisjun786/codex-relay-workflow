@@ -132,7 +132,7 @@ Load the existing owner for the requested operation:
 | Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore the project parent's native goal, which the role policy makes the default | [crw-loop](../../crw-loop/SKILL.md) |
+| Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-loop](../../crw-loop/SKILL.md) |
 | Execute an initiative's approved projects through their existing parents | [crw-run](../../crw-run/SKILL.md), entering at [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than at the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
@@ -676,9 +676,10 @@ Only one owner controls an operation. `crw-define` defines initiative intent, `c
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
 is a scheduling unit; only an explicit narrower request limits delivery to that batch.
-[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
-and automatic host continuation to the same Run execution and scope. Run alone does
-not establish the parent goal or promise future wake-ups; the goal is the role default and
+[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of a native parent goal
+and automatic host continuation to the same Run execution and scope. Run holds no goal,
+which is the default rather than a gap: what returns a waiting parent is the delivery path,
+on the readiness its start policy recorded. A goal is what an explicit Loop opens, and
 `crw-loop` establishes it. Run inside Loop returns to the
 existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
