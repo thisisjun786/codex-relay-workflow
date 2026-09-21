@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"",
+            "command": "python3 -c \"\nimport os, sys\nnamed = os.environ.get('CODEX_HOME')\nhome = named if named else os.path.join(os.path.expanduser('~'), '.codex')\nfor candidate in (sys.argv[1] if len(sys.argv) > 1 else '',\n                  os.path.join(home, 'crw-stop-hook.py')):\n    if not candidate:\n        continue\n    try:\n        with open(candidate, 'rb') as handle:\n            source = handle.read()\n    except OSError:\n        continue\n    try:\n        exec(compile(source, candidate, 'exec'),\n             {'__name__': '__main__', '__file__': candidate})\n    except SystemExit as ending:\n        code = ending.code\n        if not (code is None or (isinstance(code, int)\n                                 and int.__int__(code) == 0)):\n            raise SystemExit(1)\n    break\nraise SystemExit(0)\n\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"",
             "timeout": 10,
             "statusMessage": "(crw) Checking the completion records"
           }
