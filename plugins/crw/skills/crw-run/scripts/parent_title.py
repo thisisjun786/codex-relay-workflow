@@ -17,6 +17,14 @@ is deliberate: the group is not exposed by the project read, so a helper countin
 prefix confidently from another group whenever a project with no family carried exactly one label.
 Membership is evidence the caller has to bring; a count is not membership.
 
+One rule governs every boundary below, because a label is unrestricted text and three separate
+defects came from forgetting it: a label may contain "[" or "]", so where one label ends cannot be
+read out of a title. A boundary is therefore only ever acted on when it was CONSTRUCTED from the
+verified family, or NAMED verbatim by the caller. The bracket reader exists to notice that a
+leading bracket is there and to say what it looked like in a refusal; nothing decides a strip or a
+prefix from what it parsed. Keep it that way when extending this: a new branch that trusts a
+parsed boundary will be wrong for some label somebody is entitled to use.
+
 What this does not do. It writes no title and reads no host, so a decision here is a proposal and
 never evidence that a task is named anything. It settles no binding either: every answer below
 assumes the caller has already matched this task to this project by their stable IDs, and the one
