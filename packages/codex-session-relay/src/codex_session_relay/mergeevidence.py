@@ -224,6 +224,11 @@ def checks_problems(head_sha, required, checks, *, require_declared=False, provi
     block either. Omitted, nothing changes: a caller that did not read the integration out of
     the rule has not learnt anything about it.
 
+    Each context maps to the LIST of integrations required for it, because two rulesets can bind
+    one context to two different apps and both of them are then required. Mapping a context to a
+    single provider let the second rule overwrite the first, and one app's success satisfied a
+    gate the other app never ran.
+
     Assumes shape_problems already passed. Run it first.
     """
     if require_declared and required is UNDECLARED:
@@ -237,12 +242,22 @@ def checks_problems(head_sha, required, checks, *, require_declared=False, provi
     required = list(required or [])
     # Defensive rather than trusting: a caller handing this a list or a string would otherwise
     # raise out of a predicate whose whole contract is to return problems instead of exceptions.
-    providers = dict(providers) if isinstance(providers, dict) else {}
+    declared = {}
+    if isinstance(providers, dict):
+        for context, wanted in providers.items():
+            if isinstance(wanted, (list, tuple, set, frozenset)):
+                names = sorted({str(one) for one in wanted if str(one).strip()})
+            elif wanted is None or not str(wanted).strip():
+                names = []
+            else:
+                names = [str(wanted)]
+            if names:
+                declared[str(context)] = names
 
     def answers_for(entry, name):
         """Whether this entry is the check the branch named, provider and all."""
-        wanted = providers.get(name)
-        return wanted is None or str(entry.get("provider") or "") == str(wanted)
+        wanted = declared.get(name)
+        return wanted is None or str(entry.get("provider") or "") in wanted
 
     def stale(detail):
         return [Problem(CHECKS_STALE, detail)]
@@ -289,12 +304,28 @@ def checks_problems(head_sha, required, checks, *, require_declared=False, provi
         and entry.get("conclusion") == "success"
         and answers_for(entry, str(entry.get("name", "")))
     }
+    # A context bound to two integrations needs a success from EACH of them, not one success
+    # from whichever happened to run.
+    answered = {
+        (str(entry.get("name", "")), str(entry.get("provider") or "")) for entry in checks
+        if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
+        and entry.get("conclusion") == "success"
+    }
+    unanswered = [
+        (name, one) for name in required for one in declared.get(name, [])
+        if (name, one) not in answered
+    ]
+    if unanswered:
+        return stale_at(
+            "these required checks have no successful run from the integration the branch rule"
+            " names: " + repr([name + " (integration " + one + ")" for name, one in unanswered]),
+            unanswered[0][0])
     missing = [name for name in required if name not in present]
     if missing:
         return stale_at(
             "these checks were declared required and are not present and successful in the"
             " restated set" + (" from the provider the branch rule names" if any(
-                name in providers for name in missing) else "") + ": " + repr(missing),
+                name in declared for name in missing) else "") + ": " + repr(missing),
             missing[0])
     if not required and not present:
         # With nothing declared required, the set still has to contain something green on

@@ -691,7 +691,29 @@ class ARequiredContextCanNameItsProvider(unittest.TestCase):
         snapshot = collect(fake)
         self.assertEqual(snapshot["verdict"], forge.NOT_READY)
         self.assertIn(mergeevidence.CHECKS_STALE, codes(snapshot))
-        self.assertEqual(snapshot["handoff"]["requiredProviders"], {"dev-gate": "42"})
+        self.assertEqual(snapshot["handoff"]["requiredProviders"], {"dev-gate": ["42"]})
+
+    def test_two_rules_binding_one_context_both_have_to_answer(self):
+        # Assigned rather than accumulated, the second rule erased the first and one app's
+        # success satisfied a gate the other app never ran.
+        rules = [
+            {"type": "required_status_checks",
+             "parameters": {"required_status_checks": [
+                 {"context": "dev-gate", "integration_id": 42}]}},
+            {"type": "required_status_checks",
+             "parameters": {"required_status_checks": [
+                 {"context": "dev-gate", "integration_id": 77}]}},
+        ]
+        published = [{"id": 9, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                      "conclusion": "success", "app": {"id": 42, "slug": "one"}}]
+        half = Fake(threads=threads(1), rules=rules, runs=[], jobs={}, checks=published)
+        snapshot = collect(half)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertEqual(snapshot["handoff"]["requiredProviders"], {"dev-gate": ["42", "77"]})
+        both = Fake(threads=threads(1), rules=rules, runs=[], jobs={}, checks=published + [
+            {"id": 10, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+             "conclusion": "success", "app": {"id": 77, "slug": "two"}}])
+        self.assertEqual(collect(both)["verdict"], forge.READY)
 
     def test_the_declared_provider_answers_for_it(self):
         fake = Fake(

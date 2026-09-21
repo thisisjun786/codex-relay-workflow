@@ -565,6 +565,13 @@ def _discussion(forge, owner, name, number, problems, connections):
     wrong, or a summary comment naming a regression, blocks a merge exactly as much and has no
     thread to be unresolved. Merge readiness asks for all of them, so all of them are enumerated
     under the same contract - and, like the threads, none of them is triaged here.
+
+    What each one does to the verdict differs, and the difference is deliberate. A submitted
+    review has a formal STATE, and CHANGES_REQUESTED is graded because the forge itself holds the
+    merge for it. A summary comment has no state at all: whether one describes a defect is a
+    reading of what somebody wrote, which is the parent's judgement and not an observation. So
+    comments are collected, carried with their permalinks, and never graded - a READY verdict
+    means the mechanical gates are met, not that nobody raised anything in prose.
     """
     findings = []
     reviews = _read(
@@ -846,20 +853,46 @@ def _gates(forge, owner, name, base_ref, problems):
                         # The rule binds this context to one app. Dropping it accepts a
                         # namesake from any other, which is the same collapse as grading two
                         # different runs by their shared name.
-                        integrations[context] = str(integration)
+                        #
+                        # Accumulated rather than assigned: two rulesets can bind one context to
+                        # two different apps, and both are then required. Overwriting let the
+                        # second rule erase the first, so one app's success satisfied a gate the
+                        # other app never ran.
+                        integrations.setdefault(context, set()).add(str(integration))
         elif rule.get("type") == "pull_request":
             gates["threadResolutionRequired"] = bool(
                 parameters.get("required_review_thread_resolution"))
     gates["readable"] = True
     gates["requiredDeclared"] = sorted(set(contexts))
-    gates["requiredProviders"] = integrations
+    gates["requiredProviders"] = {context: sorted(found)
+                                  for context, found in integrations.items()}
     gates["digest"] = hashlib.sha256(json.dumps({
         "required": gates["requiredDeclared"],
-        "providers": integrations,
+        "providers": gates["requiredProviders"],
         "strictBase": gates["strictBase"],
         "threadResolutionRequired": gates["threadResolutionRequired"],
     }, sort_keys=True).encode("utf-8")).hexdigest()
     return gates
+
+
+def _provider_map(mapping):
+    """One shape for a provider declaration, however the record spelled it.
+
+    A context can be bound to one integration or to several, and a record written by hand may
+    say either. Comparing the spellings rather than the meaning would report a gate as moved
+    because one side wrote a string where the other wrote a list of one.
+    """
+    found = {}
+    for context, wanted in (mapping or {}).items():
+        if isinstance(wanted, (list, tuple, set, frozenset)):
+            names = sorted({str(one) for one in wanted if str(one).strip()})
+        elif wanted is None or not str(wanted).strip():
+            names = []
+        else:
+            names = [str(wanted)]
+        if names:
+            found[str(context)] = names
+    return found
 
 
 def _conflicting_reviewers(required, disabled):
@@ -1078,8 +1111,8 @@ def restate_problems(head_sha, record, snapshot):
     fresh_providers = gates.get("requiredProviders")
     if isinstance(fresh_providers, dict):
         stated_providers = providers if isinstance(providers, dict) else {}
-        expected = {str(key): str(value) for key, value in fresh_providers.items()}
-        recorded = {str(key): str(value) for key, value in stated_providers.items()}
+        expected = _provider_map(fresh_providers)
+        recorded = _provider_map(stated_providers)
         if expected != recorded:
             problems.append(Problem(
                 GATES_MOVED, "the record states " + (repr(recorded) if recorded else "nothing")
