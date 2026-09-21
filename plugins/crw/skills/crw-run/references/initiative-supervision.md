@@ -93,8 +93,8 @@ rather than produced as a side effect of binding.
 A name settles none of this in either direction. A task holding this designation is the supervisor
 whether or not anything calls it one, and going unnamed gives it none of a parent's acceptance or
 merge authority; a task called 감독 세션 in a title or a prompt, with no initiative designated, is
-not one and binds nothing. One task holds one live scope per role, and what a store does with a
-second same-role binding is in
+not one and binds nothing. One task holds one live scope in exactly one role, and what a store does
+with a second binding of either kind is in
 [What a recorded relationship settles](#what-a-recorded-relationship-settles-and-what-it-does-not).
 
 The supervision then belongs in a task of its own, or in the existing supervisor where there is
@@ -108,8 +108,12 @@ nothing: a designation reported unbound is better than a parent quietly repurpos
 
 ### What a recorded relationship settles, and what it does not
 
-Where an installation records these relationships, one live scope per task per role is the rule it
-enforces, so a second same-role binding is refused rather than silently replacing the first. Where
+Where an installation records these relationships, what it enforces is one live scope in one role
+per task, and it separates two different mistakes. A task asking for a second scope of the role it
+already holds is refused, because several ready projects mean several parents rather than one
+parent holding two. A task that already holds one role and asks to be bound in another is refused
+too, which is what stops a parent from also supervising somebody. Either refusal leaves the first
+binding standing rather than silently replacing it. Where
 nothing records them, and the bundled relay records none, the reuse below is a read and not a lock:
 two designations issued at once can both find no supervisor, and the initiative's own record is
 what reconciles that afterwards rather than what prevents it.
