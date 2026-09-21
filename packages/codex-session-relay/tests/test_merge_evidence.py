@@ -325,6 +325,53 @@ def test_the_parent_sees_the_readiness_in_the_message_not_only_in_the_store():
     assert report._handoff_lines({"headSha": HEAD, "baseSha": BASE}) == []
 
 
+def test_a_minor_finding_a_parent_accepted_has_a_true_disposition_to_record():
+    """CRW-25: the five older judgments could not say this, so the record had to be false.
+
+    A real finding the owning parent decided not to fix now is not `not_applicable`, because
+    it does apply, and not `disputed`, because nobody disputes it. With only those words
+    available the child's choices were a false `fixed` or another round, and the gate
+    counting unresolved threads made the false `fixed` the cheaper one.
+    """
+    handoff = _ready_handoff(threadDispositions=[{
+        "threadId": "t1", "disposition": "accepted",
+        "evidence": "wording residue in a comment; no criterion depends on it",
+        "addressedBy": "parent decision 2026-09-21, follow-up CRW-176",
+    }])
+    recorded = report._check_handoff(handoff, 12, HEAD, BASE, "ready_for_review")
+    assert recorded["threadDispositions"] == [{
+        "threadId": "t1", "disposition": "accepted",
+        "evidence": "wording residue in a comment; no criterion depends on it",
+        "addressedBy": "parent decision 2026-09-21, follow-up CRW-176",
+    }]
+
+
+def test_an_acceptance_that_names_no_decision_is_refused_like_a_fix_with_no_commit():
+    """An acceptance with nothing to point at reads like a judgment and contains none.
+
+    This is the failure the new word would otherwise introduce: `accepted` is the easiest
+    value to write and the hardest to check, so it carries `fixed`'s burden rather than
+    becoming the blank that clears every thread.
+    """
+    for missing in (None, "", "   "):
+        with pytest.raises(ReceiptRefused) as caught:
+            report._check_handoff(_ready_handoff(threadDispositions=[{
+                "threadId": "t1", "disposition": "accepted",
+                "evidence": "minor and separable", "addressedBy": missing,
+            }]), 12, HEAD, BASE, "ready_for_review")
+        assert caught.value.reason is RefusalReason.MERGE_REVIEW_INCOMPLETE
+        assert "accepted" in str(caught.value)
+
+
+def test_resolving_a_thread_is_still_not_among_the_judgments():
+    """Adding a word to the enum must not turn it into a place to put the button."""
+    with pytest.raises(ReceiptRefused) as caught:
+        report._check_handoff(_ready_handoff(threadDispositions=[{
+            "threadId": "t1", "disposition": "resolved", "evidence": "closed the thread",
+        }]), 12, HEAD, BASE, "ready_for_review")
+    assert caught.value.reason is RefusalReason.MERGE_REVIEW_INCOMPLETE
+
+
 def test_an_omitted_attempt_is_not_evidence_that_this_one_is_newest():
     """Defaulting to 1 let an omission stand for a fact.
 

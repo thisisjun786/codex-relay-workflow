@@ -1676,7 +1676,14 @@ _HANDOFF_REASONS = {
     mergeevidence.REQUIRED_UNDECLARED: RefusalReason.MERGE_EVIDENCE_REQUIRED,
 }
 
-DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
+#: `accepted` is here because the other five could not say the true thing about a real
+#: finding a parent decided not to fix now. `not_applicable` is false when it does apply
+#: and `disputed` is false when nobody disputes it, so a child holding a minor separable
+#: defect had only a false `fixed` or another round. Which findings may be accepted at all,
+#: and what the acceptance has to record, belong to the impact rule in the crw-run skill;
+#: this enum only keeps the judgment sayable.
+DISPOSITIONS = ("fixed", "accepted", "not_applicable", "duplicate", "already_resolved",
+                "disputed")
 
 
 def _verified_at(value):
@@ -1818,6 +1825,12 @@ def _check_dispositions(entries, review):
     already-resolved findings are judged with a reason rather than cleared mechanically. So a
     thread the child saw and did not account for is missing, and 'resolved' is not among the
     words it may account for it with.
+
+    `accepted` carries the same burden as `fixed` for the same reason. A fix names the commit
+    because the claim is checkable there; an acceptance names the decision and the follow-up
+    it left because that is where ITS claim is checkable. An acceptance with nothing to point
+    at is the shape this gate exists to refuse: it reads exactly like a weighed judgment and
+    contains none.
     """
     judged = {}
     for item in _sequence(entries, "threadDispositions"):
@@ -1856,6 +1869,13 @@ def _check_dispositions(entries, review):
                 f"thread {identifier!r} is recorded fixed without the commit that fixed it; "
                 "a per-finding trail is the finding, the commit that addressed it, and the "
                 "recheck",
+            )
+        if disposition == "accepted" and not (isinstance(addressed, str) and addressed.strip()):
+            raise ReceiptRefused(
+                RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                f"thread {identifier!r} is recorded accepted without naming the decision that "
+                "accepted it and the follow-up it left; an acceptance is a judgment somebody "
+                "made and owns, not a fix and not a cleared thread",
             )
         judged[identifier] = {
             "threadId": identifier, "disposition": disposition, "evidence": note,

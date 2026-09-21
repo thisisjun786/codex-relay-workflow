@@ -79,7 +79,9 @@ Triage findings against code and acceptance criteria. Send confirmed in-scope
 defects to the existing responsible task, verify corrections with focused checks,
 and reconcile related threads within authorization. Record an evidence-backed
 reason for duplicate, inapplicable, or disputed findings; do not dismiss them to
-make the badge green. Material defects and unmet required review gates block merge.
+make the badge green. Which findings block merge is decided by
+[impact](#judge-a-finding-by-its-impact); an unmet required review gate blocks
+whatever the findings say.
 
 For optional reviewers, observe a running review with bounded waits appropriate
 to its expected runtime. If unavailable or stalled, use sufficient independent
@@ -89,6 +91,107 @@ Do not wait for every historical or possible future reviewer. Fallback review
 cannot replace required CI, a required review source, or mandatory formal approval.
 Inspection does not authorize enabling integrations, new paid usage, or sending
 private source to another service.
+
+## Judge a finding by its impact
+
+Whether a finding blocks is decided by what it does to this change at its current
+head. The parent that owns the criteria makes that classification against the list
+below. The child triages, fixes what blocks, prepares the evidence and the
+current-head readiness, and proposes the rest.
+
+A finding BLOCKS, and is never conditionally accepted, when it is any of these:
+
+- a required issue or acceptance criterion left unmet, where the user has not
+  expressly conceded it;
+- a safety effect, or data loss or corruption;
+- an authorization, permission, credential, or protection boundary that the change
+  weakens or bypasses;
+- a regression this change introduced, including one introduced by the round's own
+  fix;
+- an unmet required review gate or required check.
+
+A blocking finding is fixed on this pull request, or the candidate is reported
+blocked. One that arrives after the child has finished its rounds is raised to the
+parent rather than absorbed silently, and the parent decides whether it belongs to
+this issue or to a successor.
+
+Every other real finding is MINOR AND SEPARABLE: worth recording, and not worth
+holding this delivery for. Wording, formatting, a clearer phrasing, a naming
+preference, a hardening suggestion beyond this issue's scope, and an independent
+defect that predates this change are the usual shapes. Being real is what earns it
+a disposition; being separable is what makes it acceptable.
+
+A level above the owning parent may raise a finding, and may decide merge order. It
+does not reclassify a minor separable residue as blocking by asserting that it is
+serious, and reopening a settled delivery takes a finding that actually falls in one
+of the classes above.
+
+### Conditional acceptance, and what recording one costs
+
+The parent that owns the criteria owns this judgment, and a child does not grant its
+own. A parent may instead grant it in the assignment as a bounded standing decision,
+stating the bound it covers. Either way, each acceptance records five things or is
+not recorded:
+
+1. the exact finding, quoted or linked to its thread;
+2. its current effect, stated concretely rather than as "minor";
+3. why accepting it now serves this issue's purpose;
+4. the follow-up owner and the trigger that reopens it, as a named successor issue
+   or an explicitly accepted owner, never as unassigned;
+5. the boundary this leaves known-imperfect, so the next reader does not rediscover
+   it as new.
+
+A conditional acceptance is NOT a fix, and it never becomes one: not by the thread
+being resolved, not by a later round going quiet about it, and not by the issue
+closing. Nor is it available for a finding nobody weighed. A disposition written to
+clear a gate without assessing what the finding actually does is the thing this
+section exists to forbid, and it is worse than another round, because the round
+costs time while the false record costs the reader their trust in every other one.
+
+A bounded follow-up never waives a required criterion. Where accepting a finding
+would leave an issue criterion unmet, the criterion governs and the finding blocks.
+An obligation deliberately deferred is recorded as an unverified criterion carrying
+its deferral, under the per-criterion dispositions
+[crw-check](../../crw-check/SKILL.md) owns, and never as a satisfied one.
+
+### Resolve a thread on the judgment actually reached
+
+Resolving a conversation is a button, and a forge gate that counts unresolved
+threads measures the button rather than the work. Satisfying that gate is never a
+reason to assert a fix that did not happen. Record the judgment that is true and
+resolve on that record: `fixed` naming the commit, `accepted` naming the parent's
+decision and its follow-up, `not_applicable`, `duplicate` or `already_resolved`
+carrying the evidence that the defect itself is gone, or `disputed` carrying the
+reason.
+
+`duplicate` and `already_resolved` are claims about the defect rather than about the
+thread. A repeated or outdated thread whose defect survives is judged on the defect:
+fixed once it is fixed, accepted once a parent has accepted it. An out-of-scope or
+pre-existing finding carries a named owner and a follow-up and is not closed
+unverified. No rule makes every comment produce a code change, and none makes a
+comment that arrives late produce nothing.
+
+### Where the rounds end
+
+Reviewers that re-read a whole diff on every push make "nothing unresolved and no
+new round" unreachable: a fix needs a push, a push invites a round, and some rounds
+arrive with no push behind them at all. So the condition is about impact rather than
+arithmetic. The rounds end when every thread seen on the current head carries a
+truthful judged disposition and no blocking finding is outstanding. A further round
+that produces only minor separable findings adds dispositions and follow-ups; it
+does not reopen a change that has met that condition.
+
+None of this turns a real defect into a non-defect. A reviewer's P1/P2 badge, the
+number of rounds, the time spent and the cost of another round are not severity:
+they neither exempt a blocking finding nor create one, and a finding on round nine
+is judged exactly as one on round one. Repeated rounds over a large diff are a
+reason to split the next change rather than a reason to stop reading this one.
+
+Which threads exist, and whether the evidence is still current, are different
+questions from impact and keep their own owners: the review-coverage rules in this
+procedure, and
+[OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) for a
+new head invalidating the review it outran.
 
 ## Recheck, integrate, and record
 
