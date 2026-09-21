@@ -275,20 +275,25 @@ one that is usually skipped.
    `active-observation` for that one or requires the child to emit under it.
 5. An unattended idle-to-turn wake has already been observed on this same operating scope, App
    Server instance, store and socket, service instance, approval policy, role-policy identity,
-   transport revision, disposition class and the recipient's load state — by this parent on an
-   earlier run, or by a separate probe recipient that proved it first. The role policy belongs in
-   that list because the service decides authorization under whichever one its own process can
-   read, so a wake observed under a different one is evidence about a different configuration.
+   transport revision and disposition class — by this parent on an earlier run, or by a separate
+   probe recipient that proved it first. The role policy belongs in that list because the service
+   decides authorization under whichever one its own process can read, so a wake observed under a
+   different one is evidence about a different configuration.
 
-   Load state belongs in it because an idle recipient and one the host reports `notLoaded` are
-   not woken the same way: a resume into an unloaded task must derive its pair from the role's
-   declared pair, which [the relay reference](relay.md) states and a record-based or
-   exception-authorized pair is refused for. A parent that waits long enough is evicted, so the
-   unloaded route is the one a long wait actually depends on, and a wake observed while the
-   parent was still loaded has not exercised it. Both were observed on 2026-09-21: a loaded idle
-   parent woken at `recipientStatusBefore: idle`, and an evicted one woken at
-   `recipientStatusBefore: notLoaded` after three hours idle, each tying the parent's new turn id
-   to the delivery record that named it.
+   The wake must also cover the load state the wait will end up in, which is not the one it is
+   adjudicated in. An idle recipient and one the host reports `notLoaded` are not woken the same
+   way: a resume into an unloaded task must derive its pair from the role's declared pair, which
+   [the relay reference](relay.md) states and for which a record-based or exception-authorized
+   pair is refused. Adjudication happens while the parent is still loaded, so a loaded wake is
+   both the easiest evidence to have and the wrong evidence to rely on — a wait long enough to be
+   worth making ends in eviction, and the event that arrives then takes the route nobody proved.
+   Matching the state observed during adjudication would therefore pass fact 5 on evidence the
+   wait invalidates. So wherever eviction is possible, which is every ordinary wait, selecting
+   `event-driven-idle` needs a `notLoaded` wake on this scope; a loaded wake alone leaves fact 5
+   `unmeasured` rather than passed, and `active-observation` is the path until one exists. Both
+   were observed on 2026-09-21: `recipientStatusBefore: idle` on a loaded parent, and
+   `recipientStatusBefore: notLoaded` on one the host had evicted after three hours idle, each
+   tying the parent's new turn id to the delivery record that named it.
 
 Fact 5 is written that way because the obvious version is circular: a parent cannot observe its
 own first wake without first yielding idle on the strength of the observation it has not made. A
