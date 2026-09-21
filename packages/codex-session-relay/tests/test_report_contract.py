@@ -319,6 +319,94 @@ class Elision(DeliveryTestCase):
             self.assertIn(one, message, f"{one} did not survive the default budget")
         self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
 
+    def test_confirmations_that_cannot_fit_this_report_are_refused_while_it_is_recordable(self):
+        """Every field legal and the sum impossible, which per-field bounds cannot catch.
+
+        Unelidable confirmations turn an oversized set into a report stored once and
+        delivered never, because rendering happens inside the delivery claim and every retry
+        lands on the same arithmetic. Refusing at record time is the difference between a
+        child told to fix some of them and a queue entry nobody can drain.
+        """
+        _relationship, event_id = self.queued_event()
+        head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+        threads = [f"PRRT_{n}" for n in range(4)]
+
+        def handoff_for(**field):
+            one = a_handoff(head)
+            one["reviewCoverage"] = {"hasNextPage": False, "pagesRead": 1,
+                                     "totalCount": len(threads), "threadsSeen": threads,
+                                     "unresolved": 0}
+            one["threadDispositions"] = [
+                {"threadId": t, "disposition": "accepted", "evidence": "residue",
+                 "addressedBy": field.get("addressedBy", "parent 01a0b406 decided this"),
+                 "followUpOwner": field.get("followUpOwner", "CRW-176"),
+                 "reopenTrigger": field.get("reopenTrigger", "the wording reaches a criterion")}
+                for t in threads
+            ]
+            return one
+
+        error = self.assertRefused(
+            RefusalReason.MERGE_EVIDENCE_REQUIRED,
+            lambda: report.record(
+                self.store, self.clock, event_id=event_id,
+                **a_report(handoff=handoff_for(addressedBy="a" * 300, followUpOwner="o" * 300,
+                                               reopenTrigger="t" * 300), head_sha=head)),
+        )
+        self.assertIn("are left for them", error.detail)
+        # The same four threads with references somebody would actually write are fine: the
+        # ceiling is on what the parent must be shown, not on how many may be accepted.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(handoff=handoff_for(), head_sha=head))
+        self.assertIn("confirm each was yours", self.delivery.render_message(event_id))
+
+    def test_the_worst_legal_report_carrying_confirmations_still_renders(self):
+        """PROTOCOL_FLOOR has to be real, or the room it leaves is a guess.
+
+        Every other unelidable field at its own maximum, and confirmations filling exactly
+        the room that leaves. If this cannot render at the default budget then the floor is
+        too small and the refusal above is letting undeliverable reports through.
+        """
+        _relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+        summary = "s" * report.SUMMARY_MAX
+        reason = "r" * report.REASON_MAX
+        action = "n" * report.ACTION_MAX
+        # The same url the report carries, because record() counts it and a test that does
+        # not would build a block the recorder then refuses.
+        pr_url = a_report()["pr_url"]
+        room = report._confirmations_room(summary, reason, action, pr_url)
+        threads, dispositions, used = [], [], 0
+        while True:
+            one = f"PRRT_accepted_{len(threads)}"
+            entry = {"threadId": one, "disposition": "accepted", "evidence": "residue",
+                     "addressedBy": "parent task 01a0b406 decided this",
+                     "followUpOwner": "CRW-176",
+                     "reopenTrigger": "the wording reaches a criterion"}
+            grown = sum(len(line.encode("utf-8")) + 1
+                        for line in report._acceptance_lines(dispositions + [entry]))
+            if grown > room:
+                break
+            threads.append(one)
+            dispositions.append(entry)
+            used = grown
+        self.assertGreater(len(threads), 0, "the worst legal report must still fit some")
+        handoff = a_handoff(head)
+        handoff["reviewCoverage"] = {"hasNextPage": False, "pagesRead": 1,
+                                     "totalCount": len(threads), "threadsSeen": threads,
+                                     "unresolved": 0}
+        handoff["threadDispositions"] = dispositions
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(handoff=handoff, head_sha=head, summary=summary,
+                                 cxc_reason=reason, next_action=action,
+                                 unresolved=[f"open item {n}" for n in range(200)]))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        message = report.render_completion(row, receipt, "del-x-a1", stored)
+        for one in threads:
+            self.assertIn(one, message, f"{one} did not survive the worst legal report")
+        self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
+
     def test_shortening_a_long_list_stays_correct_and_does_not_rescan(self):
         _relationship, event_id = self.queued_event()
         receipt = self.intake.get(event_id)

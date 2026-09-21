@@ -70,6 +70,21 @@ REF_SHOWN = 240
 # not. A candidate whose confirmations do not fit the message the parent reads is a candidate
 # carrying too many accepted defects to hand over in one piece.
 ACCEPTANCE_SHOWN = 2400
+# And a FIXED ceiling is not enough either, which is the same mistake one level up. summary,
+# next_action, cxc_reason and pr_url are each legal at their own limits and each land on lines
+# the composer cannot drop, so 1200 + 1200 + 600 of them plus a full 2400 of confirmations plus
+# the scaffolding passes every individual bound and still exceeds BUDGET. The room left for
+# confirmations is therefore measured against what those four actually cost on this report
+# rather than assumed.
+#
+# PROTOCOL_FLOOR is what stays unelidable underneath them: the header framing, the readiness
+# lines, the omission notice, the relay record and the instruction for answering. It is
+# MEASURED rather than estimated, by bisecting the smallest budget that renders, and the
+# measured figure is flat across one, two, four and eight confirmations. That flatness is the
+# shape to expect, because pinning the confirmations also pins the three readiness lines above
+# them that used to shrink, and that delta is a constant. The margin is for the scaffolding
+# changing; the worst-legal-report test is what fails if it moves past the margin.
+PROTOCOL_FLOOR = 1500
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -198,6 +213,26 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     restore = _check_restore(restore)
     submission_no = _submission(submission_no)
     handoff = _check_handoff(handoff, pr_number, head_sha, base_sha, outcome)
+    # Checked here rather than inside the handoff, because the room depends on summary,
+    # cxc_reason and next_action, and they live at this level. Refusing now is the difference
+    # between a child that is told to fix some of them and a report that is accepted and then
+    # undeliverable for good, since rendering happens inside the delivery claim.
+    shown = _acceptance_lines(_accepted_dispositions(handoff))
+    if shown:
+        total = sum(_size(line) + 1 for line in shown)
+        room = _confirmations_room(summary, reason, next_action, pr_url)
+        if total > room:
+            raise ReceiptRefused(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                f"the acceptance confirmations for this candidate render {total} bytes and"
+                f" only {room} are left for them once this report's summary, reason, next"
+                " action and pull request url have taken theirs. They cannot be shortened,"
+                " because a dropped"
+                " confirmation hides a decision the parent is credited with and never made,"
+                " so a candidate whose confirmations do not fit the message is carrying too"
+                " many accepted defects to hand over at once. Fix some of them, shorten the"
+                " decision and follow-up references, or split the change",
+            )
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -1755,6 +1790,19 @@ def _verified_at(value):
         return None
     return parsed.isoformat()
 
+def _confirmations_room(summary, reason, next_action, pr_url=None) -> int:
+    """How many bytes the unelidable confirmations may take on THIS report.
+
+    A fixed reserve answered the wrong question. What matters is not whether the
+    confirmations are large in the abstract but whether they still fit once the other things
+    nobody can shorten have taken their share, and those vary per report.
+    """
+    spoken_for = (PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
+                  + _size(pr_url or ""))
+    # Never negative: a report whose other required parts already fill the budget has room
+    # for no confirmation at all, and that is a refusal rather than a wrapped-around ceiling.
+    return max(0, min(ACCEPTANCE_SHOWN, BUDGET - spoken_for))
+
 
 def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
     """The child's merge-readiness evidence, refused at the point it can still be fixed.
@@ -1851,20 +1899,6 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
     # Checked here rather than per field, because every field can be legal while the sum is
     # not, and refusing at record time is the difference between a child that is told to fix
     # some of them and a report that is accepted now and undeliverable for good.
-    shown = _acceptance_lines([one for one in dispositions
-                               if one["disposition"] == "accepted"])
-    if shown:
-        total = sum(_size(line) + 1 for line in shown)
-        if total > ACCEPTANCE_SHOWN:
-            raise ReceiptRefused(
-                RefusalReason.MERGE_EVIDENCE_REQUIRED,
-                f"the acceptance confirmations for this candidate render {total} bytes and the"
-                f" reserve is {ACCEPTANCE_SHOWN}. They cannot be shortened, because a dropped"
-                " confirmation hides a decision the parent is credited with and never made, so"
-                " a candidate whose confirmations do not fit the message is carrying too many"
-                " accepted defects to hand over at once. Fix some of them, shorten the decision"
-                " and follow-up references, or split the change",
-            )
     return {
         "isDraft": False,
         "baseVerifiedAt": verified_at,
