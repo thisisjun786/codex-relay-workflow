@@ -61,6 +61,31 @@ URL_MAX = 2000
 # on an essential line now, so it is given a bounded REPRESENTATION here rather than a limit
 # imposed on a contract field this layer does not own.
 REF_SHOWN = 240
+# Acceptance confirmations cannot be elided, because dropping one hides a decision the parent
+# is credited with and never made. Something unelidable needs an aggregate ceiling or it
+# becomes an undeliverable report instead: four acceptances with individually legal 300-byte
+# fields render past the whole budget, and rendering happens inside the delivery claim, so the
+# claim rolls back unsent every time and the report is stored forever and delivered never.
+# Bounding the fields one at a time cannot catch that, since each one is fine and the sum is
+# not. A candidate whose confirmations do not fit the message the parent reads is a candidate
+# carrying too many accepted defects to hand over in one piece.
+ACCEPTANCE_SHOWN = 2400
+# And a FIXED ceiling is not enough either, which is the same mistake one level up. summary,
+# next_action and cxc_reason are each legal at their own limits and each land on lines the
+# composer cannot drop, so 1200 + 1200 + 600 of them plus a full 2400 of confirmations plus the
+# scaffolding passes every individual bound and still exceeds BUDGET. The room left for
+# confirmations is therefore measured against what those three actually cost on this report
+# rather than assumed.
+#
+# PROTOCOL_FLOOR is everything else that survives shrinking, and it is MEASURED rather than
+# estimated, by bisecting the smallest budget that renders. The figure is a flat 1342 across
+# one, four and eight confirmations AND across one and twenty declared required checks. That
+# second invariance is the one worth having: it is what says the confirmations are the only
+# thing this change pins, so no other variable part is hiding inside this constant. Two
+# earlier versions of this accounting failed exactly there, each time because pinning the
+# whole merge-readiness block dragged another variable line in with it. The margin is for the
+# scaffolding changing, and the worst-legal-report test is what fails if it moves past it.
+PROTOCOL_FLOOR = 1400
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -189,6 +214,25 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     restore = _check_restore(restore)
     submission_no = _submission(submission_no)
     handoff = _check_handoff(handoff, pr_number, head_sha, base_sha, outcome)
+    # Checked here rather than inside the handoff, because the room depends on summary,
+    # cxc_reason and next_action, and they live at this level. Refusing now is the difference
+    # between a child that is told to fix some of them and a report that is accepted and then
+    # undeliverable for good, since rendering happens inside the delivery claim.
+    pinned = _acceptance_lines(_accepted_dispositions(handoff))
+    if pinned:
+        total = sum(_size(line) + 1 for line in pinned)
+        room = _confirmations_room(summary, reason, next_action)
+        if total > room:
+            raise ReceiptRefused(
+                RefusalReason.MERGE_EVIDENCE_REQUIRED,
+                f"the acceptance confirmations for this candidate render {total} bytes and only"
+                f" {room} are left for them once this report's summary, reason and next action"
+                " have taken theirs. They cannot be shortened, because a dropped"
+                " confirmation hides a decision the parent is credited with and never made,"
+                " so a candidate whose confirmations do not fit the message is carrying too"
+                " many accepted defects to hand over at once. Fix some of them, shorten the"
+                " decision and follow-up references, or split the change",
+            )
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -1236,6 +1280,7 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
     event_id = row["event_id"]
     assert_current(report, execution_generation=receipt.get("executionGeneration")
                    or report["executionGeneration"])
+    confirmations = _acceptance_lines(_accepted_dispositions(report.get("handoff")))
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -1249,6 +1294,14 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
         # a floor of two is what keeps the heading attached to whatever survives under it.
         _Section("pull request", _pr_lines(report), rank=1, essential=True, keep=2),
         _Section("merge readiness", _handoff_lines(report), rank=1, essential=True, keep=2),
+        # Its OWN section, so that pinning it pins nothing else. Folding it into merge
+        # readiness above meant raising that section's floor to its whole length, which also
+        # pinned the line joining every declared required check name together and made a long
+        # check list able to exhaust the budget on its own. An acceptance line is the only
+        # place the parent learns it is credited with a decision it may never have made, so
+        # this one cannot shrink; nothing around it needs to change for that to hold.
+        _Section("acceptance confirmations", confirmations, rank=1, essential=True,
+                 keep=len(confirmations)),
         _Section("verification", _evidence_lines(report), rank=4),
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
@@ -1638,6 +1691,33 @@ def _ack_lines(event_id):
 
 # ------------------------------------------------------------------- merge readiness
 
+def _accepted_dispositions(handoff) -> list:
+    """The threads a handoff claims the parent agreed to leave unfixed."""
+    if not handoff:
+        return []
+    return [
+        one for one in (handoff.get("threadDispositions") or [])
+        if one.get("disposition") == "accepted"
+    ]
+
+
+def _acceptance_lines(accepted) -> list:
+    """The confirmations, formatted once.
+
+    The record-time bound and the render read the same function on purpose. Measuring one
+    string and rendering another is how a limit passes its own check and then overflows the
+    thing it was protecting.
+    """
+    if not accepted:
+        return []
+    lines = [f"  accepted by your decision ({len(accepted)}) - confirm each was yours:"]
+    for one in accepted:
+        lines.append(f"    {one.get('threadId')}: {one.get('addressedBy')}"
+                     f" - {one.get('followUpOwner')} owns it,"
+                     f" reopens on {one.get('reopenTrigger')}")
+    return lines
+
+
 def _handoff_lines(report) -> list:
     """What the parent restates, said in the message rather than left in the store.
 
@@ -1676,7 +1756,14 @@ _HANDOFF_REASONS = {
     mergeevidence.REQUIRED_UNDECLARED: RefusalReason.MERGE_EVIDENCE_REQUIRED,
 }
 
-DISPOSITIONS = ("fixed", "not_applicable", "duplicate", "already_resolved", "disputed")
+#: `accepted` is here because the other five could not say the true thing about a real
+#: finding a parent decided not to fix now. `not_applicable` is false when it does apply
+#: and `disputed` is false when nobody disputes it, so a child holding a minor separable
+#: defect had only a false `fixed` or another round. Which findings may be accepted at all,
+#: and what the acceptance has to record, belong to the impact rule in the crw-run skill;
+#: this enum only keeps the judgment sayable.
+DISPOSITIONS = ("fixed", "accepted", "not_applicable", "duplicate", "already_resolved",
+                "disputed")
 
 
 def _verified_at(value):
@@ -1697,6 +1784,26 @@ def _verified_at(value):
     if parsed.tzinfo is None:
         return None
     return parsed.isoformat()
+
+def _confirmations_room(summary, reason, next_action) -> int:
+    """How many bytes the unelidable confirmations may take on THIS report.
+
+    A fixed reserve answered the wrong question. What matters is not whether they are large
+    in the abstract but whether they still fit once the other things nobody can shorten have
+    taken their share, and those vary per report.
+
+    What is charged is exactly what this change pins, which is the confirmations and nothing
+    else. Two earlier attempts charged the wrong set: the first ignored these three fields,
+    and the second pinned the whole merge-readiness block and so had to charge the line that
+    joins every declared required check name together. Both were the same mistake, which is a
+    constant standing in for something that varies, and each fix found one more variable part
+    underneath. Giving the confirmations their own section is what stopped that, because now
+    nothing else changed its floor and nothing else has to be charged here.
+    """
+    spoken_for = PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
+    # Never negative: a report whose other required parts already fill the budget has room
+    # for no confirmation at all, and that is a refusal rather than a wrapped-around ceiling.
+    return max(0, min(ACCEPTANCE_SHOWN, BUDGET - spoken_for))
 
 
 def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
@@ -1767,11 +1874,14 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
             "the handoff states isDraft as true or false; it is how a reviewer knows the "
             "review was actually requested, and leaving it out is not the same as false",
         )
-    if handoff["isDraft"]:
+    drafted = mergeevidence.draft_problems(handoff["isDraft"])
+    if drafted:
+        # Delegated rather than restated. The forge collector asks the same question before any
+        # receipt exists, and while both spellings said the same thing today, one rule written
+        # in two places is how it starts meaning two things. The sentence is unchanged.
         raise ReceiptRefused(
             RefusalReason.MERGE_EVIDENCE_REQUIRED,
-            "the pull request is still a draft, so the review it reports was never actually "
-            "requested; mark it ready for review before handing it over",
+            "; ".join(mergeevidence.details(drafted)),
         )
     verified_at = _verified_at(handoff.get("baseVerifiedAt"))
     if verified_at is None:
@@ -1791,6 +1901,9 @@ def _check_handoff(handoff, pr_number, head_sha, base_sha, outcome):
             "against; without one there is nothing for the pre-merge re-read to disagree with",
         )
     dispositions = _check_dispositions(handoff.get("threadDispositions"), review)
+    # Checked here rather than per field, because every field can be legal while the sum is
+    # not, and refusing at record time is the difference between a child that is told to fix
+    # some of them and a report that is accepted now and undeliverable for good.
     return {
         "isDraft": False,
         "baseVerifiedAt": verified_at,
@@ -1818,6 +1931,22 @@ def _check_dispositions(entries, review):
     already-resolved findings are judged with a reason rather than cleared mechanically. So a
     thread the child saw and did not account for is missing, and 'resolved' is not among the
     words it may account for it with.
+
+    `accepted` carries the same burden as `fixed` for the same reason. A fix names the commit
+    because the claim is checkable there; an acceptance names the decision and the follow-up
+    it left because that is where ITS claim is checkable. An acceptance with nothing to point
+    at is the shape this gate exists to refuse: it reads exactly like a weighed judgment and
+    contains none.
+
+    What this canNOT do is authenticate the parent. Nothing here has an authenticated caller,
+    so a child asserting "the parent accepted this" is asserting it, exactly as `--actor` and
+    `--task` are asserted everywhere else in this package. An acceptance is therefore the one
+    disposition that legitimises a defect the candidate still carries, which makes an
+    unnoticed forgery the real risk rather than a malformed field. The answer is not a check
+    that cannot be performed and reads like one: every acceptance is rendered into the merge
+    readiness lines the parent restates before merging, so a decision the parent did not make
+    arrives in front of the party that would know, and OPS-9.4 already returns a record that
+    disagrees with the re-read to the child fail-closed.
     """
     judged = {}
     for item in _sequence(entries, "threadDispositions"):
@@ -1857,9 +1986,62 @@ def _check_dispositions(entries, review):
                 "a per-finding trail is the finding, the commit that addressed it, and the "
                 "recheck",
             )
+        owner = item.get("followUpOwner")
+        trigger = item.get("reopenTrigger")
+        if disposition == "accepted":
+            if not (isinstance(addressed, str) and addressed.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted without naming the parent "
+                    "decision that accepted it; an acceptance is a judgment somebody made and "
+                    "owns, not a fix and not a cleared thread",
+                )
+            # Two facts, two fields. One opaque follow-up string was satisfied by naming an
+            # owner and saying nothing about what brings the finding back, and an acceptance
+            # nothing can reopen is a waiver wearing a follow-up's name.
+            if not (isinstance(owner, str) and owner.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted with no follow-up owner; an "
+                    "acceptance that leaves nobody holding the residue is how a known defect "
+                    "stops being anybody's",
+                )
+            if not (isinstance(trigger, str) and trigger.strip()):
+                raise ReceiptRefused(
+                    RefusalReason.MERGE_REVIEW_INCOMPLETE,
+                    f"thread {identifier!r} is recorded accepted with no reopen trigger; "
+                    "without one the acceptance cannot be revisited by anything, which is a "
+                    "waiver rather than a deferral",
+                )
+            owner = _bounded(_single_line(owner.strip(), "a follow-up owner"),
+                             "a follow-up owner", LABEL_MAX)
+            trigger = _bounded(_single_line(trigger.strip(), "a reopen trigger"),
+                               "a reopen trigger", LABEL_MAX)
+            # Normalised HERE, because only an acceptance renders these into the confirmation
+            # lines the parent reads. A newline in a rendered value does not wrap, it adds a
+            # line to the protocol, which is the splice `_single_line` exists to refuse.
+            # Applying the same rule to every disposition made the recorder stricter than the
+            # renderer: a `fixed` whose addressedBy is long or multiline is rendered nowhere
+            # and recorded fine before this change, so refusing it was a regression rather
+            # than a guard. Charge what is rendered, exactly as the budget accounting does.
+            identifier = _bounded(_single_line(identifier, "a thread identifier"),
+                                  "a thread identifier", LABEL_MAX)
+            addressed = _bounded(_single_line(addressed.strip(), "a disposition addressedBy"),
+                                 "a disposition addressedBy", LABEL_MAX)
+        elif owner is not None or trigger is not None:
+            # Only an acceptance leaves a residue somebody owns. Letting these ride along on
+            # a fix would make "there is a follow-up" stop meaning anything.
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"thread {identifier!r} is recorded {disposition!r} and carries follow-up "
+                "fields; a follow-up owner and a reopen trigger belong to an acceptance, "
+                "which is the disposition that leaves a residue for somebody to own",
+            )
         judged[identifier] = {
             "threadId": identifier, "disposition": disposition, "evidence": note,
             "addressedBy": addressed.strip() if isinstance(addressed, str) else None,
+            "followUpOwner": owner if isinstance(owner, str) else None,
+            "reopenTrigger": trigger if isinstance(trigger, str) else None,
         }
     seen = [str(one) for one in (review.get("threadsSeen") or [])]
     unaccounted = [one for one in seen if one not in judged]

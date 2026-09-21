@@ -80,6 +80,8 @@ OFFLINE_COMMANDS = (
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
     "slot-release", "slot-reserve", "usage-observe",
+    # Reaches a forge and never the App Server, and constructs no Store at all.
+    "merge-evidence",
 ) + MARKER_COMMANDS_BY_NAME
 
 
@@ -2499,6 +2501,85 @@ MARKER_COMMANDS = (
 # ----------------------------------------------------------------------- wiring
 
 
+# ------------------------------------------------------- CRW-26 forge evidence (read-only)
+#
+# One command, disjoint from everything above it. It constructs no Store, reaches no App Server,
+# and issues GET requests and GraphQL queries to one forge. It is the only command here that
+# talks to a network service that is not the host, which is why it lives in its own region.
+
+
+def cmd_merge_evidence(services, args) -> dict:
+    """Read a pull request and return the merge-readiness record, observed rather than asserted.
+
+    Two modes, one command. Without --restate it takes a snapshot, and the payload's `handoff` is
+    what a child pastes into its completion report. With --restate it takes a FRESH snapshot and
+    grades a record the child already produced against it, which is the parent's currency check:
+    the parent never reads the child's own numbers back, it reads the forge and compares.
+
+    Exit 0 is the READY verdict and nothing else. A stale or unknown snapshot is still a complete
+    answer and still exits 2, because a caller reading only the exit status must never take "I
+    could not tell" for "yes" - which is the same mistake, in a different costume, as reading a
+    truncated page as a count.
+    """
+    from . import forge as forge_evidence
+
+    try:
+        collector = forge_evidence.Forge(
+            page_size=args.page_size, page_budget=args.page_budget,
+            call_budget=args.call_budget, timeout=args.timeout,
+        )
+        snapshot = forge_evidence.collect(
+            collector, repository=args.repository, number=args.pull_request,
+        )
+    except forge_evidence.ForgeUsage as error:
+        raise SystemExit2(str(error), EXIT_USAGE)
+    ready = snapshot["verdict"] == forge_evidence.READY
+    if args.restate:
+        document = _restated_record(args.restate)
+        head = (args.restate_head or document.get("headSha")
+                or (document.get("pinned") or {}).get("headSha"))
+        if not head:
+            raise SystemExit2(
+                "the record does not say which head it is about; pass --restate-head", EXIT_USAGE)
+        handoff = document.get("handoff") or document
+        problems = forge_evidence.restate_problems(head, handoff, snapshot)
+        snapshot["restatement"] = {
+            "headSha": head,
+            "current": not problems,
+            "problems": [{"code": one.code, "detail": one.detail} for one in problems],
+        }
+        ready = ready and not problems
+    if not ready:
+        raise PayloadExit(snapshot, EXIT_REFUSED)
+    return snapshot
+
+
+def _restated_record(source: str) -> dict:
+    """The record to restate, read from a file or from stdin.
+
+    A snapshot this command produced earlier and a bare handoff are both accepted, because the
+    child has one and the parent is handed the other, and making them convert by hand is how a
+    field gets dropped in transit.
+
+    The decode failure is caught beside the read failure rather than left to escape. A record
+    written in another encoding is a file this command cannot read, which is the same answer as
+    a file that is not there; letting UnicodeDecodeError out instead would report the host's
+    traceback for what is an ordinary bad input.
+    """
+    try:
+        raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    except (OSError, ValueError) as error:
+        raise SystemExit2(f"the record to restate could not be read: {error}", EXIT_USAGE)
+    try:
+        document = json.loads(raw)
+    except ValueError as error:
+        raise SystemExit2(f"the record to restate is not JSON: {error}", EXIT_USAGE)
+    if not isinstance(document, dict):
+        raise SystemExit2("the record to restate is an object, not a "
+                          f"{type(document).__name__}", EXIT_USAGE)
+    return document
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-session-relay")
     parser.add_argument("--state")
@@ -3343,6 +3424,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 
+    # CRW-26. Registered last, in its own region: the managed-* regions this file is about to
+    # receive belong to another task, and a command wedged between them is a merge conflict for
+    # no reason. Read-only, and the only command here that reaches a forge.
+    evidence = subparsers.add_parser(
+        "merge-evidence",
+        help="read a pull request's review, checks and declared gates, and report whether the"
+             " candidate is ready - enumerated to the end rather than asserted")
+    evidence.add_argument("--repository", required=True, help="owner/name")
+    evidence.add_argument("--pull-request", required=True, type=int)
+    evidence.add_argument("--restate",
+                          help="a handoff record or an earlier snapshot to grade against a fresh"
+                               " reading; '-' reads it from stdin")
+    evidence.add_argument("--restate-head",
+                          help="the head the restated record is about, when the record itself"
+                               " does not name one")
+    evidence.add_argument("--page-size", type=int, default=100)
+    evidence.add_argument("--page-budget", type=int, default=50,
+                          help="how many pages one connection may take before the read is"
+                               " reported unfinished rather than answered")
+    evidence.add_argument("--call-budget", type=int, default=300)
+    evidence.add_argument("--timeout", type=int, default=60)
+    evidence.set_defaults(handler=cmd_merge_evidence)
+
     return parser
 
 
@@ -3530,6 +3634,11 @@ def _reads_no_selected_store(args) -> bool:
     handler = getattr(args, "handler", None)
     if handler is cmd_intent_declare:
         return bool(getattr(args, "no_db_path", False))
+    if handler is cmd_merge_evidence:
+        # It opens no store at all. An unrelated ambiguity in relay discovery used to refuse a
+        # command whose whole subject is a pull request, which is the same class of failure the
+        # marker exemption exists for.
+        return True
     if handler is cmd_intent_register:
         # It confirms the relationship against a store, so it is only marker-only when the caller
         # named which store rather than letting discovery guess one.

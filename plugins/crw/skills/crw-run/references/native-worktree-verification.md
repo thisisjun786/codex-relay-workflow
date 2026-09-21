@@ -8,9 +8,13 @@ stay in [bridge.md](bridge.md) and [relay.md](relay.md).
 
 Every measured observation must carry its date, client and version, because a
 published default or a feature stage can change between builds. The measurements
-reported below were taken on 2026-09-15 against Codex 0.154.0, on a remote-SSH Linux
-host whose desktop client was not inspectable from that host. Record your own
-environment beside your result.
+reported below come from two rounds, each dated where it appears. The creation,
+isolation, write-capability and relay observations were taken on 2026-09-15; the
+resume-surface and retention observations were taken on 2026-09-22. Both ran against
+Codex 0.154.0 on a remote-SSH Linux host from which no layer of that desktop client was
+read: not its bundle, not its profile, not its screen. Record your own environment
+beside your result, and name the layers you reached and the ones you did not, rather
+than one inspectable-or-not verdict for the whole client.
 
 Re-run the probe rather than inheriting a verdict, but only when the current scope
 authorizes what it does: this procedure creates and resumes tasks, writes and pushes,
@@ -26,7 +30,7 @@ recording any availability claim.
 
 | Surface | Who performs creation | Reachable from inside a task |
 |---|---|---|
-| Desktop client worktree flow | The ChatGPT desktop app, from the new chat composer | No. Client-side and not inspectable from a remote host |
+| Desktop client worktree flow | The ChatGPT desktop app, from the new chat composer | No for creation. Partly inspectable: see the client-inspection boundary below |
 | Model-visible app tools | Whatever dynamic tools the host exposes to the running model | Only when that namespace is actually exposed |
 | App Server thread protocol | The backend that accepts thread creation and resume | Yes, and its generated schema is checkable |
 | CLI experimental feature | The local Codex binary under an experimental flag | Yes, when the flag is passed for that invocation |
@@ -36,6 +40,28 @@ statement about that protocol version. Neither one proves the product lacks the
 feature. Confirm product capability against the official documentation, and mark
 anything the access path cannot reach as unverified rather than absent.
 
+## The client-inspection boundary
+
+A desktop client is not a single yes or no. When the machine running it is reachable
+and that access is authorized, three of its layers are readable without touching the
+screen: the installed bundle and its version, the client profile that the app writes,
+and the account or enrollment records that tie the client to a host. Use them, and
+keep each one inside what it can actually establish.
+
+- The bundle proves which code shipped in that build, including a feature's settings
+  keys, storage keys and the gate that guards it. It never proves the feature is on
+  for this account, because the gate value is decided elsewhere.
+- The profile proves what that profile produced, at the moment it was read. A missing
+  storage key means that profile holds nothing for that feature now; it is not proof
+  that the feature is disabled, and it says nothing about another machine's profile.
+  Validate the scan with a control string that must be present, or an empty result is
+  only evidence that the scan missed.
+- Neither layer is the rendered screen. A claim about what the user sees in the client
+  needs the screen itself, which needs screen-capture permission on that machine.
+  Without it, mark the screen-dependent claims unverified and name the missing
+  permission. Confidence is per layer, not per surface: a bundle or profile finding
+  that was already established keeps it when the screen turns out to be unreachable.
+
 ## Distinguish the identifiers
 
 App Server `projectId` on a thread record, the desktop saved-project identity, the
@@ -44,6 +70,30 @@ Grouping into a custom section, pinning, or renaming a task is not project
 association. When `projectId` reads null for every thread on a host, including tasks
 created directly in the desktop app, that field proves nothing in either direction
 and the grouping question must be settled on the client.
+
+The git metadata stored on the thread record is a fifth identifier, and it is not
+authoritative. Measured on this host on 2026-09-22, across 372 unarchived threads whose
+working directory is a worktree of one repository: 314 carry the branch the checkout is
+really on, 53 carry an empty branch, and 5 carry something that is not a branch at all -
+a file path, `HEAD`, or a raw short sha - while git in that same worktree reports the
+correct branch. When a client feature keys on that stored branch, say so: it inherits
+this unreliability, and for those threads it will find nothing or the wrong thing no
+matter how the feature is configured.
+
+How to read the branch depends on what step 5 recorded about HEAD, and the two cases do
+not share a rule. On an attached checkout, git is the authority: take the branch from
+the checkout and judge the stored value against it. On a detached one, which is what a
+managed worktree produces, git has no current branch to give and deriving one from it
+would destroy the identity the Setting preservation verdict consumes. There, keep the
+requested source branch you recorded before creation as the subject, compare the stored
+metadata against that request, and verify the checked-out commit separately as its own
+fact.
+
+Those two outcomes are not one verdict. A stored branch that contradicts the request is
+evidence that the branch is not the intended one, so it fails Setting preservation the
+same way any other unintended value does; recording it as inconclusive would hide a real
+failure behind a missing measurement. Only an absent record leaves nothing to judge, and
+that one is unverified. Neither case licenses inventing a branch from the checkout.
 
 ## Probe procedure
 
@@ -95,6 +145,28 @@ Run against a disposable fixture repository, never a real checkout.
     Repeat the artifact-production check after resume with a fresh change and a new
     commit, pushed to a second explicit disposable ref so the two attempts stay
     distinguishable on the remote, and record both attempts separately.
+
+    Name the resume surface, because the two measured here do not agree. Measured
+    2026-09-22 on Codex 0.154.0, Linux, in an isolated Codex home. App Server
+    `thread/resume` sent with `threadId` alone returned the managed worktree as both
+    `cwd` and the single runtime workspace root, byte-for-byte the path creation
+    resolved, even though the server process itself had been started in the source
+    checkout. That is the behaviour of that one payload; the same schema also accepts
+    `cwd` and `runtimeWorkspaceRoots`, so a caller that sends them is sending its own
+    answer, and no client was measured here.
+
+    The command-line `codex exec resume <id>` took the working directory from the
+    invocation instead, and it did not merely report it. Run from the source checkout
+    against a thread created in a managed worktree, it reported the source checkout as
+    the working directory and then PERSISTED it: the thread's stored working directory
+    changed from the managed worktree to the source checkout, while the checkout and
+    its `codex-thread.json` still named that same thread as their owner. The two sides
+    of the binding disagreed afterwards. Run from inside the managed worktree, the same
+    command kept the worktree.
+
+    So record which surface produced the value before comparing it, and do not resume a
+    managed-worktree task from the command line outside its own checkout: it silently
+    moves the work, and it rewrites the thread record that a later comparison reads.
 12. Exercise the retention path you intend to rely on, on a disposable fixture only:
     trigger the cleanup condition the policy names, then attempt the documented
     recovery, and record what was removed and what came back. If you do not exercise
@@ -370,6 +442,59 @@ date next to the verdict, because a published default can change between version
 Because the automatic path can remove a checkout, evidence a later reviewer needs
 must be written outside it before the task ends. That obligation belongs in the task
 packet, not in the checkout.
+
+### Measured on the command-line surface, 2026-09-22
+
+Exercised per step 12 against a disposable fixture in an isolated Codex home on Codex
+0.154.0, Linux, with `codex exec --enable worktrees --worktree`. Two of the three
+removal conditions the policy names were exercised, and they are different cases. The
+third, the recent-count limit, could not be triggered from this surface at all; that is
+recorded below rather than inferred from a count.
+`codex archive` set the thread's archived flag and left the checkout, its git
+registration and its owner record in place; the thread still exists, so the checkout
+still has a live owner. `codex delete --force` removed the thread row and still left
+all three, so after that command alone the checkout, its registration and a
+`codex-thread.json` naming a thread that no longer exists were left dangling. The
+binary's own messages point the same way: every removal path it describes tells the
+operator to run `git worktree remove <checkout-path>` from the source repository. None
+of these checkouts was Git-locked, unlike a checkout an explicit retention convention
+locks, so nothing in Git objected to their removal either.
+
+The recent-count condition stays UNVERIFIED, and a creation count does not stand in for
+it. Twelve managed worktrees were created from one fixture repository and all twelve
+remained, but that establishes only that these commands removed nothing at that depth.
+It says nothing about recent-count trimming, because no effective limit governed the
+run. The retention settings this build carries — `desktop.worktree-keep-count`,
+`desktop.worktree-auto-cleanup-enabled` and `desktop.git-worktree-root` — sit in a
+`desktop.` namespace that the command-line creation path does not read. Setting them
+for the invocation changed nothing: with auto-cleanup enabled and a keep count of two,
+four consecutive creations produced four surviving checkouts, and
+`desktop.git-worktree-root` pointed at a different directory while the checkout still
+landed under the Codex home root. Neither key was set in the host configuration either.
+So the limit was not merely unobserved, it was absent from the path under test, and the
+trigger cannot be exercised from here. Close this condition on the surface that owns
+those settings, and record the effective limit and any exemption state next to the
+result, as the table above requires.
+
+On the paths exercised above, then, Codex 0.154.0 removed no checkout on its own, and
+the risk to plan for is an accumulating leftover rather than a checkout that
+disappears. That is a statement about those commands at that version, not a policy for
+the surface, and it does not transfer to the desktop-app surface, which owns the
+documented policy above and was not reachable from the measuring host; its automatic
+removal stays unverified. The distinction matters here because both surfaces are in
+use: of the 33 managed-worktree checkouts currently referenced by that host's thread
+store, 27 were created with `source=vscode` and 6 from the command line, and 7 threads
+name `Codex Desktop` as originator outright. Deletion removes thread rows, so that
+snapshot is a floor, not a history. Ten of the 33 were gone from disk, cleanly, with
+their git registrations removed too, and the three whose threads had been archived were
+all among them — a correlation on three cases, not a demonstrated cause, and not
+something the command-line experiment reproduced. Age does not explain the rest: the
+two oldest checkouts in that snapshot are still present.
+
+Write the evidence outside the checkout whichever surface created it. Under the
+documented desktop policy the checkout can vanish; on the command-line paths measured
+here it outlives its task, and after a forced thread deletion its owner record points
+at a thread that is gone.
 
 ## Adoption gate
 
