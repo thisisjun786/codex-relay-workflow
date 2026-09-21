@@ -218,11 +218,10 @@ class MergeTurn:
                 "'unknown') ORDER BY requested_at, turn_id",
                 (task_id,)):
             record = self.turn(row["turn_id"])
-            occupant = self.store.one(
-                "SELECT turn_id FROM merge_turns"
-                "  WHERE target_key = ? AND state IN ('holding','merging','unknown')",
-                (row["target_key"],))
-            record["targetFree"] = occupant is None
+            held_back = (self._acquirable(record) if record["state"] == WAITING
+                         else "already " + record["state"])
+            record["targetFree"] = not held_back
+            record["heldBackBy"] = held_back or None
             answer.append(record)
         return answer
 
@@ -319,6 +318,16 @@ class MergeTurn:
         UPDATE, so resubmitting identical evidence converges on one row. A rerun changes the
         attempt inside checks_digest, so a re-poll against NEW evidence does open a new one.
 
+        Only rows about the CURRENT candidate. Check rows outlive a head change, so the newest
+        one could describe a candidate this turn no longer means to merge - and once readiness
+        came back on the new head, that stale refusal decided the reported cause. A candidate
+        nobody has restated reads as unrestated, which is what it is.
+
+        readyPeers is who would actually be promoted, not who declared readiness. _promote_in
+        re-checks ownership and skips a paused owner, so listing every ready waiter told a
+        holder to return the turn for a peer that cannot take it. The rest are reported beside
+        them with the reason they are held back.
+
         The cause of a refused restatement is read from the refusal that was stored, not
         assumed. begin_merge writes a check row for EVERY refusal it reaches - an unfinished
         review, a base that moved, a candidate that moved - so calling all of them unfinished
@@ -327,9 +336,9 @@ class MergeTurn:
         if holder is None:
             return None
         rows = self.store.all(
-            "SELECT * FROM merge_turn_checks WHERE turn_id = ?"
+            "SELECT * FROM merge_turn_checks WHERE turn_id = ? AND head_sha = ?"
             "  ORDER BY recorded_at DESC, check_id DESC",
-            (holder["turnId"],))
+            (holder["turnId"], holder["candidateHead"]))
         latest = rows[0] if rows else None
         if holder["state"] == MERGING:
             cause = "merge_in_flight"
@@ -341,6 +350,8 @@ class MergeTurn:
             cause = REFUSAL_CAUSES.get(latest["refusal_reason"], "restatement_refused")
         else:
             cause = "candidate_not_restated"
+        peers = [(waiter, self._withheld(waiter))
+                 for waiter in waiters if waiter["declaredReady"]]
         return {
             "cause": cause, "turnId": holder["turnId"],
             "holderTaskId": holder["holderTaskId"],
@@ -352,7 +363,12 @@ class MergeTurn:
             "readyPeers": [
                 {"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"],
                  "candidateHead": waiter["candidateHead"], "prNumber": waiter["prNumber"]}
-                for waiter in waiters if waiter["declaredReady"]],
+                for waiter, why in peers if not why],
+            "withheldPeers": [
+                {"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"],
+                 "candidateHead": waiter["candidateHead"],
+                 "prNumber": waiter["prNumber"], "reason": why}
+                for waiter, why in peers if why],
         }
 
     def _return_marks(self, turn):
@@ -423,6 +439,37 @@ class MergeTurn:
         if len(held) != 1:
             return None
         return held[0]["status"]
+
+    def _withheld(self, record):
+        """Why this waiter would NOT be promoted, or "" when it would.
+
+        The conditions _promote_in applies, asked by the readers that report who is next. A
+        report that called every waiter with declared_ready ready-to-proceed was telling a
+        holder to return the turn for a peer the promotion would skip, which frees the target
+        and moves nobody.
+        """
+        held = [owner["taskId"] for owner in self.linkage.owners(PROJECT, record["projectKey"])
+                if owner["role"] == PARENT]
+        if held != [record["holderTaskId"]]:
+            return "not_the_project_owner"
+        if self._owner_status(record["projectKey"]) != ACTIVE:
+            return "owner_paused"
+        return ""
+
+    def _acquirable(self, record):
+        """Why this waiting claim could not take its target right now, or "" when it could.
+
+        Occupancy is one condition of three. Reporting it alone advertised a target that
+        declare_ready would refuse, which sends a parent that just came back to do the one
+        thing that cannot work.
+        """
+        occupant = self.store.one(
+            "SELECT turn_id FROM merge_turns"
+            "  WHERE target_key = ? AND state IN ('holding','merging','unknown')",
+            (record["targetKey"],))
+        if occupant is not None:
+            return "target_occupied"
+        return self._withheld(record)
 
     def _unanswered_grant(self, db, row, actor):
         """A grant nobody answered is an audit entry, not a gate.
@@ -548,7 +595,7 @@ class MergeTurn:
         exact(holder.host_id, "a host id")
         exact(candidate_head, "a candidate head")
         now = self.clock.iso()
-        refusal, turn = None, None
+        refusal, turn, replayed = None, None, None
         with self.store.transaction() as db:
             owner, refusal = self._project_owner(db, project_key, target, holder.task_id)
             if refusal is None and owner != holder.task_id:
@@ -572,9 +619,12 @@ class MergeTurn:
                     (target, holder.task_id),
                 ).fetchone()
                 if live is not None:
-                    answer = self._record(live)
-                    answer["alreadyClaimed"] = True
-                    return answer
+                    # The SAME answer the first request gave, not a thinner one. A caller
+                    # retrying because that response was lost needs the grant it never saw:
+                    # without it there is no acknowledgement to make, and the merge gate then
+                    # refuses a turn this parent legitimately holds.
+                    replayed = live["turn_id"]
+            if refusal is None and replayed is None:
                 occupied = db.execute(
                     "SELECT turn_id FROM merge_turns"
                     "  WHERE target_key = ? AND state IN ('holding','merging','unknown')",
@@ -616,10 +666,14 @@ class MergeTurn:
                 self.store.journal(
                     "merge_turn_requested", turn,
                     {"targetKey": target, "state": state, "holder": holder.task_id}, at=now)
-            else:
+            elif refusal is not None:
                 self.conflicts.record_in(db, refusal, at=now)
         if refusal is not None:
             raise refusal.error()
+        if replayed is not None:
+            answer = self.turn(replayed)
+            answer["alreadyClaimed"] = True
+            return answer
         return self.turn(turn)
 
     def declare_ready(self, turn, *, actor, ready, candidate_head=None, cause=""):

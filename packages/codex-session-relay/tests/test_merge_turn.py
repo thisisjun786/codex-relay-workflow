@@ -263,6 +263,31 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
     def test_an_unoccupied_target_has_nothing_to_be_waiting_on(self):
         self.assertIsNone(self.turns.target(REPO, BASE)["blocked"])
 
+    def test_a_peer_the_promotion_would_skip_is_not_reported_as_ready(self):
+        """Returning the turn for a peer that cannot take it frees the target and moves nobody."""
+        self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.set_status(PROJECT_B, "paused")
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["readyPeers"], [])
+        self.assertEqual([peer["turnId"] for peer in blocked["withheldPeers"]],
+                         [waiter["turnId"]])
+        self.assertEqual(blocked["withheldPeers"][0]["reason"], "owner_paused")
+
+    def test_a_refusal_about_a_head_this_turn_left_behind_does_not_decide_the_cause(self):
+        """Check rows outlive a head change, so the newest one can be about another candidate."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        self.refused_check(held["turnId"])
+        self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-b")
+        self.turns.declare_ready(held["turnId"], actor=self.alpha.task_id, ready=True)
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "candidate_not_restated")
+        self.assertEqual(blocked["candidateHead"], "head-b")
+        self.assertEqual(blocked["checkSnapshots"], 0)
+        self.assertIsNone(blocked["lastRefusal"])
+
     def test_restating_the_same_evidence_does_not_look_like_a_second_restatement(self):
         """checkSnapshots counts distinct evidence, and says so rather than counting polls."""
         held = self.claim(self.alpha, PROJECT_A, "head-a")
@@ -305,6 +330,29 @@ class AParentThatCameBackFindsItsOwnClaims(MergeTurnTestCase):
         self.assertEqual([record["turnId"] for record in mine], [held["turnId"]])
         self.assertEqual(mine[0]["grant"]["grantId"],
                          grant_id(held["turnId"], mine[0]["tenure"], "head-a"))
+
+    def test_a_free_target_a_paused_owner_cannot_take_is_not_reported_free(self):
+        """targetFree answers whether to try, so occupancy alone was the wrong question."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.set_status(PROJECT_B, "paused")
+        self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned", reason="done")
+        mine = self.turns.outstanding(self.beta.task_id)
+        self.assertEqual([record["turnId"] for record in mine], [waiter["turnId"]])
+        self.assertFalse(mine[0]["targetFree"])
+        self.assertEqual(mine[0]["heldBackBy"], "owner_paused")
+
+    def test_a_claim_that_already_holds_replays_with_the_grant_it_was_given(self):
+        """A lost response is retried, and the retry has to carry what the first one did."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        again = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.assertTrue(again["alreadyClaimed"])
+        self.assertEqual(again["turnId"], held["turnId"])
+        self.assertEqual(again["grant"]["grantId"], held["grant"]["grantId"])
+        self.turns.acknowledge_grant(
+            again["turnId"], actor=self.alpha.task_id, grant=again["grant"]["grantId"],
+            evidence="acting on the retried response")
 
 
 class OneParentHoldsTheTargetAtATime(MergeTurnTestCase):
