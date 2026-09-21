@@ -402,13 +402,27 @@ def cmd_register(services, args) -> dict:
     # either task. So the writes are composed into one transaction here, where both halves are
     # in hand, rather than by changing what registry.register promises its other callers.
     #
-    # Settings are parsed FIRST. _settings_json may read a file, and an @path naming one that
-    # does not exist is a usage error rather than something to discover holding the write lock.
-    settings = [
-        (task, _settings_json(raw), role, exception)
-        for task, raw, role, exception in (
-            (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
-            (args.child_task, args.child_settings, args.child_role, args.child_exception),
+    # Settings are parsed ONCE, and before the lock. _settings_json may read a file: an @path
+    # naming one that does not exist is a usage error rather than something to discover holding
+    # the write lock, and reading it twice would let the content validated differ from the
+    # content recorded.
+    from .linkage import CHILD
+
+    #
+    # Each side carries its own exception, because recovering it from the settings value by
+    # identity or equality asks the wrong question: two sides can pass the same string, and
+    # then the child is validated against the parent's exception.
+    #
+    # The last element is the role THIS write would establish. With --project the registration
+    # binds the relationship's child task to its issue scope as a child, so that -- not the
+    # role the caller cited -- is what the citation has to agree with.
+    writes = [
+        (task, _settings_json(raw), role, exception, establishes)
+        for task, raw, role, exception, establishes in (
+            (args.parent_task, args.parent_settings, args.parent_role,
+             args.parent_exception, None),
+            (args.child_task, args.child_settings, args.child_role, args.child_exception,
+             CHILD if args.project else None),
         )
         if raw
     ]
@@ -417,7 +431,7 @@ def cmd_register(services, args) -> dict:
         with services.store.composing():
             # Inside the transaction now, so the bindings it reads cannot move between the
             # check and the write it authorizes.
-            _refuse_role_disagreement(services, args)
+            _refuse_role_disagreement(services, writes)
             record = services.registry.register(
                 parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
                                 cxc_session=args.parent_cxc_session),
@@ -435,7 +449,7 @@ def cmd_register(services, args) -> dict:
             # Execution settings come from the creation result the caller already holds.
             # Recording them here is what lets a later send preserve them instead of
             # inheriting a host default.
-            for task, values, role, exception in settings:
+            for task, values, role, exception, _establishes in writes:
                 # The role the CREATION cited, from the receipt's executionPolicy. Recorded
                 # beside the settings so a later binding can be checked against what the task
                 # was made as.
@@ -462,41 +476,28 @@ def _settings_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _refuse_role_disagreement(services, args) -> None:
+def _refuse_role_disagreement(services, writes) -> None:
     """Refuse a registration whose stated roles and settings already contradict each other.
 
     Answers exactly what record_settings would answer afterwards, from the same predicate, so
-    the two cannot disagree. The roles and settings come from the arguments and the files they
-    name; the one thing it reads from the store is the binding each task already holds, because
-    a citation is checked against the role the task will actually be in and that is not always
-    the role the caller named.
+    the two cannot disagree. It is given the settings its caller already parsed rather than
+    re-reading them, so the content checked here is the content recorded afterwards even when
+    an @path file changes underneath. The one thing it reads from the store is the binding each
+    task already holds, because a citation is checked against the role the task will actually
+    be in and that is not always the role the caller named.
     """
     from . import rolepolicy
     from .errors import RefusalReason, RegistrationError
-    from .linkage import CHILD
     from .settings import TaskSettings
 
     policy = rolepolicy.declared()
-    # Each side carries its own exception in the tuple. Recovering it from the settings value
-    # by identity or equality asks the wrong question: two sides can pass the same string, and
-    # then the child is validated against the parent's exception and a legitimate registration
-    # is refused before anything is written.
-    #
-    # The fourth element is the role THIS write would establish. With --project the registration
-    # binds the relationship's child task to its issue scope as a child, so that -- not the role
-    # the caller cited -- is what the citation has to agree with. Comparing the cited role
+    # The role a write would establish arrives with each entry. Comparing the cited role
     # against itself asked a different question and passed every time: a registration citing
-    # parent for the child task committed the relationship and the binding, and only the settings
-    # write after them refused, leaving a live wrong-role assignment this function exists to
-    # prevent and nothing here could undo.
-    for task, raw, role, exception, establishes in (
-        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception, None),
-        (args.child_task, args.child_settings, args.child_role, args.child_exception,
-         CHILD if args.project else None),
-    ):
-        if not raw:
-            continue
-        settings = dict(_settings_json(raw))
+    # parent for the child task committed the relationship and the binding, and only the
+    # settings write after them refused, leaving a live wrong-role assignment this function
+    # exists to prevent and nothing here could undo.
+    for task, values, role, exception, establishes in writes:
+        settings = dict(values)
         # The same completeness question record_settings asks, asked while there is still
         # nothing to unwind, and asked of every settings value rather than only the ones that
         # also name a role. Without it an incomplete settings file passed here, the relationship
