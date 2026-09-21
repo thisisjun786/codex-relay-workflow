@@ -815,6 +815,35 @@ Preserved: the real owner in every case, the previous task's permissions staying
 and the turn as separate states, the current reading's precedence over an older record, and
 authorized work continuing without title control.
 
+## S37 An evidence run wants its own daemon, and one of the two forgets the override
+
+Observed: two runs want to exercise delivery without disturbing the scope's real service. The
+first points at its own state directory under a scratch path and starts a bounded daemon there.
+The second does the same and additionally overrides the scope directory and passes the flag that
+permits an isolated authority. A third attempt then starts a second daemon against that same
+isolated store while the first one is still inside its bound.
+
+Clauses: OPS-3.6 for what a separate store does and does not isolate, OPS-3.1 for what an operating
+scope is, OPS-4.1 for one service per scope, OPS-4.2 for duplicate-start evidence, OPS-8.4 for what
+may be claimed from it.
+
+Action: the first run is not isolated and must not be described as though it were. Its store is its
+own, but it resolves the shared scope authority, so the daemon it starts is the shared scope's one
+service and every rule about not ending another parent's service applies to it. Read the reported
+scope authority before believing otherwise, because the record says which one was resolved. The
+second run is isolated: it holds its own scope root, registers its own scope record there, and the
+real service keeps its lock untouched. Its directories are private to the owner or the start is
+refused, which is the guard working rather than a permission to loosen them. The third attempt is
+refused on that store's own lock, because an isolated authority is a scope of one's own and not
+permission to run two services in it. What either run may then claim is bounded by what it
+observed: ticks against an empty store establish that the loop ran, and establish nothing about
+delivery, wake or acknowledgement.
+
+Preserved: the real service's lock and its in-flight deliveries, the shared scope root with no
+record of an isolated run in it, the one-service invariant inside every scope including an isolated
+one, the private directory modes, and the difference between a loop that ticked and a delivery that
+arrived.
+
 ## S36 A goal-free parent waits idle, and four things go wrong with its queue
 
 Observed: a project parent holds no goal and has yielded idle with every readiness fact recorded.
