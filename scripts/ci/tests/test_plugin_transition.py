@@ -359,6 +359,39 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         self.assertEqual([item["outcome"] for item in step], ["would_change"])
 
 
+    def test_a_held_launcher_lock_stops_the_sequence_before_the_settings(self):
+        """Devin review: a busy launcher must not let the settings be written without it.
+
+        transition() owns the Busy handler: it names the step that was running and marks every
+        later step not reached. Answering busy inside the step instead would hand the main loop
+        an ordinary result it does not break on, and the host would end with plugin-owned
+        settings and no fallback -- which is the combination the step exists to prevent.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion as _completion, hostrecord as _hostrecord
+
+        host = self.ready()
+        launcher = Path(host.home) / _completion.LAUNCHER_NAME
+        lock = Path(str(launcher) + _hostrecord.LOCK_SUFFIX)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("99999999", encoding="utf-8")
+        self.addCleanup(lambda: lock.exists() and lock.unlink())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
+        self.assertEqual(outcomes.get("stable launcher install"), "busy",
+                         json.dumps(answer["results"])[:700])
+        self.assertEqual(outcomes.get("settings install"), "not_reached",
+                         json.dumps(answer["results"])[:700])
+        self.assertFalse(launcher.exists())
+        # No plugin-owned settings were written, which is the claim. The settings the retire
+        # step had already archived stay archived: that window belongs to the retire-first order
+        # and is the same for every step that refuses after it, not something this one adds.
+        landed = host.settings()
+        self.assertTrue(landed is None or landed.get("owner") != "plugin", landed)
+
+
     def test_the_retired_settings_and_record_are_kept_not_deleted(self):
         host = self.ready()
         host.transition("--apply")

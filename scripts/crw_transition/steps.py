@@ -1490,14 +1490,17 @@ def launcher_install(host, options, *, apply=False):
     Before settings install, for the reason that ordering exists everywhere else here: a launcher
     with no settings stands down in silence, while settings whose fallback was never placed look
     installed and are not. A refusal here therefore stops the sequence with the host unchanged.
+
+    hostrecord.Busy is deliberately NOT caught. transition() catches it, names the step that was
+    running and marks every later step not reached; catching it here would return an ordinary
+    busy answer that the main loop does not break on, and settings install would then write a
+    plugin-owned document for a host whose fallback was never placed -- the exact combination
+    this step was added to prevent.
     """
     step = "stable launcher install"
     path = completion.launcher_path(Path(host["codexHome"]))
     source = Path(host["repoRoot"]) / completion.LAUNCHER_SOURCE
-    try:
-        placed = completion.place_launcher(path, source, apply=apply)
-    except hostrecord.Busy as error:
-        return _answer(step, BUSY, str(error))
+    placed = completion.place_launcher(path, source, apply=apply)
     outcome = placed["outcome"]
     settled = SETTLED if outcome == completion.LAUNCHER_PLACED else (
         ALREADY if outcome == completion.LAUNCHER_UNCHANGED else (
