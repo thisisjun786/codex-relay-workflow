@@ -371,9 +371,14 @@ it reach its own bound is a process end under OPS-4.3; ending it early is the pr
 however short the bound was and however finished that parent's own work is. This speaks about the
 shared scope: under an isolated authority established per OPS-3.6 the same rule holds within that
 scope, over that store's own assignments. The only daemon a run
-owns outright is one attached to an OPS-3.2 test or evidence store, which is not the scope's store
-and carries nobody else's assignments; that one it cleans up with the rest of its evidence, and a
-report says which of the two it was rather than leaving a reader to infer it. Whether the scope
+owns outright is one running under an isolated authority established per OPS-3.6, which carries
+nobody else's assignments; that one it cleans up with the rest of its evidence. A test or evidence
+store under OPS-3.2 does not by itself confer that ownership, because state selection and scope
+selection are independent: without the scope override such a daemon is the shared scope's service,
+whatever store it reads. Letting any daemon reach a configured bound is a process end under
+OPS-4.3 and is never the prohibited act; stopping one early is, and it is permitted only for a
+daemon owned outright under this paragraph. A report says which of the two it was rather than
+leaving a reader to infer it. Whether the scope
 should run a supervised service of its own instead is arbitration under OPS-4.6, and proposed.
 
 The MCP server process is a separate case: Codex spawns and restarts it from its registration, not

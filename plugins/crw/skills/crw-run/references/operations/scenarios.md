@@ -818,19 +818,25 @@ authorized work continuing without title control.
 ## S37 An evidence run wants its own daemon, and one of the two forgets the override
 
 Observed: two runs want to exercise delivery without disturbing the scope's real service. The
-first points at its own state directory under a scratch path and starts a bounded daemon there.
-The second does the same and additionally overrides the scope directory and passes the flag that
-permits an isolated authority. A third attempt then starts a second daemon against that same
-isolated store while the first one is still inside its bound.
+first points at its own state directory under a scratch path and tries to start a bounded daemon
+there, without overriding the scope. It tries this twice: once while the scope's real service is
+running, and once when nothing owns the scope. The second run overrides the scope directory and
+passes the flag that permits an isolated authority. A third attempt then starts a second daemon
+against that same isolated store while the first one is still inside its bound.
 
 Clauses: OPS-3.6 for what a separate store does and does not isolate, OPS-3.1 for what an operating
 scope is, OPS-4.1 for one service per scope, OPS-4.2 for duplicate-start evidence, OPS-8.4 for what
 may be claimed from it.
 
-Action: the first run is not isolated and must not be described as though it were. Its store is its
-own, but it resolves the shared scope authority, so the daemon it starts is the shared scope's one
-service and every rule about not ending another parent's service applies to it. Read the reported
-scope authority before believing otherwise, because the record says which one was resolved. The
+Action: the first run is not isolated and must not be described as though it were, and what happens
+to it depends on who owns the scope rather than on which store it selected. While the real service
+holds that scope, its start is refused because the scope is owned by another store: no ticks run
+and there is no evidence daemon to clean up, so a run reporting that it exercised delivery there
+has reported something that did not happen. Where nothing owns the scope, the start succeeds and
+what it started is the shared scope's one service, carrying whatever assignments the scope has;
+every rule about not ending another parent's service then applies to it, and finishing its own work
+is not permission to stop it. Read the reported scope authority and the refusal reason before
+believing either outcome, because the record says which one was resolved. The
 second run is isolated: it holds its own scope root, registers its own scope record there, and the
 real service keeps its lock untouched. Its directories are private to the owner or the start is
 refused, which is the guard working rather than a permission to loosen them. The third attempt is
