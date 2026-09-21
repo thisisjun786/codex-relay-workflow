@@ -304,11 +304,8 @@ class Elision(DeliveryTestCase):
              "reopenTrigger": "the wording reaches a criterion"}
             for n, one in enumerate(threads)
         ]
-        # The WHOLE readiness block, because an acceptance pins all of it, which is what the
-        # recorder charges. Sizing against the confirmations alone put this test just under a
-        # ceiling the recorder measured differently.
-        block = sum(len(line.encode("utf-8")) + 1 for line in report._handoff_lines(
-            {"headSha": head, "baseSha": a_report()["base_sha"], "handoff": handoff}))
+        block = sum(len(line.encode("utf-8")) + 1
+                    for line in report._acceptance_lines(handoff["threadDispositions"]))
         room = report._confirmations_room(a_report()["summary"], a_report()["cxc_reason"],
                                           a_report()["next_action"])
         self.assertGreater(block, room - 400,
@@ -357,7 +354,7 @@ class Elision(DeliveryTestCase):
                 **a_report(handoff=handoff_for(addressedBy="a" * 300, followUpOwner="o" * 300,
                                                reopenTrigger="t" * 300), head_sha=head)),
         )
-        self.assertIn("are left for it", error.detail)
+        self.assertIn("are left for them", error.detail)
         # The same four threads with references somebody would actually write are fine: the
         # ceiling is on what the parent must be shown, not on how many may be accepted.
         report.record(self.store, self.clock, event_id=event_id,
@@ -378,7 +375,6 @@ class Elision(DeliveryTestCase):
         reason = "r" * report.REASON_MAX
         action = "n" * report.ACTION_MAX
         room = report._confirmations_room(summary, reason, action)
-        base = a_handoff(head)
         threads, dispositions = [], []
         while True:
             one = f"PRRT_accepted_{len(threads)}"
@@ -386,10 +382,8 @@ class Elision(DeliveryTestCase):
                      "addressedBy": "parent task 01a0b406 decided this",
                      "followUpOwner": "CRW-176",
                      "reopenTrigger": "the wording reaches a criterion"}
-            probe = dict(base)
-            probe["threadDispositions"] = dispositions + [entry]
-            grown = sum(len(line.encode("utf-8")) + 1 for line in report._handoff_lines(
-                {"headSha": head, "baseSha": a_report()["base_sha"], "handoff": probe}))
+            grown = sum(len(line.encode("utf-8")) + 1
+                        for line in report._acceptance_lines(dispositions + [entry]))
             if grown > room:
                 break
             threads.append(one)
@@ -410,15 +404,18 @@ class Elision(DeliveryTestCase):
         for one in threads:
             self.assertIn(one, message, f"{one} did not survive the worst legal report")
         self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
-    def test_a_long_required_check_list_counts_against_the_same_room(self):
-        """Every name bounded and the joined line unbounded, which is the same trap again.
+    def test_an_acceptance_does_not_pin_the_required_check_line_with_it(self):
+        """The confirmations are their own section so that pinning them pins nothing else.
 
-        `_handoff_lines` joins every declared required check onto ONE line, and an acceptance
-        pins that line along with the rest of the block. Charging only the confirmations left
-        that line free to grow past the budget by itself, so a report with many required
-        checks and a couple of acceptances recorded and then failed every render.
+        Folding them into merge readiness meant raising that section's floor to its whole
+        length, which also pinned the line joining every declared required check name
+        together. A long check list could then exhaust the budget by itself, and the recorder
+        had to start charging a line it never wanted to own. Separating the section is what
+        made that unnecessary: many required checks and an acceptance record fine, and the
+        confirmations still survive because their own floor is untouched.
         """
         _relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
         head = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
         threads = ["PRRT_accepted_0"]
         names = [f"dev-gate-{'n' * 60}-{n}" for n in range(40)]
@@ -434,22 +431,15 @@ class Elision(DeliveryTestCase):
              "addressedBy": "parent task 01a0b406 decided this", "followUpOwner": "CRW-176",
              "reopenTrigger": "the wording reaches a criterion"}
         ]
-        error = self.assertRefused(
-            RefusalReason.MERGE_EVIDENCE_REQUIRED,
-            lambda: report.record(self.store, self.clock, event_id=event_id,
-                                  **a_report(handoff=handoff, head_sha=head)),
-        )
-        self.assertIn("checks line included", error.detail)
-        # Without an acceptance the block is elidable again, so the same checks are fine.
-        plain = dict(handoff)
-        plain["reviewCoverage"] = {"hasNextPage": False, "pagesRead": 1, "totalCount": 1,
-                                   "threadsSeen": threads, "unresolved": 0}
-        plain["threadDispositions"] = [
-            {"threadId": threads[0], "disposition": "fixed", "evidence": "fixed and rechecked",
-             "addressedBy": "a1b2c3d"}
-        ]
         report.record(self.store, self.clock, event_id=event_id,
-                      **a_report(handoff=plain, head_sha=head))
+                      **a_report(handoff=handoff, head_sha=head,
+                                 unresolved=[f"open item {n}" for n in range(400)]))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        message = report.render_completion(row, receipt, "del-x-a1", stored)
+        self.assertIn("confirm each was yours", message)
+        self.assertIn(threads[0], message, "the confirmation survives a long check list")
+        self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
 
     def test_shortening_a_long_list_stays_correct_and_does_not_rescan(self):
         _relationship, event_id = self.queued_event()

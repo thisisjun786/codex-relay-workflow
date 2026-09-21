@@ -71,21 +71,21 @@ REF_SHOWN = 240
 # carrying too many accepted defects to hand over in one piece.
 ACCEPTANCE_SHOWN = 2400
 # And a FIXED ceiling is not enough either, which is the same mistake one level up. summary,
-# next_action, cxc_reason and pr_url are each legal at their own limits and each land on lines
-# the composer cannot drop, so 1200 + 1200 + 600 of them plus a full 2400 of confirmations plus
-# the scaffolding passes every individual bound and still exceeds BUDGET. The room left for
-# confirmations is therefore measured against what those four actually cost on this report
+# next_action and cxc_reason are each legal at their own limits and each land on lines the
+# composer cannot drop, so 1200 + 1200 + 600 of them plus a full 2400 of confirmations plus the
+# scaffolding passes every individual bound and still exceeds BUDGET. The room left for
+# confirmations is therefore measured against what those three actually cost on this report
 # rather than assumed.
 #
-# PROTOCOL_FLOOR is what stays unelidable underneath them once the merge-readiness block is
-# measured separately: the header framing, the omission notice, the relay record and the
-# instruction for answering. It is MEASURED rather than estimated, by bisecting the smallest
-# budget that renders, and the measured figure is a flat 1235 across one, four and eight
-# confirmations AND across one and six declared required checks. That flatness in both
-# directions is the evidence that the varying parts are all being charged where they vary
-# rather than absorbed into this constant. The margin is for the scaffolding changing, and
-# the worst-legal-report test is what fails if it moves past the margin.
-PROTOCOL_FLOOR = 1280
+# PROTOCOL_FLOOR is everything else that survives shrinking, and it is MEASURED rather than
+# estimated, by bisecting the smallest budget that renders. The figure is a flat 1342 across
+# one, four and eight confirmations AND across one and twenty declared required checks. That
+# second invariance is the one worth having: it is what says the confirmations are the only
+# thing this change pins, so no other variable part is hiding inside this constant. Two
+# earlier versions of this accounting failed exactly there, each time because pinning the
+# whole merge-readiness block dragged another variable line in with it. The margin is for the
+# scaffolding changing, and the worst-legal-report test is what fails if it moves past it.
+PROTOCOL_FLOOR = 1400
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -218,19 +218,16 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     # cxc_reason and next_action, and they live at this level. Refusing now is the difference
     # between a child that is told to fix some of them and a report that is accepted and then
     # undeliverable for good, since rendering happens inside the delivery claim.
-    if _accepted_dispositions(handoff):
-        # The WHOLE block, because an acceptance pins all of it, including the line that
-        # joins every required check name together.
-        pinned = _handoff_lines({"headSha": head_sha, "baseSha": base_sha, "handoff": handoff})
+    pinned = _acceptance_lines(_accepted_dispositions(handoff))
+    if pinned:
         total = sum(_size(line) + 1 for line in pinned)
         room = _confirmations_room(summary, reason, next_action)
         if total > room:
             raise ReceiptRefused(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
-                f"the merge readiness block for this candidate renders {total} bytes and only"
-                f" {room} are left for it once this report's summary, reason and next action"
-                " have taken theirs. An acceptance pins the whole block, checks line included,"
-                " because a dropped"
+                f"the acceptance confirmations for this candidate render {total} bytes and only"
+                f" {room} are left for them once this report's summary, reason and next action"
+                " have taken theirs. They cannot be shortened, because a dropped"
                 " confirmation hides a decision the parent is credited with and never made,"
                 " so a candidate whose confirmations do not fit the message is carrying too"
                 " many accepted defects to hand over at once. Fix some of them, shorten the"
@@ -1283,8 +1280,7 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
     event_id = row["event_id"]
     assert_current(report, execution_generation=receipt.get("executionGeneration")
                    or report["executionGeneration"])
-    readiness = _handoff_lines(report)
-    readiness_keep = len(readiness) if _accepted_dispositions(report.get("handoff")) else 2
+    confirmations = _acceptance_lines(_accepted_dispositions(report.get("handoff")))
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -1297,13 +1293,15 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
         # keep counts from the top of the block, and these blocks open with a blank line, so
         # a floor of two is what keeps the heading attached to whatever survives under it.
         _Section("pull request", _pr_lines(report), rank=1, essential=True, keep=2),
-        # keep is a floor on what survives shrinking, and 2 left only the heading. That was
-        # survivable while this section carried counts the parent could re-read for itself,
-        # and it is not now: an acceptance line is the ONLY place the parent learns it is
-        # credited with a decision it may never have made, so dropping it silently restores
-        # exactly the forgery this rendering exists to catch. Naming the whole block makes
-        # the composer shorten something else instead.
-        _Section("merge readiness", readiness, rank=1, essential=True, keep=readiness_keep),
+        _Section("merge readiness", _handoff_lines(report), rank=1, essential=True, keep=2),
+        # Its OWN section, so that pinning it pins nothing else. Folding it into merge
+        # readiness above meant raising that section's floor to its whole length, which also
+        # pinned the line joining every declared required check name together and made a long
+        # check list able to exhaust the budget on its own. An acceptance line is the only
+        # place the parent learns it is credited with a decision it may never have made, so
+        # this one cannot shrink; nothing around it needs to change for that to hold.
+        _Section("acceptance confirmations", confirmations, rank=1, essential=True,
+                 keep=len(confirmations)),
         _Section("verification", _evidence_lines(report), rank=4),
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
@@ -1734,12 +1732,7 @@ def _handoff_lines(report) -> list:
     coverage = handoff.get("reviewCoverage") or {}
     required = handoff.get("requiredDeclared") or []
     checks = handoff.get("checks") or []
-    # An acceptance is the child asserting a decision the PARENT made, and nothing here can
-    # authenticate that. Rendering each one puts the assertion in front of the only party who
-    # knows whether it happened, at the moment it restates the record anyway. Left in the
-    # store it would be a row nobody had a reason to fetch.
-    accepted = _accepted_dispositions(handoff)
-    lines = [
+    return [
         "",
         "merge readiness (restate these; do not collect them again):",
         f"  head {report.get('headSha')} on base {report.get('baseSha')}"
@@ -1749,7 +1742,6 @@ def _handoff_lines(report) -> list:
         f"  review: {coverage.get('totalCount')} thread(s) seen over"
         f" {coverage.get('pagesRead')} page(s), {coverage.get('unresolved')} unresolved",
     ]
-    return lines + _acceptance_lines(accepted)
 
 #: Which refusal a problem code becomes. The next action genuinely differs for each, which is
 #: why the predicate returns codes rather than prose: an undeclared required set is something
@@ -1794,21 +1786,19 @@ def _verified_at(value):
     return parsed.isoformat()
 
 def _confirmations_room(summary, reason, next_action) -> int:
-    """How many bytes the pinned merge-readiness block may take on THIS report.
+    """How many bytes the unelidable confirmations may take on THIS report.
 
-    A fixed reserve answered the wrong question. What matters is not whether the block is
-    large in the abstract but whether it still fits once the other things nobody can shorten
-    have taken their share, and those vary per report.
+    A fixed reserve answered the wrong question. What matters is not whether they are large
+    in the abstract but whether they still fit once the other things nobody can shorten have
+    taken their share, and those vary per report.
 
-    What is charged here is what is actually pinned. An acceptance sets the section's floor to
-    its whole length, so the base readiness lines above the confirmations are pinned too, and
-    one of them joins every declared required check name onto a single line whose length
-    nothing bounds in aggregate. Charging only the confirmations left that line free to grow
-    past the budget on its own.
-
-    pr_url is deliberately NOT charged. It is the third line of a section with keep=2, so the
-    composer can drop it, and charging an elidable line would make the recorder stricter than
-    the renderer and refuse reports that would have delivered perfectly well.
+    What is charged is exactly what this change pins, which is the confirmations and nothing
+    else. Two earlier attempts charged the wrong set: the first ignored these three fields,
+    and the second pinned the whole merge-readiness block and so had to charge the line that
+    joins every declared required check name together. Both were the same mistake, which is a
+    constant standing in for something that varies, and each fix found one more variable part
+    underneath. Giving the confirmations their own section is what stopped that, because now
+    nothing else changed its floor and nothing else has to be charged here.
     """
     spoken_for = PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
     # Never negative: a report whose other required parts already fill the budget has room
