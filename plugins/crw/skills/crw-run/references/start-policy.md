@@ -177,6 +177,13 @@ records its resolution.
 A new session, a compaction and a later batch satisfy none of those by themselves. A recorded
 blocker whose owning record nobody has re-read is a blocker that still stands, not an unknown.
 
+One trigger is not a change in the world at all. A closed-vocabulary field whose recorded value is
+missing, or outside the set declared above, is adjudicated again on every re-read, because a value
+the reader cannot match was never a restorable record in the first place. That check runs even
+where every identity in `valid_while` still holds and nothing else differs, and it is what stops
+two consumers of one record — one re-adjudicating an unreadable value, one finding no listed
+change and restoring it as it stands — resuming the same parent under two different policies.
+
 ## Three compatibility facts, not one
 
 Preflight at start, on recovery, and after an App Server restart records three separate results,
