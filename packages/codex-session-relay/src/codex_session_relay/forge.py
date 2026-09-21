@@ -638,8 +638,12 @@ def _checks(forge, owner, name, head, problems, connections):
         except (TypeError, ValueError):
             continue
         lane = (run.get("workflow_id"), run.get("event"))
-        if lane not in newest or identifier > newest[lane]:
-            newest[lane] = identifier
+        # By the time the forge says the run started, with the id only as a tiebreak. A larger
+        # id is a reasonable guess at recency and it is still a guess; the run carries its own
+        # timestamp, so the ordering does not have to rest on one.
+        stamp = (str(run.get("run_started_at") or run.get("created_at") or ""), identifier)
+        if lane not in newest or stamp > newest[lane][0]:
+            newest[lane] = (stamp, identifier)
     superseded = []
     job_ids = set()
     by_job = []
@@ -650,7 +654,8 @@ def _checks(forge, owner, name, head, problems, connections):
             problems.append(Problem(UNREADABLE, "a workflow run came back without a usable id,"
                                     " so its jobs cannot be read"))
             continue
-        replaced = newest.get((run.get("workflow_id"), run.get("event"))) != int(run_id)
+        lane = newest.get((run.get("workflow_id"), run.get("event")))
+        replaced = lane is not None and lane[1] != int(run_id)
         if replaced:
             superseded.append({"runId": run_id, "workflowId": run.get("workflow_id"),
                                "event": run.get("event"), "url": run.get("html_url"),
@@ -661,12 +666,24 @@ def _checks(forge, owner, name, head, problems, connections):
                                filter="all"),
                      lambda job: job.get("id"), problems)
         connections.append(jobs.record())
-        for job in jobs.items:
+        # Two jobs in one run CAN carry one name, and keyed by name alone their identities merge:
+        # the attempt rule then lets one job's higher-attempt success stand for the other's
+        # failure. Ordered by name, attempt and id, each gets a stable position among its
+        # namesakes, so attempts of the same job still meet and different jobs never do.
+        position = {}
+        ordered = sorted(jobs.items, key=lambda one: (str(one.get("name") or ""),
+                                                      int(one.get("run_attempt") or 1),
+                                                      int(one.get("id") or 0)))
+        for job in ordered:
             job_ids.add(job.get("id"))
             job_name = str(job.get("name") or "")
+            slot = (job_name, int(job.get("run_attempt") or 1))
+            index = position.get(slot, 0)
+            position[slot] = index + 1
+            identity = "workflow-run:" + run_id + ":" + job_name + "#" + str(index)
             if not replaced:
                 entry = {
-                    "runId": "workflow-run:" + run_id + ":" + job_name,
+                    "runId": identity,
                     "name": job_name,
                     "headSha": str(run.get("head_sha") or ""),
                     "conclusion": _outcome(job),
@@ -677,7 +694,7 @@ def _checks(forge, owner, name, head, problems, connections):
                 by_job.append((entry, job.get("id")))
             detail.append({
                 "source": "workflow-job",
-                "runId": "workflow-run:" + run_id + ":" + job_name,
+                "runId": identity,
                 "name": job_name,
                 "superseded": replaced,
                 "status": job.get("status"),
@@ -1027,10 +1044,38 @@ def restate_problems(head_sha, record, snapshot):
     problems = []
     pinned = (snapshot or {}).get("pinned") or {}
     observed = pinned.get("headSha")
+    providers = record.get("requiredProviders")
+    if providers is not None and not isinstance(providers, dict):
+        # Handed to dict() unchecked this raised out of the command as a host failure, which
+        # tells a caller nothing it can act on about its own record.
+        problems.append(Problem(
+            RECORD_INVALID, "the record states requiredProviders as a "
+            + type(providers).__name__ + ", not a mapping of context to the integration its"
+            " rule names"))
+        providers = None
     problems.extend(mergeevidence.handoff_problems(
         str(head_sha or ""), record.get("reviewCoverage"), record.get("checks") or [],
         required=record.get("requiredDeclared", mergeevidence.UNDECLARED),
-        providers=record.get("requiredProviders")))
+        providers=providers))
+    gates = (snapshot or {}).get("gates") or {}
+    fresh = gates.get("requiredDeclared")
+    stated = record.get("requiredDeclared")
+    if (fresh is not mergeevidence.UNDECLARED and stated is not mergeevidence.UNDECLARED
+            and fresh is not None and stated is not None
+            and sorted(str(one) for one in fresh) != sorted(str(one) for one in stated)):
+        # Two gate sets can each be satisfied by the checks that were read and still be
+        # different sets. A branch that added a gate leaves the record describing the rules it
+        # was graded against rather than the ones now in force.
+        problems.append(Problem(
+            GATES_MOVED, "the record was graded against required checks " + repr(sorted(
+                str(one) for one in stated)) + " and this branch now declares " + repr(sorted(
+                    str(one) for one in fresh))))
+    elif (isinstance(gates.get("requiredProviders"), dict) and isinstance(providers, dict)
+            and {str(k): str(v) for k, v in gates["requiredProviders"].items()}
+            != {str(k): str(v) for k, v in providers.items()}):
+        problems.append(Problem(
+            GATES_MOVED, "the record and this branch disagree about which integration answers"
+            " for a required context"))
     if head_sha and observed and str(head_sha) != str(observed):
         problems.append(Problem(
             CANDIDATE_MOVED, "the record is about head " + repr(str(head_sha)) + " and the forge"

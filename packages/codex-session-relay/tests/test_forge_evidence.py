@@ -650,7 +650,7 @@ class ARunThatWasReplacedDoesNotBlockTheOneThatReplacedIt(unittest.TestCase):
         snapshot = collect(fake)
         self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
         self.assertEqual([one["runId"] for one in snapshot["handoff"]["checks"]],
-                         ["workflow-run:2:dev-gate"])
+                         ["workflow-run:2:dev-gate#0"])
         self.assertEqual([one["runId"] for one in snapshot["supersededRuns"]], ["1"])
 
     def test_the_newest_run_still_decides_when_it_is_the_failing_one(self):
@@ -803,3 +803,74 @@ class AForgeThatNeverAnswersIsUnknown(unittest.TestCase):
         self.assertEqual(snapshot["verdict"], forge.UNKNOWN)
         self.assertIn(forge.UNREADABLE, codes(snapshot))
         self.assertTrue(any("timeout" in one["detail"] for one in snapshot["problems"]))
+
+
+class TwoJobsCanShareOneName(unittest.TestCase):
+    """Keyed by name alone, two jobs in one run merge into one identity.
+
+    The attempt rule then does the damage it exists to prevent: the higher-attempt success of
+    one job stands for the other job's failure, under a runId that names them both.
+    """
+
+    def test_a_namesake_in_the_same_run_does_not_absorb_the_other_s_failure(self):
+        fake = Fake(
+            threads=threads(1), runs=[workflow_run(1)],
+            jobs={1: [job("dev-gate", identifier=11, attempt=1),
+                      job("dev-gate", identifier=12, attempt=1, conclusion="failure")]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertEqual(len({one["runId"] for one in snapshot["handoff"]["checks"]}), 2)
+
+    def test_attempts_of_one_job_still_meet_under_one_identity(self):
+        fake = Fake(
+            threads=threads(1), runs=[workflow_run(1)],
+            jobs={1: [job("dev-gate", identifier=11, attempt=1, conclusion="failure"),
+                      job("dev-gate", identifier=12, attempt=2)]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        self.assertEqual(len({one["runId"] for one in snapshot["handoff"]["checks"]}), 1)
+
+
+class RecencyIsNotAnAssumptionAboutIdentifiers(unittest.TestCase):
+    def test_the_run_the_forge_started_later_is_the_one_that_answers(self):
+        older = dict(workflow_run(900, workflow_id=100), run_started_at="2026-09-22T09:00:00Z")
+        newer = dict(workflow_run(2, workflow_id=100), run_started_at="2026-09-22T11:00:00Z")
+        fake = Fake(
+            threads=threads(1), runs=[older, newer],
+            jobs={900: [job("dev-gate", identifier=11, conclusion="failure")],
+                  2: [job("dev-gate", identifier=22)]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        self.assertEqual([one["runId"] for one in snapshot["supersededRuns"]], ["900"])
+
+
+class AGateSetCanMoveBetweenTheRecordAndTheRestatement(unittest.TestCase):
+    def test_a_branch_that_added_a_gate_invalidates_the_record(self):
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        record = full_record(snapshot, requiredDeclared=["dev-gate", "security-gate"])
+        problems = forge.restate_problems(HEAD, record, snapshot)
+        self.assertIn(forge.GATES_MOVED, [one.code for one in problems])
+
+    def test_a_disagreement_about_the_provider_invalidates_it_too(self):
+        fake = Fake(threads=threads(1), rules=[{
+            "type": "required_status_checks",
+            "parameters": {"required_status_checks": [
+                {"context": "dev-gate", "integration_id": 42}]}}], runs=[], jobs={},
+            checks=[{"id": 9, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                     "conclusion": "success", "app": {"id": 42, "slug": "actions"}}])
+        snapshot = collect(fake)
+        record = full_record(snapshot, requiredProviders={"dev-gate": "99"})
+        self.assertIn(forge.GATES_MOVED,
+                      [one.code for one in forge.restate_problems(HEAD, record, snapshot)])
+
+    def test_a_provider_map_of_the_wrong_shape_is_refused_not_raised(self):
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        record = full_record(snapshot, requiredProviders=["dev-gate"])
+        problems = forge.restate_problems(HEAD, record, snapshot)
+        self.assertIn(forge.RECORD_INVALID, [one.code for one in problems])
+

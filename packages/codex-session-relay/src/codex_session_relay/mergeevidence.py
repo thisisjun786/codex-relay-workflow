@@ -235,7 +235,9 @@ def checks_problems(head_sha, required, checks, *, require_declared=False, provi
             " none")]
     checks = list(checks or [])
     required = list(required or [])
-    providers = dict(providers or {})
+    # Defensive rather than trusting: a caller handing this a list or a string would otherwise
+    # raise out of a predicate whose whole contract is to return problems instead of exceptions.
+    providers = dict(providers) if isinstance(providers, dict) else {}
 
     def answers_for(entry, name):
         """Whether this entry is the check the branch named, provider and all."""
