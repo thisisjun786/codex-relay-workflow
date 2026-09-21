@@ -102,13 +102,31 @@ would be restored and used as they stood. So the consumer side fails the same wa
 side does, and for the same reason: the field is reconstructed from what it appears to mean rather
 than checked against what is declared.
 
-Three interventions have now been measured on this one problem — asking for the literals in prose,
+Three interventions were measured while this was failing — asking for the literals in prose,
 offering them as a list to copy, and requiring a consumer to reject anything outside the set — and
-none of them changed a reader's behaviour. The rule above stays because it is what a correct
-implementation does, and because the alternative of tolerant matching is worse: with no alias
-table two readers restore two different policies from one record. But nothing in this file should
-be read as evidence that writing the rule down makes it happen. On this evidence these two fields
-need validation in code at the point they are written and read, and a document cannot supply it.
+none of them changed a reader's behaviour at the time. The rule above stays because it is what a
+correct implementation does, and because the alternative of tolerant matching is worse: with no
+alias table two readers restore two different policies from one record.
+
+So the enumeration is also runnable. [`scripts/start_policy.py`](../scripts/start_policy.py)
+parses the pairing table in this file and answers from it:
+`vocabulary` prints the legal pairings as lines to copy into a record, and `check` reads a
+record and exits non-zero on a value outside the set or an illegal pairing. A producer writes the
+two lines by copying command output instead of recalling a literal, and a consumer that doubts a
+record runs the same check rather than deciding by eye what an unfamiliar value must have meant.
+Because the script reads this table rather than keeping its own copy, renaming a literal here
+cannot leave the two disagreeing, and `scripts/ci/contracts.py` runs its selftest, which carries
+the four recorded paraphrases as cases that must be rejected.
+
+The failure then stopped reproducing, and not because of that script. Four readers of this file as
+it now stands wrote `goal-free-run` with either `event-driven-idle` or `active-observation` —
+in the set every time, and the one given no readiness evidence correctly took the unproven path.
+Two of the four read deliberately damaged copies: one with every previously wrong value deleted
+from the page, one with the paragraph above removed. Neither ablation brought the failure back,
+and none of the four ran the check. So the earlier paraphrases are real and this text does not
+provoke them, but nothing here identifies what changed between the two revisions, and eight
+readers of one model at one effort establish a rate in neither direction. Run the check to settle
+a record you doubt; do not read it as the reason records are now well formed.
 
 Every field carries three more things, because a field without them cannot be restored later:
 nobody reading it can tell what it was allowed to survive.
