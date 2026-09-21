@@ -683,7 +683,9 @@ says, so read the level first and the fields second:
   host instead of adopting them, and settles an unsupported one under
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution).
 - Where the block travels to a parent rather than to an issue child, the recorded `run_mode` and
-  `observation_path` with the readiness facts behind an `event-driven-idle` one, and the event
+  `observation_path` — spelled as the literals
+  [Start policy](start-policy.md#what-is-settled-and-what-is-recorded-with-it) declares, because a
+  paraphrase will not restore — with the readiness facts behind an `event-driven-idle` one, and the event
   state still outstanding: which relationships are owed a result, the last generation and revision
   applied, and any delivery observed holding terminally. A goal-free parent that ended its turn
   because only waiting remained cannot tell, on restart, whether that was a decision or an

@@ -77,6 +77,14 @@ project's scope or a child count.
 | `approval_policy` | Whether the approval policy in force can carry the callback this run depends on, recorded apart from goal support and from the observation path. |
 | `operating_scope` | What identifies the scope those host facts were read on: host, OS user and App Server under [OPS-3.1](operations.md#ops-31-the-operating-scope-is-the-sharing-unit). Recorded apart from what identifies this run. |
 
+`run_mode` and `observation_path` are closed vocabularies, and their values are recorded verbatim
+as one of the literals declared above. A paraphrase is not a restorable record: these two are the
+keys the pairing matrix is checked against and the keys a later session restores from, so a value
+that reads correctly but is spelled differently is a record the next reader cannot match, and the
+restore it was written for silently becomes a fresh adjudication. Two parents reading this file on
+2026-09-21 wrote `goal_free` and `relay_only` for values declared `goal-free-run` and
+`event-driven-idle`, which is the failure this sentence exists to prevent.
+
 Every field carries three more things, because a field without them cannot be restored later:
 nobody reading it can tell what it was allowed to survive.
 
