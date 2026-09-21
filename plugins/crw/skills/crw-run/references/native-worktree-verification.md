@@ -398,10 +398,10 @@ packet, not in the checkout.
 ### Measured on the command-line surface, 2026-09-22
 
 Exercised per step 12 against a disposable fixture in an isolated Codex home on Codex
-0.154.0, Linux, with `codex exec --enable worktrees --worktree`. Twelve managed
-worktrees were created from one fixture repository and none was removed, so no
-recent-count trimming took effect at that depth under the default configuration. Two
-removal commands were then exercised on that fixture, and they are different cases.
+0.154.0, Linux, with `codex exec --enable worktrees --worktree`. Two of the three
+removal conditions the policy names were exercised, and they are different cases. The
+third, the recent-count limit, could not be triggered from this surface at all; that is
+recorded below rather than inferred from a count.
 `codex archive` set the thread's archived flag and left the checkout, its git
 registration and its owner record in place; the thread still exists, so the checkout
 still has a live owner. `codex delete --force` removed the thread row and still left
@@ -411,6 +411,22 @@ binary's own messages point the same way: every removal path it describes tells 
 operator to run `git worktree remove <checkout-path>` from the source repository. None
 of these checkouts was Git-locked, unlike a checkout an explicit retention convention
 locks, so nothing in Git objected to their removal either.
+
+The recent-count condition stays UNVERIFIED, and a creation count does not stand in for
+it. Twelve managed worktrees were created from one fixture repository and all twelve
+remained, but that establishes only that these commands removed nothing at that depth.
+It says nothing about recent-count trimming, because no effective limit governed the
+run. The retention settings this build carries — `desktop.worktree-keep-count`,
+`desktop.worktree-auto-cleanup-enabled` and `desktop.git-worktree-root` — sit in a
+`desktop.` namespace that the command-line creation path does not read. Setting them
+for the invocation changed nothing: with auto-cleanup enabled and a keep count of two,
+four consecutive creations produced four surviving checkouts, and
+`desktop.git-worktree-root` pointed at a different directory while the checkout still
+landed under the Codex home root. Neither key was set in the host configuration either.
+So the limit was not merely unobserved, it was absent from the path under test, and the
+trigger cannot be exercised from here. Close this condition on the surface that owns
+those settings, and record the effective limit and any exemption state next to the
+result, as the table above requires.
 
 On the paths exercised above, then, Codex 0.154.0 removed no checkout on its own, and
 the risk to plan for is an accumulating leftover rather than a checkout that
