@@ -258,7 +258,11 @@ class AdmittedTurnsWithoutReceipts(DaemonTestCase):
 
     def test_unknown_generation_admission_is_not_assignment_work(self):
         relation = self.register()
-        self.admit(relation, "unknown-generation-failure", generation=99, status="failed")
+        self.adapter.start_turn(CHILD, turn_id="unknown-generation-failure", status="failed")
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO generation_turns VALUES (?,?,?,?,?,?,?)",
+                       (relation["relationshipId"], 99, "unknown-generation-failure",
+                        "explicit_admission", "old-writer", "", self.clock.iso()))
         selected = self.daemon._turns_to_poll(self.registry.get(relation["relationshipId"]), 8)
         self.assertNotIn("unknown-generation-failure", selected)
         self.daemon.tick()
@@ -312,3 +316,54 @@ class AdmittedTurnsWithoutReceipts(DaemonTestCase):
         self.assertIn("older-business", self.daemon._turns_to_poll(current, 8))
         self.daemon.tick()
         self.assertNotIn("older-business", self.daemon._turns_to_poll(current, 8))
+
+
+class AdmissionBinding(DaemonTestCase):
+    def test_both_writers_refuse_unknown_and_unbound_generations_atomically(self):
+        from codex_session_relay.admission import admit_explicitly, record_admission, Admission, EXPLICIT_ADMISSION
+        from codex_session_relay.errors import RegistrationError
+        relation = self.register()
+        rid = relation["relationshipId"]
+        self.registry.open_generation(rid, dispatch_request_id="pending", reason="needs_changes_revision")
+        for generation in (2, 99):
+            for writer in ("operator", "receipt"):
+                with self.subTest(generation=generation, writer=writer):
+                    with self.assertRaises(RegistrationError):
+                        if writer == "operator":
+                            admit_explicitly(self.store, self.clock, rid, generation, "bad", actor="owner")
+                        else:
+                            record_admission(self.store, self.clock, rid, generation, "bad",
+                                             Admission(True, EXPLICIT_ADMISSION, "claim"))
+        self.assertEqual(self.store.all("SELECT * FROM generation_turns"), [])
+
+    def test_future_legacy_admission_stays_ineligible_after_generation_opens(self):
+        from codex_session_relay.admission import AnchorOrExplicit
+        relation = self.register()
+        rid = relation["relationshipId"]
+        self.adapter.start_turn(CHILD, turn_id="unrelated", status="failed")
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO generation_turns VALUES (?,?,?,?,?,?,?)",
+                       (rid, 2, "unrelated", "explicit_admission", "old-writer", "", self.clock.iso()))
+        self.registry.open_generation(rid, dispatch_request_id="next", dispatch_turn_id="new-anchor",
+                                      reason="needs_changes_revision")
+        current = self.registry.get(rid)
+        self.assertFalse(AnchorOrExplicit().admit(self.store, current, current["generations"][-1],
+                                                "unrelated").admitted)
+        self.assertNotIn("unrelated", self.daemon._turns_to_poll(current, 8))
+        self.daemon.tick()
+        self.assertIsNone(self.store.one("SELECT * FROM assignment_settlements WHERE turn_id='unrelated'"))
+        self.assertEqual(self.store.all("SELECT * FROM events"), [])
+
+    def test_fresh_explicit_admission_upgrades_legacy_record(self):
+        from codex_session_relay.admission import admit_explicitly, AnchorOrExplicit
+        relation = self.register()
+        rid = relation["relationshipId"]
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO generation_turns VALUES (?,?,?,?,?,?,?)",
+                       (rid, 1, "legitimate", "explicit_admission", "old-writer", "", self.clock.iso()))
+        self.assertFalse(AnchorOrExplicit().admit(self.store, relation, relation["generations"][0],
+                                                "legitimate").admitted)
+        admit_explicitly(self.store, self.clock, rid, 1, "legitimate", actor="confirmed-owner")
+        self.assertTrue(AnchorOrExplicit().admit(self.store, relation, relation["generations"][0],
+                                               "legitimate").admitted)
+        self.assertEqual(len(self.store.all("SELECT * FROM generation_turns")), 1)

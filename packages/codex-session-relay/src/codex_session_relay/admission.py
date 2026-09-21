@@ -15,8 +15,17 @@ completion call, so nothing here adds a readiness turn, a reapproval, or a read 
 
 from dataclasses import dataclass
 
+from .errors import RegistrationError, RefusalReason
+
 ANCHOR = "anchor"
 EXPLICIT_ADMISSION = "explicit_admission"
+BOUND_EXPLICIT_PREFIX = "explicit_admission_bound:"
+# Readers alias the admission as t and its exact generation as g. A generation
+# number alone can refer to a future generation that did not exist at admission.
+BOUND_ADMISSION_SQL = (
+    "g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id <> ''"
+    " AND t.evidence = ('" + BOUND_EXPLICIT_PREFIX + "' || g.dispatch_turn_id)"
+)
 ORDERING_CORROBORATED = "ordered_same_thread"
 ORDERING_ABSENT = "not_corroborated"
 ORDERING_CONTRADICTED = "ordering_contradicted"
@@ -140,26 +149,47 @@ def _next_anchor_start(adapter, generation_record, _unused, thread):
 
 def _stored(store, relationship, generation_record, turn_id) -> bool:
     row = store.one(
-        "SELECT 1 FROM generation_turns WHERE relationship_id = ? AND execution_generation = ?"
-        " AND turn_id = ?",
+        "SELECT 1 FROM generation_turns t JOIN generations g"
+        " ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation"
+        " WHERE t.relationship_id = ? AND t.execution_generation = ? AND t.turn_id = ?"
+        " AND " + BOUND_ADMISSION_SQL,
         (relationship["relationshipId"], generation_record["executionGeneration"], turn_id),
     )
     return row is not None
 
 
+def _record_bound(db, relationship_id, generation, turn_id, actor, detail, now):
+    row = db.execute(
+        "SELECT dispatch_turn_id FROM generations WHERE relationship_id=?"
+        " AND execution_generation=?", (relationship_id, generation),
+    ).fetchone()
+    if row is None:
+        raise RegistrationError(RefusalReason.UNKNOWN_GENERATION, "admission needs an existing generation")
+    anchor = row["dispatch_turn_id"]
+    if not isinstance(anchor, str) or not anchor.strip():
+        raise RegistrationError(RefusalReason.UNBOUND_GENERATION, "admission needs a bound generation")
+    evidence = BOUND_EXPLICIT_PREFIX + anchor
+    # A fresh authorized admission may repair a legacy row. Merely opening a later
+    # generation never upgrades it, and repeated valid admissions do not rewrite the admission row.
+    db.execute(
+        "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id,"
+        " evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)"
+        " ON CONFLICT(relationship_id, execution_generation, turn_id) DO UPDATE SET"
+        " evidence=excluded.evidence, actor=excluded.actor, detail=excluded.detail,"
+        " admitted_at=excluded.admitted_at WHERE generation_turns.evidence <> excluded.evidence",
+        (relationship_id, generation, turn_id, evidence, actor, detail, now),
+    )
+
+
 def admit_explicitly(store, clock, relationship_id, generation, turn_id, *, actor, detail=""):
-    """Record an owner-confirmed admission out of band, for an operator that needs one."""
+    """Bind an owner's admission to the generation that exists in this transaction."""
     if not isinstance(turn_id, str) or not turn_id.strip():
         raise ValueError("an admitted turn needs an exact turn id")
     if not isinstance(actor, str) or not actor.strip():
         raise ValueError("an explicit admission records who made it")
     now = clock.iso()
     with store.transaction() as db:
-        db.execute(
-            "INSERT OR IGNORE INTO generation_turns (relationship_id, execution_generation,"
-            " turn_id, evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)",
-            (relationship_id, generation, turn_id, EXPLICIT_ADMISSION, actor, detail, now),
-        )
+        _record_bound(db, relationship_id, generation, turn_id, actor, detail, now)
         store.journal(
             "turn_admitted", turn_id,
             {"relationship": relationship_id, "generation": generation, "actor": actor}, at=now,
@@ -167,16 +197,9 @@ def admit_explicitly(store, clock, relationship_id, generation, turn_id, *, acto
 
 
 def record_admission(store, clock, relationship_id, generation, turn_id, admission: Admission):
-    """Persist how a turn was admitted, so a receipt's basis stays inspectable."""
+    """Persist a checked continuation claim against its generation's bound anchor."""
     if admission.evidence != EXPLICIT_ADMISSION:
         return
-    now = clock.iso()
     with store.transaction() as db:
-        db.execute(
-            "INSERT OR IGNORE INTO generation_turns (relationship_id, execution_generation,"
-            " turn_id, evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)",
-            (
-                relationship_id, generation, turn_id, admission.evidence, "child",
-                f"{admission.detail} | corroboration={admission.corroboration}", now,
-            ),
-        )
+        _record_bound(db, relationship_id, generation, turn_id, "child",
+                      f"{admission.detail} | corroboration={admission.corroboration}", clock.iso())

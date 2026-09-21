@@ -670,7 +670,7 @@ class ContinuationAdmission(DeliveryTestCase):
         admitted = self.store.one(
             "SELECT * FROM generation_turns WHERE turn_id = ?", ("turn-loop-3",)
         )
-        self.assertEqual(admitted["evidence"], "explicit_admission")
+        self.assertEqual(admitted["evidence"], "explicit_admission_bound:turn-dispatch-1")
         self.assertIn("PABCD cycle 3", admitted["detail"])
 
     def test_an_admission_naming_the_wrong_anchor_is_refused(self):

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
+from .admission import BOUND_ADMISSION_SQL
 from .errors import (
     DeliveryRefused, RefusalReason, RegistrationError, RelayError, ScopeError,
 )
@@ -334,7 +335,7 @@ class RelayDaemon:
         admitted = [row["turn_id"] for row in self.store.all(
             "SELECT t.turn_id FROM generation_turns t WHERE t.relationship_id = ?"
             " AND EXISTS (SELECT 1 FROM generations g WHERE g.relationship_id = t.relationship_id"
-            " AND g.execution_generation = t.execution_generation)"
+            " AND g.execution_generation = t.execution_generation AND " + BOUND_ADMISSION_SQL + ")"
             " ORDER BY t.admitted_at, t.turn_id", (rid,),
         )]
         ring = [

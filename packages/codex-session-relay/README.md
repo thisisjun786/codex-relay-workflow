@@ -352,6 +352,21 @@ this managed admission boundary. Malformed JSON requests exit 4; missing CLI arg
 argparse's exit 2 on stderr. Refused or incomplete admission
 exits 2; admitted requests exit 0. Transport failures retain the existing host-error behavior.
 
+### Admission identity after an update
+
+Explicit continuation admissions now retain the bound anchor of their exact generation.
+The writer refuses an unknown or unbound generation inside the same transaction, so a typo
+cannot become valid later merely because that generation opens. The daemon, receipt admission
+and reporting reader share the same anchor-binding predicate.
+
+Older `explicit_admission` rows remain stored but do not establish that binding. Do not infer
+it from timestamps or bulk-upgrade them. After confirming the original assignment, its owner
+can replay the same managed-start request or issue a supported `admit-turn` for the exact
+relationship, generation and turn. This fresh admission upgrades that row without creating a
+child, completion event or terminal settlement. Existing final receipts and acknowledgements
+are retained. Until recovery, legacy continuations remain unmeasured; this is an explicit
+compatibility boundary, not automatic migration.
+
 ### Exact-turn reporting observation
 
 `reporting-show` is a direct, manual, offline diagnosis of one already selected turn. It reads the

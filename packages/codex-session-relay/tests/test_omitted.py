@@ -171,6 +171,20 @@ class Reporting(GuardTestCase):
                               db_path=str(self.store.path))
         self.assertEqual(self.read()["reportingState"], "unreported")
 
+    def test_legacy_admission_needs_fresh_binding_before_omission_is_proven(self):
+        relation = self.managed()
+        turn = "legacy-business"
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO generation_turns VALUES (?,?,?,?,?,?,?)",
+                       (relation["relationshipId"], 1, turn, "explicit_admission",
+                        "legacy-owner", "", NOW))
+        self.evaluate(turn_id=turn)
+        self.settle(relation, turn=turn)
+        self.assertEqual(self.read(turn=turn)["reason"], "admission_unrecorded")
+        admit_explicitly(self.store, self.clock, relation["relationshipId"], 1, turn,
+                         actor="confirmed-owner")
+        self.assertEqual(self.read(turn=turn)["reportingState"], "unreported")
+
     def test_unadmitted_business_is_not_inferred_from_claim_or_time(self):
         self.managed()
         self.evaluate(turn_id="unadmitted-business")
