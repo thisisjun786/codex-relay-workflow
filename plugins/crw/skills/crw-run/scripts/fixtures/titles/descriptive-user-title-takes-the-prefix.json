@@ -18,6 +18,6 @@
     "summary": null,
     "user_title": "descriptive"
   },
-  "note": "The default written into the rule: a title the user described rather than fixed keeps its wording as the body and takes the prefix in front of it. This is the one case still awaiting confirmation, so the fixture records the current answer rather than implying it is settled.",
+  "note": "Settled by Jun on 2026-09-22: a title the user described keeps its wording as the body and takes the prefix in front of it, while a title the user fixed exactly, or a parent where renaming is forbidden, is left alone. This fixture holds the first half; user-fixed-title-is-left-alone holds the second.",
   "subcommand": "decide"
 }
