@@ -193,7 +193,7 @@ def review_problems(review):
     return problems
 
 
-def checks_problems(head_sha, required, checks, *, require_declared=False):
+def checks_problems(head_sha, required, checks, *, require_declared=False, providers=None):
     """Present, successful, on this head, and at the highest attempt submitted for its run.
 
     The attempt rule matters because a rerun is how a red check becomes green: accepting any
@@ -215,6 +215,15 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     list still means nothing is required, on either side; the distinction is between not having
     looked and having looked.
 
+    `providers` carries the identity a branch rule can bind a context to. GitHub's required
+    status checks name an integration as well as a context, and matching on the name alone
+    accepts a namesake from anywhere: the branch requires `dev-gate` from app 42, app 42 never
+    runs, app 99 publishes a successful `dev-gate`, and the gate opens on a check nobody
+    required. Where a provider is declared, only an entry from that provider answers for the
+    context - and an entry from another one is not the required check, so its failure does not
+    block either. Omitted, nothing changes: a caller that did not read the integration out of
+    the rule has not learnt anything about it.
+
     Assumes shape_problems already passed. Run it first.
     """
     if require_declared and required is UNDECLARED:
@@ -226,6 +235,12 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
             " none")]
     checks = list(checks or [])
     required = list(required or [])
+    providers = dict(providers or {})
+
+    def answers_for(entry, name):
+        """Whether this entry is the check the branch named, provider and all."""
+        wanted = providers.get(name)
+        return wanted is None or str(entry.get("provider") or "") == str(wanted)
 
     def stale(detail):
         return [Problem(CHECKS_STALE, detail)]
@@ -260,7 +275,9 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
         # A conclusion is only binding for a check the caller declared required. An
         # optional lint failing alongside a green dev-gate is not a reason to refuse a
         # merge, and refusing it made the declared set mean nothing.
-        if str(entry.get("name", "")) in required and entry.get("conclusion") != "success":
+        if (str(entry.get("name", "")) in required
+                and answers_for(entry, str(entry.get("name", "")))
+                and entry.get("conclusion") != "success"):
             return stale_at("required check " + repr(entry.get("name")) + " (run " + repr(run)
                             + ") concluded " + repr(entry.get("conclusion"))
                             + " on its newest attempt", run)
@@ -268,11 +285,15 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
         str(entry.get("name", "")) for entry in checks
         if int(entry.get("attempt", 1) or 1) == highest[str(entry.get("runId", ""))]
         and entry.get("conclusion") == "success"
+        and answers_for(entry, str(entry.get("name", "")))
     }
     missing = [name for name in required if name not in present]
     if missing:
-        return stale_at("these checks were declared required and are not present and"
-                        " successful in the restated set: " + repr(missing), missing[0])
+        return stale_at(
+            "these checks were declared required and are not present and successful in the"
+            " restated set" + (" from the provider the branch rule names" if any(
+                name in providers for name in missing) else "") + ": " + repr(missing),
+            missing[0])
     if not required and not present:
         # With nothing declared required, the set still has to contain something green on
         # this head; otherwise an all-red restatement would pass for want of a rule.
@@ -281,7 +302,8 @@ def checks_problems(head_sha, required, checks, *, require_declared=False):
     return []
 
 
-def handoff_problems(head_sha, review, checks, required=UNDECLARED):
+def handoff_problems(head_sha, review, checks, required=UNDECLARED, *, providers=None,
+                     reviews=None):
     """Everything a child-side record must satisfy, in the order that keeps it honest.
 
     Shape first, and nothing else when shape fails. The semantic rules read values with `str`
@@ -295,7 +317,48 @@ def handoff_problems(head_sha, review, checks, required=UNDECLARED):
     if malformed:
         return malformed
     return (review_problems(review)
-            + checks_problems(head_sha, required, checks, require_declared=True))
+            + review_state_problems(reviews)
+            + checks_problems(head_sha, required, checks, require_declared=True,
+                              providers=providers))
+
+
+CHANGES_REQUESTED = "review_changes_requested"
+
+
+def review_state_problems(reviews):
+    """A reviewer who asked for changes and has not since said otherwise.
+
+    This is not content triage and deliberately reads nothing a reviewer wrote. A submitted
+    review carries a formal STATE, and CHANGES_REQUESTED is a mechanical fact about the pull
+    request in the same way a failing check is: the forge itself will hold the merge for it.
+    Enumerating reviews and then grading none of them left a candidate with an outstanding
+    changes-requested review reading as ready, which is the gap between collecting evidence and
+    using it.
+
+    Latest per author, because a reviewer who asked for changes and then approved has answered
+    their own review, and the older state is history rather than an open request.
+    """
+    latest = {}
+    for entry in reviews or ():
+        if not isinstance(entry, dict):
+            continue
+        author = str(entry.get("author") or "")
+        state = str(entry.get("state") or "").upper()
+        if state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            # COMMENTED and PENDING say nothing about whether the reviewer is waiting on a
+            # change, so they neither block nor clear an earlier request.
+            continue
+        when = str(entry.get("submittedAt") or "")
+        if author not in latest or when >= latest[author][0]:
+            latest[author] = (when, state)
+    asking = sorted(author for author, (_when, state) in latest.items()
+                    if state == "CHANGES_REQUESTED")
+    if not asking:
+        return []
+    return [Problem(
+        CHANGES_REQUESTED,
+        "these reviewers asked for changes and have not since approved or dismissed their own"
+        " review: " + ", ".join(repr(one) for one in asking))]
 
 
 #: The candidate itself, which is not the same question as its review or its checks. A pull
@@ -398,4 +461,3 @@ def candidate_problems(candidate, *, strict_base=False):
             " unknown rather than clean, because a forge that adds one must not acquire a"
             " passing verdict by default"))
     return problems
-

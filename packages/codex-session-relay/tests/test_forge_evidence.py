@@ -13,6 +13,9 @@ the right verdict when the forge behaves in a way that has actually happened.
 import json
 import os
 import unittest
+# By name, not as a module attribute: this module must stay one that does NOT spend real wall
+# time, and the suite's own inventory decides that by reading subprocess.<call> sites.
+from subprocess import TimeoutExpired
 
 from codex_session_relay import forge, mergeevidence
 
@@ -61,6 +64,12 @@ REQUIRED_DEV_GATE = [{
     "parameters": {"strict_required_status_checks_policy": False,
                    "required_status_checks": [{"context": "dev-gate"}]},
 }]
+
+
+def workflow_run(identifier=1, *, workflow_id=100, event="pull_request", head=HEAD):
+    """A workflow run. The workflow and the event are what decide which run replaced which."""
+    return {"id": identifier, "name": "CI", "head_sha": head, "workflow_id": workflow_id,
+            "event": event, "html_url": "https://forge/run/" + str(identifier)}
 
 
 class Fake:
@@ -221,8 +230,14 @@ def codes(snapshot):
 
 
 def green_run(name="dev-gate", **kwargs):
-    return {"runs": [{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}],
-            "jobs": {1: [job(name, **kwargs)]}}
+    return {"runs": [workflow_run(1)], "jobs": {1: [job(name, **kwargs)]}}
+
+
+def full_record(snapshot, **overrides):
+    """The handoff exactly as the collector produced it, which is what a child hands over."""
+    record = dict(snapshot["handoff"])
+    record.update(overrides)
+    return record
 
 
 class TheLastPageIsRead(unittest.TestCase):
@@ -347,8 +362,8 @@ class ChecksAreNotCollapsedByName(unittest.TestCase):
     def test_a_pending_newer_run_is_not_hidden_by_an_older_success(self):
         fake = Fake(
             threads=threads(1),
-            runs=[{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"},
-                  {"id": 2, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/2"}],
+            # Two DIFFERENT workflows, so neither replaced the other and both bind.
+            runs=[workflow_run(1, workflow_id=100), workflow_run(2, workflow_id=200)],
             jobs={1: [job("dev-gate", identifier=11)],
                   2: [job("dev-gate", identifier=22, status="in_progress", conclusion=None)]},
         )
@@ -364,7 +379,7 @@ class ChecksAreNotCollapsedByName(unittest.TestCase):
         # rule is the attempt NUMBER, because a re-run is how a red check becomes green.
         fake = Fake(
             threads=threads(1),
-            runs=[{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}],
+            runs=[workflow_run(1)],
             jobs={1: [
                 job("dev-gate", attempt=1, identifier=11, completed="2026-09-22T10:05:00Z"),
                 job("dev-gate", attempt=2, identifier=12, conclusion="failure",
@@ -378,7 +393,7 @@ class ChecksAreNotCollapsedByName(unittest.TestCase):
     def test_a_rerun_still_running_does_not_inherit_the_old_success(self):
         fake = Fake(
             threads=threads(1),
-            runs=[{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}],
+            runs=[workflow_run(1)],
             jobs={1: [job("dev-gate", attempt=1, identifier=11),
                       job("dev-gate", attempt=2, identifier=12, status="queued",
                           conclusion=None)]},
@@ -391,7 +406,7 @@ class ChecksAreNotCollapsedByName(unittest.TestCase):
         # attempt it never had, and it would go missing from the required set.
         fake = Fake(
             threads=threads(1),
-            runs=[{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}],
+            runs=[workflow_run(1)],
             jobs={1: [job("dev-gate", attempt=1, identifier=11),
                       job("lint", attempt=2, identifier=12)]},
         )
@@ -415,8 +430,7 @@ class ChecksAreNotCollapsedByName(unittest.TestCase):
         self.assertIn(mergeevidence.CHECKS_STALE, codes(snapshot))
 
     def test_a_truncated_workflow_run_page_is_unknown(self):
-        runs = [{"id": index, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run"}
-                for index in range(1, 151)]
+        runs = [workflow_run(index, workflow_id=index) for index in range(1, 151)]
         fake = Fake(threads=threads(1), runs=runs,
                     jobs={index: [job("dev-gate", identifier=index)] for index in range(1, 151)})
         self.assertEqual(collect(fake, page_budget=1)["verdict"], forge.UNKNOWN)
@@ -493,7 +507,7 @@ class TheCandidateItself(unittest.TestCase):
         """
         fake = Fake(
             pulls=[pull(mergeable_state="unstable")], threads=threads(1),
-            runs=[{"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}],
+            runs=[workflow_run(1)],
             jobs={1: [job("dev-gate", identifier=11),
                       job("lint", identifier=12, conclusion="failure")]},
         )
@@ -528,25 +542,55 @@ class TheRecordMustSurviveAReadingItDidNotProduce(unittest.TestCase):
     def test_a_thread_that_arrived_late_on_an_unchanged_head_invalidates_the_record(self):
         fake = Fake(threads=threads(2), **green_run())
         snapshot = collect(fake)
-        record = dict(snapshot["handoff"]["reviewCoverage"])
-        record["threadsSeen"] = ["T1"]
-        problems = forge.restate_problems(HEAD, {"reviewCoverage": record}, snapshot)
+        coverage = dict(snapshot["handoff"]["reviewCoverage"])
+        coverage.update(threadsSeen=["T1"], totalCount=1)
+        record = full_record(snapshot, reviewCoverage=coverage)
+        problems = forge.restate_problems(HEAD, record, snapshot)
         self.assertEqual([one.code for one in problems], [forge.LATE_FINDING])
 
     def test_a_record_about_another_head_is_not_current(self):
         fake = Fake(threads=threads(1), **green_run())
         snapshot = collect(fake)
-        problems = forge.restate_problems(
-            MOVED, {"reviewCoverage": snapshot["handoff"]["reviewCoverage"]}, snapshot)
+        problems = forge.restate_problems(MOVED, full_record(snapshot), snapshot)
         self.assertIn(forge.CANDIDATE_MOVED, [one.code for one in problems])
 
     def test_a_record_that_still_describes_the_candidate_raises_nothing(self):
         fake = Fake(threads=threads(2), **green_run())
         snapshot = collect(fake)
-        self.assertEqual(
-            forge.restate_problems(
-                HEAD, {"reviewCoverage": snapshot["handoff"]["reviewCoverage"]}, snapshot),
-            [])
+        self.assertEqual(forge.restate_problems(HEAD, full_record(snapshot), snapshot), [])
+
+    def test_an_empty_record_does_not_pass_for_want_of_a_late_thread(self):
+        """Comparing an unvalidated record says only that it does not disagree with the forge.
+
+        On a pull request with no threads there is nothing that can be late, so a restatement
+        that looked only for late threads accepted a caller who had collected nothing at all.
+        """
+        fake = Fake(threads=(), **green_run())
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        problems = forge.restate_problems(HEAD, {}, snapshot)
+        self.assertTrue(problems)
+        # Shape first, as the handoff contract orders it: a record with no review coverage at
+        # all is malformed rather than merely incomplete, and reading its absent fields with
+        # coercion is how nothing passed for satisfied in the first place.
+        self.assertIn(mergeevidence.MALFORMED, [one.code for one in problems])
+
+    def test_a_base_that_moved_under_an_unchanged_head_is_not_current(self):
+        # Every merge-result check the record carries was computed against the old base, and a
+        # branch requiring currency will not take them. The head alone cannot notice this.
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        record = full_record(snapshot, baseSha=MOVED)
+        problems = forge.restate_problems(HEAD, record, snapshot)
+        self.assertIn(forge.CANDIDATE_MOVED, [one.code for one in problems])
+
+    def test_a_record_that_never_named_its_base_says_so(self):
+        fake = Fake(threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        record = full_record(snapshot)
+        record.pop("baseSha")
+        self.assertIn(forge.RECORD_INVALID,
+                      [one.code for one in forge.restate_problems(HEAD, record, snapshot)])
 
 
 class NothingHereWrites(unittest.TestCase):
@@ -585,3 +629,177 @@ class NothingHereWrites(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARunThatWasReplacedDoesNotBlockTheOneThatReplacedIt(unittest.TestCase):
+    """Observed on this issue's own pull request, by this collector reading it.
+
+    The repository's CI cancels an in-progress run when a new event arrives for the same pull
+    request. That leaves a cancelled run whose dev-gate failed sitting on the same head as the
+    successful one, and grading them as peers refuses a candidate whose current CI is green.
+    A re-run and a cancellation are the same relation seen twice: the newer one answers.
+    """
+
+    def test_a_cancelled_earlier_run_of_the_same_workflow_is_not_graded(self):
+        fake = Fake(
+            threads=threads(1),
+            runs=[workflow_run(1, workflow_id=100), workflow_run(2, workflow_id=100)],
+            jobs={1: [job("dev-gate", identifier=11, conclusion="cancelled")],
+                  2: [job("dev-gate", identifier=22)]},
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        self.assertEqual([one["runId"] for one in snapshot["handoff"]["checks"]],
+                         ["workflow-run:2:dev-gate"])
+        self.assertEqual([one["runId"] for one in snapshot["supersededRuns"]], ["1"])
+
+    def test_the_newest_run_still_decides_when_it_is_the_failing_one(self):
+        # The rule is "the newest answers", not "the green one answers". A newer run that failed
+        # replaces an older success exactly as it would replace an older failure.
+        fake = Fake(
+            threads=threads(1),
+            runs=[workflow_run(1, workflow_id=100), workflow_run(2, workflow_id=100)],
+            jobs={1: [job("dev-gate", identifier=11)],
+                  2: [job("dev-gate", identifier=22, conclusion="failure")]},
+        )
+        self.assertEqual(collect(fake)["verdict"], forge.NOT_READY)
+
+    def test_a_different_event_is_not_a_replacement(self):
+        fake = Fake(
+            threads=threads(1),
+            runs=[workflow_run(1, workflow_id=100, event="push"),
+                  workflow_run(2, workflow_id=100, event="pull_request")],
+            jobs={1: [job("dev-gate", identifier=11, conclusion="failure")],
+                  2: [job("dev-gate", identifier=22)]},
+        )
+        self.assertEqual(collect(fake)["verdict"], forge.NOT_READY)
+
+
+class ARequiredContextCanNameItsProvider(unittest.TestCase):
+    """A rule binds a context to an integration, and a namesake from elsewhere is not it."""
+
+    RULES = [{"type": "required_status_checks",
+              "parameters": {"required_status_checks": [
+                  {"context": "dev-gate", "integration_id": 42}]}}]
+
+    def test_a_namesake_from_another_app_does_not_answer_for_the_gate(self):
+        fake = Fake(
+            threads=threads(1), rules=self.RULES, runs=[], jobs={},
+            checks=[{"id": 9, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                     "conclusion": "success", "app": {"id": 99, "slug": "impostor"}}],
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertIn(mergeevidence.CHECKS_STALE, codes(snapshot))
+        self.assertEqual(snapshot["handoff"]["requiredProviders"], {"dev-gate": "42"})
+
+    def test_the_declared_provider_answers_for_it(self):
+        fake = Fake(
+            threads=threads(1), rules=self.RULES, runs=[], jobs={},
+            checks=[{"id": 9, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                     "conclusion": "success", "app": {"id": 42, "slug": "actions"}}],
+        )
+        self.assertEqual(collect(fake)["verdict"], forge.READY)
+
+    def test_a_workflow_job_carries_the_app_the_check_run_states(self):
+        # The jobs endpoint does not name the publishing app; the check-runs endpoint describes
+        # the same objects and does. Without the join a real required gate looks like an impostor.
+        fake = Fake(
+            threads=threads(1), rules=self.RULES, **green_run(identifier=11),
+            checks=[{"id": 11, "name": "dev-gate", "head_sha": HEAD, "status": "completed",
+                     "conclusion": "success", "app": {"id": 42, "slug": "actions"}}],
+        )
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+        self.assertEqual([one["provider"] for one in snapshot["handoff"]["checks"]], ["42"])
+
+
+class TheCandidateCanChangeWithoutMovingACommit(unittest.TestCase):
+    """Closing it, drafting it or retargeting it leaves both shas untouched."""
+
+    def drifted(self, **after):
+        fake = Fake(pulls=[pull(), pull(**after)], threads=threads(1), **green_run())
+        return collect(fake)
+
+    def test_becoming_a_draft_mid_collection_is_stale(self):
+        snapshot = self.drifted(draft=True)
+        self.assertEqual(snapshot["verdict"], forge.STALE)
+        self.assertIn(forge.CANDIDATE_MOVED, codes(snapshot))
+
+    def test_closing_mid_collection_is_stale(self):
+        self.assertEqual(self.drifted(state="closed")["verdict"], forge.STALE)
+
+    def test_retargeting_to_another_branch_at_the_same_commit_is_stale(self):
+        fake = Fake(pulls=[pull(), pull(base={"sha": BASE, "ref": "main"})], threads=threads(1),
+                    **green_run())
+        self.assertEqual(collect(fake)["verdict"], forge.STALE)
+
+    def test_a_merge_state_that_settles_during_the_read_is_not_movement(self):
+        """The forge computes it asynchronously, so it routinely settles from unknown.
+
+        Calling that movement would make nearly every collection stale. The re-read is simply
+        the better answer about the same candidate, so it is the one graded.
+        """
+        fake = Fake(pulls=[pull(mergeable_state="unknown"), pull(mergeable_state="clean")],
+                    threads=threads(1), **green_run())
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.READY, snapshot["problems"])
+
+    def test_a_merge_state_that_settles_into_a_refusal_is_graded_too(self):
+        fake = Fake(pulls=[pull(mergeable_state="unknown"), pull(mergeable_state="dirty")],
+                    threads=threads(1), **green_run())
+        self.assertIn(mergeevidence.CANDIDATE_CONFLICTED, codes(collect(fake)))
+
+
+class AReviewerWhoAskedForChangesIsStillWaiting(unittest.TestCase):
+    """Enumerating reviews and grading none of them is collecting evidence and not using it."""
+
+    @staticmethod
+    def review(state, *, author="reviewer", when="2026-09-22T10:00:00Z", identifier="R1"):
+        return {"id": identifier, "state": state, "url": "https://forge/review", "body": "",
+                "submittedAt": when, "author": {"login": author}}
+
+    def test_an_outstanding_changes_requested_review_refuses(self):
+        fake = Fake(threads=threads(1), reviews=[self.review("CHANGES_REQUESTED")], **green_run())
+        snapshot = collect(fake)
+        self.assertEqual(snapshot["verdict"], forge.NOT_READY)
+        self.assertIn(mergeevidence.CHANGES_REQUESTED, codes(snapshot))
+
+    def test_a_later_approval_from_the_same_reviewer_answers_it(self):
+        fake = Fake(threads=threads(1), **green_run(), reviews=[
+            self.review("CHANGES_REQUESTED", when="2026-09-22T10:00:00Z", identifier="R1"),
+            self.review("APPROVED", when="2026-09-22T11:00:00Z", identifier="R2"),
+        ])
+        self.assertEqual(collect(fake)["verdict"], forge.READY)
+
+    def test_a_comment_neither_blocks_nor_clears(self):
+        fake = Fake(threads=threads(1), **green_run(), reviews=[
+            self.review("CHANGES_REQUESTED", when="2026-09-22T10:00:00Z", identifier="R1"),
+            self.review("COMMENTED", when="2026-09-22T11:00:00Z", identifier="R2"),
+        ])
+        self.assertEqual(collect(fake)["verdict"], forge.NOT_READY)
+
+    def test_another_reviewer_s_approval_does_not_answer_for_the_first(self):
+        fake = Fake(threads=threads(1), **green_run(), reviews=[
+            self.review("CHANGES_REQUESTED", author="anna", identifier="R1"),
+            self.review("APPROVED", author="bo", when="2026-09-22T11:00:00Z", identifier="R2"),
+        ])
+        self.assertEqual(collect(fake)["verdict"], forge.NOT_READY)
+
+
+class AForgeThatNeverAnswersIsUnknown(unittest.TestCase):
+    def test_a_timeout_is_an_observation_that_did_not_happen(self):
+        """Exit 3 and a traceback throws away every connection already read.
+
+        The honest answer is the snapshot, naming the one part nobody could see.
+        """
+        def timing_out(argv, timeout):
+            if "check-runs" in argv[-1]:
+                raise TimeoutExpired(argv, timeout)
+            return Fake(threads=threads(1), **green_run()).run(argv, timeout)
+
+        engine = forge.Forge(run=timing_out)
+        snapshot = forge.collect(engine, repository="owner/name", number=7)
+        self.assertEqual(snapshot["verdict"], forge.UNKNOWN)
+        self.assertIn(forge.UNREADABLE, codes(snapshot))
+        self.assertTrue(any("timeout" in one["detail"] for one in snapshot["problems"]))

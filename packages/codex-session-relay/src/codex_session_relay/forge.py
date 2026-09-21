@@ -74,6 +74,7 @@ DUPLICATED = "enumeration_duplicated"
 COUNT_DISAGREES = "enumeration_count_disagrees"
 REVIEW_UNSTABLE = "review_set_unstable"
 CANDIDATE_MOVED = "candidate_moved"
+SUPERSEDED = "superseded_run"
 GATES_MOVED = "gates_moved"
 BASE_REF_MISSING = "base_ref_missing"
 UNREADABLE = "unreadable"
@@ -185,7 +186,16 @@ class Forge:
             raise Unreadable(where, "the collection reached its budget of "
                              + str(self.call_budget) + " forge calls before it finished, so what"
                              " it has is a prefix rather than an answer")
-        code, out, err = self._run([*self.command, *argv], self.timeout)
+        try:
+            code, out, err = self._run([*self.command, *argv], self.timeout)
+        except subprocess.TimeoutExpired as error:
+            # A timeout is an observation that did not happen, which is exactly what Unreadable
+            # means. Letting it escape turned the whole command into a host failure and threw
+            # away every connection already read, when the honest answer is a snapshot naming
+            # the one part nobody could see.
+            self.calls.append({"argv": [*self.command, *argv], "exitCode": None})
+            raise Unreadable(where, "reading " + where + " exceeded the timeout of "
+                             + str(self.timeout) + " seconds, so no answer was observed") from error
         self.calls.append({"argv": [*self.command, *argv], "exitCode": code})
         if code != 0:
             found = _HTTP_STATUS.search(err or "")
@@ -400,6 +410,17 @@ def _thread_finding(node):
     }
 
 
+def _provider(check):
+    """Which app published a check, as the rule names it.
+
+    A branch rule binds a context to an integration id, so that is the identity compared. The
+    slug is kept beside it for a reader, but a name is not what the rule says.
+    """
+    app = check.get("app") or {}
+    identifier = app.get("id")
+    return str(identifier) if identifier is not None else None
+
+
 def _outcome(entry):
     """The word that goes in the conclusion field, which is never allowed to be nothing.
 
@@ -419,6 +440,13 @@ def _outcome(entry):
 
 
 LATE_FINDING = "late_finding"
+RECORD_INVALID = "record_invalid"
+
+#: The candidate fields whose movement makes everything collected about the wrong thing. The
+#: merge state is deliberately NOT here: the forge computes it asynchronously, so it routinely
+#: settles from UNKNOWN to CLEAN mid-collection, and calling that movement would make almost
+#: every reading stale. It is graded from the RE-READ instead, which is the fresher answer.
+DRIFT_FIELDS = ("headSha", "baseSha", "baseRef", "state", "merged", "isDraft")
 
 _BRANCH = re.compile(r"\A[^\s?#%:`^\\]+\Z")
 
@@ -587,6 +615,14 @@ def _checks(forge, owner, name, head, problems, connections):
     Taking it from the run relabels an already-read attempt-1 success as attempt 2 the moment a
     re-run starts, which inverts the very rule the attempt exists to serve - and a job that was
     not re-run in a later attempt keeps its own identity, so it is not read as missing either.
+
+    Two runs of the SAME workflow and event on one head are a different relation again: the newer
+    one REPLACED the older, which is what this repository's own CI does when it cancels an
+    in-progress run on a new event. Graded as peers, the cancelled run's failed gate blocks a head
+    whose current run is green - observed on this pull request, where a cancelled `dev-gate` sat
+    beside a successful one. So the newest run of each workflow and event answers for it, and the
+    ones it replaced are recorded as superseded rather than graded. Different workflows sharing a
+    name are still peers and still both binding.
     """
     root = "repos/" + owner + "/" + name
     entries, detail = [], []
@@ -595,7 +631,18 @@ def _checks(forge, owner, name, head, problems, connections):
                            head_sha=head),
                  lambda run: run.get("id"), problems)
     connections.append(runs.record())
+    newest = {}
+    for run in runs.items:
+        try:
+            identifier = int(run.get("id"))
+        except (TypeError, ValueError):
+            continue
+        lane = (run.get("workflow_id"), run.get("event"))
+        if lane not in newest or identifier > newest[lane]:
+            newest[lane] = identifier
+    superseded = []
     job_ids = set()
+    by_job = []
     for run in runs.items:
         try:
             run_id = str(int(run.get("id")))
@@ -603,6 +650,11 @@ def _checks(forge, owner, name, head, problems, connections):
             problems.append(Problem(UNREADABLE, "a workflow run came back without a usable id,"
                                     " so its jobs cannot be read"))
             continue
+        replaced = newest.get((run.get("workflow_id"), run.get("event"))) != int(run_id)
+        if replaced:
+            superseded.append({"runId": run_id, "workflowId": run.get("workflow_id"),
+                               "event": run.get("event"), "url": run.get("html_url"),
+                               "conclusion": run.get("conclusion")})
         where = "jobs of workflow run " + run_id
         jobs = _read(forge, where,
                      rest_step(forge, root + "/actions/runs/" + run_id + "/jobs", "jobs", where,
@@ -612,17 +664,22 @@ def _checks(forge, owner, name, head, problems, connections):
         for job in jobs.items:
             job_ids.add(job.get("id"))
             job_name = str(job.get("name") or "")
-            entries.append({
-                "runId": "workflow-run:" + run_id + ":" + job_name,
-                "name": job_name,
-                "headSha": str(run.get("head_sha") or ""),
-                "conclusion": _outcome(job),
-                "attempt": int(job.get("run_attempt") or 1),
-            })
+            if not replaced:
+                entry = {
+                    "runId": "workflow-run:" + run_id + ":" + job_name,
+                    "name": job_name,
+                    "headSha": str(run.get("head_sha") or ""),
+                    "conclusion": _outcome(job),
+                    "attempt": int(job.get("run_attempt") or 1),
+                    "provider": None,
+                }
+                entries.append(entry)
+                by_job.append((entry, job.get("id")))
             detail.append({
                 "source": "workflow-job",
                 "runId": "workflow-run:" + run_id + ":" + job_name,
                 "name": job_name,
+                "superseded": replaced,
                 "status": job.get("status"),
                 "conclusion": job.get("conclusion"),
                 "attempt": int(job.get("run_attempt") or 1),
@@ -637,6 +694,12 @@ def _checks(forge, owner, name, head, problems, connections):
                                 "check runs", filter="latest"),
                       lambda check: check.get("id"), problems)
     connections.append(published.record())
+    # The jobs endpoint does not carry the publishing app, and a branch rule can bind a context
+    # to one. The two endpoints describe the same objects - a job's id IS its check run's id - so
+    # the identity is taken from the one that states it.
+    provider_of = {check.get("id"): _provider(check) for check in published.items}
+    for entry, identifier in by_job:
+        entry["provider"] = provider_of.get(identifier)
     for check in published.items:
         if check.get("id") in job_ids:
             # The same object under another endpoint. Adding it again would put one check in the
@@ -649,11 +712,13 @@ def _checks(forge, owner, name, head, problems, connections):
             "headSha": str(check.get("head_sha") or ""),
             "conclusion": _outcome(check),
             "attempt": 1,
+            "provider": _provider(check),
         })
         detail.append({
             "source": "check-run",
             "runId": "check-run:" + str(check.get("id")),
             "name": check_name,
+            "superseded": False,
             "status": check.get("status"),
             "conclusion": check.get("conclusion"),
             "attempt": 1,
@@ -661,6 +726,7 @@ def _checks(forge, owner, name, head, problems, connections):
             "completedAt": check.get("completed_at"),
             "url": check.get("html_url"),
             "app": ((check.get("app") or {}).get("slug")),
+            "provider": _provider(check),
         })
     statuses = _read(forge, "commit statuses",
                      rest_step(forge, root + "/commits/" + head + "/status", "statuses",
@@ -675,18 +741,22 @@ def _checks(forge, owner, name, head, problems, connections):
             "headSha": head,
             "conclusion": str(status.get("state") or "unknown"),
             "attempt": 1,
+            # A commit status carries no check-run app, so it can never answer for a context
+            # whose rule names an integration. Left None rather than guessed.
+            "provider": None,
         })
         detail.append({
             "source": "commit-status",
             "runId": "status:" + context,
             "name": context,
+            "superseded": False,
             "status": status.get("state"),
             "conclusion": status.get("state"),
             "attempt": 1,
             "url": status.get("target_url"),
             "updatedAt": status.get("updated_at"),
         })
-    return entries, detail
+    return entries, detail, superseded
 
 
 def _gates(forge, owner, name, base_ref, problems):
@@ -707,8 +777,15 @@ def _gates(forge, owner, name, base_ref, problems):
         "readable": False,
         "baseRefExists": None,
         "requiredDeclared": UNDECLARED,
+        "requiredProviders": {},
         "strictBase": False,
         "threadResolutionRequired": None,
+        # Descriptive, and said so rather than left looking operative. This workflow refuses an
+        # unresolved thread whether or not the branch demands resolution, because OPS-9.2 is
+        # stricter than the forge here; reading this field could only ever loosen that, so it is
+        # recorded for a reader and never consulted by a verdict.
+        "threadResolutionNote": "recorded for the reader; the handoff refuses an unresolved"
+                                " thread regardless, so this cannot loosen the gate",
         "digest": None,
     }
     try:
@@ -735,6 +812,7 @@ def _gates(forge, owner, name, base_ref, problems):
         problems.append(Problem(UNREADABLE, error.detail))
         return gates
     contexts = []
+    integrations = {}
     for rule in rules or []:
         if not isinstance(rule, dict):
             continue
@@ -746,13 +824,21 @@ def _gates(forge, owner, name, base_ref, problems):
                 context = str((one or {}).get("context") or "").strip()
                 if context:
                     contexts.append(context)
+                    integration = (one or {}).get("integration_id")
+                    if integration is not None:
+                        # The rule binds this context to one app. Dropping it accepts a
+                        # namesake from any other, which is the same collapse as grading two
+                        # different runs by their shared name.
+                        integrations[context] = str(integration)
         elif rule.get("type") == "pull_request":
             gates["threadResolutionRequired"] = bool(
                 parameters.get("required_review_thread_resolution"))
     gates["readable"] = True
     gates["requiredDeclared"] = sorted(set(contexts))
+    gates["requiredProviders"] = integrations
     gates["digest"] = hashlib.sha256(json.dumps({
         "required": gates["requiredDeclared"],
+        "providers": integrations,
         "strictBase": gates["strictBase"],
         "threadResolutionRequired": gates["threadResolutionRequired"],
     }, sort_keys=True).encode("utf-8")).hexdigest()
@@ -794,9 +880,10 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
     problems, connections = [], []
 
     def snapshot(pinned=None, reread=None, coverage=None, findings=None, checks=None,
-                 detail=None, gates=None):
+                 detail=None, gates=None, superseded=None):
         gates = gates or {"readable": False, "requiredDeclared": UNDECLARED, "strictBase": False,
-                          "baseRefExists": None, "threadResolutionRequired": None, "digest": None}
+                          "baseRefExists": None, "threadResolutionRequired": None,
+                          "requiredProviders": {}, "digest": None}
         pinned = pinned or {}
         required = gates.get("requiredDeclared", UNDECLARED)
         conflicting = _conflicting_reviewers(
@@ -812,9 +899,15 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
         handoff = {
             "isDraft": bool(pinned.get("isDraft")),
             "baseVerifiedAt": (reread or {}).get("verifiedAt") or _now(),
+            # The base the checks were read against, carried so the parent's restatement can
+            # notice a destination that moved. A record naming when its base was verified and
+            # not WHICH base hands over half of the comparison.
+            "baseSha": pinned.get("baseSha"),
+            "baseRef": pinned.get("baseRef"),
             "reviewCoverage": coverage or {},
             "checks": checks or [],
             "requiredDeclared": required,
+            "requiredProviders": gates.get("requiredProviders") or {},
             # Judgements, left empty on purpose. An observer that filled these would be
             # certifying its own evidence; they belong to the child and the parent.
             "threadDispositions": [],
@@ -833,6 +926,7 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
             "pinned": pinned,
             "reread": reread,
             "gates": gates,
+            "supersededRuns": superseded or [],
             "connections": connections,
             "handoff": handoff,
             "findings": findings or [],
@@ -855,23 +949,34 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
         return snapshot(pinned=pinned)
 
     coverage, findings = _review(forge, owner, name, number, problems, connections)
-    findings = findings + _discussion(forge, owner, name, number, problems, connections)
-    checks, detail = _checks(forge, owner, name, str(head), problems, connections)
+    discussion = _discussion(forge, owner, name, number, problems, connections)
+    findings = findings + discussion
+    reviews = [one for one in discussion if one.get("kind") == "review"]
+    checks, detail, superseded = _checks(forge, owner, name, str(head), problems, connections)
     gates = _gates(forge, owner, name, pinned.get("baseRef"), problems)
 
     reread = None
+    graded = pinned
     try:
         after = _candidate(forge, owner, name, number)
         reread = dict(after, verifiedAt=_now())
-        if after.get("headSha") != pinned.get("headSha"):
+        # Every field whose movement makes the collection about a different thing, not just the
+        # two shas. Closing the candidate, converting it to a draft or retargeting it to another
+        # branch all leave both shas untouched and all invalidate what was read.
+        drifted = [field for field in DRIFT_FIELDS
+                   if after.get(field) != pinned.get(field)]
+        if drifted:
             problems.append(Problem(
-                CANDIDATE_MOVED, "the head moved from " + repr(pinned.get("headSha")) + " to "
-                + repr(after.get("headSha")) + " while this was being collected, so what was read"
-                " describes a commit that is no longer the candidate"))
-        elif after.get("baseSha") != pinned.get("baseSha"):
-            problems.append(Problem(
-                CANDIDATE_MOVED, "the base moved from " + repr(pinned.get("baseSha")) + " to "
-                + repr(after.get("baseSha")) + " while this was being collected"))
+                CANDIDATE_MOVED, "the candidate changed while this was being collected ("
+                + ", ".join(field + ": " + repr(pinned.get(field)) + " to "
+                            + repr(after.get(field)) for field in drifted)
+                + "), so what was read describes something that is no longer the candidate"))
+        else:
+            # Nothing moved, so the fresher merge state is simply the better reading of the same
+            # candidate. The forge computes it asynchronously and it routinely settles from
+            # unknown during a collection; grading the first answer would report unknown about a
+            # candidate the forge had already made its mind up about.
+            graded = after
     except Unreadable as error:
         problems.append(Problem(UNREADABLE, "the pull request could not be re-read to confirm it"
                                 " had not moved: " + error.detail))
@@ -886,11 +991,12 @@ def collect(forge, *, repository, number, disabled_reviewers=DISABLED_REVIEWERS)
                 " longer the ones this branch declares"))
 
     problems.extend(mergeevidence.candidate_problems(
-        pinned, strict_base=bool(gates.get("strictBase"))))
+        graded, strict_base=bool(gates.get("strictBase"))))
     problems.extend(mergeevidence.handoff_problems(
-        str(head), coverage, checks, required=gates.get("requiredDeclared", UNDECLARED)))
+        str(head), coverage, checks, required=gates.get("requiredDeclared", UNDECLARED),
+        providers=gates.get("requiredProviders"), reviews=reviews))
     return snapshot(pinned=pinned, reread=reread, coverage=coverage, findings=findings,
-                    checks=checks, detail=detail, gates=gates)
+                    checks=checks, detail=detail, gates=gates, superseded=superseded)
 
 
 def restate_problems(head_sha, record, snapshot):
@@ -909,6 +1015,11 @@ def restate_problems(head_sha, record, snapshot):
     OPS-9.4's late finding is the case worth naming: a thread that appears on the SAME head, not
     in the record's threadsSeen, invalidates the record even though nothing moved. An invalidated
     record is not a verdict; it returns to the child that produced it.
+
+    The record is GRADED before it is compared. Restatement that only looked for late threads
+    accepted an empty record on a pull request with no threads: there was nothing to be late, so
+    nothing objected, and a caller who had collected no evidence at all passed the currency
+    check. Comparing an unvalidated record says only that it does not disagree with the forge.
     """
     if not isinstance(record, dict):
         return [Problem(mergeevidence.MALFORMED,
@@ -916,11 +1027,28 @@ def restate_problems(head_sha, record, snapshot):
     problems = []
     pinned = (snapshot or {}).get("pinned") or {}
     observed = pinned.get("headSha")
+    problems.extend(mergeevidence.handoff_problems(
+        str(head_sha or ""), record.get("reviewCoverage"), record.get("checks") or [],
+        required=record.get("requiredDeclared", mergeevidence.UNDECLARED),
+        providers=record.get("requiredProviders")))
     if head_sha and observed and str(head_sha) != str(observed):
         problems.append(Problem(
             CANDIDATE_MOVED, "the record is about head " + repr(str(head_sha)) + " and the forge"
             " now reports " + repr(str(observed)) + ", so the record describes a commit that is"
             " no longer the candidate"))
+    recorded_base = record.get("baseSha")
+    if recorded_base and pinned.get("baseSha") and str(recorded_base) != str(pinned["baseSha"]):
+        # The destination moved under an unchanged head. Every merge-result check the record
+        # carries was computed against the old base, and a branch that requires currency will
+        # not take them.
+        problems.append(Problem(
+            CANDIDATE_MOVED, "the record was verified against base " + repr(str(recorded_base))
+            + " and the candidate now targets " + repr(str(pinned["baseSha"]))
+            + ", so its checks cover a merge that is no longer the one being made"))
+    elif not recorded_base:
+        problems.append(Problem(
+            RECORD_INVALID, "the record does not name the base commit it was verified against,"
+            " so a destination that moved under an unchanged head cannot be noticed"))
     for one in (snapshot or {}).get("problems") or []:
         problems.append(Problem(one.get("code", UNREADABLE), one.get("detail", "")))
     coverage = record.get("reviewCoverage") or {}
@@ -934,4 +1062,3 @@ def restate_problems(head_sha, record, snapshot):
             " candidate: " + ", ".join(sorted(str(one.get("url") or one.get("id"))
                                               for one in late)[:5])))
     return problems
-
