@@ -86,6 +86,17 @@ RESERVED_PREFIXES = (
     GRANT + ":", GRANT_ACKNOWLEDGED + ":",
 )
 
+# What a stored refusal means for somebody asking why a target is not moving. Each of these
+# asks the holder for something different - finish the review, refresh the evidence, restate
+# the head it actually means - so they are not one word. Anything this map has no word for is
+# reported as a refused restatement rather than guessed at, and lastRefusal carries the
+# reason verbatim either way.
+REFUSAL_CAUSES = {
+    RefusalReason.MERGE_CURRENCY_STALE.value: "required_evidence_not_current",
+    RefusalReason.MERGE_REVIEW_INCOMPLETE.value: "review_not_finished",
+    RefusalReason.MERGE_CANDIDATE_MOVED.value: "candidate_moved",
+}
+
 
 def target_key(repository, base_ref):
     return derive("tgt", exact(repository, "a repository"), exact(base_ref, "a base ref"))
@@ -295,6 +306,11 @@ class MergeTurn:
         base, the declared required set and both digests, and the row is written ON CONFLICT DO
         UPDATE, so resubmitting identical evidence converges on one row. A rerun changes the
         attempt inside checks_digest, so a re-poll against NEW evidence does open a new one.
+
+        The cause of a refused restatement is read from the refusal that was stored, not
+        assumed. begin_merge writes a check row for EVERY refusal it reaches - an unfinished
+        review, a base that moved, a candidate that moved - so calling all of them unfinished
+        checks would put a confident wrong word on three different problems.
         """
         if holder is None:
             return None
@@ -310,7 +326,7 @@ class MergeTurn:
         elif not holder["declaredReady"]:
             cause = "candidate_not_ready"
         elif latest is not None and latest["result"] == "refused":
-            cause = "required_checks_unfinished"
+            cause = REFUSAL_CAUSES.get(latest["refusal_reason"], "restatement_refused")
         else:
             cause = "candidate_not_restated"
         return {
@@ -396,6 +412,41 @@ class MergeTurn:
             return None
         return held[0]["status"]
 
+    def _unanswered_grant(self, db, row, actor):
+        """A grant nobody answered is an audit entry, not a gate.
+
+        The point of recording who was given the turn is that a parent stops acting on what it
+        remembers, so a merge that walks past its own grant leaves the notice doing no work at
+        all. Acknowledging is what says this candidate was re-checked against the store.
+
+        A turn with NO grant is not held to this. One that reached holding before grants were
+        recorded has nothing to answer, and this store has no migration path, so demanding an
+        answer that cannot exist would wedge that turn permanently with no supported repair.
+        """
+        grant = grant_id(row["turn_id"], row["tenure"])
+        notice = db.execute(
+            "SELECT recorded_at FROM merge_turn_ledger"
+            "  WHERE turn_id = ? AND idempotency_key = ?",
+            (row["turn_id"], GRANT + ":" + grant),
+        ).fetchone()
+        if notice is None:
+            return None
+        answered = db.execute(
+            "SELECT recorded_at FROM merge_turn_ledger"
+            "  WHERE turn_id = ? AND idempotency_key = ?",
+            (row["turn_id"], GRANT_ACKNOWLEDGED + ":" + grant),
+        ).fetchone()
+        if answered is not None:
+            return None
+        return Refusal(
+            RefusalReason.MERGE_TURN_NOT_HELD,
+            "turn " + repr(row["turn_id"]) + " was granted " + repr(grant) + " and has not"
+            " acknowledged it, so nothing records that this candidate was re-checked against"
+            " the store rather than against what its holder remembers. Acknowledge the grant,"
+            " then merge",
+            domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
+            incumbent=grant, challenger=actor)
+
     # ------------------------------------------------------------ ledger
 
     def _write_ledger(self, db, turn, *, kind, from_state, to_state, evidence_kind,
@@ -416,12 +467,22 @@ class MergeTurn:
         # row of the wrong kind here means the ledger already disagrees with itself. Raising
         # rolls the whole operation back, because a transition whose record was silently
         # dropped is worse than an operation that did not happen.
+        #
+        # Every field, not just the kind. A row that agrees about the kind and disagrees about
+        # the actor, the evidence or the states it moved between is still not the row this
+        # call meant to write, and every reader downstream would consume the other one.
         seen = db.execute(
-            "SELECT evidence_kind, actor_task_id FROM merge_turn_ledger"
+            "SELECT kind, from_state, to_state, evidence_kind, actor_task_id, evidence"
+            "  FROM merge_turn_ledger"
             "  WHERE turn_id = ? AND idempotency_key = ?",
             (turn, idempotency_key),
         ).fetchone()
-        if seen is not None and seen["evidence_kind"] != evidence_kind:
+        if seen is None:
+            return
+        wrote = (kind, from_state, to_state, evidence_kind, actor, evidence)
+        if tuple(seen[column] for column in (
+                "kind", "from_state", "to_state", "evidence_kind", "actor_task_id",
+                "evidence")) != wrote:
             raise CoordinationError(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
                 "turn " + repr(turn) + " already holds " + repr(idempotency_key) + " as "
@@ -593,6 +654,16 @@ class MergeTurn:
                         evidence=row["candidate_head"] + " -> " + head,
                         idempotency_key="head:" + head, at=now)
                 if flag != row["declared_ready"]:
+                    # Readiness can die, be restored and die again on ONE head, and each of
+                    # those is a separate fact with its own cause. Keying on the head alone
+                    # made the second withdrawal converge onto the first and kept reporting
+                    # the stale reason. A replay cannot reach this write at all - the flag has
+                    # to have actually changed - so a sequence here counts real changes only.
+                    sequence = db.execute(
+                        "SELECT COUNT(*) AS seen FROM merge_turn_ledger"
+                        "  WHERE turn_id = ? AND evidence_kind IN (?,?)",
+                        (turn, READINESS_DECLARED, READINESS_WITHDRAWN),
+                    ).fetchone()["seen"] + 1
                     self._write_ledger(
                         db, turn, kind=TRANSITION, from_state=state, to_state=state,
                         evidence_kind=READINESS_DECLARED if flag == 1
@@ -602,8 +673,8 @@ class MergeTurn:
                             "the head moved to " + head if moved
                             else ("declared ready on " + head if flag == 1
                                   else "readiness withdrawn on " + head)),
-                        idempotency_key="ready:" + str(row["tenure"]) + ":" + head + ":"
-                        + str(flag), at=now)
+                        idempotency_key="ready:" + str(row["tenure"]) + ":" + str(sequence),
+                        at=now)
                 if state == WAITING and flag == 1:
                     occupant = db.execute(
                         "SELECT turn_id, state FROM merge_turns"
@@ -1012,6 +1083,8 @@ class MergeTurn:
                 # actually lands work. A binding paused after the turn was granted leaves a
                 # parent holding a target it is not running to use.
                 refusal = self._paused(row, actor, "begin a merge")
+            if refusal is None:
+                refusal = self._unanswered_grant(db, row, actor)
             if refusal is None and head_sha != row["candidate_head"]:
                 refusal = Refusal(
                     RefusalReason.MERGE_CANDIDATE_MOVED,

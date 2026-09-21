@@ -54,6 +54,14 @@ class CoordinationCliTestCase(RelayTestCase):
             "--task", task, "--host", host)
         self.assertEqual(code, cli.EXIT_OK)
 
+    def answer_grant(self, claimed, actor):
+        """What a parent does between being given the turn and using it."""
+        code, _payload = self.run_cli(
+            "merge-turn-acknowledge", "--turn", claimed["turnId"], "--actor", actor,
+            "--grant", claimed["grant"]["grantId"],
+            "--evidence", "read the grant and re-checked the record")
+        self.assertEqual(code, cli.EXIT_OK)
+
 
 class TheRegistrationTableIsComplete(CoordinationCliTestCase):
     def test_every_new_command_is_registered_with_a_handler(self):
@@ -94,6 +102,7 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
         self.assertEqual(claimed["state"], "holding")
 
         turn = claimed["turnId"]
+        self.answer_grant(claimed, "task-alpha")
         code, checked = self.run_cli(
             "merge-turn-check", "--turn", turn, "--actor", "task-alpha",
             "--head-sha", "head-a", "--base-sha", "base-0",
@@ -120,6 +129,7 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
             "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
             "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
             "--head", "head-a", "--ready")
+        self.answer_grant(claimed, "task-alpha")
         code, payload = self.run_cli(
             "merge-turn-check", "--turn", claimed["turnId"], "--actor", "task-alpha",
             "--head-sha", "head-moved", "--base-sha", "base-0",

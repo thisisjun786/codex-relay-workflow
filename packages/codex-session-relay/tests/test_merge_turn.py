@@ -70,6 +70,19 @@ class MergeTurnTestCase(RelayTestCase):
             "UPDATE scope_bindings SET status = ? WHERE scope_key = ? AND role = ?",
             (status, project, "parent"))
 
+    def answer_grant(self, turn, actor):
+        """What a parent does between being given the turn and using it.
+
+        A turn that has no grant - one that reached holding before grants were recorded - has
+        nothing to answer, and answering is not required of it.
+        """
+        grant = self.turns.turn(turn)["grant"]
+        if grant is None:
+            return None
+        return self.turns.acknowledge_grant(
+            turn, actor=actor, grant=grant["grantId"],
+            evidence="read the grant and re-checked the record")
+
 
 class APausedParentKeepsItsClaimAndCannotAct(MergeTurnTestCase):
     """Owning a project and running are two facts, and a pause separates them.
@@ -113,6 +126,7 @@ class APausedParentKeepsItsClaimAndCannotAct(MergeTurnTestCase):
 
     def test_a_paused_holder_cannot_begin_a_merge(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.set_status(PROJECT_A, "paused")
         with self.assertRaises(CoordinationError) as caught:
             self.turns.begin_merge(
@@ -205,15 +219,31 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
 
     def test_a_refused_check_with_a_ready_peer_behind_it_names_both(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.answer_grant(waiter["turnId"], self.beta.task_id)
         self.refused_check(held["turnId"])
         blocked = self.turns.target(REPO, BASE)["blocked"]
-        self.assertEqual(blocked["cause"], "required_checks_unfinished")
+        self.assertEqual(blocked["cause"], "required_evidence_not_current")
         self.assertEqual(blocked["candidateHead"], "head-a")
         self.assertEqual(blocked["lastResult"], "refused")
         self.assertEqual(blocked["lastRefusal"], "merge_currency_stale")
         self.assertEqual([peer["turnId"] for peer in blocked["readyPeers"]],
                          [waiter["turnId"]])
+
+    def test_an_unfinished_review_is_not_reported_as_an_unfinished_check(self):
+        """Every refusal writes a check row, so one word for all of them is a wrong word."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        with self.assertRaises(CoordinationError):
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"), required=["dev-gate"],
+                review={"hasNextPage": True, "pagesRead": 1, "totalCount": 4,
+                        "threadsSeen": ["thread-1"], "unresolved": 0})
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "review_not_finished")
+        self.assertEqual(blocked["lastRefusal"], "merge_review_incomplete")
 
     def test_a_holder_that_never_declared_readiness_is_not_reported_as_checking(self):
         self.claim(self.alpha, PROJECT_A, "head-a", ready=False)
@@ -223,6 +253,7 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
 
     def test_a_merging_holder_is_told_apart_from_one_restating_its_candidate(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -235,6 +266,7 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
     def test_restating_the_same_evidence_does_not_look_like_a_second_restatement(self):
         """checkSnapshots counts distinct evidence, and says so rather than counting polls."""
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.refused_check(held["turnId"])
         self.refused_check(held["turnId"])
         self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["checkSnapshots"], 1)
@@ -251,6 +283,7 @@ class AParentThatCameBackFindsItsOwnClaims(MergeTurnTestCase):
 
     def test_an_unresolved_outcome_is_reported_as_unresolved_and_not_as_free(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -433,6 +466,7 @@ class AnUnreadyCandidateGetsOutOfTheWay(MergeTurnTestCase):
 class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
     def merging(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -492,7 +526,9 @@ class NothingIsReleasedBecauseTimePassed(MergeTurnTestCase):
 
 class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
     def held(self):
-        return self.claim(self.alpha, PROJECT_A, "head-a")
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        return held
 
     def begin(self, held, **overrides):
         arguments = {
@@ -620,6 +656,7 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
             first["turnId"], actor=self.alpha.task_id, landed_sha="merge-1",
             observed_base_sha="base-1", evidence="landed")
         second = self.claim(self.alpha, PROJECT_A, "head-c")
+        self.answer_grant(second["turnId"], self.alpha.task_id)
         with self.assertRaises(CoordinationError) as caught:
             self.begin(second, head_sha="head-c", checks=run_checks("head-c"),
                        base_sha="base-0")
@@ -641,6 +678,7 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         a project it no longer owns, and this is the write that lands work.
         """
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.store.db.execute(
             "UPDATE scope_bindings SET status = 'archived'"
             "  WHERE scope_key = ? AND task_id = ?", (PROJECT_A, self.alpha.task_id))
@@ -652,6 +690,7 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
 
     def test_a_check_with_no_identity_is_not_evidence(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         for entry in ({"runId": "", "name": "dev-gate"}, {"runId": "run-1", "name": ""}):
             check = dict(entry, headSha="head-a", conclusion="success", attempt=1)
             with self.assertRaises(CoordinationError) as caught:
@@ -668,6 +707,7 @@ class TheCurrencyCheckImmediatelyBeforeMerging(MergeTurnTestCase):
         straight past.
         """
         held = self.claim(self.alpha, PROJECT_A, "head-a", ready=False)
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         with self.assertRaises(CoordinationError) as caught:
             self.turns.begin_merge(
                 held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
@@ -691,6 +731,7 @@ class ActingOnATurnYouDoNotHoldNeedsAuthority(MergeTurnTestCase):
 
     def merging(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -737,6 +778,7 @@ class ActingOnATurnYouDoNotHoldNeedsAuthority(MergeTurnTestCase):
 class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
     def unknown_turn(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -810,6 +852,7 @@ class AnObservationDecidesTheOutcomeRatherThanTheCaller(MergeTurnTestCase):
 class ReviewEvidenceIsCountedByDistinctThread(MergeTurnTestCase):
     def test_a_repeated_thread_identifier_does_not_stand_for_an_unread_one(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         with self.assertRaises(CoordinationError) as caught:
             self.turns.begin_merge(
                 held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
@@ -821,6 +864,7 @@ class ReviewEvidenceIsCountedByDistinctThread(MergeTurnTestCase):
 
     def test_two_distinct_threads_satisfy_a_total_of_two(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         answer = self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"),
@@ -929,7 +973,9 @@ class AGrantIsAddressedAndConverges(MergeTurnTestCase):
 
     def test_no_grant_is_written_while_an_outcome_is_unknown(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
         waiter = self.claim(self.beta, PROJECT_B, "head-b")
+        self.answer_grant(waiter["turnId"], self.beta.task_id)
         self.turns.begin_merge(
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
@@ -1091,6 +1137,7 @@ class TheCrossedHandoffOf20260921(MergeTurnTestCase):
                    for task in ("task-plugin", "task-docs", "task-status")]
         self.assertEqual(held["state"], "holding")
         self.assertEqual([turn["state"] for turn in waiting], ["waiting"] * 3)
+        self.answer_grant(held["turnId"], "task-hierarchy")
 
         # Its required CI has not finished. The restatement is refused, the refusal is kept,
         # and the turn stays exactly where it was.
@@ -1102,7 +1149,7 @@ class TheCrossedHandoffOf20260921(MergeTurnTestCase):
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
 
         blocked = self.turns.target(repository, base)["blocked"]
-        self.assertEqual(blocked["cause"], "required_checks_unfinished")
+        self.assertEqual(blocked["cause"], "required_evidence_not_current")
         self.assertEqual(blocked["prNumber"], 73)
         self.assertEqual(len(blocked["readyPeers"]), 3)
 
