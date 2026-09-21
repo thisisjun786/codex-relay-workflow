@@ -117,7 +117,7 @@ def ledger_id(turn, idempotency_key):
     return derive("mte", turn, exact(idempotency_key, "an idempotency key"))
 
 
-def grant_id(turn, tenure):
+def grant_id(turn, tenure, head):
     """One turn's one acquisition of a target, named from what defines it.
 
     A tenure reaches holding exactly once: waiting to holding is one way, a close is terminal,
@@ -128,8 +128,14 @@ def grant_id(turn, tenure):
     That is the whole difference from what this replaced. The promotion and the take-a-free-
     target keys were derived from the timestamp of the write, which is not a property of the
     acquisition at all - two readers describing one grant could not tell they meant one grant.
+
+    The candidate is in the key because a held turn can restate its head, and a grant is a
+    statement about a candidate as much as about a target. Keyed on the tenure alone, a
+    restatement left the only grant naming a head that no longer existed: a holder that had
+    not answered it could never answer it again, and one that had answered the old head could
+    merge the new one having acknowledged nothing about it. A restatement issues a fresh grant.
     """
-    return derive("mtg", turn, str(tenure))
+    return derive("mtg", turn, str(tenure), exact(head, "a candidate head"))
 
 
 def reserved(evidence_kind, idempotency_key):
@@ -190,7 +196,8 @@ class MergeTurn:
             return None
         record = self._record(row)
         record["ledger"] = self.ledger(turn)
-        record["grant"] = self._grant_record(record["ledger"], turn, row["tenure"])
+        record["grant"] = self._grant_record(
+            record["ledger"], turn, row["tenure"], row["candidate_head"])
         return record
 
     def outstanding(self, task_id):
@@ -220,14 +227,18 @@ class MergeTurn:
         return answer
 
     @staticmethod
-    def _grant_record(entries, turn, tenure):
+    def _grant_record(entries, turn, tenure, head):
         """This tenure's grant, and whether its recipient has answered it.
 
         Read out of the ledger rather than stored beside the turn, because the ledger is what
         makes it durable and convergent in the first place. A claim made before grants were
         recorded answers None, which is the truth about it and not a fault.
+
+        The grant for the CURRENT candidate. A restatement leaves the previous head's grant in
+        the ledger, readable as what it is: the grant for a candidate this turn no longer means
+        to merge.
         """
-        identifier = grant_id(turn, tenure)
+        identifier = grant_id(turn, tenure, head)
         notice = next((entry for entry in entries
                        if entry["idempotencyKey"] == GRANT + ":" + identifier), None)
         if notice is None:
@@ -286,7 +297,8 @@ class MergeTurn:
             answer["transportAcceptedAt"] = marks[1]
             answer["releasedAt"] = holder["closedAt"]
             holder["grant"] = self._grant_record(
-                self.ledger(holder["turnId"]), holder["turnId"], holder["tenure"])
+                self.ledger(holder["turnId"]), holder["turnId"], holder["tenure"],
+                holder["candidateHead"])
         answer["blocked"] = self._blocked_report(holder, waiters)
         return answer
 
@@ -423,7 +435,7 @@ class MergeTurn:
         recorded has nothing to answer, and this store has no migration path, so demanding an
         answer that cannot exist would wedge that turn permanently with no supported repair.
         """
-        grant = grant_id(row["turn_id"], row["tenure"])
+        grant = grant_id(row["turn_id"], row["tenure"], row["candidate_head"])
         notice = db.execute(
             "SELECT recorded_at FROM merge_turn_ledger"
             "  WHERE turn_id = ? AND idempotency_key = ?",
@@ -507,7 +519,7 @@ class MergeTurn:
         finds it by re-reading its own claims on entry, which is the wake path's own rule that
         the queue is the truth and a wake is only a hint.
         """
-        grant = grant_id(turn, tenure)
+        grant = grant_id(turn, tenure, head)
         self._write_ledger(
             db, turn, kind=ATTESTATION, from_state=state, to_state=None,
             evidence_kind=GRANT, actor=recipient,
@@ -653,6 +665,17 @@ class MergeTurn:
                         evidence_kind="candidate_head_changed", actor=actor,
                         evidence=row["candidate_head"] + " -> " + head,
                         idempotency_key="head:" + head, at=now)
+                    if state == HOLDING:
+                        # A restatement while holding is a new candidate on a target this
+                        # parent already has, so it gets its own grant to answer. Without one,
+                        # the only grant named a head that no longer existed: a holder that had
+                        # not answered it could never answer it, and one that had could merge a
+                        # candidate it had acknowledged nothing about.
+                        self._grant_in(
+                            db, turn=turn, tenure=row["tenure"], target=row["target_key"],
+                            repository=row["repository"], base_ref=row["base_ref"],
+                            recipient=actor, head=head, state=HOLDING,
+                            granted_from="candidate_restated", at=now)
                 if flag != row["declared_ready"]:
                     # Readiness can die, be restored and die again on ONE head, and each of
                     # those is a separate fact with its own cause. Keying on the head alone
@@ -773,7 +796,7 @@ class MergeTurn:
         refusal, notice = None, None
         with self.store.transaction() as db:
             row = self._row_in(db, turn)
-            current = grant_id(turn, row["tenure"])
+            current = grant_id(turn, row["tenure"], row["candidate_head"])
             if row["holder_task_id"] != actor:
                 refusal = self._not_holder(row, actor, "acknowledge a grant on")
             elif row["state"] != HOLDING:
@@ -808,16 +831,6 @@ class MergeTurn:
                         " a claim made before grants were recorded has none and needs none",
                         domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
                         incumbent=row["holder_task_id"], challenger=actor)
-            if refusal is None:
-                envelope = json.loads(notice["evidence"])
-                if envelope.get("candidateHead") != row["candidate_head"]:
-                    refusal = Refusal(
-                        RefusalReason.MERGE_CANDIDATE_MOVED,
-                        "the grant was for head " + repr(envelope.get("candidateHead"))
-                        + " and this turn now names " + repr(row["candidate_head"])
-                        + "; the candidate moved after the turn was granted",
-                        domain=DOMAIN_MERGE_TARGET, subject=row["target_key"],
-                        incumbent=envelope.get("candidateHead") or "", challenger=actor)
             if refusal is None:
                 self._write_ledger(
                     db, turn, kind=ATTESTATION, from_state=row["state"], to_state=None,

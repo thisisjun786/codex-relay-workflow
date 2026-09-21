@@ -168,6 +168,18 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
         self.assertEqual(mine["claims"][0]["state"], "holding")
         self.assertFalse(mine["claims"][0]["targetFree"])
 
+    def test_two_selectors_refuse_instead_of_answering_about_one_of_them(self):
+        self.bind("PRJ-A", "task-alpha")
+        for arguments in (
+                ("--parent-task", "task-alpha", "--repository", "owner/repo",
+                 "--base-ref", "dev"),
+                ("--repository", "owner/repo"),
+                (),
+        ):
+            code, payload = self.run_cli("merge-turn-show", *arguments)
+            self.assertEqual(code, cli.EXIT_REFUSED, arguments)
+            self.assertEqual(payload["reason"], "bad_invocation", arguments)
+
     def test_acknowledging_a_grant_twice_converges_on_one_record(self):
         self.bind("PRJ-A", "task-alpha")
         _code, claimed = self.run_cli(

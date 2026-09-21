@@ -829,6 +829,32 @@ def cmd_merge_turn_withdraw(services, args) -> dict:
 
 
 def cmd_merge_turn_show(services, args) -> dict:
+    """One selector, named, because three forms resolved by branch order answered silently.
+
+    A caller that passed --parent-task beside --repository got a successful answer about every
+    claim that task holds anywhere, with no sign that the target it named was never consulted.
+    A recovery read that quietly changed scope is worse than one that refuses.
+    """
+    named = [
+        label for label, given in (
+            ("--turn", bool(args.turn)),
+            ("--parent-task", bool(args.parent_task)),
+            ("--repository with --base-ref", bool(args.repository or args.base_ref)),
+        ) if given
+    ]
+    if len(named) != 1:
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "merge-turn-show takes exactly one selector - --turn, --parent-task, or"
+                      " --repository with --base-ref - and this named "
+                      + (", ".join(named) if named else "none"),
+        }, EXIT_REFUSED)
+    if bool(args.repository) != bool(args.base_ref):
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "a target is a repository AND a base ref; --repository and --base-ref"
+                      " are given together or not at all",
+        }, EXIT_REFUSED)
     if args.turn:
         return _with_enforcement(services, services.merge_turn.turn(args.turn) or {
             "ok": False, "reason": "unregistered_scope", "turnId": args.turn})

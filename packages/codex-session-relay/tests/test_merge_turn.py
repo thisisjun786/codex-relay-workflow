@@ -304,7 +304,7 @@ class AParentThatCameBackFindsItsOwnClaims(MergeTurnTestCase):
         mine = after.outstanding(self.alpha.task_id)
         self.assertEqual([record["turnId"] for record in mine], [held["turnId"]])
         self.assertEqual(mine[0]["grant"]["grantId"],
-                         grant_id(held["turnId"], mine[0]["tenure"]))
+                         grant_id(held["turnId"], mine[0]["tenure"], "head-a"))
 
 
 class OneParentHoldsTheTargetAtATime(MergeTurnTestCase):
@@ -889,10 +889,10 @@ class AGrantIsAddressedAndConverges(MergeTurnTestCase):
         self.assertEqual(grant["candidateHead"], "head-a")
         self.assertIsNone(grant["acknowledgedAt"])
 
-    def test_the_grant_is_keyed_by_tenure_and_carries_no_timestamp(self):
+    def test_the_grant_is_keyed_by_what_defines_it_and_not_by_a_clock(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
         record = self.turns.turn(held["turnId"])
-        key = "grant:" + grant_id(held["turnId"], record["tenure"])
+        key = "grant:" + grant_id(held["turnId"], record["tenure"], "head-a")
         keys = [entry["idempotencyKey"] for entry in record["ledger"]
                 if entry["evidenceKind"] == "grant"]
         self.assertEqual(keys, [key])
@@ -944,16 +944,49 @@ class AGrantIsAddressedAndConverges(MergeTurnTestCase):
                 evidence="I still had the old one")
         self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
 
-    def test_a_candidate_that_moved_after_the_grant_is_refused(self):
+    def test_a_restated_candidate_gets_its_own_grant_to_answer(self):
+        """The wedge a head change used to create, from both sides.
+
+        Keyed on the tenure alone, the only grant named a head that no longer existed. A
+        holder that had not answered it could never answer it again, and one that HAD answered
+        the old head could merge the new candidate having acknowledged nothing about it.
+        """
         held = self.claim(self.alpha, PROJECT_A, "head-a")
-        grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
-        self.turns.declare_ready(
+        first = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        moved = self.turns.declare_ready(
             held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-a2")
+
+        second = moved["grant"]
+        self.assertEqual(second["candidateHead"], "head-a2")
+        self.assertEqual(second["grantedFrom"], "candidate_restated")
+        self.assertNotEqual(second["grantId"], first)
+        self.assertIsNone(second["acknowledgedAt"])
+
         with self.assertRaises(CoordinationError) as caught:
             self.turns.acknowledge_grant(
-                held["turnId"], actor=self.alpha.task_id, grant=grant,
-                evidence="acting on what I read")
-        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CANDIDATE_MOVED)
+                held["turnId"], actor=self.alpha.task_id, grant=first,
+                evidence="acting on what I read before")
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
+
+        answered = self.turns.acknowledge_grant(
+            held["turnId"], actor=self.alpha.task_id, grant=second["grantId"],
+            evidence="re-read the record for the new head")
+        self.assertEqual(answered["grant"]["acknowledgedBy"], self.alpha.task_id)
+
+    def test_answering_the_old_head_does_not_let_the_new_one_merge(self):
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        self.turns.declare_ready(
+            held["turnId"], actor=self.alpha.task_id, ready=True, candidate_head="head-a2")
+        # A restatement resets readiness, so declare it again for the head it now means.
+        self.turns.declare_ready(held["turnId"], actor=self.alpha.task_id, ready=True)
+        with self.assertRaises(CoordinationError) as caught:
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a2",
+                base_sha="base-0", checks=run_checks("head-a2"), review=dict(GREEN),
+                required=["dev-gate"])
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_TURN_NOT_HELD)
+        self.assertIn("acknowledged it", caught.exception.detail)
 
     def test_a_bare_acknowledgement_is_refused(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
