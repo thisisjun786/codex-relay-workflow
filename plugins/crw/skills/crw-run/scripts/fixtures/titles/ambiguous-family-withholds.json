@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "ambiguous_family",
+    "title": "공유 작업"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW",
+      "AAS"
+    ],
+    "observed_title": "공유 작업",
+    "project_labels": [
+      "CRW",
+      "AAS"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Two candidates are a question for a person, never a coin toss.",
+  "subcommand": "decide"
+}

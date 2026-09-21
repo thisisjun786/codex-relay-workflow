@@ -280,8 +280,10 @@ apply. See [Independent implementation tasks](plugins/crw/skills/crw-run/SKILL.m
 
 Run and Loop use the shared [project binding procedure](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
 to record project/task IDs in Linear, set the task title and sidebar pin when
-supported, and restore context. Management titles use a concise project summary;
-the binding uses the stable project ID regardless of names or initiative membership.
+supported, and restore context. Management titles lead with the linked project's
+product-family label in brackets, spelled exactly as Linear spells it, followed by a
+concise project summary; the binding uses the stable project ID regardless of names
+or initiative membership.
 The requesting skill remains the operation owner.
 Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.

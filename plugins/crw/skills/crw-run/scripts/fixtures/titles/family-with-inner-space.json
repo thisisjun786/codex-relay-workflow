@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "prefix": "LINA CORE",
+    "reason": "prefix_added",
+    "title": "[LINA CORE] 실행 호스트 정리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "LINA CORE"
+    ],
+    "observed_title": "실행 호스트 정리",
+    "project_labels": [
+      "LINA CORE"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A family label containing a space is one label, not two candidates.",
+  "subcommand": "decide"
+}

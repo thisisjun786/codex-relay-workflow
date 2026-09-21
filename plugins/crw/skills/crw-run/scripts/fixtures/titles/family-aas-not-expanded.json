@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "prefix": "AAS",
+    "reason": "prefix_added",
+    "title": "[AAS] 전략 스윕 운영"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "AAS"
+    ],
+    "observed_title": "전략 스윕 운영",
+    "project_labels": [
+      "AAS"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "AAS stays AAS. No alias table turns it into Aegis.",
+  "subcommand": "decide"
+}

@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "family_unverified",
+    "title": "전략 스윕 운영"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "전략 스윕 운영",
+    "project_labels": [
+      "AAS"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A candidate the project does not actually carry is unverified, whatever supplied it.",
+  "subcommand": "decide"
+}

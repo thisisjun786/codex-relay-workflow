@@ -22,7 +22,10 @@ PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
 separate from naming. An explicit user-supplied title takes precedence over
-this default. Each implementation packet names its
+this default. This convention names issue children; the management task above them
+is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
+including the product-family prefix that no child title carries.
+Each implementation packet names its
 one issue and intended PR. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile

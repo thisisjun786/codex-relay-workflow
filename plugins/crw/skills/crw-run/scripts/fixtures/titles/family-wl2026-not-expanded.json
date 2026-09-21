@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "prefix": "WL2026",
+    "reason": "prefix_added",
+    "title": "[WL2026] 행사 준비"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "WL2026"
+    ],
+    "observed_title": "행사 준비",
+    "project_labels": [
+      "WL2026"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "WL2026 keeps its digits and case; it does not become WONDERLIVET.",
+  "subcommand": "decide"
+}

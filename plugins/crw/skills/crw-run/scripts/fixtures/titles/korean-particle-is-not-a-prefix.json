@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_added",
+    "stripped": null,
+    "title": "[CRW] CRW를 설치형 Codex 플러그인으로 전환"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW를 설치형 Codex 플러그인으로 전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "CRW를 is a subject with a particle. Stripping it would delete the sentence.",
+  "subcommand": "decide"
+}

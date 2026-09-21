@@ -23,7 +23,12 @@ repository identity. One repository may support several Linear projects, and
 one project may involve several repositories. Resolve names to stable project
 IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
-title alone. A rename or changed initiative relation does not change a binding. An initiative is
+title alone. A rename or changed initiative relation does not change a binding, and a title is not
+read the other way either. The management title carries its project's product-family label by the
+rule in [Set the app presentation and record](#set-the-app-presentation-and-record), so the label
+is derived from the binding and is never evidence of one: a task is not bound to a project because
+its title names that project's family, and a title carrying a different family is a presentation
+gap to report rather than a binding to correct. An initiative is
 itself a target only for an explicit designation to execute its approved projects, which binds at
 that level through [Initiative supervision](../../crw-run/references/initiative-supervision.md);
 cited as context by any other operation it changes no binding.
@@ -72,22 +77,59 @@ A request to make this the fixed management task covers its matching title,
 sidebar pin, and a compact Linear management record. Respect an explicit title,
 no-rename, unpinned, or read-only constraint.
 
-Use a concise project summary as the management task title: the short outcome the
-project exists for, named so the title also reads as the task that manages it.
-Preserve an explicit
-user title. Product family and initiative membership are context, not required
-title prefixes; no initiative or multiple initiatives needs no title-choice
-question. Resolve same-name projects by stable ID under the shared target rules
-before binding. If their management titles would be indistinguishable, append a
-short project-ID suffix. Do not rename the initiative or project itself. This
-convention names the management task; execution-task titles follow
-[Child task titles](../../crw-run/references/task-packet.md#child-task-titles).
+Use a concise project summary as the management task title, led by the linked
+project's product-family label in brackets, as in `[CRW] 설치형 플러그인 전환`: the
+short outcome the project exists for, named so the title also reads as the task
+that manages it. Write the label the project actually carries, exactly as Linear
+spells it, without expanding, translating, abbreviating or changing its case, and
+without a table of families kept beside the workspace's own. Initiative membership
+is still not a prefix, and no initiative or multiple initiatives needs no
+title-choice question. Preserve an explicit user title: the user's wording stays as
+the body and takes the prefix in front of it, while an explicit fixed title, a
+no-rename or a read-only constraint leaves the title as it is. Resolve same-name
+projects by stable ID under the shared target rules before binding. If their
+management titles would be indistinguishable, append a short project-ID suffix. Do
+not rename the initiative or project itself, whose own name needs no product
+prefix. This convention names the Codex management task; an issue child follows
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) and a
+supervision task keeps its own name.
+
+Take the family from the project's product-family label group. The project read
+returns a flat list of label names without the group each belongs to, so the value
+carries its own provenance — the label group where a surface shows it, or the family
+already recorded in this binding with its source — and a list of labels alone is not
+that evidence, because a count is not membership. Exactly one such label is the
+family. None is a legitimate classification rather than an error, and more than one
+is a question; in both cases leave the title unprefixed, record what is missing as
+part of the unverified state below, and ask instead of choosing. Never read the
+family from the repository, the working directory, the task's model or the Linear
+team key, which often spells the same word and is a different field.
+
+Apply the prefix once. A title already carrying this family keeps it, and a family
+name standing separably in front of the title is absorbed rather than repeated.
+Otherwise the body is left exactly as it is: a label joined to what follows it is
+part of the sentence, so the subject in `CRW를 설치형 …` and the issue code in
+`CRW-137 · …` are text rather than prefixes. A leading bracket that is not this
+family is neither overwritten nor stacked behind a second one; report it and take a
+decision on that exact bracket, keeping it as body or replacing it, because an
+obsolete family and a user's own words are indistinguishable from here.
+[parent_title.py](../../crw-run/scripts/parent_title.py) settles these cases offline
+and its `replay` holds it to recorded expectations; it proposes a title and writes
+nothing. Any later surface that shows or edits this prefix reads the same label
+through the same rule and the same helper rather than keeping a mapping of its own.
 
 Discover the supported task rename and sidebar tools and their current schemas.
 Apply changes only to the verified current task, and check its resulting title
 and pin state in the app listing. If a capability is unavailable, complete the
 supported parts and report the gap. Do not edit a session database or global
 configuration to simulate a successful binding.
+
+A rename that fails or is unsupported leaves the title unwritten: record the
+requested title and the limitation, and carry on with the authorized work. A rename
+that is accepted proves transport and nothing more. The title is verified when a
+read by task ID returns the requested string; a read returning anything else is a
+mismatch to report with both strings rather than a success with a caveat, and no
+read at all is unread rather than a failed write.
 
 Reuse a suitable linked coordination document. When only a canonical planning
 document exists, a compact management section there is sufficient. Read scoped,
@@ -102,6 +144,9 @@ Record only what supports recovery:
 - Repository identity and checkout path when relevant.
 - Assignment, delivery limits, and the source/date of the user's designation.
 - Verified app title/pin results and any unsynced or unverified part.
+- The task record read by task ID before and after a rename, showing the fields
+  that read exposes unchanged. Whatever it does not expose is read from its owning
+  surface or recorded unverified, rather than claimed preserved on its behalf.
 
 Read back the saved document and its project relation. Reconcile uncertain
 writes by reading before retrying; an accepted request is not a verified result.
@@ -120,9 +165,12 @@ not assign ownership here. Follow the shared target-resolution rules for
 explicit one-off targets and changes to the persistent link.
 
 Keep the recorded project ID when its name, product labels, or initiative
-relations change. Existing titles with an initiative prefix are presentation,
-not a reason to rebind or rename during recovery. Refresh the title only within
-an authorized presentation change; do not migrate existing bindings implicitly.
+relations change. Existing titles are presentation, whether they carry a
+product-family prefix or an initiative one, and neither is a reason to rebind or
+rename during recovery. A project whose family has changed does not have its prefix
+corrected on sight, and existing parents are not renamed in bulk. Refresh the title
+only within an authorized presentation change; do not migrate existing bindings
+implicitly.
 
 Load the existing owner for the requested operation:
 
@@ -364,8 +412,11 @@ what a record keys on.
 
 Writing the names down settles what they are called and nothing else. A display name in either
 language keys nothing, so no relationship id, assignment, goal, worktree or task title is
-regenerated because this section now spells them out, and titles keep the convention
-[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) already fixes. Read
+regenerated because this section now spells them out, and each level keeps the title convention
+that already fixes it: a verified project parent follows
+[Set the app presentation and record](#set-the-app-presentation-and-record), an issue child follows
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles), and a supervision
+task keeps its own name. Read
 earlier phrasing the same way rather than rewriting it: an initiative task, an initiative
 management task or a 상위 관리 세션 is the supervisor under another description. That is how to read
 those words, not a licence to substitute them wherever they appear, and the two things that merely

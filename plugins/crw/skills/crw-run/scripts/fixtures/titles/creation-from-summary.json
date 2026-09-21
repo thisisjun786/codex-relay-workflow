@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_added",
+    "title": "[CRW] 설치·3단계 운영 마무리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": null,
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": "설치·3단계 운영 마무리",
+    "user_title": "none"
+  },
+  "note": "At creation there is no observed title yet, so the summary is the body.",
+  "subcommand": "decide"
+}

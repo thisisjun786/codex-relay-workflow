@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_added",
+    "stripped": null,
+    "title": "[CRW] CRW 플러그인 전환"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW 플러그인 전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "In CRW 플러그인 전환 the label is the subject; a plain space is not a separator.",
+  "subcommand": "decide"
+}

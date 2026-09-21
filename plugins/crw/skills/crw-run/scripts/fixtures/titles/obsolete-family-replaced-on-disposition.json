@@ -1,0 +1,27 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_replaced",
+    "stripped": "[AAS] ",
+    "title": "[CRW] 전략 스윕 운영"
+  },
+  "input": {
+    "binding_verified": true,
+    "bracket_disposition": {
+      "action": "replace",
+      "bracket": "[AAS] "
+    },
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[AAS] 전략 스윕 운영",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "With fresh linkage confirmed, that exact bracket is removed and the current family applied.",
+  "subcommand": "decide"
+}

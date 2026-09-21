@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "reason": "user_fixed_title",
+    "title": "내가 정한 제목"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "내가 정한 제목",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "fixed"
+  },
+  "note": "A user who fixed the exact string, or forbade the rename, outranks presentation.",
+  "subcommand": "decide"
+}
