@@ -92,8 +92,12 @@ only and cannot alter an objective or budget; it refuses a task with no goal,
 reports `already_paused` without writing, and refuses a goal that already ended.
 It is not atomic — the protocol has no expected-status precondition — so read the
 goal again afterwards, and the receipt says so itself. Pausing does not stop a turn
-in flight: re-read the active turn and steer it to finish safely. A paused,
-cancelled or archived task is still never resumed automatically.
+in flight: re-read the active turn and steer it to finish safely. A paused or
+archived task is still never resumed automatically, and a delivery whose assignment the
+registry records as paused, cancelled or archived is never selected for one. The host
+reports no cancelled state for a task itself, so that one is an unestablished reading
+rather than a guarantee
+([OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)).
 
 The task must use the agreed sandbox and approval policy. Do not widen them to
 make a launch succeed. Prefer a supported native path if the bridge cannot

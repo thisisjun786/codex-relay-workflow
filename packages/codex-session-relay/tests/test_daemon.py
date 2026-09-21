@@ -3,9 +3,28 @@
 import unittest
 
 from codex_session_relay.daemon import RelayDaemon, SingleInstance
-from codex_session_relay.transport import DISPATCHED
+from codex_session_relay.transport import DISPATCHED, WITHHELD_PRE_SEND
 
 from .support import CHILD, DISPATCH_TURN, PARENT, DeliveryTestCase
+
+
+class WithheldOnAttempt:
+    """The deactivation race, staged: the scheduler selected this row while its assignment was
+    active, and the assignment was paused, cancelled or archived before attempt() read it.
+
+    A plain delegating wrapper, because the suite's fault-injection reader refuses reflective
+    mutation it cannot follow.
+    """
+
+    def __init__(self, inner, record):
+        self._inner = inner
+        self._record = record
+
+    def attempt(self, event_id, adapter, *, now=None, owner="relay"):
+        return self._record
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 class DaemonTestCase(DeliveryTestCase):
@@ -65,6 +84,27 @@ class QuietTicks(DaemonTestCase):
         report = self.daemon.tick()
         self.assertFalse(report.quiet)
         self.assertEqual(report.delivered, 1)
+
+    def test_a_tick_that_withheld_a_deactivated_assignment_is_not_quiet(self):
+        _relationship, event_id = self.queued_event()
+        daemon = RelayDaemon(
+            self.store, self.registry, self.intake,
+            WithheldOnAttempt(self.delivery, {
+                "deliveryState": WITHHELD_PRE_SEND,
+                "withheldReason": "relationship_not_active",
+                "relationshipStatus": "cancelled",
+                "eventId": event_id,
+                "sendAttempted": "no",
+            }),
+            self.ack, self.reconciler, self.adapter, clock=self.clock,
+        )
+        report = daemon.tick()
+        # quiet is derived as "none of seven counters moved", and deferred is one of the seven
+        # while skipped is not. Asserting the counters settles the flag without folding it
+        # again here: a deferral of 1 makes quiet False by construction.
+        self.assertEqual(report.deferred, 1)
+        self.assertEqual(report.skipped, 0, "it was decided and persisted, not passed over")
+        self.assertEqual(report.as_dict()["quiet"], False)
 
     def test_an_already_observed_terminal_turn_is_not_reobserved(self):
         relationship = self.register()
