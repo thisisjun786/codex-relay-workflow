@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "matched": "bracket_family",
+    "reason": "already_prefixed",
+    "title": "[Core]Beta] 출시 준비"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "Core]Beta"
+    ],
+    "observed_title": "[Core]Beta] 출시 준비",
+    "project_labels": [
+      "Core]Beta"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "The second call on the title the first one proposed. Recognising the prefix the helper built, rather than parsing to the first closing bracket, is what keeps this unchanged instead of reporting a foreign prefix.",
+  "subcommand": "decide"
+}

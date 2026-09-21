@@ -178,39 +178,43 @@ def decide(request):
     stripped = None
     body = source
     matched = "none"
+    own = "[" + family + "]"
     bracketed = bracket_prefix(source)
-    if bracketed:
-        lexeme, inner, removed, rest = bracketed
-        if inner == family and not rest.strip():
+    if source.startswith(own):
+        # Built from the verified family rather than parsed, so a label that itself contains a
+        # closing bracket still recognises its own prefix. The reader below stops at the first
+        # "]", which for such a label is the wrong character.
+        rest = source[len(own):]
+        if not rest.strip():
             # The whole title is this prefix. There is nothing to add to it.
             return settle("unchanged", "already_prefixed", title=source, prefix=family,
                           body="", matched="bracket_family")
-        if inner != family and not rest.strip():
+        body = rest.lstrip()
+        matched = "bracket_family"
+    elif bracketed:
+        lexeme, inner, removed, rest = bracketed
+        if not rest.strip():
             # A bracket alone that is not this family names nothing that could survive a
             # decision, so there is no title to propose either way.
             return settle("withhold", "foreign_prefix", title=observed,
                           requires=["a title body beside " + lexeme])
-        if inner == family:
-            body = rest
-            matched = "bracket_family"
+        disposition = request.get("bracket_disposition")
+        action = None
+        if isinstance(disposition, dict) and disposition.get("bracket") == lexeme:
+            action = disposition.get("action")
+        if action not in BRACKET_ACTIONS:
+            # A bracket that is not this family may be an obsolete family or the user's own
+            # words. Nothing here can tell those apart, and stacking a second bracket to
+            # avoid deciding would put two classifications on one title. A disposition
+            # naming some other bracket is not an answer about this one.
+            return settle("withhold", "foreign_prefix", title=observed,
+                          requires=["bracket_disposition naming " + lexeme
+                                    + " as body or replace"])
+        if action == "replace":
+            stripped, body = removed, rest
+            matched = "bracket_replaced"
         else:
-            disposition = request.get("bracket_disposition")
-            action = None
-            if isinstance(disposition, dict) and disposition.get("bracket") == lexeme:
-                action = disposition.get("action")
-            if action not in BRACKET_ACTIONS:
-                # A bracket that is not this family may be an obsolete family or the user's own
-                # words. Nothing here can tell those apart, and stacking a second bracket to
-                # avoid deciding would put two classifications on one title. A disposition
-                # naming some other bracket is not an answer about this one.
-                return settle("withhold", "foreign_prefix", title=observed,
-                              requires=["bracket_disposition naming " + lexeme
-                                        + " as body or replace"])
-            if action == "replace":
-                stripped, body = removed, rest
-                matched = "bracket_replaced"
-            else:
-                matched = "bracket_body"
+            matched = "bracket_body"
     else:
         bare = bare_prefix(source, family)
         if bare:
