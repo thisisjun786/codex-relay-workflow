@@ -31,6 +31,8 @@ import sys
 CONTRACT = Path(__file__).resolve().parents[1] / "references" / "start-policy.md"
 FIELDS = ("run_mode", "observation_path")
 CELL = re.compile(r"`([^`]+)`")
+DECORATION = "`'\"*_ "
+PUNCTUATION = ".,;"
 
 
 class ContractError(RuntimeError):
@@ -77,12 +79,29 @@ def load():
         raise ContractError(f"cannot read {CONTRACT}: {error}") from error
 
 
-def read_record(lines):
-    """Pull `field: value` pairs out of record text.
+def undecorate(value):
+    """Take markdown decoration and trailing punctuation off a value.
 
-    Markdown decoration around the value is formatting, not a different literal, so a bullet,
-    backticks or quotes are removed before the value is compared. The value itself is compared
-    exactly: that is the whole point of the check.
+    Repeated until nothing more comes off, because the two interleave: `loop`, ends with
+    punctuation outside a backtick, and one pass in either order leaves the other behind.
+    """
+    previous = None
+    while previous != value:
+        previous = value
+        value = value.strip().strip(DECORATION).rstrip(PUNCTUATION)
+    return value
+
+
+def read_record(lines):
+    """Pull every `field: value` occurrence out of record text.
+
+    Markdown decoration around the value is formatting, not a different literal, so bullets,
+    backticks, quotes and trailing punctuation come off before the value is compared. The value
+    itself is compared exactly: that is the whole point of the check.
+
+    Every occurrence is kept rather than the first. A record that states one field twice with
+    two different values is ambiguous, and picking by position is exactly how two consumers
+    restore two different policies from one record.
     """
     found = {}
     for line in lines:
@@ -90,10 +109,10 @@ def read_record(lines):
         if ":" not in text:
             continue
         name, _, value = text.partition(":")
-        name = name.strip().strip("`*_").strip()
-        if name not in FIELDS or name in found:
+        name = undecorate(name)
+        if name not in FIELDS:
             continue
-        found[name] = value.strip().strip("`'\"").strip().rstrip(".,;")
+        found.setdefault(name, []).append(undecorate(value))
     return found
 
 
@@ -103,19 +122,25 @@ def check(record, vocabulary, out):
     failed = False
     for field in FIELDS:
         allowed = " | ".join(declared[field])
-        if field not in record:
+        values = record.get(field, [])
+        distinct = list(dict.fromkeys(values))
+        if not values:
             out.append(f"{field}: missing -> declared: {allowed}")
             failed = True
-        elif record[field] in declared[field]:
-            out.append(f"{field}: {record[field]} -> ok")
+        elif len(distinct) > 1:
+            out.append(f"{field}: recorded as {' and '.join(distinct)} -> two values, unreadable")
+            failed = True
+        elif distinct[0] in declared[field]:
+            repeated = f" (stated {len(values)} times, same value)" if len(values) > 1 else ""
+            out.append(f"{field}: {distinct[0]} -> ok{repeated}")
         else:
-            out.append(f"{field}: {record[field]} -> not in set; declared: {allowed}")
+            out.append(f"{field}: {distinct[0]} -> not in set; declared: {allowed}")
             failed = True
     if failed:
         out.append("pairing: not checked, a field is unreadable")
         out.append("An unreadable field is re-adjudicated exactly as a missing one is.")
         return False
-    pair = (record["run_mode"], record["observation_path"])
+    pair = (record["run_mode"][0], record["observation_path"][0])
     if legal.get(pair):
         out.append(f"pairing: {pair[0]} + {pair[1]} -> legal")
         return True
@@ -140,6 +165,9 @@ SELFTEST = (
     ("the declared default", ["run_mode: goal-free-run", "observation_path: event-driven-idle"], True),
     ("a transitional record", ["run_mode: goal-free-run", "observation_path: blocked"], True),
     ("backticked and bulleted", ["- `run_mode`: `loop`", "- `observation_path`: `active-observation`"], True),
+    ("decorated with trailing punctuation", ["`run_mode`: `loop`,", "`observation_path`: `blocked`."], True),
+    ("the same value stated twice", ["run_mode: loop", "observation_path: blocked", "run_mode: loop"], True),
+    ("a stale pair above a current one", ["run_mode: goal-free-run", "observation_path: event-driven-idle", "run_mode: blocked", "observation_path: blocked"], False),
     ("parent G", ["run_mode: relay_only", "observation_path: relay"], False),
     ("parent H", ["run_mode: goal_free", "observation_path: relay"], False),
     ("parent I", ["run_mode: run_only", "observation_path: relay"], False),
@@ -151,6 +179,9 @@ SELFTEST = (
 
 def selftest(vocabulary, out):
     modes, paths, _ = vocabulary
+    # The literals are written out again here on purpose. The table decides what check accepts,
+    # so a rename lands there; this line is the tripwire that makes such a rename deliberate
+    # rather than silent, and landing one means changing both in the same commit.
     expected = (
         ["goal-free-run", "loop", "blocked"],
         ["event-driven-idle", "active-observation", "blocked"],

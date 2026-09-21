@@ -117,8 +117,10 @@ Otherwise continue until the agreed scope is delivered, the user stops, a resour
 limit is reached, or no authorized progress is possible. An empty ready queue while
 children run calls for bounded observation; a blocked issue does not stop independent
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
-not a claim that the first batch completed the request. Run alone promises no automatic
-future wake-up, and a standalone status-only request wakes nothing. A checkpoint inside
+not a claim that the first batch completed the request. Where the recorded `observation_path`
+is `event-driven-idle`, the parent yields the turn and the delivery path resumes it on a real
+child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
+future wake-up. A standalone status-only request wakes nothing under either. A checkpoint inside
 an authorized ongoing initiative is not that request: it is handed to the responsible
 parent and handled there as a resume of the authorized run, which re-evaluates outstanding
 child results, pending decision requests, cleared blockers and empty execution slots, then
