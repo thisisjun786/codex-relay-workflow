@@ -367,3 +367,103 @@ class AdmissionBinding(DaemonTestCase):
         self.assertTrue(AnchorOrExplicit().admit(self.store, relation, relation["generations"][0],
                                                "legitimate").admitted)
         self.assertEqual(len(self.store.all("SELECT * FROM generation_turns")), 1)
+
+
+class AdmissionQueryBudget(DaemonTestCase):
+    def test_settled_history_is_read_in_bounded_pages_and_tail_is_reached(self):
+        from codex_session_relay.admission import admit_explicitly
+        relation = self.register()
+        rid = relation['relationshipId']
+        self.adapter.start_turn(CHILD, turn_id='turn-dispatch-1', status='inProgress')
+        for index in range(45):
+            turn = f'business-{index:03}'
+            self.adapter.start_turn(CHILD, turn_id=turn, status='completed')
+            admit_explicitly(self.store, self.clock, rid, 1, turn, actor='owner')
+            if index < 40:
+                self.intake.record_observation(TurnRef(CHILD, turn, 'completed'),
+                    'execution_only', relationship_id=rid)
+        original = self.store.all
+        batches = []
+        def observed(sql, params=()):
+            rows = original(sql, params)
+            if 'generation_turns' in sql:
+                batches.append(len(rows))
+            return rows
+        self.store.all = observed
+        seen = set()
+        for _ in range(100):
+            seen.update(self.daemon._turns_to_poll(relation, 2))
+        self.assertLessEqual(max(batches), 2, 'one tick materialized lifetime admission history')
+        self.assertLessEqual({f'business-{i:03}' for i in range(40,45)}, seen)
+        self.assertEqual({f'business-{i:03}' for i in range(40)} & seen, set())
+
+    def test_keyset_survives_restart_and_shares_one_slot_with_anchor_and_history(self):
+        from codex_session_relay.admission import admit_explicitly
+        from codex_session_relay.daemon import RelayDaemon
+        relation = self.register()
+        rid = relation['relationshipId']
+        self.adapter.start_turn(CHILD, turn_id='turn-dispatch-1', status='inProgress')
+        for index in range(5):
+            admit_explicitly(self.store, self.clock, rid, 1, f'business-{index}', actor='owner')
+        self.registry.open_generation(rid, dispatch_request_id='new', dispatch_turn_id='current',
+                                      reason='needs_changes_revision')
+        relation = self.registry.get(rid)
+        seen = set()
+        for _ in range(80):
+            selected = self.daemon._turns_to_poll(relation, 1)
+            self.assertLessEqual(len(selected), 1)
+            seen.update(selected)
+            self.daemon = RelayDaemon(self.store, self.registry, self.intake, self.delivery,
+                self.ack, self.reconciler, self.adapter, clock=self.clock)
+        self.assertLessEqual({'current', 'turn-dispatch-1', *[f'business-{i}' for i in range(5)]}, seen)
+
+    def test_continuously_growing_tail_cannot_prevent_wrap_to_an_earlier_insert(self):
+        from codex_session_relay.admission import admit_explicitly
+        relation = self.register()
+        rid = relation['relationshipId']
+        self.adapter.start_turn(CHILD, turn_id='turn-dispatch-1', status='inProgress')
+        for name in ('middle-a','middle-b'):
+            admit_explicitly(self.store, self.clock, rid, 1, name, actor='owner')
+        self.daemon._turns_to_poll(relation, 2)
+        admit_explicitly(self.store, self.clock, rid, 1, 'earlier-insert', actor='owner')
+        seen = set()
+        for index in range(16):
+            admit_explicitly(self.store, self.clock, rid, 1, f'tail-{index:03}', actor='owner')
+            seen.update(self.daemon._turns_to_poll(relation, 2))
+        self.assertIn('earlier-insert', seen)
+
+
+class HistoricalAdmissionOutcome(DaemonTestCase):
+    def test_old_failure_is_observed_without_resurrecting_superseded_work(self):
+        from codex_session_relay.admission import admit_explicitly
+        relation = self.register()
+        rid = relation['relationshipId']
+        self.adapter.start_turn(CHILD, turn_id='old-business', status='failed')
+        admit_explicitly(self.store, self.clock, rid, 1, 'old-business', actor='owner')
+        self.registry.open_generation(rid, dispatch_request_id='replacement',
+            dispatch_turn_id='new-anchor', reason='needs_changes_revision')
+        self.adapter.start_turn(CHILD, turn_id='new-anchor', status='inProgress')
+        self.daemon.tick()
+        row = self.store.one('SELECT * FROM assignment_settlements WHERE turn_id=?', ('old-business',))
+        self.assertIsNotNone(row)
+        self.assertEqual(row['terminal_status'], 'failed')
+        self.assertEqual(self.store.all('SELECT * FROM events'), [])
+        self.assertEqual(self.adapter.sends, [])
+        # Settlement records the observed ending, not acceptance. Current generation
+        # authorization deliberately supersedes EVERY old outcome, including failure.
+        self.assertNotIn('old-business', self.daemon._turns_to_poll(self.registry.get(rid), 8))
+
+
+class AdmissionInsertionFairness(DaemonTestCase):
+    def test_inserting_inside_lexical_window_cannot_starve_original_tail(self):
+        from codex_session_relay.admission import admit_explicitly
+        relation = self.register()
+        rid = relation['relationshipId']
+        self.adapter.start_turn(CHILD, turn_id='turn-dispatch-1', status='inProgress')
+        for name in ('a','z-target'):
+            admit_explicitly(self.store, self.clock, rid, 1, name, actor='owner')
+        seen = set(self.daemon._turns_to_poll(relation, 2))
+        for index in range(16):
+            admit_explicitly(self.store, self.clock, rid, 1, 'a'*(index+2), actor='owner')
+            seen.update(self.daemon._turns_to_poll(relation, 2))
+        self.assertIn('z-target', seen)
