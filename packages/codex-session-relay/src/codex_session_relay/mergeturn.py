@@ -149,6 +149,40 @@ def reserved(evidence_kind, idempotency_key):
     return ""
 
 
+def grant_envelope(entry):
+    """One ledger entry read as a grant this module wrote, or None when it is not one.
+
+    Every reader of a grant goes through here, because "evidence_kind is grant" does not mean
+    "this module wrote it". attest() accepted ANY kind and any text until that namespace was
+    reserved in this change, and this store has no migration path, so a perfectly valid
+    existing store can hold a row whose kind is grant and whose evidence is a sentence
+    somebody typed. Parsing that as an envelope raised out of turn() - which every mutator
+    calls AFTER its transaction commits, so the write landed and the caller got a host fault
+    for an operation that had already succeeded.
+
+    So a grant is recognised by BOTH halves: its key is in the namespace this module owns, and
+    its evidence is an envelope with the fields a reader indexes. Anything else is somebody
+    else's attestation and is not read as a grant. Nothing here raises: a reader that can
+    raise on stored data is the failure this exists to remove.
+    """
+    if entry["evidenceKind"] != GRANT:
+        return None
+    if not str(entry["idempotencyKey"] or "").startswith(GRANT + ":"):
+        return None
+    try:
+        envelope = json.loads(entry["evidence"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(envelope, dict):
+        return None
+    sequence = envelope.get("sequence")
+    if not isinstance(envelope.get("grantId"), str) or not envelope["grantId"]:
+        return None
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        return None
+    return envelope
+
+
 def check_id(turn, head_sha, base_sha, checks_digest, review_digest):
     return derive("chk", turn, head_sha, base_sha, checks_digest, review_digest)
 
@@ -197,6 +231,13 @@ class MergeTurn:
         record = self._record(row)
         record["ledger"] = self.ledger(turn)
         record["grant"] = self._grant_record(record["ledger"])
+        # Named rather than silently skipped. A row this module cannot read as its own grant
+        # is somebody else's attestation or a damaged one, and either way an operator asking
+        # why a turn reports no grant deserves to see it rather than infer it.
+        record["unreadableGrants"] = [
+            entry["idempotencyKey"] for entry in record["ledger"]
+            if entry["evidenceKind"] == GRANT and grant_envelope(entry) is None
+        ]
         return record
 
     def outstanding(self, task_id):
@@ -242,11 +283,11 @@ class MergeTurn:
         same second have no meaningful order at all - and an injected clock writes every one of
         them in the same second.
         """
-        grants = [entry for entry in entries if entry["evidenceKind"] == GRANT]
+        grants = [(entry, grant_envelope(entry)) for entry in entries]
+        grants = [(entry, envelope) for entry, envelope in grants if envelope is not None]
         if not grants:
             return None
-        notice = max(grants, key=lambda entry: json.loads(entry["evidence"])["sequence"])
-        envelope = json.loads(notice["evidence"])
+        notice, envelope = max(grants, key=lambda pair: pair[1]["sequence"])
         identifier = envelope["grantId"]
         answered = next(
             (entry for entry in entries
@@ -287,7 +328,10 @@ class MergeTurn:
         )
         holder = next((self._record(r) for r in rows if r["state"] in OCCUPYING), None)
         waiters = [self._record(r) for r in rows if r["state"] == WAITING]
-        ready = [w for w in waiters if w["declaredReady"]]
+        # The same sequence _promote_in walks, in the same order. Reporting every waiter that
+        # declared readiness named a parent the promotion would skip, so a holder was told to
+        # hand the turn to somebody who could not take it.
+        ready = [w for w in waiters if w["declaredReady"] and not self._withheld(w)]
         answer = {
             "targetKey": target, "repository": repository, "baseRef": base_ref,
             "holder": holder, "waiters": waiters,
@@ -518,15 +562,25 @@ class MergeTurn:
         By the sequence the grant carries, because the ledger's own order is recorded_at and
         then a digest, which says nothing about which of two grants written in one second came
         second.
+
+        Through the same recogniser the readers use, so a legacy attestation under this kind
+        cannot make a mutator raise from inside its own transaction.
         """
         rows = db.execute(
-            "SELECT evidence FROM merge_turn_ledger"
+            "SELECT evidence, evidence_kind, idempotency_key FROM merge_turn_ledger"
             "  WHERE turn_id = ? AND evidence_kind = ?",
             (turn, GRANT),
         ).fetchall()
-        if not rows:
+        envelopes = [
+            envelope for envelope in (
+                grant_envelope({"evidenceKind": row["evidence_kind"],
+                                "idempotencyKey": row["idempotency_key"],
+                                "evidence": row["evidence"]})
+                for row in rows)
+            if envelope is not None
+        ]
+        if not envelopes:
             return None
-        envelopes = [json.loads(row["evidence"]) for row in rows]
         return max(envelopes, key=lambda envelope: envelope["sequence"])["grantId"]
 
     # ------------------------------------------------------------ ledger

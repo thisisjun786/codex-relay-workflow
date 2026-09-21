@@ -136,6 +136,28 @@ class APausedParentKeepsItsClaimAndCannotAct(MergeTurnTestCase):
         self.assertEqual(caught.exception.reason, RefusalReason.SCOPE_ROLE_MISMATCH)
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
 
+    def test_the_next_ready_waiter_is_the_one_the_promotion_would_actually_take(self):
+        """nextReady named the oldest waiter that declared readiness, and the promotion takes
+        the oldest one it can actually promote. With a paused first waiter those differ."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        first = self.claim(self.beta, PROJECT_B, "head-b")
+        gamma = Endpoint("task-gamma", "host-g", cwd="/gamma")
+        self.linkage.bind_scope(role=PARENT, scope_key="PRJ-C", endpoint=gamma)
+        self.linkage.register_supervision(
+            initiative_key="INIT-1", project_key="PRJ-C",
+            supervisor=self.supervisor, parent=gamma)
+        second = self.claim(gamma, "PRJ-C", "head-c")
+        self.set_status(PROJECT_B, "paused")
+
+        answer = self.turns.target(REPO, BASE)
+        self.assertEqual(answer["nextReady"]["turnId"], second["turnId"])
+        self.assertEqual([peer["turnId"] for peer in answer["blocked"]["withheldPeers"]],
+                         [first["turnId"]])
+
+        released = self.turns.release(
+            held["turnId"], actor=self.alpha.task_id, disposition="returned", reason="done")
+        self.assertEqual(released["promoted"]["turnId"], second["turnId"])
+
     def test_a_paused_holder_cannot_act_on_its_grant(self):
         held = self.claim(self.alpha, PROJECT_A, "head-a")
         grant = self.turns.turn(held["turnId"])["grant"]["grantId"]
@@ -1159,6 +1181,66 @@ class TheNamesThisModuleWritesAreItsOwn(MergeTurnTestCase):
         self.assertEqual(self.turns.turn(held["turnId"])["state"], "holding")
         self.assertEqual(self.turns.turn(waiter["turnId"])["state"], "waiting")
         self.assertTrue(self.turns.target(REPO, BASE)["occupied"])
+
+    def write_row(self, turn, *, kind, key, evidence):
+        """A ledger row this module did not write, which a real store can already hold."""
+        self.store.db.execute(
+            "INSERT INTO merge_turn_ledger (entry_id, turn_id, kind, from_state, to_state,"
+            " evidence_kind, actor_task_id, evidence, idempotency_key, recorded_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("legacy-" + key, turn, "attestation", None, None, kind, self.beta.task_id,
+             evidence, key, "2026-01-01T00:00:00Z"))
+
+    def test_a_ledger_holding_a_legacy_grant_attestation_still_reads(self):
+        """attest() took any kind and any text until this change reserved the namespace.
+
+        A valid existing store therefore holds rows whose kind is grant and whose evidence is
+        a sentence somebody typed. Reading one as an envelope raised out of turn(), which
+        every mutator calls AFTER its transaction commits - so the write landed and the caller
+        was handed a host fault for an operation that had already succeeded.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        mine = self.turns.turn(held["turnId"])["grant"]["grantId"]
+        self.write_row(held["turnId"], kind="grant", key="chat-note-1",
+                       evidence="approved in chat")
+        self.write_row(held["turnId"], kind="grant", key="grant:not-json",
+                       evidence="{oops")
+        self.write_row(held["turnId"], kind="grant", key="grant:no-sequence",
+                       evidence='{"grantId": "mtg-forged"}')
+
+        record = self.turns.turn(held["turnId"])
+        self.assertEqual(record["grant"]["grantId"], mine)
+        self.assertEqual(sorted(record["unreadableGrants"]),
+                         ["chat-note-1", "grant:no-sequence", "grant:not-json"])
+        self.assertEqual(
+            self.turns.target(REPO, BASE)["holder"]["grant"]["grantId"], mine)
+        self.assertEqual(self.turns.outstanding(self.alpha.task_id)[0]["grant"]["grantId"],
+                         mine)
+
+        # And the mutators that resolve the current grant inside their own transaction.
+        self.turns.acknowledge_grant(
+            held["turnId"], actor=self.alpha.task_id, grant=mine,
+            evidence="read the grant past the rows nobody can read")
+        answer = self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.assertEqual(answer["state"], "merging")
+
+    def test_a_turn_whose_only_grant_row_is_unreadable_has_no_grant_and_no_gate(self):
+        """Not this module's grant, so not a grant - and nothing to acknowledge either."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.store.db.execute(
+            "DELETE FROM merge_turn_ledger WHERE turn_id = ? AND evidence_kind = ?",
+            (held["turnId"], "grant"))
+        self.write_row(held["turnId"], kind="grant", key="chat-note-1",
+                       evidence="approved in chat")
+        record = self.turns.turn(held["turnId"])
+        self.assertIsNone(record["grant"])
+        self.assertEqual(record["unreadableGrants"], ["chat-note-1"])
+        answer = self.turns.begin_merge(
+            held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        self.assertEqual(answer["state"], "merging")
 
 
 class TwoParentsRacingForOneTarget(MergeTurnTestCase):
