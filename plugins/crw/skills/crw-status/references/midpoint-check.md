@@ -61,10 +61,12 @@ parent is actually in, read from its recorded `run_mode` and `observation_path` 
 [Start policy](../../crw-run/references/start-policy.md), which now owns which role carries which
 lifecycle by default.
 
-For a parent holding no goal the stall question is the delivery path alone, because an absent goal
-is deliverable. A goal blocks only where one exists, which means an explicit Loop or a parent
-carried over from before the default and recorded `loop` by
-[Start policy](../../crw-run/references/start-policy.md) rather than converted, and there
+For a parent recorded `goal-free-run` the stall question is the delivery path alone, because an
+absent goal is deliverable. The other no-goal record is `blocked`, a parent that can neither hold a
+goal nor proceed without one, and that one is M14's case rather than a delivery fault. A goal
+blocks only where one exists, which means an explicit Loop or a parent carried over from before
+the default and recorded `loop` by [Start policy](../../crw-run/references/start-policy.md) rather
+than converted, and there
 [OPS-8.2](../../crw-run/references/operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
 owns which goal statuses the relay treats as blocking, read from there rather than named here. That
 is a real stall with a specific cause, and it looks identical from the outside to a parent nobody
@@ -124,8 +126,9 @@ where two levels disagree, and three of them recur:
 
 - The parent is idle while its children's work is still outstanding AND nothing will bring it back.
   Idle alone is not the blocker: under event-driven handoff a parent answers, returns to idle, and
-  a delivered event starts its next turn, which [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)
-  owns. What makes that path a verified one is the readiness list in
+  a delivered event starts its next turn, which
+  [OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting) owns.
+  What makes that path a verified one is the readiness list in
   [Before a parent may wait idle](../../crw-run/references/start-policy.md#before-a-parent-may-wait-idle),
   read from there rather than from a shorter copy here, because the fact it calls the one usually
   skipped is the one a checkpoint skips too. The blockers are an idle parent with no such path,
