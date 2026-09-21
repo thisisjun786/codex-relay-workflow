@@ -1137,9 +1137,10 @@ class DeclaredStopCommandTest(unittest.TestCase):
     A plugin hook command is fixed when the turn starts, with the plugin root already resolved
     into it. Replacing the package removes that directory whole, and python3 exits 2 for a
     missing script -- the number the hook protocol reads as "block this turn". Measured on the
-    real incident: one removed directory, 74 repeated Stop prompts, and a turn that could not
-    end. So these cases drive the ACTUAL declared command through a shell, the way the host
-    runs it, rather than asserting anything about its text.
+    real incident: one removed directory, eleven repeated Stop prompts in one turn and eight in
+    a second task's turn, and neither able to end; an isolated reproduction of the same manoeuvre
+    produced thirty-seven in one turn. So these cases drive the ACTUAL declared command through
+    a shell, the way the host runs it, rather than asserting anything about its text.
     """
 
     DECLARATION = ROOT / "plugins/crw/wiring/hooks/stop-recording-completion.json"

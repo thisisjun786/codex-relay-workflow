@@ -1400,9 +1400,10 @@ With `--owner plugin` this command also writes `crw-stop-hook.py` beside those s
 writes it **before** them. That file is the second candidate the package’s Stop declaration
 opens, and it exists because a hook command is fixed when a turn starts, with the plugin root
 already resolved into it. Installing a version removes the previous cache directory whole, so an
-update landing mid-turn leaves that turn’s command naming a file that is gone, and `python3`
-exits 2 for a missing script — the hook protocol’s blocking code. Measured on a real host: the
-same missing-file error 74 times in one turn, and a task that could not finish.
+update landing while a task still holds that command leaves it naming a file that is gone, and
+`python3` exits 2 for a missing script — the hook protocol’s blocking code. Measured on the
+user's host: eleven repeated Stop prompts in one turn of one task and eight in a turn of a
+second, and neither able to finish. An isolated reproduction produced thirty-seven in one turn.
 [Plugin packaging](plugin-packaging.md#the-cache-lifetime) owns the full reference table and the
 supported range; what belongs here is who writes the file and what that writer refuses.
 

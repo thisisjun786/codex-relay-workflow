@@ -184,7 +184,8 @@ that layout.
 
 Bump `version` in the manifest when the change should reach installations, and
 install the plugin again: a cached version changes only on installation, and a task
-already running keeps the package its session started with.
+already running may still hold cache-bound references to the version its session started
+with — the same directory the next install removes.
 
 
 ## The cache lifetime
@@ -201,8 +202,8 @@ each declared surface is whether its reference outlives the directory it names.
 | Stop settings at `<CODEX_HOME>/crw-completion-hook.json` | No | Nothing | The same command |
 | Adapter, relay and bridge executables | No, they sit under the installer pointer | Nothing | `runtime_install.py install` |
 | Hook document path in the run identifier | Yes | Held as an identifier and never re-read | The host |
-| MCP start `cwd` and `args` | Yes | A server already running survives, because it has already replaced itself with the installed bridge. A restart inside that session fails | The host |
-| Skill reads | Yes | The read fails at the moment it is made | The host |
+| MCP start `cwd` and `args` | Yes | A server already running survives, because it has already replaced itself with the installed bridge. A restart inside that session is expected to fail: inferred from the `cwd` the host holds, not measured here | The host |
+| Skill reads | Yes | A read against the removed directory is expected to fail: inferred from where the host reads skills, not measured here | The host |
 
 Two of those this package can answer for and two it cannot, and the difference is a host rule
 rather than a preference. A hook command goes through a shell, so it can be written to resolve
@@ -215,10 +216,13 @@ outside the version cache by anything this package declares.
 
 A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
 the whole turn reuses that string — including every Stop re-fire. Replace the package while a
-turn is open and the command names a file that no longer exists. `python3` exits **2** for a
+task still holds that command and it names a file that no longer exists; nothing measured shows
+a later turn of the same task resolving it afresh. `python3` exits **2** for a
 missing script, and 2 is the hook protocol’s blocking code, so the host feeds the error back
-to the model and fires Stop again. Measured on a real host: one removed directory, the same
-error 74 times in one turn, and a task that could not finish until it was interrupted by hand.
+to the model and fires Stop again. Measured on the user's host: one removed directory, eleven
+repeated Stop prompts in a single turn of one task and eight in a single turn of a second, and
+neither able to finish until interrupted by hand. An isolated reproduction of the same manoeuvre
+produced thirty-seven in one turn.
 
 So the declaration names two candidates and opens the first one it can read:
 
@@ -252,27 +256,34 @@ the version path, so an update that leaves the command alone keeps its trust.
 
 ### The supported range
 
-| When the update lands | Stop | MCP restart | Skill reads |
+| Task holding the old package reference | Stop | MCP restart | Skill reads |
 | --- | --- | --- | --- |
-| Between turns | Safe: the next turn resolves everything afresh | Safe | Safe |
-| During a turn | Safe: the second candidate answers | **Still fails** | **Still fails** |
+| Existing task, including an idle interval between turns | The fallback is available if installed; a quiet turn does not establish package-reference reload | Cache-bound reference may be stale; not measured as safe | Cache-bound reference may be stale; not measured as safe |
+| Existing task during a turn, removed cache | Fallback invocation measured after removal | Failure is inferred from the retained cache-bound reference, not independently measured here | Failure is inferred from the retained cache-bound reference, not independently measured here |
+| Fresh task created after update | Invocation measured from the updated installation | Verify the new task's actual MCP call | Verify the new task's actual skill read |
 
-The second row is the honest limit. This package cannot move those two references off the
-cache, so an update during an open turn is avoided rather than survived.
+The fallback protects the Stop launcher. It does not make every old package reference survive
+replacement. A task can remain alive across many turns; an idle interval is not a session reload.
 
 ### Updating safely
 
-1. Check that no turn is open.
+1. Identify tasks that still hold the version being replaced. Finish and replace those tasks
+   through the supported new-task path, or establish a supported way to keep every referenced
+   path available continuously. Merely observing no active turn is insufficient.
 2. Run `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --apply`
    first, so the fallback is current before the directory it backs up can disappear.
 3. Run `codex plugin add crw@<marketplace>`.
 4. Re-trust the hook once if its command changed.
-5. Keep the previous version directory until nothing references it, then release it.
+5. Read back the installed payload and validate each required surface in a fresh task.
+   Preserve existing recovery evidence and compatibility paths until their readers are gone.
 
-Preserving that directory is an operator step. `codex plugin add` removes it and this
-repository does not own that command, so nothing here can hold it open.
-`python3 scripts/plugin_transition.py swap-state` reports what a replacement actually left,
-and that is what to read before releasing a preserved copy.
+`codex plugin add` removes the prior version cache. This procedure does not promise to retain
+that directory automatically or prescribe copying it back after a gap as uninterrupted support.
+If path continuity cannot be established before replacement, use the finished-task boundary
+in step 1; do not proceed on an assumption that the old cache will remain.
+`python3 scripts/plugin_transition.py swap-state` reports what a replacement actually left. It
+reads the pointer and the host records, not the tasks holding references, so it cannot establish
+that the last reader is gone; that needs evidence of its own.
 
 A host carrying temporary compatibility files — an old cache path kept alive by hand after an
 update went wrong — needs a record of its own, kept with the task record outside this
@@ -286,8 +297,9 @@ The cache keeps one version per plugin, and installing a new version replaces th
 previous directory instead of keeping both. Rolling back therefore means making
 the source offer the earlier revision again and reinstalling it, not selecting an
 older copy from the cache. Bump `version` in the manifest for a release; a new
-task picks up the new package when its session starts, and work already running
-keeps the version it started with.
+task picks up the new package when its session starts, and work already running may still hold
+cache-bound references to the version it started with, which is the directory the new install
+removes.
 
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a

@@ -71,7 +71,8 @@ anything has been taken.
 It is here at all because this command writes the same plugin-owned settings
 `runtime_install.py hook --owner plugin` writes. A migration that stopped at the settings would
 leave the package's Stop declaration with one candidate again, and the first package replacement
-during an open turn would land back in the loop that declaration exists to avoid. See
+while a task still held the old command would land back in the loop that declaration exists to
+avoid. See
 [the fallback launcher](runtime-install.md#the-fallback-launcher-and-why-this-command-places-it)
 for what it refuses and who removes it, and [the cache lifetime](plugin-packaging.md#the-cache-lifetime)
 for why a second candidate is needed at all.
