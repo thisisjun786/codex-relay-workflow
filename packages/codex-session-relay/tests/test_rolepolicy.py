@@ -509,6 +509,10 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
             os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = self._previous
         rolepolicy.reset()
 
+    def _authorized_parent_record(self):
+        """The parent's own declared pair, recorded with no citation: what policy derives."""
+        return task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT)
+
     def test_an_unloaded_supervisor_is_not_resumed_with_a_pair_policy_never_derived(self):
         """Its pair is the user's own selection and the transmitted pair is whatever was
         recorded, which is exactly what goes stale when they change it. A resume may apply what
@@ -531,6 +535,63 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
         self.assertIsNotNone(self.attempt(event_id))
         self.assertEqual(len(self.adapter.sends), 1)
+
+
+    def test_a_pair_differing_from_the_roles_only_in_model_is_not_derived_from_it(self):
+        """This comparison has two halves and until now only one of them was ever tested.
+
+        Every record that reached the pair comparison differed in both model and effort, or
+        carried a citation, which is answered before the pair is read at all. So the equality
+        could lose its model half and nothing would fail: applied to an isolated copy of the
+        source, exactly that mutation passed all 41 tests in this module and the rest of the
+        package with them.
+
+        A record like this one is what a half-finished pair move leaves behind. The parent went
+        to xai/grok-4.6 at xhigh and back to devin/swe-2 at max, and a record carried across one
+        of those moves on a single axis names a pair no policy ever declared while still looking
+        like the role's own on whichever half is compared.
+        """
+        policy = rolepolicy.declared()
+        authorized = self._authorized_parent_record()
+        self.assertIsNone(
+            rolepolicy.check_unloaded_transmission(authorized, "parent", policy, "notLoaded"),
+            "the role's declared pair is derived from policy and nothing here is withheld",
+        )
+        refusal = rolepolicy.check_unloaded_transmission(
+            dict(authorized, model=SUPERSEDED_PARENT[0]), "parent", policy, "notLoaded"
+        )
+        self.assertIsNotNone(
+            refusal, "the superseded model at the current effort is not the declared pair"
+        )
+        self.assertEqual(refusal.reason, RefusalReason.UNVERIFIED_PAIR_FOR_UNLOADED_THREAD)
+        # The guard reads the record, the policy and a status, and that is all it reads: this
+        # refusal is reached without the host being asked anything, which is what makes it a
+        # decision taken before a send rather than one taken around it.
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+
+    def test_a_pair_differing_from_the_roles_only_in_effort_is_not_derived_either(self):
+        """The other half, as its own test rather than a second case inside the one above.
+
+        A mutation removes one half of the equality, so a single test asserting both would stop
+        at whichever half it reached first and could not show that the other still protects
+        anything. Separate tests report separately, and that is what makes the mutation evidence
+        readable: under a mutation that drops the model half, the test above fails and this one
+        keeps passing.
+        """
+        policy = rolepolicy.declared()
+        authorized = self._authorized_parent_record()
+        self.assertIsNone(
+            rolepolicy.check_unloaded_transmission(authorized, "parent", policy, "notLoaded"),
+            "the role's declared pair is derived from policy and nothing here is withheld",
+        )
+        refusal = rolepolicy.check_unloaded_transmission(
+            dict(authorized, reasoningEffort=SUPERSEDED_PARENT[1]), "parent", policy, "notLoaded"
+        )
+        self.assertIsNotNone(
+            refusal, "the current model at the superseded effort is not that pair either"
+        )
+        self.assertEqual(refusal.reason, RefusalReason.UNVERIFIED_PAIR_FOR_UNLOADED_THREAD)
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
 
 
     def test_a_recipient_that_unloads_after_the_observation_is_still_refused(self):

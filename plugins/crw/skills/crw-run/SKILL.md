@@ -6,9 +6,11 @@ description: "Coordinate one Linear project through independent issue children, 
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator: one parent per project, one child per issue. Follow the shared
+as its coordinator: this task is that project's parent, one parent per project and
+one child per issue. Follow the shared
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
-including standalone issues and explicit current-task work. Where the initiative above this
+which fixes those three names and the ids they are recorded under and covers
+standalone issues and explicit current-task work. Where the initiative above this
 project has an execution supervisor, it verifies this parent's reported outcome and instructs this
 task, never this task's children; where it has none, nothing changes. An explicit designation
 naming an initiative is handled one level up, through
