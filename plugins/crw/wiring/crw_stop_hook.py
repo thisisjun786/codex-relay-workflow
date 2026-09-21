@@ -65,10 +65,11 @@ MAX_SECONDS = 9
 # adapter only while the recorded budget stays at or under MAX_SECONDS - MARGIN_SECONDS: above
 # that the cap eats the margin, and at a budget just under MAX_SECONDS this deadline arrives
 # while the adapter is still writing the record of its own timeout. Settings that record such a
-# budget are refused where they are written -- scripts/crw_transition/steps.py, which derives its
-# limit from these two numbers -- rather than here, because this launcher cannot wait longer than
-# the hook it is registered under. If one of these numbers moves, that limit has to move with it;
-# a test asserts they still agree, because this file cannot import that module.
+# budget are refused where they are written rather than here, because this launcher cannot wait
+# longer than the hook it is registered under. That limit is completion.MAX_PLUGIN_GUARD_SECONDS,
+# derived from these same two numbers and shared by both writers; scripts/crw_transition/steps.py
+# aliases it rather than keeping a second copy. If one of these numbers moves, that limit moves
+# with it; a test asserts they still agree, because this file cannot import that module.
 
 
 def settings_path():

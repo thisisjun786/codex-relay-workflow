@@ -1478,6 +1478,37 @@ class StableLauncherPlacementTest(unittest.TestCase):
         self.assertEqual(answer["outcome"], completion.LAUNCHER_SOURCE_MISSING)
         self.assertFalse(self.path.exists())
 
+    def test_a_legacy_document_is_refused_before_a_fallback_is_placed(self):
+        """Devin review: a fallback must not be wired to settings this command will not accept.
+
+        Measured rather than assumed: the ownership precondition reads the live document and
+        runs the same complaints() over it, so a host carrying the old eight second budget is
+        refused there, before the placement block is reached at all. The emitted receipt carries
+        no launcher cell and nothing is written. This case pins that ordering, because the
+        placement is only safe while some earlier precondition keeps an unusable document from
+        ever reaching it.
+        """
+        home = self.home / "legacy"
+        home.mkdir()
+        (home / completion.CONFIG_NAME).write_text(json.dumps(
+            {"configVersion": 1, "event": "Stop", "owner": "plugin", "mode": "observe",
+             "timeoutSeconds": 8, "adapterInterpreter": sys.executable,
+             "adapterEntryPoint": sys.executable, "relayExecutable": "/bin/true",
+             "markerRoot": str(home / "marker")}), encoding="utf-8")
+        relay = self.home / "relay"
+        relay.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        relay.chmod(0o755)
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "runtime_install.py"), "hook",
+             "--adapter", "completion", "--owner", "plugin", "--codex-home", str(home),
+             "--relay-command", str(relay), "--apply"], capture_output=True, text=True)
+        self.assertNotEqual(done.returncode, 0, done.stdout[:400])
+        emitted = json.loads(done.stdout)
+        self.assertIsNone(emitted.get("launcher"))
+        self.assertIn("timeoutSeconds", emitted["error"])
+        self.assertFalse(completion.launcher_path(home).exists())
+
+
     def test_the_state_reader_separates_the_marker_from_the_digest(self):
         self.place(apply=True)
         state = completion.launcher_state(self.home, self.SOURCE)
