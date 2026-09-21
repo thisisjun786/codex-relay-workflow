@@ -166,6 +166,84 @@ def host_versions(user_agent: str):
     return set(re.findall(r"/(\d+(?:\.\d+)+[^\s()/;,]*)", user_agent or ""))
 
 
+# The host version the Desktop-visibility reading was actually taken on. Its own constant, and
+# deliberately not TESTED_HOST_VERSION: those are different builds, and writing one where the
+# other belongs is how a reading taken on 0.153.4 comes to describe a 0.154.0 server.
+DESKTOP_VISIBILITY_HOST = "0.153.4"
+
+# The host version the approval-preservation reading was taken on, kept separate for the same
+# reason.
+APPROVAL_PRESERVATION_HOST = "0.154.0"
+
+
+def observation(version: str, observed_server: str, seen: str):
+    """A reading taken once, on one host version, kept apart from a measurement taken now.
+
+    Prose that merely mentions a version leaves a consumer to notice the difference by reading,
+    and this tool is read by programs. So the version is a field, and the only measured value
+    here is sameVersionConnected: whether the server on the other end of this connection declares
+    the build the reading was taken on. The reading itself is what was seen then. This call does
+    not re-establish it and probes nothing.
+    """
+    return {
+        "observedOn": f"codex-cli {version}",
+        "observedServer": observed_server,
+        "sameVersionConnected": version in host_versions(observed_server),
+        "observation": seen,
+        "note": "A reading taken on the named host version, not a probe of the server connected "
+        "now. sameVersionConnected is the only measured value here.",
+    }
+
+
+# What this bridge implements. Every entry is true by reading this file, so none of it was asked
+# of a host and none of it describes one. Booleans only, on purpose: the block is consumed as a
+# map of flags, so the sentence saying what the map IS lives beside it rather than inside it.
+BRIDGE_CAPABILITIES = {
+    "createThread": True,
+    "sendMessage": True,
+    "listReadWait": True,
+    "goalRead": True,
+    "bridgeManagedWorktrees": True,
+    "projectImport": False,
+    "clientSideToolsAndApprovals": False,
+}
+
+CAPABILITIES_NOTE = (
+    "What this bridge implements, and nothing else. Every value is true by reading this bridge's "
+    "own code, so none of it was asked of the connected host and none of it is an answer about "
+    "one. The two goal questions are answered precisely in exposure, as goalObjectiveWrite and "
+    "goalPause. Questions about the host that nothing here asked are in hostNotProbed, which "
+    "carries no values at all."
+)
+
+# Questions about the connected host that this tool does not answer. They are kept out of the
+# capabilities block and given sentences instead of values, because a false here would be an
+# answer nobody obtained: desktopManagedWorktrees: false was read downstream as "this host
+# cannot", which no probe ever supported. Each sentence also says what this bridge does instead,
+# so the missing answer cannot be filled in from the silence around it.
+HOST_NOT_PROBED = {
+    "desktopManagedWorktrees": (
+        "Not asked. Worktrees made through this bridge are bridge-managed, which is reported as "
+        "bridgeManagedWorktrees. Whether the connected host offers a Desktop-managed worktree of "
+        "its own is carried by a host feature flag rather than an App Server method, so this "
+        "transport never sees it, and a flag that is switched off is not a capability absent."
+    ),
+    "desktopProjectRegistry": (
+        "Not asked. This bridge imports and creates no project, which is reported as "
+        "projectImport, and it uses only a project id a caller supplies. What the connected "
+        "host's project registry holds is not read here, and an empty backend listing seen once "
+        "on one setup is not a statement that the registry is missing."
+    ),
+}
+
+HOST_NOT_PROBED_NOTE = (
+    "Questions this tool does not answer. No capability probe is performed, so each entry is a "
+    "sentence and not a value: there is nothing here to read as true or false. hostSupport.state "
+    "compares the connected server's version against the one this bridge was built against, and "
+    "does not reach these questions, which are unanswered on every version including that one."
+)
+
+
 # Why a thread cannot be steered, named by the exact status the host reported. Collapsing these
 # into one "not active" answer is how a system error gets handled as though it were an idle peer,
 # and a correction then goes down a path that cannot carry it.
@@ -305,17 +383,10 @@ class Bridge:
             "server": self.rpc.info,
             "transport": "same-host Unix WebSocket",
             "socket": str(self.rpc.socket_path),
-            "capabilities": {
-                "createThread": True,
-                "sendMessage": True,
-                "listReadWait": True,
-                "goalRead": True,
-                "goalSet": False,
-                "desktopManagedWorktrees": False,
-                "bridgeManagedWorktrees": True,
-                "desktopProjectRegistry": False,
-                "clientSideToolsAndApprovals": False,
-            },
+            # Flags about this bridge, and only about this bridge. What the block is a map of is
+            # the sentence beside it, so the map itself stays consumable as a map.
+            "capabilities": dict(BRIDGE_CAPABILITIES),
+            "capabilitiesNote": CAPABILITIES_NOTE,
             # Readable before creating anything, so a caller learns whether an allowlist is in
             # force instead of discovering it in a refusal or assuming one that does not exist.
             "executionPolicy": self.policy.summary(),
@@ -326,17 +397,25 @@ class Bridge:
                 "declarable": list(APPROVAL_POLICIES),
                 "transmitsApprovalPolicy": False,
                 "preservation": "send_message_to_thread omits approvalPolicy from thread/resume, "
-                "so it cannot set or change the policy of a thread it did not create. Measured "
-                "on codex-cli 0.154.0 in both directions: the resume reports the thread's own "
-                "policy and does not inherit the CODEX_HOME config default.",
+                "so it cannot set or change the policy of a thread it did not create. That is "
+                "true by reading this bridge; what the host does with the omission was read "
+                "once, and is reported as its own observation.",
+                "preservationObserved": observation(
+                    APPROVAL_PRESERVATION_HOST,
+                    observed,
+                    "Read in both directions: the resume reports the thread's own policy and "
+                    "does not inherit the CODEX_HOME config default.",
+                ),
                 "servicesApprovals": False,
                 "onApprovalRequest": "refused_not_routed",
                 "routeToOriginalApprover": None,
-                "missingInterface": "The protocol has no method by which a second client hands "
-                "an approval request back to the client that owns the thread, so this bridge "
-                "can refuse an approval request but cannot deliver it to the thread's approver. "
-                "Whether the host shows that request to the owning client anyway is NOT "
-                "established here and is reported unverified rather than assumed.",
+                "missingInterface": "This bridge holds no route by which an approval request "
+                "reaches the thread's own approver, so it can refuse such a request and cannot "
+                "deliver it. That much is true by reading this bridge. The wider statement, that "
+                "the protocol offers no such method at all, is an inspection of codex-cli "
+                f"{TESTED_HOST_VERSION} rather than a reading of the connected server. Whether "
+                "the host shows that request to the owning client anyway is NOT established "
+                "here and is reported unverified rather than assumed.",
                 "limits": APPROVAL_LIMITS,
             },
             # What THIS bridge offers. A tool missing here says nothing about the host: the
@@ -366,8 +445,16 @@ class Bridge:
                 "note": "Generated from the tested host's protocol. No live capability probe is "
                 "performed, and an unrecognised server is reported unknown rather than assumed.",
             },
-            "desktopVisibility": "Observed on Codex 0.153.4 with an existing project checkout; "
-            "verify actual Desktop listing for each launch. Backend project IDs are separate.",
+            # The questions this tool does not answer, in their own block so that no neighbouring
+            # state can be read as covering them.
+            "hostNotProbed": dict(HOST_NOT_PROBED),
+            "hostNotProbedNote": HOST_NOT_PROBED_NOTE,
+            "desktopVisibility": observation(
+                DESKTOP_VISIBILITY_HOST,
+                observed,
+                "Threads created in an existing project checkout appeared in Desktop. Verify the "
+                "actual Desktop listing for each launch; backend project IDs are separate.",
+            ),
         }
 
     async def _mutate(
