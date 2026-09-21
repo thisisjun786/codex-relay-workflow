@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "foreign_prefix",
+    "title": "[codex-relay-workflow] 설치·3단계 운영 마무리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[codex-relay-workflow] 설치·3단계 운영 마무리",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Live title. The bracket is a repository name, not this family, and stacking would put two classifications on one title.",
+  "subcommand": "decide"
+}

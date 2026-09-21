@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "foreign_prefix",
+    "title": "[Core]Beta] launch"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "Other"
+    ],
+    "observed_title": "[Core]Beta] launch",
+    "project_labels": [
+      "Other"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "The obsolete family holds a closing bracket, so the reader sees only part of it. With nothing named, this withholds rather than acting on a fragment.",
+  "subcommand": "decide"
+}

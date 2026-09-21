@@ -1,0 +1,21 @@
+{
+  "expected": {
+    "decision": "invalid",
+    "reason": "malformed_user_title"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "무엇이든",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "maybe"
+  },
+  "note": "The user-title vocabulary is closed; a value outside it is a malformed call and not a title outcome.",
+  "subcommand": "decide"
+}

@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "none",
+    "prefix": "Core]Beta",
+    "reason": "prefix_added",
+    "title": "[Core]Beta] 출시 준비"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "Core]Beta"
+    ],
+    "observed_title": "출시 준비",
+    "project_labels": [
+      "Core]Beta"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A label is data and may hold any character. This one holds a closing bracket, which the generic reader would stop at.",
+  "subcommand": "decide"
+}
