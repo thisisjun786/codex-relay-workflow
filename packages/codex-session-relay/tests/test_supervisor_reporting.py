@@ -26,9 +26,9 @@ class ReportingTestCase(DeliveryTestCase):
         self.sync = SyncOutbox(self.store, self.clock)
         self.ack.sync = self.sync
 
-    def reported(self, **overrides):
+    def reported(self, *, recipients=None, **overrides):
         """A queued event with a work report on it, which is the ordinary completion shape."""
-        _relationship, event_id = self.queued_event()
+        _relationship, event_id = self.queued_event(recipients=recipients)
         report.record(self.store, self.clock, event_id=event_id, **a_report(**overrides))
         return event_id
 
@@ -126,6 +126,31 @@ class WhatIsNewsForTheLevelAbove(ReportingTestCase):
         self.assertEqual(decided["reason"], supervision.NOT_NEWS)
         self.assertIsNone(decided["obligationId"])
 
+    def test_a_correction_travelling_down_is_not_news_for_the_level_above(self):
+        """A needs-human correction is the parent judging a child, not the user deciding.
+
+        The relay writes the correction event itself on a verdict, and it carries a report with
+        a status like any other. Reading that status without asking which way the message was
+        going turned an ordinary review round into a decision Jun owed.
+        """
+        event_id = self.reported(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(event_id, ack_turn_id=turn.turn_id,
+                             ack_proof=identity.ack_proof(event_id, turn.turn_id),
+                             accepted=True, adapter=self.adapter)
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v1",
+            criteria=[{"id": "c1", "verdict": "needs_changes", "note": "the tie rule"}])
+        correction = self.store.one(
+            "SELECT event_id, producer FROM events WHERE outcome = 'revision_request'")
+        self.assertIsNotNone(correction, "the verdict is supposed to open a correction")
+        self.assertIsNone(
+            supervision.from_event(self.store, correction["event_id"],
+                                   report.read(self.store, correction["event_id"])),
+            "a message travelling downward raises nothing upward")
+
 
 class OneFactOneObligation(ReportingTestCase):
     def test_a_second_reading_converges_on_the_same_id(self):
@@ -208,7 +233,9 @@ class WhatDoesNotDischargeIt(ReportingTestCase):
         self.assertFalse(decided["report"], "the duplicate is suppressed")
         self.assertEqual(decided["standing"], supervision.STANDING,
                          "and what is owed is still owed")
-        self.assertIn("no Linear record", decided["dischargeReason"])
+        self.assertIn("no coordination_document target is configured",
+                      decided["dischargeReason"],
+                      "with no target there is no record the supervisor reads at all")
 
     def test_a_failed_linear_write_is_not_a_finished_one(self):
         """SyncOutbox.fail looks terminal and means the opposite of done."""
@@ -340,12 +367,44 @@ class TheReportNobodyWrote(ReportingTestCase):
         relationship = self.register(project_key="CRW")
         self._rid = relationship["relationshipId"]
         readings = [self.observation("unreported", relationshipId=self._rid),
-                    self.observation("unmeasured", reason="marker_unreadable")]
+                    self.observation("unmeasured", relationshipId=self._rid,
+                                     reason="marker_unreadable")]
         answer = supervision.standing_for(self.store, linkage, "CRW", observations=readings)
         self.assertEqual([entry["kind"] for entry in answer["standing"]],
                          [supervision.UNREPORTED])
         self.assertEqual([gap["gap"] for gap in answer["gaps"]], ["reporting_unmeasured"])
         self.assertIn("passed in", answer["limits"])
+
+    def test_a_reading_about_another_project_is_not_this_project_s_business(self):
+        """A caller's list must not decide what a project owes."""
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        elsewhere = self.observation("unreported", relationshipId="rel-somewhere-else")
+        answer = supervision.standing_for(self.store, linkage, "CRW",
+                                          observations=[elsewhere, elsewhere])
+        self.assertEqual(answer["standing"], [])
+
+    def test_the_same_reading_twice_is_still_one_obligation(self):
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        reading = self.observation("unreported", relationshipId=self._rid)
+        answer = supervision.standing_for(self.store, linkage, "CRW",
+                                          observations=[reading, reading])
+        self.assertEqual(len(answer["standing"]), 1)
 
 
 class AnExplicitRequestIsItsOwnPath(ReportingTestCase):

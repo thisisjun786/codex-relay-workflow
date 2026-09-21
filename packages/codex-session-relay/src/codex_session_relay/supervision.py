@@ -77,6 +77,13 @@ BY_OUTCOME = {"ready_for_review": COMPLETION, "blocked_needs_input": BLOCKED}
 # said the opposite, and an evidence read that failed is not evidence that a report is owed.
 OBSERVED_OMISSION = "unreported"
 
+# Who produced an event, for events that travel UPWARD. A correction is written by the relay
+# on the parent's verdict and travels down to a child, and it carries a report of its own with
+# a status: without this check a needs-human correction - an ordinary parent judgment about a
+# child's work - was promoted into a decision the user owed. The daemon's observation of how a
+# turn ended is a child-side fact and stays eligible.
+UPWARD_PRODUCERS = ("child", "daemon_observation")
+
 # The journal kind a produced report is recorded under. The journal is an existing append-only
 # table, so a second observation of one fact - after a restart, after a service replacement -
 # finds the first report rather than producing another.
@@ -129,6 +136,8 @@ def from_event(store, event_id, report=None) -> dict | None:
         # is staged. A staged claim is not a transition anybody can report upward yet.
         return None
     if row["suppressed_reason"]:
+        return None
+    if row["producer"] not in UPWARD_PRODUCERS:
         return None
     kind = None
     detail = None
@@ -215,8 +224,9 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
     rows = store.all(
         "SELECT sync_id, state, target, target_ref, external_ref, confirmed_at, last_error"
         "  FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = ?"
+        "   AND target = ?"
         " ORDER BY created_at",
-        (obligation["relationId"], obligation["subject"], sync.VERDICT),
+        (obligation["relationId"], obligation["subject"], sync.VERDICT, target),
     )
     records = [dict(row) for row in rows]
     configured = store.one(
@@ -224,8 +234,17 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
         (obligation["relationId"], target),
     )
     current = configured["target_ref"] if configured is not None else None
+    if current is None:
+        # No target is configured, so there is no record the supervisor reads for this
+        # relationship at all. A confirmed row from before the target was cleared describes a
+        # document nobody is pointed at now, and treating its absence as permissive would
+        # discharge an obligation against a place this store cannot name.
+        return {"standing": STANDING,
+                "reason": f"no {target} target is configured for this relationship, so there"
+                          f" is no record the supervisor reads",
+                "records": records}
     confirmed = [one for one in records if one["state"] == sync.CONFIRMED
-                 and (current is None or one["target_ref"] == current)]
+                 and one["target_ref"] == current]
     if confirmed:
         return {"standing": DISCHARGED, "reason": "the Linear record is confirmed",
                 "records": records, "externalRef": confirmed[0]["external_ref"],
@@ -400,15 +419,24 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
                                     "relationshipStatus": about["status"],
                                     "supersededBy": about["superseded_by"]})
     gaps = []
+    seen = {entry["obligationId"] for entry in obligations}
     for reading in observations:
+        about = reading.get("relationshipId") if isinstance(reading, dict) else None
+        if about not in relations:
+            # A reading about somebody else's project is not this project's business, and
+            # accepting it would let a caller's list decide what a project owes.
+            continue
         one = from_observation(reading)
         if one is not None:
+            if one["obligationId"] in seen:
+                continue
+            seen.add(one["obligationId"])
             obligations.append({**one, "decision": select(store, one, recipient=None),
                                 "relationshipStatus": (relations.get(one["relationId"]) or {})
                                 .get("status")})
             continue
         gap = unmeasured_gap(reading)
-        if gap is not None:
+        if gap is not None and gap not in gaps:
             gaps.append(gap)
     return {"schema": SCHEMA, "projectKey": project_key, "relations": list(relations),
             "standing": obligations, "gaps": gaps,

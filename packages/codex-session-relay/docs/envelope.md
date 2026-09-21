@@ -5,15 +5,19 @@ correction, and that pair has a queue, a receipt, an acknowledgement and a verdi
 supervisor and a parent exchange instructions and reports, and that pair has none of those.
 
 `envelope.py` owns what they share. `supervision.py` owns what the level above is still owed.
-Neither stores anything of its own: every value is derived from rows another module already
-writes, which is what lets the same reading survive a restart with nothing remembered.
+Neither adds a table. Every value is derived from rows another module already writes, which is
+what lets the same reading survive a restart with nothing remembered; the one thing either of
+them writes is a journal entry saying a report was produced, which is how a second reading of one
+fact finds the first report instead of making another.
 
 ## relay-envelope/1
 
-A **kind** says what the recipient owes, and it is the only thing that decides whether a
-message may interrupt anybody. A **request** owes an answer from the recipient, a **decision**
-owes one from the user and from nobody else, a **notification** owes none, and a
-**status_response** answers a question somebody asked.
+A **kind** says what the recipient owes. A **request** owes an answer from the recipient, a
+**decision** owes one from the user and from nobody else, a **notification** owes none, and a
+**status_response** answers a question somebody asked. The kind is what makes a message worth a
+turn at all; whether one is actually produced is `supervision.select`, which also reads whether
+the fact is already in the record, whether a report was already produced for it, and whether the
+recipient can be reached.
 
 A **purpose** is why the message was sent, and each direction has its own set. The supervisor
 sends a project assignment, a midpoint check, a resume, a scope correction, a relayed decision

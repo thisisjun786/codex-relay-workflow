@@ -496,10 +496,12 @@ loaded is left alone rather than resumed under a pair that was never checked aga
 A supervisor instructs a parent and a parent reports back; a parent instructs a child and a child
 reports back. The two relations carry different machinery and the same questions, so what
 identifies a message, what the recipient owes because it arrived, and how far it actually got are
-written once. The relay owns that form as `relay-envelope/1` in
-[the shared envelope](../../../../../packages/codex-session-relay/docs/envelope.md); this section says
-what a task does with it, and neither this nor any other skill restates its fields, because two
-copies of a vocabulary drift and the one in code is the one a message is actually built from.
+decided once. This section is the workflow rule: which occasion is which, what each form carries,
+and when the level above is woken. The record form itself - the field names, the version, and what
+each state means to the code that builds a message - belongs to the relay, as `relay-envelope/1`
+in `packages/codex-session-relay/docs/envelope.md`, and is read there rather than copied here.
+The words below are the ones that document uses, so a parent and a supervisor mean the same thing
+by them.
 
 **What a message asks for.** A request owes an answer from the recipient. A decision owes one from
 Jun and from nobody else. A notification owes none. A status response answers a question somebody

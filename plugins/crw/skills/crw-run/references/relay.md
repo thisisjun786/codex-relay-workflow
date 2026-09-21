@@ -836,9 +836,8 @@ correction; `sync-status` and `sync-retry` manage the queue, and
 The wire and record protocol, the invariants, and the package internals live with the package's
 own documents. Read them when changing the relay, not when running an assignment.
 
-The message form both relations share is one of them. `relay-envelope/1` is defined in
-[the shared envelope](../../../../../packages/codex-session-relay/docs/envelope.md), with the
-workflow rule in
+The message form both relations share is one of them. `relay-envelope/1` is defined in the
+package's own `docs/envelope.md`, with the workflow rule in
 [the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
 relay carries no supervisor channel, so nothing above the record itself is measured on that

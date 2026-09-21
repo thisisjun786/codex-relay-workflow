@@ -380,8 +380,14 @@ def check_reach(direction, ladder) -> None:
     _known(direction, DIRECTIONS, "direction")
     sources = REACH_SOURCES[direction]
     for name in STAGES:
-        entry = ladder.get(name) or {}
+        if name not in ladder:
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"a reach ladder answers every stage; {name} is missing. Start from"
+                " unreached(direction) rather than from a partial dictionary")
+        entry = ladder[name] or {}
         state = entry.get("state")
+        _known(state, STATES, "reach state")
         declared = sources[name]
         if declared is None:
             if state != IMPOSSIBLE:
