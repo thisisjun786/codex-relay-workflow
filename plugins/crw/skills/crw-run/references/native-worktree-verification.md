@@ -85,8 +85,13 @@ managed worktree produces, git has no current branch to give and deriving one fr
 would destroy the identity the Setting preservation verdict consumes. There, keep the
 requested source branch you recorded before creation as the subject, compare the stored
 metadata against that request, and verify the checked-out commit separately as its own
-fact. Metadata that is missing or that contradicts the request is unverified, never a
-branch invented from the checkout.
+fact.
+
+Those two outcomes are not one verdict. A stored branch that contradicts the request is
+evidence that the branch is not the intended one, so it fails Setting preservation the
+same way any other unintended value does; recording it as inconclusive would hide a real
+failure behind a missing measurement. Only an absent record leaves nothing to judge, and
+that one is unverified. Neither case licenses inventing a branch from the checkout.
 
 ## Probe procedure
 
