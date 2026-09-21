@@ -393,35 +393,63 @@ def cmd_register(services, args) -> dict:
     # both halves in its own arguments, so it can answer the question while there is still
     # nothing to unwind. The checks inside record_settings and binding_plan remain for callers
     # that arrive separately; neither of those can undo a write the other already committed.
-    _refuse_role_disagreement(services, args)
-    record = services.registry.register(
-        parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
-                        cxc_session=args.parent_cxc_session),
-        child=Endpoint(args.child_task, args.child_host, cwd=args.child_cwd,
-                       cxc_session=args.child_cxc_session),
-        issue_key=args.issue,
-        artifact_roots=args.artifact_root,
-        allowed_recipients=args.allowed_recipient,
-        scope_ref=args.scope_ref,
-        dispatch_request_id=args.dispatch_request_id,
-        dispatch_turn_id=args.dispatch_turn_id,
-        supersedes=args.supersedes,
-        project_key=args.project,
-    )
-    payload = relationship_record(record)
-    # Execution settings come from the creation result the caller already holds. Recording them
-    # here is what lets a later send preserve them instead of inheriting a host default.
+    #
+    # Validation cannot reach the OTHER way this command left half a registration behind. A
+    # worker killed between the two commits, a disk refusing, COMMIT itself failing: those
+    # arrive between the writes rather than before them, and the relationship was already
+    # durable when they did. Measured, before this was one transaction: a kill at the settings
+    # commit left an active relationship and its generation with no authorized settings for
+    # either task. So the writes are composed into one transaction here, where both halves are
+    # in hand, rather than by changing what registry.register promises its other callers.
+    #
+    # Settings are parsed FIRST. _settings_json may read a file, and an @path naming one that
+    # does not exist is a usage error rather than something to discover holding the write lock.
+    settings = [
+        (task, _settings_json(raw), role, exception)
+        for task, raw, role, exception in (
+            (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
+            (args.child_task, args.child_settings, args.child_role, args.child_exception),
+        )
+        if raw
+    ]
     recorded = {}
-    for task, raw, role, exception in (
-        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
-        (args.child_task, args.child_settings, args.child_role, args.child_exception),
-    ):
-        if raw:
-            # The role the CREATION cited, from the receipt's executionPolicy. Recorded beside
-            # the settings so a later binding can be checked against what the task was made as.
-            record_settings(services.store, services.clock, task, _settings_json(raw),
-                            source="creation_result", role=role, exception=exception)
-            recorded[task] = "recorded"
+    try:
+        with services.store.composing():
+            # Inside the transaction now, so the bindings it reads cannot move between the
+            # check and the write it authorizes.
+            _refuse_role_disagreement(services, args)
+            record = services.registry.register(
+                parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
+                                cxc_session=args.parent_cxc_session),
+                child=Endpoint(args.child_task, args.child_host, cwd=args.child_cwd,
+                               cxc_session=args.child_cxc_session),
+                issue_key=args.issue,
+                artifact_roots=args.artifact_root,
+                allowed_recipients=args.allowed_recipient,
+                scope_ref=args.scope_ref,
+                dispatch_request_id=args.dispatch_request_id,
+                dispatch_turn_id=args.dispatch_turn_id,
+                supersedes=args.supersedes,
+                project_key=args.project,
+            )
+            # Execution settings come from the creation result the caller already holds.
+            # Recording them here is what lets a later send preserve them instead of
+            # inheriting a host default.
+            for task, values, role, exception in settings:
+                # The role the CREATION cited, from the receipt's executionPolicy. Recorded
+                # beside the settings so a later binding can be checked against what the task
+                # was made as.
+                record_settings(services.store, services.clock, task, values,
+                                source="creation_result", role=role, exception=exception)
+                recorded[task] = "recorded"
+    except RelayError as failure:
+        # The transaction that just rolled back was this command's, so a contest recorded
+        # inside it went down with the registration. The refusal travels on the error for
+        # exactly this, and recording it is what every linkage write path promises. A failure
+        # carrying no refusal records nothing.
+        services.registry.record_refusal(failure, at=services.clock.iso())
+        raise
+    payload = relationship_record(record)
     payload["authorizedSettings"] = recorded or None
     return payload
 
