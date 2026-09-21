@@ -83,12 +83,22 @@ keys the pairing matrix is checked against and the keys a later session restores
 that reads correctly but is spelled differently is a record the next reader cannot match, and the
 restore it was written for silently becomes a fresh adjudication.
 
-Stating that has not been enough. Three readers of this file on 2026-09-21 wrote `relay_only`,
-`goal_free` and `run_only` for `run_mode`, and `relay` for `observation_path` every time. The
-third read this paragraph and still paraphrased. So a consumer of a start-policy record should
-expect approximations in the wild and match tolerantly, while a producer writes the literal; and
-whatever finally fixes this is not a sentence asking for care, which has now been measured not to
-work.
+Stating that has not been enough. Four readers of this file on 2026-09-21 wrote `relay_only`,
+`goal_free`, `run_only` and `relay_only` again for `run_mode`, and `relay` for
+`observation_path` every time. Two of them had been given the requirement, one as prose and one as
+a copyable list, and paraphrased anyway.
+
+A consumer stays strict about it. A value outside the declared set is not a value to interpret: it
+is an unreadable field, and an unreadable field is re-adjudicated under the trigger list below
+exactly as a missing one is. Do not normalise an approximation into a literal, even an obvious
+looking one — `relay_only` names an observation path while sitting in `run_mode`, so the obvious
+reading and the field it was written in disagree, and two readers guessing independently would
+restore two different policies from one record. Re-adjudicating is deterministic and leaves a
+record that says so; guessing is neither.
+
+That makes the failure loud rather than silent, which is the most this file can do about it.
+Whatever actually fixes the writing side is not a sentence asking for care, which has now been
+measured twice not to work.
 
 Every field carries three more things, because a field without them cannot be restored later:
 nobody reading it can tell what it was allowed to survive.
