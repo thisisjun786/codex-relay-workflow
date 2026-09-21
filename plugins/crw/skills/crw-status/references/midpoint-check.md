@@ -352,9 +352,11 @@ Observed: a parent has no running turn. In one variant its goal is active with c
 working; in another it has no goal, or a paused one, or one that cannot activate.
 Action: read its effective workflow, then report the turn and the goal as two readings. A goal-free
 parent is in the default mode and its absent goal is not the stall; what to check there is whether
-its delivery path is reaching it. A Loop parent with a
-missing, paused or unactivatable goal will stay quiet whatever arrives, and that is the fact the
-report leads with rather than calling it idle. Either way the parent needs nothing only while
+its delivery path is reaching it. A Loop parent whose goal is missing or unactivatable is a mode
+mismatch and the report leads with that rather than calling it idle, but do not infer from it that
+nothing can reach the parent: an absent goal is deliverable under OPS-8.2, so read the delivery
+path and the waiting events separately before naming a cause. A paused goal is the one that
+genuinely receives nothing, whatever arrives. Either way the parent needs nothing only while
 nothing is outstanding for it; where something is, the item decides under the precedence above and
 a working goal is not a reason for silence. Distinguish a goal that exists, a goal that activated,
 and continuation observed actually happening; say which you saw.

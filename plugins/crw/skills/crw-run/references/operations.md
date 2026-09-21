@@ -972,6 +972,11 @@ behaviour.
 A parent that waits idle is trusting a queue, a service and a recipient observation it cannot see
 while it sleeps. These are the rules that make that trust checkable.
 
+These rules bind the parent's own behaviour. They are not enforced by the installed relay, and
+nothing here claims the runtime applies them: the store's guarantees are the ones its own records
+and readers already carry, and where a rule below needs runtime support that does not exist, it
+says so rather than implying an enforcement nobody installed.
+
 **The queue is the truth; a wake is only a hint.** On every entry — woken, resumed after a
 compaction, or restarted — the parent re-reads its own outstanding work rather than acting on the
 payload that woke it. That is what carries events which arrived while it was mid-turn, and it is
@@ -983,11 +988,16 @@ event id. A second arrival of the same identity is reconciled against the verdic
 and is never judged a second time. A correction is a new generation whose first receipt names no
 predecessor, which is what distinguishes it from a redelivery.
 
-**Order.** Apply by generation and then revision, never by arrival time. A later generation does
-not silently retire an earlier event that was never applied: the earlier one is recorded as
-superseded, with that fact stated, so a reader can tell a skipped event from a handled one. The
-parent's per-relationship marker advances only after an event is durably applied, so the marker can
-never step over something received and not acted on.
+**Order.** Apply by generation, never by arrival time. Inside one generation a revision hash
+carries no order of its own, so ordering comes from the declared lineage and the current-head
+determination in [verify the current revision](relay.md#verify-the-current-revision), never from
+arrival time and never from comparing hash strings. Where that determination yields no single
+current head — two candidates, neither declaring that it supersedes the other — the parent applies
+nothing and advances nothing, and routes the ambiguity to its existing recovery rather than
+picking one. A later generation does not silently retire an earlier event that was never applied:
+the earlier one is recorded as superseded, with that fact stated, so a reader can tell a skipped
+event from a handled one. The parent's per-relationship marker advances only after an event is
+durably applied, so the marker can never step over something received and not acted on.
 
 **Delivery, acknowledgement and verdict are three states.** A send the transport accepted is not a
 turn that ran, a turn that ran is not an acknowledgement, an acknowledgement is not an applied

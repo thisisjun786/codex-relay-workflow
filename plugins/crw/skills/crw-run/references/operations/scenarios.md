@@ -597,7 +597,8 @@ Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
 
 Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
 goal and resolve its specific resume/conflict/read requirement; do not create over it.
-No-goal prevents activation, and Run is used only if separately covered by the request.
+No-goal prevents this Loop's activation and nothing else: the run continues as the ordinary
+goal-free default, which needs no separate authorization, and no child is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
 record the supported host fix, without disabling hooks or faking PABCD. In the compatible
 active run, continue independent ready work; do not mark the whole goal blocked on a
