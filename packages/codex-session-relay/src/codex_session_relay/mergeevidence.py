@@ -296,3 +296,106 @@ def handoff_problems(head_sha, review, checks, required=UNDECLARED):
         return malformed
     return (review_problems(review)
             + checks_problems(head_sha, required, checks, require_declared=True))
+
+
+#: The candidate itself, which is not the same question as its review or its checks. A pull
+#: request can carry a fully enumerated review and a green required gate and still be unmergeable:
+#: closed, conflicted, or blocked by the forge's own rules. Those facts had no home, so a caller
+#: that read only the two predicates above could assemble a complete record about something nobody
+#: could merge. They live here rather than in the observer for the reason everything else here
+#: does: one place decides readiness, and an observer that also decided it would drift from this
+#: one while both stayed green.
+CANDIDATE_NOT_OPEN = "candidate_not_open"
+CANDIDATE_DRAFT = "candidate_draft"
+CANDIDATE_CONFLICTED = "candidate_conflicted"
+CANDIDATE_BLOCKED = "candidate_blocked"
+CANDIDATE_BEHIND = "candidate_behind"
+CANDIDATE_UNKNOWN = "candidate_unknown"
+
+#: What the forge's merge-state values mean here. Written as a table rather than as a chain of
+#: ifs because the dangerous entry is the one nobody wrote: an unrecognised value has to be
+#: UNKNOWN, and a forge that adds a state next year must not acquire a passing one by default.
+#:
+#: Two states deliberately do NOT refuse on their own. UNSTABLE says something non-passing exists
+#: on the head; it does not say the thing is required, and checks_problems above exists precisely
+#: to let an optional lint fail beside a green required gate. Refusing UNSTABLE would contradict
+#: that rule from inside the same module. BEHIND is the same shape: being behind the base blocks
+#: only where the branch declares a strict required-status-checks policy, which is why it is
+#: passed in rather than assumed.
+CLEAN_MERGE_STATES = ("clean", "has_hooks", "unstable")
+
+
+def draft_problems(is_draft):
+    """A draft is not a candidate, said once.
+
+    The receipt contract refuses a draft handoff and so does the collector, and for a while each
+    said it in its own words. Two spellings of one rule is how the rule starts meaning two things,
+    so the sentence lives here and both callers raise it.
+    """
+    if not is_draft:
+        return []
+    return [Problem(
+        CANDIDATE_DRAFT,
+        "the pull request is still a draft, so the review it reports was never actually "
+        "requested; mark it ready for review before handing it over")]
+
+
+def candidate_problems(candidate, *, strict_base=False):
+    """Is this pull request a thing that could be merged at all?
+
+    Separate from the review and the checks because the next action is different again: a closed
+    candidate is not waiting for anything, a conflicted one needs a rebase or a merge, and a
+    merge state the forge has not finished computing needs only to be asked again.
+
+    `strict_base` comes from the branch's own declared rules rather than from a guess, because
+    "behind the base" is a refusal in a repository that requires branches to be current and is
+    merely a fact in one that does not.
+    """
+    if not isinstance(candidate, dict):
+        return [Problem(MALFORMED,
+                        "the candidate is an object stating state, isDraft and mergeStateStatus,"
+                        " not a " + type(candidate).__name__)]
+    problems = []
+    state = str(candidate.get("state") or "").lower()
+    if candidate.get("merged"):
+        problems.append(Problem(CANDIDATE_NOT_OPEN,
+                                "this pull request is already merged, so there is nothing left to"
+                                " hand over"))
+    elif state and state != "open":
+        problems.append(Problem(CANDIDATE_NOT_OPEN,
+                                "this pull request is " + repr(state) + ", not open"))
+    elif not state:
+        problems.append(Problem(CANDIDATE_UNKNOWN,
+                                "the candidate does not say whether it is open"))
+    problems.extend(draft_problems(candidate.get("isDraft")))
+    status = str(candidate.get("mergeStateStatus") or "").lower()
+    if status in CLEAN_MERGE_STATES:
+        pass
+    elif status == "dirty":
+        problems.append(Problem(CANDIDATE_CONFLICTED,
+                                "the candidate does not merge cleanly into its base"))
+    elif status == "blocked":
+        problems.append(Problem(CANDIDATE_BLOCKED,
+                                "the forge reports this candidate blocked by its own branch"
+                                " rules, so something it requires is not satisfied yet"))
+    elif status == "behind":
+        if strict_base:
+            problems.append(Problem(CANDIDATE_BEHIND,
+                                    "the candidate is behind its base and this branch requires"
+                                    " branches to be current before merging"))
+    elif status == "draft":
+        # Reached only when the forge says draft and the record's own isDraft did not, which is a
+        # disagreement worth reporting rather than resolving in favour of either side.
+        if not candidate.get("isDraft"):
+            problems.append(Problem(CANDIDATE_DRAFT,
+                                    "the forge reports this candidate as a draft although the"
+                                    " record says it is not"))
+    else:
+        problems.append(Problem(
+            CANDIDATE_UNKNOWN,
+            "the forge reports merge state " + repr(candidate.get("mergeStateStatus"))
+            + ", which is not a state this rule recognises; an unrecognised merge state is"
+            " unknown rather than clean, because a forge that adds one must not acquire a"
+            " passing verdict by default"))
+    return problems
+

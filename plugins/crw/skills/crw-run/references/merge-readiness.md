@@ -62,11 +62,30 @@ is still unknown.
 ## Inspect review content and coverage
 
 Collect relevant submitted reviews, inline threads, summary comments, statuses,
-and independent local review artifacts. Follow pagination where necessary. For
-each applicable source, establish who reviewed what base/head or diff, whether
-the run completed, and which findings remain. A successful review job can still
-contain defects; a completed COMMENTED review can be useful evidence without
-being a formal approval. Thread resolution alone does not prove a fix.
+and independent local review artifacts. For each applicable source, establish who
+reviewed what base/head or diff, whether the run completed, and which findings
+remain. A successful review job can still contain defects; a completed COMMENTED
+review can be useful evidence without being a formal approval. Thread resolution
+alone does not prove a fix.
+
+Where a count is the gate, read it to the end and prove that you did. An unresolved
+count of zero is the value that OPENS the merge gate, so a truncated page reads as
+a pass: sixty of sixty-three threads with nothing unresolved among the sixty once
+reported "0 unresolved" about a candidate with three open threads and a P1 among
+them. Every connection the verdict rests on - threads, reviews, comments, check
+runs, workflow runs, jobs, statuses - carries the same obligation, because a second
+required check on page two is exactly as invisible as the sixty-first thread was.
+
+`codex-session-relay merge-evidence --repository owner/name --pull-request N`
+performs that reading and returns the record: it enumerates each connection until
+its pagination is exhausted, counts unique identifiers against the reported total,
+pins the head and base before collecting and re-reads them with the effective rules
+afterwards, and reads a zero twice before reporting it. Exit 0 is the ready verdict
+alone; a stale, unknown or not-ready answer exits 2 with the whole payload. A
+truncated page, a permission error or a head that moved is reported as stale or
+unknown and never as green or zero. Its `handoff` is the record a completion report
+carries; the dispositions and the criterion evidence stay yours to judge, and it
+never resolves a thread.
 
 Keep completed, running, not run/disabled, unavailable/error, and stale evidence
 distinct. A completion label without identifiable revision/scope does not prove
@@ -97,6 +116,15 @@ and newly arrived findings. Reconcile changes since the review; refresh only the
 proof they invalidate. A relevant unresolved finding still matters even if its
 author is an optional reviewer. Use the repository's merge method and the host's
 expected-head guard; preserve required base-update or merge-queue behavior.
+
+`merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
+own and grades the child's record against it, rather than reading the child's own
+numbers back. A thread that arrived on the same head and is not in the record's
+`threadsSeen` invalidates the record, which returns to the child that produced it.
+The reading and the merge are not one act, and the command does not pretend they
+are: the expected-head guard is what closes the gap at the moment of merging, and a
+finding that lands after it is a late finding for the original issue's correction
+path.
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.

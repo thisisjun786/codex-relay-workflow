@@ -4,14 +4,21 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 
+from codex_session_relay import forge
+
 from .support import (
     CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, DeliveryTestCase, RelayTestCase,
 )
+# The forge transcript helpers live beside the collector's own cases. The subprocess half
+# lives HERE because this module is already declared as one that spends real wall time,
+# and a second module doing it would be a fact about the suite nobody had written down.
+from .test_forge_evidence import HEAD, REQUIRED_DEV_GATE, job, pull, threads
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1922,3 +1929,137 @@ class RestorationFlagValidatesItsInput(DeliveryTestCase):
         with self.assertRaises(RelayError) as caught:
             self._verdict(["c1"], "c1")
         self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+
+
+FAKE_GH = '''#!/usr/bin/env python3
+import json, sys
+TRANSCRIPT = json.load(open(__file__ + ".json"))
+argv = sys.argv[1:]
+if argv[:2] == ["api", "graphql"]:
+    document = [one for one in argv if one.startswith("query=")][0]
+    for key in ("reviewThreads", "reviews(", "comments("):
+        if key in document:
+            name = {"reviewThreads": "reviewThreads", "reviews(": "reviews",
+                    "comments(": "comments"}[key]
+            print(json.dumps({"data": {"repository": {"pullRequest": {
+                name: TRANSCRIPT[name]}}}}))
+            sys.exit(0)
+target = argv[-1].split("?")[0]
+for fragment, payload in TRANSCRIPT["rest"]:
+    if target.endswith(fragment):
+        print(json.dumps(payload))
+        sys.exit(0)
+sys.stderr.write("gh: Not Found (HTTP 404)\\n")
+sys.exit(1)
+'''
+
+
+class TheCommandRunsAsACommand(unittest.TestCase):
+    """A subprocess, with a real gh on PATH, because that seam is where argv actually lands.
+
+    Everything above drives the collector in process. None of it would notice an argument array
+    the shell mangles, a payload that is not JSON on stdout, or an exit code that says yes.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="forge-cli-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def install(self, transcript):
+        path = os.path.join(self.tmp, "gh")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(FAKE_GH)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        with open(path + ".json", "w", encoding="utf-8") as handle:
+            json.dump(transcript, handle)
+        return path
+
+    def run_cli(self, transcript, *extra, expect=0):
+        self.install(transcript)
+        environment = dict(
+            os.environ,
+            PATH=self.tmp + os.pathsep + os.environ.get("PATH", ""),
+            PYTHONPATH=os.path.join(REPO, "src"),
+        )
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "merge-evidence",
+             "--repository", "owner/name", "--pull-request", "7", *extra],
+            capture_output=True, text=True, env=environment, timeout=120,
+        )
+        self.assertEqual(completed.returncode, expect,
+                         completed.stdout + completed.stderr)
+        return json.loads(completed.stdout)
+
+    @staticmethod
+    def transcript(*, thread_nodes, jobs):
+        def connection(nodes):
+            return {"totalCount": len(nodes),
+                    "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+
+        return {
+            "reviewThreads": connection(thread_nodes),
+            "reviews": connection([]),
+            "comments": connection([]),
+            "rest": [
+                ["/pulls/7", pull()],
+                ["/git/ref/heads/dev", {"ref": "refs/heads/dev"}],
+                ["/rules/branches/dev", REQUIRED_DEV_GATE],
+                ["/actions/runs/1/jobs", {"total_count": len(jobs), "jobs": jobs}],
+                ["/actions/runs", {"total_count": 1, "workflow_runs": [
+                    {"id": 1, "name": "CI", "head_sha": HEAD, "html_url": "https://forge/run/1"}]}],
+                ["/check-runs", {"total_count": 0, "check_runs": []}],
+                ["/status", {"total_count": 0, "statuses": []}],
+            ],
+        }
+
+    def test_a_ready_candidate_exits_zero_with_the_record_on_stdout(self):
+        payload = self.run_cli(
+            self.transcript(thread_nodes=threads(3), jobs=[job("dev-gate")]))
+        self.assertEqual(payload["verdict"], forge.READY)
+        self.assertEqual(payload["handoff"]["requiredDeclared"], ["dev-gate"])
+        self.assertEqual(payload["handoff"]["reviewCoverage"]["totalCount"], 3)
+        self.assertEqual(payload["handoff"]["threadDispositions"], [])
+
+    def test_an_unresolved_thread_exits_two_and_still_prints_everything(self):
+        payload = self.run_cli(
+            self.transcript(thread_nodes=threads(3, unresolved=(2,)), jobs=[job("dev-gate")]),
+            expect=2)
+        self.assertEqual(payload["verdict"], forge.NOT_READY)
+        self.assertEqual(payload["handoff"]["reviewCoverage"]["unresolved"], 1)
+        self.assertTrue(payload["findings"])
+
+    def test_an_unknown_answer_exits_two_rather_than_zero(self):
+        # The exit code is the whole point: a shell reading only $? must not take "I could not
+        # tell" for "yes", which is the truncation failure in another costume.
+        transcript = self.transcript(thread_nodes=threads(1), jobs=[job("dev-gate")])
+        transcript["rest"] = [entry for entry in transcript["rest"]
+                              if entry[0] != "/rules/branches/dev"]
+        payload = self.run_cli(transcript, expect=2)
+        self.assertEqual(payload["verdict"], forge.UNKNOWN)
+
+    def test_a_malformed_repository_is_a_usage_error(self):
+        # Attached with '=' on purpose. Given a space, argparse takes the dash for another
+        # option and refuses before this command sees anything; attached, the value reaches
+        # argv exactly as a caller could pass it, which is the case the validator exists for.
+        self.install(self.transcript(thread_nodes=[], jobs=[]))
+        environment = dict(os.environ, PATH=self.tmp + os.pathsep + os.environ.get("PATH", ""),
+                           PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "merge-evidence",
+             "--repository=--not-a-repository", "--pull-request", "7"],
+            capture_output=True, text=True, env=environment, timeout=120,
+        )
+        self.assertEqual(completed.returncode, 4, completed.stdout + completed.stderr)
+        self.assertIn("usage", json.loads(completed.stdout)["error"])
+
+    def test_restating_a_record_against_a_fresh_reading_catches_the_late_thread(self):
+        transcript = self.transcript(thread_nodes=threads(2), jobs=[job("dev-gate")])
+        record = os.path.join(self.tmp, "record.json")
+        with open(record, "w", encoding="utf-8") as handle:
+            json.dump({"headSha": HEAD, "handoff": {"reviewCoverage": {
+                "hasNextPage": False, "pagesRead": 1, "totalCount": 1,
+                "threadsSeen": ["T1"], "unresolved": 0}}}, handle)
+        payload = self.run_cli(transcript, "--restate", record, expect=2)
+        self.assertFalse(payload["restatement"]["current"])
+        self.assertIn(forge.LATE_FINDING,
+                      [one["code"] for one in payload["restatement"]["problems"]])
