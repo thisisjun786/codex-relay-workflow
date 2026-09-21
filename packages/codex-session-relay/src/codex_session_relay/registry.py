@@ -21,6 +21,11 @@ LIVE = ("active", "paused")
 ANCHOR_BOUND = "bound"
 ANCHOR_PENDING = "anchor_pending"
 REASONS = ("initial_assignment", "needs_changes_revision")
+RESERVATION_RESERVED = "reserved"
+RESERVATION_ARMED = "create_armed"
+RESERVATION_ATTACHED = "attached"
+RESERVATION_RELEASED = "released"
+RECEIPT_ACCEPTED = "accepted"
 
 
 def validated_turn_id(value):
@@ -108,6 +113,7 @@ class Registry:
         dispatch_turn_id: str | None = None,
         supersedes: str | None = None,
         project_key: str | None = None,
+        managed_request_id: str | None = None,
     ) -> dict:
         """Deterministic and idempotent.
 
@@ -119,6 +125,12 @@ class Registry:
         relationship also writes its whole lower level through linkage.attach_in, so an
         assignment and the project it belongs to are one atomic fact rather than two that can
         disagree after a crash. Omitted, every byte of this method's behaviour is what it was.
+
+        managed_request_id is likewise optional. Omitted, registration does not look at a
+        reservation. Supplied, the same transaction that acquires the issue also attaches that
+        reserved request, and a raw registration of an issue another request still holds is
+        refused. It is verified against the retained fingerprint and the actual child and
+        standby the receipt published; supplying the id is not itself authority.
         """
         roots = [str(r) for r in artifact_roots]
         recipients = [str(r) for r in allowed_recipients]
@@ -160,7 +172,8 @@ class Registry:
                 try:
                     returned = self._returning_tenure(
                         rid, parent, child, issue_key, dispatch_request_id,
-                        dispatch_turn_id, supersedes, project_key)
+                        dispatch_turn_id, supersedes, project_key,
+                        managed_request_id=managed_request_id)
                 except RelayError as failure:
                     # Its transaction rolled back and took any conflict row with it, so the
                     # contest is re-recorded here. This call sits OUTSIDE the try below, and
@@ -203,6 +216,9 @@ class Registry:
                 if fresh is None:
                     raise RegistrationError(
                         RefusalReason.UNREGISTERED_RELATIONSHIP, f"no relationship {rid!r}")
+                self._guard_issue_reservation(
+                    db, issue_key, managed_request_id, child, dispatch_request_id,
+                    dispatch_turn_id, acquiring=False)
                 refusal = self.linkage.attach_in(db, fresh, project_key)
                 if refusal is not None:
                     self.linkage.record_conflict_in(db, refusal, at=self.clock.iso())
@@ -243,7 +259,8 @@ class Registry:
         try:
             return self._register_in_transaction(
                 rid, parent, child, issue_key, roots, recipients, scope_ref,
-                dispatch_request_id, dispatch_turn_id, supersedes, project_key, now)
+                dispatch_request_id, dispatch_turn_id, supersedes, project_key, now,
+                managed_request_id=managed_request_id)
         except RelayError as failure:
             self._record_raced(failure, now)
             raise
@@ -299,7 +316,8 @@ class Registry:
         return found["project_key"] if found is not None else None
 
     def _returning_tenure(self, rid, parent, child, issue_key, dispatch_request_id,
-                          dispatch_turn_id, supersedes, project_key):
+                          dispatch_turn_id, supersedes, project_key,
+                          managed_request_id=None):
         """A dead identity registered again: a second tenure, or a dead end named as one.
 
         relationship_id is sha256(parentTaskId|childTaskId|issueKey) and the contract freezes
@@ -403,6 +421,9 @@ class Registry:
                 # landing in between left this None while the predecessor became scoped, and
                 # the tenure then archived that linkage and came back unscoped.
                 project_key = self._inherited_project(db, rid, issue_key, supersedes)
+            self._guard_issue_reservation(
+                db, issue_key, managed_request_id, child, dispatch_request_id,
+                dispatch_turn_id, acquiring=True)
             plan = None
             if project_key is not None:
                 # The attachment is decided BEFORE any mutation, so the transaction that
@@ -466,6 +487,10 @@ class Registry:
                     "relationship_tenure_reopened", rid,
                     {"issueKey": issue_key, "executionGeneration": generation,
                      "supersedes": supersedes, "outgoingChild": outgoing}, at=now)
+                if managed_request_id is not None:
+                    self._attach_reservation_in(
+                        db, managed_request_id, relationship_id=rid,
+                        execution_generation=generation, at=now)
                 # A generation advanced here is a generation advanced anywhere: the deliveries of
                 # the tenure that just ended are history from this moment, and without the
                 # annotation a dispatched or capped one keeps reporting as current while its
@@ -482,7 +507,7 @@ class Registry:
 
     def _register_in_transaction(self, rid, parent, child, issue_key, roots, recipients,
                                  scope_ref, dispatch_request_id, dispatch_turn_id,
-                                 supersedes, project_key, now):
+                                 supersedes, project_key, now, managed_request_id=None):
         with self.store.transaction() as db:
             # Re-decided inside THIS transaction rather than carried in: the pre-check ran in
             # its own, and between them the predecessor can have been cancelled and its issue
@@ -509,6 +534,9 @@ class Registry:
                         "assignment for its own issue",
                     )
             outgoing = self.linkage.replaceable_child_in(db, supersedes)
+            self._guard_issue_reservation(
+                db, issue_key, managed_request_id, child, dispatch_request_id,
+                dispatch_turn_id, acquiring=True)
             # One issue, one responsible child, decided in the SAME transaction as the insert.
             # Checked beforehand, two connections could both see no rival and then insert
             # different children; BEGIN IMMEDIATE serialises writers, so the second one sees
@@ -584,6 +612,10 @@ class Registry:
                 ),
             )
             self.store.journal("relationship_registered", rid, {"issueKey": issue_key}, at=now)
+            if managed_request_id is not None:
+                self._attach_reservation_in(
+                    db, managed_request_id, relationship_id=rid,
+                    execution_generation=1, at=now)
             if project_key is not None:
                 fresh = db.execute(
                     "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
@@ -860,6 +892,7 @@ class Registry:
         expect_artifact_roots,
         expect_allowed_recipients,
         actor: str,
+        managed_request_id: str | None = None,
     ) -> dict:
         """Resume, and keep the contest if the lower level refuses.
 
@@ -873,7 +906,8 @@ class Registry:
             return self._resume_in_transaction(
                 rid, expect_generation=expect_generation,
                 expect_artifact_roots=expect_artifact_roots,
-                expect_allowed_recipients=expect_allowed_recipients, actor=actor)
+                expect_allowed_recipients=expect_allowed_recipients, actor=actor,
+                managed_request_id=managed_request_id)
         except RelayError as failure:
             self._record_raced(failure, self.clock.iso())
             raise
@@ -886,6 +920,7 @@ class Registry:
         expect_artifact_roots,
         expect_allowed_recipients,
         actor: str,
+        managed_request_id: str | None = None,
     ) -> dict:
         """Resuming requires restating the generation and scope being re-authorized.
 
@@ -952,6 +987,17 @@ class Registry:
                     f"({owner['status']}); resuming {rid!r} would leave the issue with two "
                     "owners. Replace that assignment deliberately instead",
                 )
+            child = Endpoint(row["child_task_id"], row["child_host_id"], cwd=row["child_cwd"])
+            generation = db.execute(
+                "SELECT dispatch_request_id, dispatch_turn_id FROM generations"
+                " WHERE relationship_id = ? AND execution_generation = ?",
+                (rid, row["execution_generation"]),
+            ).fetchone()
+            self._guard_issue_reservation(
+                db, row["issue_key"], managed_request_id, child,
+                None if generation is None else generation["dispatch_request_id"],
+                None if generation is None else generation["dispatch_turn_id"],
+                acquiring=row["status"] not in LIVE)
             db.execute(
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (ACTIVE, now, rid),
@@ -983,6 +1029,509 @@ class Registry:
                 db, old_rid, "archived",
                 previous_status=before["status"] if before is not None else None)
             self.store.journal("superseded", old_rid, {"by": new_relationship_id}, at=now)
+
+    # --------------------------------------------------------- managed admission
+
+    def reserve_start(self, identity: dict) -> dict:
+        """Hold an issue for one managed request before any host submission.
+
+        The hold is committed here, on this physical store, and it is the only thing that
+        stops a second request — or a raw registration — from acquiring the same issue.
+        Replaying the same request with the same fingerprint returns the retained row,
+        including one that is already attached to the relationship this request created.
+        That replay is not a new reservation and does not compete with its own assignment.
+        A different fingerprint, or a request id that was already released, is a conflict.
+        """
+        fields = self._reservation_identity(identity)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            current = db.execute(
+                "SELECT * FROM managed_start_requests WHERE request_id = ?",
+                (fields["request_id"],),
+            ).fetchone()
+            if current is not None:
+                self._assert_same_reservation(current, fields)
+                if current["state"] == RESERVATION_RELEASED:
+                    raise RegistrationError(
+                        RefusalReason.RELATIONSHIP_CONFLICT,
+                        f"request {fields['request_id']!r} was released and cannot be reused",
+                    )
+                if current["state"] == RESERVATION_ATTACHED:
+                    owned = db.execute(
+                        "SELECT relationship_id FROM relationships"
+                        " WHERE relationship_id = ? AND issue_key = ?"
+                        " AND status IN ('active','paused') AND superseded_by IS NULL",
+                        (current["relationship_id"], fields["issue_key"]),
+                    ).fetchone()
+                    if owned is None:
+                        raise RegistrationError(
+                            RefusalReason.RELATIONSHIP_CONFLICT,
+                            f"request {fields['request_id']!r} is attached to "
+                            f"{current['relationship_id']!r}, which no longer holds "
+                            f"issue {fields['issue_key']!r}",
+                        )
+                return self._reservation_record(current)
+            self._assert_issue_unassigned(
+                db, fields["issue_key"], except_request=fields["request_id"])
+            other = db.execute(
+                "SELECT request_id, state FROM managed_start_requests"
+                " WHERE issue_key = ? AND state IN ('reserved','create_armed')",
+                (fields["issue_key"],),
+            ).fetchone()
+            if other is not None:
+                raise RegistrationError(
+                    RefusalReason.DUPLICATE_ASSIGNMENT,
+                    f"issue {fields['issue_key']!r} is already held by request "
+                    f"{other['request_id']!r} ({other['state']})",
+                )
+            db.execute(
+                "INSERT INTO managed_start_requests (request_id, issue_key,"
+                " request_fingerprint, fingerprint_version, workspace, marker_root,"
+                " socket_identity, create_request_id, dispatch_request_id, state, revision,"
+                " child_task_id, standby_turn_id, relationship_id, execution_generation,"
+                " receipt_status, release_reason, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,'reserved',0,NULL,NULL,NULL,NULL,NULL,NULL,?,?)",
+                (
+                    fields["request_id"], fields["issue_key"], fields["request_fingerprint"],
+                    fields["fingerprint_version"], fields["workspace"], fields["marker_root"],
+                    fields["socket_identity"], fields["create_request_id"],
+                    fields["dispatch_request_id"], now, now,
+                ),
+            )
+            self.store.journal(
+                "managed_start_reserved", fields["request_id"],
+                {"issueKey": fields["issue_key"], "revision": 0}, at=now)
+            stored = db.execute(
+                "SELECT * FROM managed_start_requests WHERE request_id = ?",
+                (fields["request_id"],),
+            ).fetchone()
+        return self._reservation_record(stored)
+
+    def arm_start(self, request_id, fingerprint, expected_revision) -> dict:
+        """Mark a reserved request armed, before any host submission.
+
+        Arming and releasing the same revision have one winner. A request that is already
+        armed with this fingerprint returns as it stands. Nothing here talks to a host.
+        """
+        request_id = self._required_text("request_id", request_id)
+        fingerprint = self._required_text("request_fingerprint", fingerprint)
+        expected_revision = self._required_revision(expected_revision)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._reservation_for_update(db, request_id, fingerprint)
+            if row["state"] == RESERVATION_ARMED and row["revision"] == expected_revision + 1:
+                return self._reservation_record(row)
+            if row["state"] != RESERVATION_RESERVED or row["revision"] != expected_revision:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} is {row['state']!r} at revision "
+                    f"{row['revision']}, not reserved at {expected_revision}",
+                )
+            changed = db.execute(
+                "UPDATE managed_start_requests SET state = 'create_armed', revision = revision + 1,"
+                " updated_at = ? WHERE request_id = ? AND state = 'reserved' AND revision = ?",
+                (now, request_id, expected_revision),
+            ).rowcount
+            if changed != 1:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} changed before it could be armed",
+                )
+            self.store.journal(
+                "managed_start_armed", request_id,
+                {"revision": expected_revision + 1}, at=now)
+            stored = db.execute(
+                "SELECT * FROM managed_start_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+        return self._reservation_record(stored)
+
+    def record_start_receipt(self, request_id, fingerprint, receipt) -> dict:
+        """Retain an actual creation receipt without publishing a child that was not created.
+
+        Only status 'accepted' together with both an actual threadId and an actual turnId
+        may publish child_task_id and standby_turn_id. The receipt is the bridge shape:
+        status, threadId, turnId. Other fields on a retained full receipt are ignored.
+        Any other status, or a partial pair, keeps those references empty. Replaying the
+        exact published ids is a no-op once the request is armed or already attached.
+        """
+        request_id = self._required_text("request_id", request_id)
+        fingerprint = self._required_text("request_fingerprint", fingerprint)
+        if not isinstance(receipt, dict):
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT, "a start receipt must be an object")
+        status = receipt.get("status")
+        if not isinstance(status, str) or not status.strip():
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT, "a start receipt needs a status")
+        thread_id = receipt.get("threadId", receipt.get("thread_id"))
+        turn_id = receipt.get("turnId", receipt.get("turn_id"))
+        accepted = (
+            status == RECEIPT_ACCEPTED
+            and isinstance(thread_id, str) and bool(thread_id.strip())
+            and isinstance(turn_id, str) and bool(turn_id.strip())
+        )
+        if accepted:
+            child_id, standby_id = thread_id, turn_id
+        else:
+            child_id = standby_id = None
+            if status == RECEIPT_ACCEPTED:
+                # Accepted without both actual ids is still partial. Recording it must not
+                # invent either reference, and it must not look like a published shell.
+                status = "partial"
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._reservation_for_update(db, request_id, fingerprint)
+            if row["state"] == RESERVATION_ATTACHED:
+                # The relationship already owns the issue. The same published shell is the
+                # receipt the caller still holds, so replaying it changes nothing. A
+                # different child or standby is a different creation and is refused.
+                if (
+                    row["receipt_status"] == RECEIPT_ACCEPTED
+                    and status == RECEIPT_ACCEPTED
+                    and child_id == row["child_task_id"]
+                    and standby_id == row["standby_turn_id"]
+                ):
+                    return self._reservation_record(row)
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} is already attached to child "
+                    f"{row['child_task_id']!r} and standby {row['standby_turn_id']!r}",
+                )
+            if row["state"] != RESERVATION_ARMED:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} is {row['state']!r}; a receipt is recorded only "
+                    "while the request is create_armed",
+                )
+            if row["receipt_status"] == RECEIPT_ACCEPTED and row["child_task_id"]:
+                if (
+                    status != RECEIPT_ACCEPTED
+                    or child_id != row["child_task_id"]
+                    or standby_id != row["standby_turn_id"]
+                ):
+                    raise RegistrationError(
+                        RefusalReason.RELATIONSHIP_CONFLICT,
+                        f"request {request_id!r} already published child "
+                        f"{row['child_task_id']!r} and standby {row['standby_turn_id']!r}",
+                    )
+                return self._reservation_record(row)
+            published = row["child_task_id"] is not None or row["standby_turn_id"] is not None
+            if row["receipt_status"] not in (None, status) and published:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} already recorded receipt "
+                    f"{row['receipt_status']!r}",
+                )
+            if (
+                row["child_task_id"] not in (None, child_id)
+                or row["standby_turn_id"] not in (None, standby_id)
+            ):
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} already published "
+                    f"{row['child_task_id']!r}/{row['standby_turn_id']!r}",
+                )
+            # A later observation that still publishes nothing replaces the previous
+            # non-publishing status. Neither row ever named a child, so keeping the
+            # latest is not fabricating a shell and not erasing one.
+            db.execute(
+                "UPDATE managed_start_requests SET receipt_status = ?, child_task_id = ?,"
+                " standby_turn_id = ?, updated_at = ? WHERE request_id = ? AND state = 'create_armed'",
+                (status, child_id, standby_id, now, request_id),
+            )
+            self.store.journal(
+                "managed_start_receipt", request_id,
+                {"status": status, "published": accepted}, at=now)
+            stored = db.execute(
+                "SELECT * FROM managed_start_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+        return self._reservation_record(stored)
+
+    def start_request(self, request_id) -> dict | None:
+        """The retained request, or None when this store has never seen that id."""
+        request_id = self._required_text("request_id", request_id)
+        row = self.store.one(
+            "SELECT * FROM managed_start_requests WHERE request_id = ?", (request_id,)
+        )
+        return self._reservation_record(row) if row is not None else None
+
+    def release_unstarted(self, request_id, fingerprint, expected_revision, reason) -> dict:
+        """Release a request that is still only reserved.
+
+        Armed, attached and already-released rows are not releasable here. The revision is
+        compared and written in one transaction, so an arm of the same revision cannot also
+        win. The released row stays, and that request id cannot be reserved again.
+        """
+        request_id = self._required_text("request_id", request_id)
+        fingerprint = self._required_text("request_fingerprint", fingerprint)
+        expected_revision = self._required_revision(expected_revision)
+        reason = self._required_text("reason", reason)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._reservation_for_update(db, request_id, fingerprint)
+            if row["state"] != RESERVATION_RESERVED or row["revision"] != expected_revision:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} is {row['state']!r} at revision "
+                    f"{row['revision']}; only a reserved row at revision {expected_revision} "
+                    "can be released",
+                )
+            changed = db.execute(
+                "UPDATE managed_start_requests SET state = 'released', revision = revision + 1,"
+                " release_reason = ?, updated_at = ?"
+                " WHERE request_id = ? AND state = 'reserved' AND revision = ?",
+                (reason, now, request_id, expected_revision),
+            ).rowcount
+            if changed != 1:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {request_id!r} changed before it could be released",
+                )
+            self.store.journal(
+                "managed_start_released", request_id,
+                {"revision": expected_revision + 1, "reason": reason}, at=now)
+            stored = db.execute(
+                "SELECT * FROM managed_start_requests WHERE request_id = ?", (request_id,)
+            ).fetchone()
+        return self._reservation_record(stored)
+
+    def _guard_issue_reservation(
+        self, db, issue_key, managed_request_id, child, dispatch_request_id,
+        dispatch_turn_id, *, acquiring,
+    ):
+        """Refuse an ownership change that a pending request still holds.
+
+        A caller that names a request is checked against that row: the fingerprint is
+        already what selected it, and the actual child, standby and dispatch id have to be
+        the ones the receipt published. Naming the id does not skip that. A caller that
+        names nothing is the raw path, and it may proceed only when no request is still
+        reserved or armed for the issue. An attached reservation is the relationship itself
+        and is not a second hold. Releasing the issue is not an acquisition, so deactivation
+        does not come through here.
+        """
+        if not acquiring and managed_request_id is None:
+            # Restating a relationship that is already live does not take the issue from
+            # anyone. A pending request for that issue is still a conflict, because the raw
+            # path must not keep operating an issue a managed request has not attached.
+            pass
+        pending = db.execute(
+            "SELECT * FROM managed_start_requests WHERE issue_key = ?"
+            " AND state IN ('reserved','create_armed')",
+            (issue_key,),
+        ).fetchone()
+        if managed_request_id is None:
+            if pending is not None:
+                raise RegistrationError(
+                    RefusalReason.DUPLICATE_ASSIGNMENT,
+                    f"issue {issue_key!r} is held by managed request "
+                    f"{pending['request_id']!r} ({pending['state']}); raw registration cannot "
+                    "acquire it",
+                )
+            return
+        named = db.execute(
+            "SELECT * FROM managed_start_requests WHERE request_id = ?",
+            (managed_request_id,),
+        ).fetchone()
+        if named is None:
+            raise RegistrationError(
+                RefusalReason.UNREGISTERED_RELATIONSHIP,
+                f"managed request {managed_request_id!r} is not reserved on this store",
+            )
+        if named["issue_key"] != issue_key:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {managed_request_id!r} is for issue "
+                f"{named['issue_key']!r}, not {issue_key!r}",
+            )
+        if named["state"] == RESERVATION_ATTACHED:
+            # Replay of an already attached request. The relationship it names has to be the
+            # one being restated, which the caller enforces by identity; here the published
+            # dispatch and child have to still match.
+            self._assert_attached_replay(
+                named, child, dispatch_request_id, dispatch_turn_id)
+            return
+        if named["state"] != RESERVATION_ARMED or named["receipt_status"] != RECEIPT_ACCEPTED:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {managed_request_id!r} is {named['state']!r}"
+                + (f" with receipt {named['receipt_status']!r}" if named["receipt_status"] else "")
+                + "; attaching it needs an armed request and an accepted receipt",
+            )
+        if named["dispatch_request_id"] != dispatch_request_id:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {managed_request_id!r} retained dispatch "
+                f"{named['dispatch_request_id']!r}, not {dispatch_request_id!r}",
+            )
+        if child is None or child.task_id != named["child_task_id"]:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {managed_request_id!r} published child "
+                f"{named['child_task_id']!r}, not "
+                f"{None if child is None else child.task_id!r}",
+            )
+        if dispatch_turn_id != named["standby_turn_id"]:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {managed_request_id!r} published standby "
+                f"{named['standby_turn_id']!r}, not {dispatch_turn_id!r}",
+            )
+
+    def _attach_reservation_in(self, db, request_id, *, relationship_id, execution_generation, at):
+        """Move a verified armed request onto the relationship in the caller's transaction."""
+        changed = db.execute(
+            "UPDATE managed_start_requests SET state = 'attached', revision = revision + 1,"
+            " relationship_id = ?, execution_generation = ?, updated_at = ?"
+            " WHERE request_id = ? AND state = 'create_armed'"
+            " AND receipt_status = 'accepted' AND relationship_id IS NULL",
+            (relationship_id, execution_generation, at, request_id),
+        ).rowcount
+        if changed != 1:
+            current = db.execute(
+                "SELECT state, relationship_id FROM managed_start_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if (
+                current is not None and current["state"] == RESERVATION_ATTACHED
+                and current["relationship_id"] == relationship_id
+            ):
+                return
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"managed request {request_id!r} could not be attached",
+            )
+        self.store.journal(
+            "managed_start_attached", request_id,
+            {"relationshipId": relationship_id, "executionGeneration": execution_generation},
+            at=at)
+
+    @staticmethod
+    def _assert_attached_replay(row, child, dispatch_request_id, dispatch_turn_id):
+        if row["dispatch_request_id"] != dispatch_request_id:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"attached request {row['request_id']!r} retained dispatch "
+                f"{row['dispatch_request_id']!r}, not {dispatch_request_id!r}",
+            )
+        if child is None or child.task_id != row["child_task_id"]:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"attached request {row['request_id']!r} published child "
+                f"{row['child_task_id']!r}",
+            )
+        if dispatch_turn_id != row["standby_turn_id"]:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"attached request {row['request_id']!r} published standby "
+                f"{row['standby_turn_id']!r}, not {dispatch_turn_id!r}",
+            )
+
+    @staticmethod
+    def _assert_issue_unassigned(db, issue_key, *, except_request):
+        owner = db.execute(
+            "SELECT relationship_id, status FROM relationships"
+            " WHERE issue_key = ? AND status IN ('active','paused') AND superseded_by IS NULL",
+            (issue_key,),
+        ).fetchone()
+        if owner is not None:
+            raise RegistrationError(
+                RefusalReason.DUPLICATE_ASSIGNMENT,
+                f"issue {issue_key!r} is already assigned under {owner['relationship_id']!r} "
+                f"({owner['status']}); a reservation cannot take it",
+            )
+
+    @staticmethod
+    def _assert_same_reservation(row, fields):
+        for key in (
+            "issue_key", "request_fingerprint", "fingerprint_version", "workspace",
+            "marker_root", "socket_identity", "create_request_id", "dispatch_request_id",
+        ):
+            if row[key] != fields[key]:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"request {fields['request_id']!r} already retained {key} {row[key]!r}, "
+                    f"not {fields[key]!r}",
+                )
+
+    def _reservation_for_update(self, db, request_id, fingerprint):
+        row = db.execute(
+            "SELECT * FROM managed_start_requests WHERE request_id = ?", (request_id,)
+        ).fetchone()
+        if row is None:
+            raise RegistrationError(
+                RefusalReason.UNREGISTERED_RELATIONSHIP,
+                f"no managed request {request_id!r}",
+            )
+        if row["request_fingerprint"] != fingerprint:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                f"request {request_id!r} retained a different fingerprint",
+            )
+        return row
+
+    @staticmethod
+    def _reservation_identity(identity):
+        if not isinstance(identity, dict):
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT, "a reservation identity must be an object")
+        allowed = {
+            "request_id", "issue_key", "request_fingerprint", "fingerprint_version",
+            "workspace", "marker_root", "socket_identity", "create_request_id",
+            "dispatch_request_id",
+        }
+        unknown = set(identity) - allowed
+        if unknown or set(identity) != allowed:
+            missing = sorted(allowed - set(identity))
+            extra = sorted(unknown)
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT,
+                "reservation identity"
+                + (f" missing {missing}" if missing else "")
+                + (f" unknown {extra}" if extra else ""),
+            )
+        return {key: Registry._required_text(key, identity[key]) for key in allowed}
+
+    @staticmethod
+    def _required_text(name, value):
+        if not isinstance(value, str) or not value.strip():
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"{name} must be a non-empty string, not {value!r}",
+            )
+        return value
+
+    @staticmethod
+    def _required_revision(value):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RegistrationError(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"revision must be a non-negative integer, not {value!r}",
+            )
+        return value
+
+    @staticmethod
+    def _reservation_record(row) -> dict:
+        return {
+            "request_id": row["request_id"],
+            "issue_key": row["issue_key"],
+            "request_fingerprint": row["request_fingerprint"],
+            "fingerprint_version": row["fingerprint_version"],
+            "workspace": row["workspace"],
+            "marker_root": row["marker_root"],
+            "socket_identity": row["socket_identity"],
+            "create_request_id": row["create_request_id"],
+            "dispatch_request_id": row["dispatch_request_id"],
+            "state": row["state"],
+            "revision": row["revision"],
+            "child_task_id": row["child_task_id"],
+            "standby_turn_id": row["standby_turn_id"],
+            "relationship_id": row["relationship_id"],
+            "execution_generation": row["execution_generation"],
+            "receipt_status": row["receipt_status"],
+            "release_reason": row["release_reason"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
 
     # ---------------------------------------------------------------- records
 
@@ -1115,7 +1664,8 @@ CLEAR_EXCEPTION = _ClearException()
 
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                     role: str | None = None,
-                    exception: "str | _ClearException | None" = None) -> dict:
+                    exception: "str | _ClearException | None" = None,
+                    ensure_only: bool = False) -> dict:
     """Record the execution settings a task was actually created with.
 
     This is the interface JUN-92 populates from the creation result Run already receives. It
@@ -1154,6 +1704,7 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
     candidate.require_usable()
     from . import rolepolicy
 
+    ensured = None
     with store.transaction() as db:
         # ------------------------------------------------------------------ role policy
         # Read and compared INSIDE the write transaction. Deciding first and writing after left
@@ -1214,14 +1765,36 @@ def record_settings(store, clock, task_id: str, settings: dict, *, source: str,
                     RefusalReason(finding["code"]), finding["detail"]
                 )
         payload = json.dumps(settings, sort_keys=True)
-        db.execute(
-            "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
-            " VALUES (?,?,?,?)"
-            " ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings,"
-            "   source = excluded.source, recorded_at = excluded.recorded_at",
-            (task_id, payload, source, clock.iso()),
-        )
-        store.journal("settings_recorded", task_id, {"source": source}, at=clock.iso())
+        if ensure_only and existing is not None:
+            # Compared after every carried field has been applied, still inside the
+            # transaction that read the row. A recovery must not overwrite an operator
+            # update that landed first; an equal record is the existing one and is not
+            # rewritten or journalled again.
+            if json.loads(existing["settings"]) != json.loads(payload):
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"{task_id!r} already has execution settings that differ from this "
+                    "record; ensure_only does not overwrite them",
+                )
+            retained_source = db.execute(
+                "SELECT source FROM authorized_settings WHERE task_id = ?", (task_id,)
+            ).fetchone()["source"]
+            ensured = {
+                "taskId": task_id,
+                "source": retained_source,
+                "settings": json.loads(existing["settings"]),
+            }
+        else:
+            db.execute(
+                "INSERT INTO authorized_settings (task_id, settings, source, recorded_at)"
+                " VALUES (?,?,?,?)"
+                " ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings,"
+                "   source = excluded.source, recorded_at = excluded.recorded_at",
+                (task_id, payload, source, clock.iso()),
+            )
+            store.journal("settings_recorded", task_id, {"source": source}, at=clock.iso())
+    if ensured is not None:
+        return ensured
     return {"taskId": task_id, "source": source, "settings": settings}
 
 

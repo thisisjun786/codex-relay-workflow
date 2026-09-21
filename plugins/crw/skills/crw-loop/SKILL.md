@@ -57,7 +57,11 @@ silent fallback to direct, and direct sends are never counted as relay completio
 
 The parent's native goal tracks verified results and integrations for the agreed
 scope. It has no CXC implementation goalplan/FSM and needs no source diff in the
-parent checkout. Children retain their effective workflow, normally CXC Loop. Load
+parent checkout. A goal is not what makes the role: the parent is the task bound to
+the project ID under
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+so opening or closing one changes what wakes this task rather than which level it is.
+Children retain their effective workflow, normally CXC Loop. Load
 CXC development skills for development/review work as applicable.
 
 The goal lifecycle reference owns preflight, create/reuse, blocked recovery and
