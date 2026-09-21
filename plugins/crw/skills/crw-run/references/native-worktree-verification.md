@@ -65,6 +65,16 @@ association. When `projectId` reads null for every thread on a host, including t
 created directly in the desktop app, that field proves nothing in either direction
 and the grouping question must be settled on the client.
 
+The git metadata stored on the thread record is a fifth identifier, and it is not
+authoritative. Measured on this host on 2026-09-22, across 372 unarchived threads whose
+working directory is a worktree of one repository: 314 carry the branch the checkout is
+really on, 53 carry an empty branch, and 5 carry something that is not a branch at all -
+a file path, `HEAD`, or a raw short sha - while git in that same worktree reports the
+correct branch. Read the branch from the checkout, not from the thread record, and when
+a client feature keys on that stored branch, say so: it inherits this unreliability, and
+for those threads it will find nothing or the wrong thing no matter how the feature is
+configured.
+
 ## Probe procedure
 
 Run against a disposable fixture repository, never a real checkout.
