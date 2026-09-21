@@ -52,6 +52,90 @@ class Schema(RelayTestCase):
         self.assertEqual(os.stat(self.store.path).st_mode & 0o777, 0o600)
 
 
+class Composing(RelayTestCase):
+    """Several existing writers, one transaction, and only where somebody asked for it."""
+
+    def journal(self, db, kind):
+        db.execute("INSERT INTO journal (at,kind,subject,detail) VALUES ('t',?,'s','d')", (kind,))
+
+    def kinds(self):
+        return [row["kind"] for row in self.store.all("SELECT kind FROM journal")]
+
+    def durable_kinds(self):
+        """What a SECOND connection can see, which is the only reading of "committed".
+
+        Asked through its own read-only connection because store.db sees its own uncommitted
+        writes: reading the claim back through the connection that wrote it would pass whether
+        or not anything was committed, which is the opposite of what these cases assert. WAL
+        is on (Store.__init__), so this reader is not blocked by the open write transaction.
+        """
+        import sqlite3
+
+        reader = sqlite3.connect(f"{Path(self.store.path).as_uri()}?mode=ro", uri=True, timeout=5)
+        try:
+            return [row[0] for row in reader.execute("SELECT kind FROM journal")]
+        finally:
+            reader.close()
+
+    def test_a_joined_scope_commits_nothing_of_its_own(self):
+        """The inner writer thinks it committed; nothing is durable until the opener says so."""
+        with self.store.composing():
+            with self.store.transaction() as db:
+                self.journal(db, "inner")
+            # Still inside the composed transaction. The inner scope's exit committed nothing,
+            # which is the whole point, and a reader outside this connection proves it.
+            self.assertTrue(self.store.in_transaction)
+            self.assertEqual(
+                self.durable_kinds(), [],
+                "the joined scope committed on its own, so composing() is not composing",
+            )
+        self.assertEqual(self.kinds(), ["inner"])
+        self.assertEqual(self.durable_kinds(), ["inner"])
+
+    def test_a_raise_inside_a_joined_scope_rolls_back_what_the_opener_wrote(self):
+        with self.assertRaises(RuntimeError):
+            with self.store.composing() as outer:
+                self.journal(outer, "opener")
+                with self.store.transaction() as db:
+                    self.journal(db, "inner")
+                    raise RuntimeError("interrupted mid-write")
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.durable_kinds(), [])
+        self.assertFalse(self.store.in_transaction)
+
+    def test_nesting_without_composing_is_still_the_error_it_always_was(self):
+        """Joining is a deliberate act. Accidental nesting must not quietly become one.
+
+        This is what keeps D1's cost bounded: every existing caller that opens a transaction
+        inside a transaction still fails loudly rather than silently handing its writes to a
+        scope that may roll them back.
+        """
+        import sqlite3
+
+        with self.assertRaises(sqlite3.OperationalError):
+            with self.store.transaction():
+                with self.store.transaction():
+                    pass
+        self.assertFalse(self.store.in_transaction)
+        # And the store is still usable afterwards, so the loud failure is a refusal rather
+        # than a connection left in a state nothing can write through.
+        with self.store.transaction() as db:
+            self.journal(db, "after")
+        self.assertEqual(self.durable_kinds(), ["after"])
+
+    def test_the_composing_counter_is_released_when_the_body_raises(self):
+        """A failed composition must not leave the store willing to join forever after."""
+        import sqlite3
+
+        with self.assertRaises(RuntimeError):
+            with self.store.composing():
+                raise RuntimeError("interrupted mid-write")
+        with self.assertRaises(sqlite3.OperationalError):
+            with self.store.transaction():
+                with self.store.transaction():
+                    pass
+
+
 class Atomicity(RelayTestCase):
     def test_an_exception_inside_a_transaction_leaves_no_partial_row(self):
         try:

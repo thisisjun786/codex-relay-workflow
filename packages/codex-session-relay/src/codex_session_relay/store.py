@@ -1298,6 +1298,9 @@ class Store:
             )
         # Tests set this to prove a transition rolls back; nothing in production assigns it.
         self.fault_hook = None
+        # How many composing() scopes are open. Zero is the ordinary store, where opening a
+        # transaction inside a transaction is the mistake it has always been.
+        self._composing = 0
 
     # ------------------------------------------------------------------ identity
 
@@ -1361,7 +1364,20 @@ class Store:
 
     @contextmanager
     def transaction(self):
-        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record."""
+        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record.
+
+        Inside a composing() scope this JOINS the transaction that scope opened instead of
+        opening one of its own: it yields the same connection and leaves the commit, the
+        rollback and the fault hook to the opener. Everywhere else it is what it was, and
+        that includes opening a transaction inside a transaction, which SQLite refuses on one
+        connection and which stays an error here rather than becoming a silent join. The
+        difference matters because joining changes what a failure costs -- a joined scope that
+        raises leaves its writes in somebody else's transaction, and a refusal raised through
+        one takes any evidence it wrote down with it. See composing().
+        """
+        if self._composing and self.db.in_transaction:
+            yield self.db
+            return
         self.db.execute("BEGIN IMMEDIATE")
         try:
             yield self.db
@@ -1375,6 +1391,42 @@ class Store:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
+
+    @contextmanager
+    def composing(self):
+        """Make every transaction opened inside this block ONE transaction.
+
+        For a command that is one fact written by several existing writers. cmd_register is
+        the first: it holds the relationship and the execution settings a later send has to
+        preserve, and writing them separately left an interval in which a worker dying
+        between the two commits published a live assignment for a task whose settings nobody
+        had recorded. Neither writer has to know it was composed, which is what keeps
+        registry.register's contract exactly where CRW-127 left it.
+
+        Deliberate, not automatic. Outside this block a nested transaction still raises, so
+        the composition is a named act somebody chose rather than a property the store
+        quietly acquired.
+
+        The counter is released before the transaction ends, so a caller reading
+        in_transaction from the except branch around this block sees the rollback finished
+        and can write what had to outlive it.
+        """
+        with self.transaction() as db:
+            self._composing += 1
+            try:
+                yield db
+            finally:
+                self._composing -= 1
+
+    @property
+    def in_transaction(self) -> bool:
+        """Is a transaction open on this store's connection right now?
+
+        Asked by a writer deciding whether what it just wrote is durable. Inside a composed
+        registration the answer is yes and the write belongs to somebody else's transaction;
+        after that transaction ends the answer is no.
+        """
+        return self.db.in_transaction
 
     def journal(self, kind: str, subject: str = "", detail="", *, at: str = "") -> None:
         self.db.execute(
