@@ -339,6 +339,58 @@ cannot apply is settled before the task exists instead.
 [Dispatch verification](dispatch-verification.md) holds what each field establishes, what
 it does not, and the classes a missing loop falls into.
 
+### The typed form these fields travel in
+
+The sections above say what an assignment, a correction and a return have to contain. What
+makes that checkable rather than habitual is `relay-packet/1`, defined in the package's own
+`docs/packets.md` and read there rather than restated here, exactly as `relay-envelope/1`
+is. It sits on that same identification region and adds
+the part the envelope deliberately does not know: which typed data a particular occasion
+cannot do without.
+
+Eleven occasions, where there used to be two words. Downward: assignment, revision request,
+resume, receipt confirmation, acceptance, integration result. Upward: completion, review
+ready, blocked, decision request, progress. Each declares its own required data, and a packet
+missing any of it is refused by field name rather than accepted and discovered three rounds
+later. Two of the declarations are restraints rather than requirements and both matter here:
+an assignment does not carry a generation, because a child this dispatch is creating has no
+registration until creation returns its task id; and a progress note carries no artifact,
+because demanding a head from a child with nothing to show is how a plausible one gets
+invented.
+
+A resume is the opposite case. It must state the effective workflow, because model, effort,
+sandbox and approval travel as settings a receipt reads back and the workflow has no
+transport field at all - so a resume that omits it has dropped it, not deferred it. The relay
+refuses a restore section that states anything else and not that.
+
+**What a receiver does with one.** It compares the packet against the record it read for
+itself and gets one of three answers. Accepted, where every field the record could answer
+agreed. Refused, naming the field and both values: another parent, another child, another
+relationship, a superseded link revision, a stale generation, an old criteria digest, a head
+that moved, or a model and effort pair the record holds as refused for this role. Or
+unavailable, where the record could not answer at all - which is neither of the other two,
+because a receiver that could not check something has not checked it, and treating that as
+acceptance is how an unverifiable instruction becomes an applied one.
+
+A correction arriving twice is answered once. The key is the message id together with a
+digest of what the packet actually asks for, so a repeat gets the disposition it already got,
+while one id asking for something different is raised as a collision rather than given the
+earlier answer.
+
+**Seven states, kept apart.** A message read, a send the transport accepted, a relay
+acknowledgement, a criteria verdict, the parent's acceptance, the merge landing and the
+Linear record reaching Done are seven facts with seven different records behind them, and
+`read` has no record at all - nothing in the relay says a recipient read anything. A model
+writing that it has reported is prose and promotes nothing. The packet document holds which
+record answers each, and a state standing above one that is not held is reported as the
+promotion it is.
+
+**Activation is three fields.** The invocation being in the assignment, the child having
+armed it, and a host goal being active are separate facts produced by separate parties, and
+the packet carries them separately so a mode with no evidence reads unverified rather than
+failed. A coordination parent and an authorized non-Loop assignment answer not applicable for
+the loop field by design, and neither is a finding.
+
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.

@@ -105,6 +105,28 @@ about application or execution. Judge L5 from the goal and goalplan identifiers,
 phase and completion evidence the child returns, which
 [Launch packet](task-packet.md#launch-packet) already requires it to report.
 
+## The record form of that separation
+
+The four verdicts and the seven classes above are read by a person. The same separation has a
+record form in `relay-packet/1`, which carries activation as three fields rather than one:
+whether the invocation was in the assignment, whether the child's own binding and goalplan
+answer, and whether a host goal is active. Each names the record that answered it, and an
+answer with no record behind it is `unverified` rather than absent - which is the same
+caution this file states above, that a single negative reading is L6 and not L1.
+
+The mode decides which of the three can answer at all. A coordination parent holds a native
+goal and persists no implementation FSM by design, and an authorized non-Loop assignment arms
+neither, so both answer `not_applicable` for the activation field and classify as L5. That
+is what stops the L3 misreading in the second direction: reading a parent's normal state as
+an unarmed child.
+
+The classes are derived in the order this file gives them. What cannot change afterwards is
+read first - a prompt with no invocation is L0 whatever happens later, and a recorded refusal
+is L2 the same way - and the negative readings are consulted only after that, with L6 as the
+answer when nothing distinguishes them yet. The details live with the package, in its own
+`docs/packets.md`, and are read there when changing the relay rather than when running an
+assignment.
+
 ## Recorded cases
 
 The nineteen cases below were decided against the JUN-99 delivery at
