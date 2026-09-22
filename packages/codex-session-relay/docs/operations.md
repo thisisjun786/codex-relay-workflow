@@ -41,9 +41,11 @@ refuses rather than guesses. Creating a store on a guess is the one outcome that
 undone by a later command: once a canonical database exists it wins every later resolution,
 and the assignments in whatever it hid become unreachable without knowing they exist.
 
-Three refusals cover it. All three are decided before the command runs, so a command that
-opens no store — `service status`, for instance — is refused on the same evidence as one
-that would create a database.
+Three refusals cover it. All but one command decide them before that command runs, so a command
+that opens no store — `service status`, for instance — is refused on the same evidence as one
+that would create a database. The exception is `guard-evaluate`, which cannot be answered that
+early and carries the same question to the point where the selection would be used; the
+exemptions below own it.
 
 | Reason | When | What it means |
 |---|---|---|
@@ -89,6 +91,52 @@ is how the candidates are found in the first place, and `ack-proof` derives a va
 own two arguments and opens no store. Exempt from these guards is not the same as never
 refusing — `doctor` still exits non-zero when a same-store comparison it was asked to make
 comes back unproven or mismatched.
+
+The nine marker commands are exempt too, for a third reason: the managed marker exists so that a
+Stop hook can answer without asking the relay anything, and legacy state nobody is using must not
+be able to switch that hook off. Two of them do reach a store and are exempt only conditionally.
+`intent-declare` RECORDS the resolved path into the intent for the hook to read later, so it
+stays guarded unless `--no-db-path` says to record none, and `intent-register` confirms the
+relationship against a store, so it is exempt only when `--db-path` names which one.
+
+`guard-evaluate` is the third conditional one, and its condition is settled later than any of
+these. It reads receipts from the first of three sources that answers: `--db-path`, then the
+`dbPath` the coordinator recorded in the intent, then its own resolution. The first two are
+selections somebody made, one explicit and one durable, and neither depends on discovery, so an
+ambiguity in discovery is genuinely unrelated to them and the hook goes on classifying and
+recording. The third is not a selection; it is a guess about somebody else's choice. That
+question cannot be settled on the command line, because whether the coordinator recorded a path
+is a fact in a marker the command has not read yet — the workspace it belongs to arrives inside
+the Stop payload, on stdin. So the refusal is not skipped for this command, it is deferred: it is
+asked again where that third source would be used, and only if execution gets there. A turn
+released on the child's own declaration never opens a store and is never refused, and neither is
+a readiness with no registered relationship, because there is nothing to look a receipt up by. A
+Stop that would otherwise be judged against a store nobody selected is refused, with the
+candidates and the recovery commands, and the payload says in `stopNotJudged` that the Stop was
+neither classified nor recorded.
+
+The two halves of that refusal are not worth the same. The different-socket half removes a wrong
+answer: that store exists and opens, its rows belong to another installation, and a relationship
+missing from it reads as `receipt_missing`, which holds a child that has finished.
+
+It speaks only when the caller names a socket, because a store's provenance IS a socket and the
+comparison needs one to compare against. So the Stop hook's settings carry `socketPath`, and both
+adapter copies pass it as the global `--socket` option ahead of the subcommand. The field is
+optional: requiring it would make every document written before it existed malformed, and a Stop
+whose settings cannot be acted on releases in silence, which is a worse failure than the one this
+closes. A host that configures no socket therefore keeps exactly what it had — nothing is compared,
+and an inherited `CODEX_SESSION_RELAY_STATE` reaching another installation's store is read as
+though it were this one's. Configure it on any host where more than one installation exists.
+
+The ambiguous and unidentified halves do not remove a wrong answer either, today. Those selections
+are returned only when no canonical database is there yet, so the fallback names a file nothing can
+open, and the guard already answers `state_unreadable` and releases. For them the refusal trades a
+recorded release for a diagnosis: the candidate stores and the commands that tell them apart,
+instead of "receipts unreadable". Giving up the marker observation for that Stop is the cost, and
+it is the reason this boundary is written down here rather than left to the code.
+
+Neither half holds anything. A hook adapter reads an exit of 2 carrying the relay's own error
+record as the relay refusing a request it understood, prints no decision, and lets the turn end.
 
 Status: implemented. `resolve_state_dir` carries the candidates on the selection and the
 command line refuses on them, naming the candidates and the database it would otherwise have
