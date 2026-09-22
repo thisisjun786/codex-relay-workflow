@@ -790,3 +790,83 @@ class WhichTurnAnsweredCanBeUnknown(ChannelTestCase):
         self.store.db.commit()
         answer = self.read_back(message_id, record["turnId"])
         self.assertEqual(answer["turnOrigin"], channel_module.ORIGIN_UNKNOWN)
+
+
+class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
+    """Four findings against the pushed head, each pinned by the case that would catch it."""
+
+    def rate_row(self, sends, now):
+        window = int(now // 3600) * 3600
+        self.store.db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,?,NULL) ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
+            " sends = excluded.sends, last_send_at = NULL",
+            (SUPERVISOR, window, sends))
+        self.store.db.commit()
+
+    def test_the_hourly_bound_is_enforced_where_the_counter_moves(self):
+        """_rate_limited runs before the host reads, so it is a preflight two callers pass."""
+        _one, message_id = self.staged()
+        now = self.clock.now()
+        cap = self.channel.policy.max_sends_per_recipient_per_hour
+        self.rate_row(cap, now)
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(message_id, now=now, owner="a racing caller",
+                                recipient=SUPERVISOR)
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED,
+                         "the claim rolled back, so nothing was spent")
+
+    def test_the_last_send_inside_the_bound_is_still_allowed(self):
+        _one, message_id = self.staged()
+        now = self.clock.now()
+        self.rate_row(self.channel.policy.max_sends_per_recipient_per_hour - 1, now)
+        attempt_no, request_id, _message = self.channel._claim(
+            message_id, now=now, owner="the last one in", recipient=SUPERVISOR)
+        self.assertEqual(attempt_no, 1)
+        self.assertTrue(request_id)
+
+    def test_an_older_send_in_flight_holds_the_one_behind_it(self):
+        """The moment ordering matters most is while the older message is being sent."""
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.channel._claim(first, now=self.clock.now(), owner="in flight",
+                            recipient=SUPERVISOR)
+        self.assertEqual(self.channel.get(first)["state"], "sending")
+        refusal = self.assertRefused(
+            RefusalReason.NOT_CLAIMABLE, self.channel.attempt, second, self.adapter)
+        self.assertIn(first, refusal.detail)
+
+    def test_a_stranded_older_send_does_not_hold_it_for_ever(self):
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.channel._claim(first, now=self.clock.now(), owner="a worker that died",
+                            recipient=SUPERVISOR)
+        expired = self.channel.get(first)["lease_until"] + 1
+        self.assertIsNotNone(self.channel.attempt(second, self.adapter, now=expired))
+
+    def test_a_read_turn_past_the_listing_bound_still_verifies(self):
+        """The listing is the last 25 turns, and a recipient takes turns of its own."""
+        _one, message_id, record = self.delivered()
+        for _ in range(30):
+            self.adapter.start_turn(SUPERVISOR, status="completed")
+        self.assertNotIn(record["turnId"], self.adapter.list_turn_ids(SUPERVISOR, limit=25))
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+
+    def test_a_turn_the_send_steered_rather_than_opened_does_not_verify(self):
+        """A send can steer an EXISTING turn, and that turn predates the message."""
+        existing = self.adapter.start_turn(SUPERVISOR, status="inProgress")
+        self.clock.advance(600)
+        _one, message_id = self.staged()
+        self.adapter.script("steer_existing")
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["turnId"], existing.turn_id,
+                         "the transport reports the turn it steered, not a new one")
+        answer = self.read_back(message_id, existing.turn_id)
+        self.assertEqual(answer["verified"], channel_module.TURN_PREDATES_SEND)
+        self.assertEqual(answer["turnOrigin"], channel_module.RELAY_OPENED,
+                         "the attempt names it, which is exactly why it cannot be exempt")
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)

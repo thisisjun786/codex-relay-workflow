@@ -82,10 +82,11 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    supervisor, a report can wait behind parent-child traffic to that same task. The transport
    lock is shared in the same way within one adapter worker, which is where it lives; it is
    not a process-wide or durable lock.
-4. Within one recipient the oldest CURRENTLY CLAIMABLE message is claimed first. That is
-   weaker than arrival order and deliberately so: an older message that is held or still
-   inside its backoff does not block the one behind it, because a permanently held report
-   would otherwise stop a project reporting anything at all.
+4. Within one recipient the oldest claimable message is claimed first, and an older message
+   that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
+   It is still weaker than arrival order, deliberately: an older message that is held, inside
+   its backoff, or stranded with an expired lease does not block the one behind it, because a
+   permanently held report would otherwise stop a project reporting anything at all.
 
 ### Durable staging
 
@@ -113,11 +114,15 @@ A verified readback says exactly three things, in these words:
   id. Not the frozen message, which is never compared; not necessarily in the turn that
   answered, which is never correlated. What it is good for is that it does not come from our
   own send receipt.
-- the host lists the named turn on the recipient's thread, that turn can be read, and it
-  carries a start time.
-- the named turn is not CERTAINLY earlier than the send. The turn this send opened skips that
-  comparison entirely, and for any other turn only a start that precedes the send by more than
-  the host's timestamp precision is refused.
+- the host can read the named turn on the recipient's thread and it carries a start time. The
+  read is thread-scoped, so it establishes membership as well as existence; asking a bounded
+  LISTING first would have answered `turn_not_found` for a real turn a busy recipient had
+  pushed off the end of it.
+- the named turn is not CERTAINLY earlier than the send - a start that precedes it by more
+  than the host's timestamp precision is refused. This applies to every candidate, including
+  the turn the attempt reports having opened, because a send can STEER an existing turn rather
+  than open one: that turn predates the message, and exempting it let it verify a readback for
+  a message it could not have been opened by.
 
 It does not say who wrote the answer, that the turn answered anything, or that the supervisor
 acted. The turn a send opens is one the sender already knows the id of, so a readback from that

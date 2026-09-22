@@ -933,9 +933,10 @@ so quoting the message back does not produce it. That is the whole of what it ru
 nothing authenticates the caller and nothing establishes that the named turn produced it.
 
 A verified readback says a bounded scan of at most 200 of the recipient's items found that
-attempt's request id, and that the host lists the named turn on the recipient's thread, that
-the turn can be read, and that it carries a start time which is not CERTAINLY earlier than the
-send - a comparison the turn the send itself opened skips. It does not say the turn answered,
+attempt's request id, and that the host can read the named turn on the recipient's thread and
+it carries a start time which is not CERTAINLY earlier than the send. That comparison applies
+to every candidate, including the turn the attempt names, because a send can steer an existing
+turn rather than open one. It does not say the turn answered,
 who wrote the answer, or that anybody acted, and it discharges nothing: the obligation stands
 until Linear confirms. Nothing here is automatic - there is no daemon behind these commands, so
 a report is expected to go out inside the parent's own turn, which is an instruction to the

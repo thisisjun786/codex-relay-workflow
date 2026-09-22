@@ -557,12 +557,17 @@ class SupervisorChannel:
         return self.store.one(
             "SELECT * FROM supervisor_messages"
             " WHERE recipient_task_id = ? AND message_id <> ?"
-            "   AND state IN (?,?,?) AND hold_reason IS NULL"
-            "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
+            # SENDING is in the set, because an older message IN FLIGHT is exactly when order
+            # matters: letting a newer one past it is how the level above learns the second
+            # fact first. A stranded row is excluded by its expired lease, so a worker that
+            # died cannot block the queue behind it for ever.
+            "   AND ((state IN (?,?,?) AND hold_reason IS NULL"
+            "         AND (next_eligible_at IS NULL OR next_eligible_at <= ?))"
+            "        OR (state = ? AND lease_until IS NOT NULL AND lease_until > ?))"
             "   AND (staged_at < ? OR (staged_at = ? AND message_id < ?))"
             " ORDER BY staged_at, message_id LIMIT 1",
             (row["recipient_task_id"], row["message_id"], QUEUED, DEFERRED_BUSY,
-             WITHHELD_PRE_SEND, now, row["staged_at"], row["staged_at"],
+             WITHHELD_PRE_SEND, now, SENDING, now, row["staged_at"], row["staged_at"],
              row["message_id"]))
 
     def _settings_for(self, task_id, runtime_status=None):
@@ -595,17 +600,20 @@ class SupervisorChannel:
                 "                    WHERE older.recipient_task_id ="
                 "                          supervisor_messages.recipient_task_id"
                 "                      AND older.message_id <> supervisor_messages.message_id"
-                "                      AND older.state IN (?,?,?)"
-                "                      AND older.hold_reason IS NULL"
-                "                      AND (older.next_eligible_at IS NULL"
-                "                           OR older.next_eligible_at <= ?)"
+                "                      AND ((older.state IN (?,?,?)"
+                "                            AND older.hold_reason IS NULL"
+                "                            AND (older.next_eligible_at IS NULL"
+                "                                 OR older.next_eligible_at <= ?))"
+                "                           OR (older.state = ?"
+                "                               AND older.lease_until IS NOT NULL"
+                "                               AND older.lease_until > ?))"
                 "                      AND (older.staged_at < supervisor_messages.staged_at"
                 "                           OR (older.staged_at = supervisor_messages.staged_at"
                 "                               AND older.message_id <"
                 "                                   supervisor_messages.message_id)))",
                 (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                  message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
-                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now),
             )
             if cursor.rowcount != 1:
                 raise _NotClaimable()
@@ -631,6 +639,16 @@ class SupervisorChannel:
             # mean a report can wait behind parent-child traffic to a task that is both a
             # parent and a supervisor. That is the intended trade, said out loud.
             self._count_send(db, recipient, now)
+            # Re-read AFTER the increment, inside the same transaction. _rate_limited runs
+            # before the host reads and is therefore a preflight: two callers can both pass
+            # it, both increment, and the recipient is woken past its own bound. The counter
+            # is the thing that knows, so it is asked once it has been moved.
+            window = int(now // 3600) * 3600
+            used = db.execute(
+                "SELECT sends FROM recipient_rate WHERE recipient_task_id = ?"
+                "   AND window_start = ?", (recipient, window)).fetchone()
+            if used and used["sends"] > self.policy.max_sends_per_recipient_per_hour:
+                raise _NotClaimable()
         return attempt_no, request_id, message
 
     def _settle(self, row, request_id, facts, record, now) -> None:
@@ -874,13 +892,12 @@ class SupervisorChannel:
         if adapter is None:
             return NO_HOST, ("no host adapter in this process, so whether this turn is real was"
                              " not established"), origin
-        try:
-            turns = set(adapter.list_turn_ids(recipient, limit=25))
-        except Exception as error:  # noqa: BLE001 - an unreadable host is not a verification
-            return NO_HOST, "the host turn list could not be read: " + str(error), origin
-        if read_turn_id not in turns:
-            return TURN_NOT_FOUND, ("the host does not list this turn on the recipient's"
-                                    " thread, so nothing says it exists"), origin
+        # read_turn is asked directly rather than checking a listing first. The listing is
+        # bounded - the last 25 turns - so a recipient that has taken a few turns since being
+        # woken pushes a perfectly real read turn off the end of it, and the readback came
+        # back turn_not_found for a turn the host would have handed over on request. The read
+        # is scoped to this thread, so it establishes existence AND membership in one answer,
+        # and a bound cannot make a real turn disappear.
         try:
             turn = adapter.read_turn(recipient, read_turn_id)
         except Exception as error:  # noqa: BLE001
@@ -890,7 +907,12 @@ class SupervisorChannel:
         if turn.started_at is None:
             return NO_HOST, ("the host did not say when this turn began, and an unknown"
                              " chronology is not a verification"), origin
-        if attempt is not None and origin != RELAY_OPENED and certainly_before(
+        # Applied to EVERY candidate, including the turn the send reports having opened. That
+        # turn is not always a new one: the transport can steer an existing turn, and the
+        # delivery path keeps a whole flag for that case, so exempting it let a turn that
+        # predates the message verify a readback for the message. The precision allowance in
+        # certainly_before already covers a turn genuinely started by this send.
+        if attempt is not None and certainly_before(
                 turn.started_at, attempt["sent_at"] or attempt["observed_at"]):
             return TURN_PREDATES_SEND, ("this turn began before the send, so it cannot be the"
                                         " turn that read it"), origin
