@@ -198,9 +198,17 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
 
     Returns (receipt, readable). readable False means we could not look, which is never the same
     answer as there is nothing there.
+
+    db_path may be a resolver called with no arguments, and it is called HERE rather than by the
+    caller, after the identity gate below. That gate answers without a store at all, so a caller
+    that resolved first would pay for - and, if its resolver refuses an unselected store, refuse
+    over - a database this lookup was never going to open. One rule, in the one place that knows
+    whether the read happens.
     """
     if not (named(relationship_id) and named(session_id) and named(turn_id)):
         return None, True
+    if callable(db_path):
+        db_path = db_path()
     if not db_path:
         # We were never told where the store is, so we cannot look. Reported as unreadable rather
         # than as an absent receipt, because the difference between those two answers is a hold.
@@ -867,9 +875,9 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
     explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
     that registered the relationship and knows where its store lives; then default_db_path, the
     caller's own resolution, which is only a guess about somebody else's choice. That third source
-    may be a path or a resolver called with no arguments, and the resolver is consulted only when
-    the first two said nothing: it is how a caller gets to refuse a guess at the moment it would
-    actually be used, rather than before this Stop was read.
+    may be a path or a resolver called with no arguments; lookup_receipt calls it, after the
+    identity gate that can answer without any store. That is how a caller gets to refuse a guess at
+    the moment it would actually be read, rather than before this Stop was read.
     """
     workspace = stop.get("cwd")
     session_id, turn_id = stop.get("session_id"), stop.get("turn_id")
@@ -912,15 +920,8 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
                 if isinstance(marker_facts.get("intent"), dict)
                 else None
             )
-            chosen = db_path or recorded
-            if not chosen:
-                # Only here, and only now. A Stop released on the child's own declaration never
-                # reaches this line, and neither does one whose store was named or recorded, so
-                # neither pays for a question about a selection it is not using. The resolver may
-                # raise StoreNotSelected, which travels to the caller intact.
-                chosen = default_db_path() if callable(default_db_path) else default_db_path
             receipt, readable = lookup_receipt(
-                chosen,
+                db_path or recorded or default_db_path,
                 relationship_id=registered.get("relationshipId"),
                 session_id=session_id,
                 turn_id=turn_id,

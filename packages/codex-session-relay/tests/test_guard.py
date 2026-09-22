@@ -1800,6 +1800,33 @@ class TheLastStoreSourceIsAskedForOnlyWhenNothingElseAnswered(GuardTestCase):
         self.assertEqual(verdict["observation"], "receipt_missing")
         self.assertEqual(self.asked, 1)
 
+    def test_a_relationship_that_names_nobody_is_answered_without_asking(self):
+        """A readiness can declare itself with nothing to look a receipt up BY.
+
+        A relationship fact that exists but names no relationshipId has registered nothing, and
+        lookup_receipt's identity gate answers that without a store. Resolving the last source
+        before reaching that gate refused this marker over a database nobody was going to open,
+        which turned a repairable registration into a store-selection question. Reported by review
+        on PR #129 at the shape rather than at the case, which is why it is pinned here.
+
+        register_relationship refuses this shape at the writer, so it is published directly: the
+        file is what gets judged, and the marker subtree is writable by whoever publishes into it.
+        """
+        self.register()
+        self.declare(db_path=None)
+        self.claim()
+        self.bind()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": "", "dispatchRequestId": DISPATCH, "at": NOW},
+        )
+        self.dispose("ready_for_review")
+        verdict = self.decide(default_db_path=self.resolver())
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(self.asked, 0)
+
     def test_its_refusal_reaches_the_caller_instead_of_becoming_a_guard_fault(self):
         """The envelope turns everything into guard_faulted, and this must not be everything.
 
