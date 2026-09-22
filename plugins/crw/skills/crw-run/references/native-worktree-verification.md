@@ -530,6 +530,25 @@ four consecutive creations produced four surviving checkouts, and
 landed under the Codex home root. Neither key was set in the host configuration either.
 So the limit was not merely unobserved, it was absent from the path under test, and the
 trigger cannot be exercised from here. Close this condition on the surface that owns
+
+A second round on 2026-09-22 closed the remaining doubt about `archive` and tightened
+this wording, on the same isolated home. The first round's `archive` had not
+necessarily run with the worktrees feature enabled, which would have made its result a
+statement about a disabled feature rather than about retention. Re-run as
+`codex --enable worktrees archive <id>` it behaved identically: the thread's archived
+flag went from 0 to 1 while the checkout, the worktrees directory count and the git
+registration were all unchanged. One further creation with
+`desktop.worktree-keep-count=1` and `desktop.worktree-auto-cleanup-enabled=true` set for
+that invocation took the home from twelve checkouts to thirteen, and archiving that new
+checkout under the same overrides left all thirteen and its registration in place. With
+a keep count of one and thirteen checkouts present, an applied policy had every
+opportunity to trim and trimmed nothing.
+
+For the command-line surface, then, the recent-count condition is no longer merely
+unobserved. Those `desktop.` keys are accepted and validated but never applied on this
+path, and `archive` is a thread-record operation whatever the feature flag says. Record
+that as unreachable from this surface rather than unverified. The desktop surface owns
+the documented policy, is still unverified, and none of this transfers to it.
 those settings, and record the effective limit and any exemption state next to the
 result, as the table above requires.
 
