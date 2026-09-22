@@ -1,0 +1,62 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "claim_uncorrelated",
+    "record": {
+      "claimEvidence": "claim_dispatch_unnamed",
+      "held": false,
+      "pendingObservation": "undeclared_turn_end"
+    },
+    "state": "claim_uncorrelated"
+  },
+  "note": "A preimage UTF-8 has no encoding for. A lone surrogate is a string, so the shape check passes it and the hash then raises; read straight through, one such value in one stale claim ends the selection walk in a traceback and the turn in guard_faulted, which switches detection off for the whole workspace on account of an assignment nobody is using. A preimage that cannot be encoded names nothing, which is the answer a blank one already gets.",
+  "observation": {
+    "assignment": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+    "disposition": null,
+    "marker": {
+      "attempts": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "outcome": "accepted",
+          "taskId": "task-1111"
+        }
+      ],
+      "bound": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "sessionId": "session-1111",
+        "taskId": "task-1111"
+      },
+      "claims": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "dispatchRequestId": "\ud800",
+          "factId": "claims/session-1111/claim.json",
+          "firstTurnId": "turn-0001",
+          "sessionId": "session-1111"
+        }
+      ],
+      "intent": {
+        "declaredAt": "2026-01-01T00:00:00+00:00",
+        "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+        "issue": "JUN-000",
+        "workspace": "/workspace/example"
+      },
+      "relationship": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "relationshipId": "rel-example"
+      }
+    },
+    "now": "2026-01-01T00:06:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    }
+  }
+}

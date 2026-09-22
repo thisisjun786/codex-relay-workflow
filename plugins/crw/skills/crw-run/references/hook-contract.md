@@ -42,7 +42,7 @@ because that is the form the rule gets violated in: `None == None` is not eviden
 | -- | -- |
 | A turn disposition against the current turn | The disposition is not this turn's, so this turn declared nothing and reads `undeclared_turn_end` |
 | A readiness receipt against the current turn and the selected assignment | The receipt is unmatched, so readiness stands unreceipted |
-| A claim against the session being judged | The claim names no verified owner, so it selects no assignment |
+| A claim against the session being judged | The claim names no verified owner, so it selects no assignment. A claim whose `dispatchRequestId` names nothing correlates with no assignment either, so after a bind it reads `claim_uncorrelated` and the turn is released |
 | A bind record against the session being judged | Nothing can be shown to be the bound child, so the state is `bound_identity_unnamed` and the turn is released, never held |
 
 The disposition comparison is the load-bearing one because it is upstream. A disposition admitted on
@@ -160,15 +160,60 @@ session's own claim is there, its turns read `marker_unclaimed` and are released
 says who the coordinator believes the child is; the claim is the session saying so itself, and a turn
 is only ever held against a session that has said it.
 
-The pre-bind window is not blind. A correlated session whose bind has not landed reads as
-`correlated_unbound`: released, never held, but its hook still records the turn's observation. When
-the bind lands, the coordinator folds those records and sees an undeclared first turn it would
-otherwise have missed. The window therefore costs at most one deferred continuation prompt, never a
-detection.
+**The claim has to be this assignment's claim, on both sides of the bind.** Correlation is a chain
+of three links and all three are required: the claim's `dispatchRequestId` preimage hashes to the
+intent's `dispatchRequestIdHash`, and that hash is the assignment the intent was published under.
+The third link is what makes the first two mean anything. Both facts inside the marker are writable
+by the parties publishing there, so an intent naming a foreign dispatch and a claim agreeing with it
+correlate with each other perfectly while correlating with nothing the coordinator dispatched. The
+assignment is the directory name and the directory name IS the hash, so it is the one link no writer
+inside the marker chooses.
 
-The dispatch request id is stored in `intent.json` only as `sha256`. Storing it in the clear would
-make correlation meaningless, because any session able to read the directory could then present it.
-The child holds the preimage from its own dispatch and writes it into its claim.
+Before the bind a broken chain reads `dispatch_uncorrelated`; after it, `claim_uncorrelated`.
+Both are released and recorded, and the second is answered apart from `marker_unclaimed` because
+the two clear differently: an unclaimed marker is the bind-before-claim race and ends the moment the
+child publishes, while every fact in this chain is create-once, so a claim already standing at
+`claims/<session>/claim.json` with the wrong dispatch request id can never be replaced by the
+correct one. Recovery is therefore adjudication or superseding the relationship, not repair in
+place. The record carries which link broke - `claim_dispatch_unnamed`, `claim_dispatch_mismatch`,
+`intent_dispatch_unnamed` or `intent_assignment_mismatch` - because they are settled differently,
+and it carries `pendingObservation` as well, since this answer replaces a classification the
+coordinator still needs. A claim whose body contradicts its path is not this session's claim at all
+and still reads `marker_unclaimed`; a preimage that is not a string is `marker_malformed`, because
+shape is answered before correlation. A declared releasing outcome is read first, so this check only
+ever turns a would-be hold into a release.
+
+**Selection asks which assignment, not whether it holds together.** A workspace outlives the
+assignment that used it, so several assignments can sit under one path and the reader consults this
+session's claim before recency to keep a running child with the assignment it claimed. That claim
+has to name the assignment it sits in. Read on the claimant alone, one uncorrelated file written
+into a NEWER assignment selected that assignment, the decision path refused it, the turn released,
+and an older assignment the session was correlated, bound and registered under never had its
+omission looked for - so a check that only releases within one assignment removed a hold across two.
+
+The selection test is the claim against the DIRECTORY and never against the intent: the path
+authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
+assignment the claim belongs to.
+
+The claim says WHICH assignments are this session's. Which of them is CURRENT is the declaration,
+and only the declaration: an assignment comes into existence by being declared, so a successor's
+declaration necessarily follows its predecessor's and cannot be made to precede it. Nothing else
+available here has that property. The claim's timestamp is written by the child, so a forward-dated
+stale claim would pin every later turn to an assignment where a releasing disposition is already
+published. An attempt is append-only and arrives on reconciliation, so a lost January response
+settled in March would revive January's assignment - which T3 already says is identity evidence and
+nothing more. A bind arrives whenever thread creation finishes, so a delayed one carries a later
+instant than a successor that was declared, claimed and bound while it was still outstanding. Each
+of those lets a stale assignment be revived and a Stop judged against its dispositions and its hold
+budget.
+
+The cost of that choice is a real one and is recorded rather than papered over: an assignment whose
+intent cannot be read carries no declaration, so it sorts below every readable sibling and an older
+assignment is judged instead. Its unreadable store is not reported, because read problems stay with
+the candidate they came from. No ordering fact this reader has closes that - every one of them is
+either inside the record that is unreadable, or able to arrive after a successor is already current
+- so closing it needs coordinator lineage the marker does not carry today. When no claim selects
+anything, recency over the declarations decides exactly as before.
 
 ### Writing a fact
 
@@ -322,6 +367,8 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | T25 | Array/object identities in either resolution form or an accepted attempt | `marker_malformed` before identity set construction; no traceback can suppress the observation |
 | T26 | Present null chosen identity or adjudication list in either resolution form | `marker_malformed`, released and recorded; absent legacy fields still confer no identity or coverage |
 | T27 | A releasing disposition with corrupt persisted counters | Preserve the declared disposition; counters are validated only when an omission hold is weighed |
+| T28 | Bound and registered, with a claim naming a dispatch request id that hashes elsewhere; and the variant where a forged intent agrees with that claim | `claim_uncorrelated` both times: released and recorded, with the broken link in `claimEvidence` and the replaced classification in `pendingObservation`. The post-bind path asked only whether the claimant was this session, so an uncorrelated claim satisfied the hold precondition and the turn was held, indistinguishable from a correlated one. The variant is why the chain runs through the assignment: an intent and a claim agreeing about a foreign dispatch correlate with each other and with nothing dispatched. Kept apart from `marker_unclaimed` because a create-once claim carrying the wrong dispatch never clears itself, and apart from a declared outcome, which is still read first |
+| T29 | Two assignments under one workspace: the older correlated, bound, registered and owing a hold, the newer carrying a claim by the same session that names a foreign dispatch | The older one is selected and held. Selection consults this session's claim before recency, and consulting the claimant alone let one uncorrelated file select the newer assignment: the decision path refused it, released, and the older assignment's omission was never looked for, so one file switched holding off for a session correlated and bound elsewhere. Selection tests the claim against the directory it sits in, so the refusal stays scoped to the assignment that produced it, and currency stays with the declaration, which is the only fact here that cannot arrive after a successor is already current. Three controls: a correlating newer claim, where the declaration still moves the child on; a forward-dated claim in a stale assignment, which does not; and a late accepted attempt on one, which does not either |
 
 ### Marker root and permissions, as an integration obligation
 
