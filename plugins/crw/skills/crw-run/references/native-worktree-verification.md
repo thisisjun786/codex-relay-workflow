@@ -364,6 +364,31 @@ Keep raw receipts outside the repository and record only the shape here.
 
 Record four verdicts separately. A single summary verdict hides the one that fails.
 
+Write each verdict as a cell that is either measured or blocked, and never as a bare
+"unverified". Unverified collapses three different situations that need different
+answers: a thing nobody attempted, a thing attempted and inconclusive, and a thing that
+cannot be reached from here at all. Only the third is a property of the environment, and
+it is the only one where stopping is the correct outcome.
+
+So a blocked cell owes three things: which cell is blocked, the capability that is
+missing, and the observation proving it is missing. "The screen is unverified" is not a
+result. "The screen needs a process inside the client machine's GUI login session;
+the session manager reports a background context, elevating to the GUI session is refused
+without root, and screen capture returns a no-display error" is a result, and a reader can
+act on it: the next person knows exactly what to arrange.
+
+Two failure modes this wording exists to stop. The first is inferring a blocked cell from
+an adjacent surface that was measured, which quietly converts one surface's result into
+another's. The second is a measured cell that hedges — "appears to", "probably" — which
+reads as evidence while carrying none. If a measured cell needs a hedge, it is not
+measured; move it to blocked and name what is missing.
+
+A criterion with no subject is its own answer and should be said plainly rather than
+filed as unverified. Measured here on 2026-09-22: project association could not fail or
+pass, because zero projects existed on either side of the client and host pair, so no task
+of any kind could appear under one. That is a fact about the deployment, and it tells the
+next reader to find a deployment with a project rather than to retry the same probe.
+
 **Project association.** Passes only when the created task appears under the
 original project in the client, with the working directory in the separate
 worktree. A section, a pin or a renamed task does not count. When the client cannot
