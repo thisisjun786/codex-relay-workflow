@@ -2289,8 +2289,15 @@ class ReadbackUnderLockTests(unittest.TestCase):
                          "hooks.install reads back inside its lock, and it is the sibling"
                          " register-mcp is measured against rather than compared to by eye")
 
+    @needs_reader
     def test_a_run_that_writes_nothing_does_not_wait_on_the_configuration_lock(self):
-        """Taking the lock on every path would satisfy the readback test and refuse work."""
+        """Taking the lock on every path would satisfy the readback test and refuse work.
+
+        Skipped without a TOML reader, and skipped rather than relaxed. On that interpreter the
+        ownership check cannot scan the configuration, so the command refuses before it reaches
+        the write block at all: the run would answer something other than BUSY without the lock
+        having been the reason, which passes this test while establishing nothing about it.
+        """
         import runtime_install
 
         with tempfile.TemporaryDirectory() as temporary:
