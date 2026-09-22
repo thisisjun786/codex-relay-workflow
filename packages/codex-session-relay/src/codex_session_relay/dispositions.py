@@ -33,8 +33,10 @@ the reviewable block lists ids and names no winner.
 It constructs no Store. Store.__init__ opens the file O_RDWR, switches on WAL and runs the whole
 schema script, so a reader that reached Services.store against a mistyped state directory would
 create an empty relay database which then answers "nothing is blocked" honestly. Every read here
-goes through store.read_only_rows: one statement over a mode=ro connection that measures the path's
-identity before and after.
+goes through store.read_only_rows: one statement over a mode=ro connection opened through a
+descriptor held on the database, which is what lets the rows be attributed to the file they came
+from rather than to whatever the pathname reaches afterwards. store._hold_database states what
+that reaches and the window it does not.
 """
 
 from .receipts import READY
@@ -237,6 +239,9 @@ def read(selection, *, project_key=None, relationship_id=None) -> dict:
     locked, malformed or legacy database. Passing that through as an empty list would turn "we could
     not look" into "there is nothing there", which is the one merge this contract refuses, so it is
     downgraded to readable False here exactly as nonce_lookup downgrades its own case.
+
+    A database it could not bind to the file it came from is already readable False, with the
+    refusal as the detail, so that case arrives here as the same "we could not look".
     """
     from .store import read_only_rows
 
@@ -559,4 +564,3 @@ def _counts(children) -> dict:
         "recipientUnmeasured": unmeasured_recipient,
         "workReportMissing": missing_report,
     }
-

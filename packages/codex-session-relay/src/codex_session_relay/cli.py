@@ -10,7 +10,9 @@ id, which is a different act entirely.
 
 import argparse
 import json
+import math
 import sys
+import time
 from pathlib import Path
 
 from .ack import AckService
@@ -21,7 +23,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker, restoration, rolepolicy
+from . import envelope, guard, intent, marker, packets, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -75,10 +77,19 @@ OFFLINE_COMMANDS = (
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
-    "merge-turn-unknown", "merge-turn-withdraw", "region-followup",
+    "merge-turn-unknown", "merge-turn-withdraw", "merge-turn-acknowledge",
+    "region-followup",
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
     "slot-release", "slot-reserve", "usage-observe",
+    # What is owed upward, read and recorded in this store alone. supervisor-select and
+    # supervisor-standing only read, and supervisor-report-recorded writes one journal row;
+    # none of the three reaches the host, so leaving them out under-reported what an operator
+    # can run with no App Server.
+    "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # Compares a packet against a reading the caller supplies. It opens no store, reaches no
+    # host and decides nothing about delivery, so it runs wherever the two files are.
+    "packet-check",
     # Reaches a forge and never the App Server, and constructs no Store at all.
     "merge-evidence",
 ) + MARKER_COMMANDS_BY_NAME
@@ -393,35 +404,77 @@ def cmd_register(services, args) -> dict:
     # both halves in its own arguments, so it can answer the question while there is still
     # nothing to unwind. The checks inside record_settings and binding_plan remain for callers
     # that arrive separately; neither of those can undo a write the other already committed.
-    _refuse_role_disagreement(services, args)
-    record = services.registry.register(
-        parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
-                        cxc_session=args.parent_cxc_session),
-        child=Endpoint(args.child_task, args.child_host, cwd=args.child_cwd,
-                       cxc_session=args.child_cxc_session),
-        issue_key=args.issue,
-        artifact_roots=args.artifact_root,
-        allowed_recipients=args.allowed_recipient,
-        scope_ref=args.scope_ref,
-        dispatch_request_id=args.dispatch_request_id,
-        dispatch_turn_id=args.dispatch_turn_id,
-        supersedes=args.supersedes,
-        project_key=args.project,
-    )
-    payload = relationship_record(record)
-    # Execution settings come from the creation result the caller already holds. Recording them
-    # here is what lets a later send preserve them instead of inheriting a host default.
+    #
+    # Validation cannot reach the OTHER way this command left half a registration behind. A
+    # worker killed between the two commits, a disk refusing, COMMIT itself failing: those
+    # arrive between the writes rather than before them, and the relationship was already
+    # durable when they did. Measured, before this was one transaction: a kill at the settings
+    # commit left an active relationship and its generation with no authorized settings for
+    # either task. So the writes are composed into one transaction here, where both halves are
+    # in hand, rather than by changing what registry.register promises its other callers.
+    #
+    # Settings are parsed ONCE, and before the lock. _settings_json may read a file: an @path
+    # naming one that does not exist is a usage error rather than something to discover holding
+    # the write lock, and reading it twice would let the content validated differ from the
+    # content recorded.
+    from .linkage import CHILD
+
+    #
+    # Each side carries its own exception, because recovering it from the settings value by
+    # identity or equality asks the wrong question: two sides can pass the same string, and
+    # then the child is validated against the parent's exception.
+    #
+    # The last element is the role THIS write would establish. With --project the registration
+    # binds the relationship's child task to its issue scope as a child, so that -- not the
+    # role the caller cited -- is what the citation has to agree with.
+    writes = [
+        (task, _settings_json(raw), role, exception, establishes)
+        for task, raw, role, exception, establishes in (
+            (args.parent_task, args.parent_settings, args.parent_role,
+             args.parent_exception, None),
+            (args.child_task, args.child_settings, args.child_role, args.child_exception,
+             CHILD if args.project else None),
+        )
+        if raw
+    ]
     recorded = {}
-    for task, raw, role, exception in (
-        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception),
-        (args.child_task, args.child_settings, args.child_role, args.child_exception),
-    ):
-        if raw:
-            # The role the CREATION cited, from the receipt's executionPolicy. Recorded beside
-            # the settings so a later binding can be checked against what the task was made as.
-            record_settings(services.store, services.clock, task, _settings_json(raw),
-                            source="creation_result", role=role, exception=exception)
-            recorded[task] = "recorded"
+    try:
+        with services.store.composing():
+            # Inside the transaction now, so the bindings it reads cannot move between the
+            # check and the write it authorizes.
+            _refuse_role_disagreement(services, writes)
+            record = services.registry.register(
+                parent=Endpoint(args.parent_task, args.parent_host, cwd=args.parent_cwd,
+                                cxc_session=args.parent_cxc_session),
+                child=Endpoint(args.child_task, args.child_host, cwd=args.child_cwd,
+                               cxc_session=args.child_cxc_session),
+                issue_key=args.issue,
+                artifact_roots=args.artifact_root,
+                allowed_recipients=args.allowed_recipient,
+                scope_ref=args.scope_ref,
+                dispatch_request_id=args.dispatch_request_id,
+                dispatch_turn_id=args.dispatch_turn_id,
+                supersedes=args.supersedes,
+                project_key=args.project,
+            )
+            # Execution settings come from the creation result the caller already holds.
+            # Recording them here is what lets a later send preserve them instead of
+            # inheriting a host default.
+            for task, values, role, exception, _establishes in writes:
+                # The role the CREATION cited, from the receipt's executionPolicy. Recorded
+                # beside the settings so a later binding can be checked against what the task
+                # was made as.
+                record_settings(services.store, services.clock, task, values,
+                                source="creation_result", role=role, exception=exception)
+                recorded[task] = "recorded"
+    except RelayError as failure:
+        # The transaction that just rolled back was this command's, so a contest recorded
+        # inside it went down with the registration. The refusal travels on the error for
+        # exactly this, and recording it is what every linkage write path promises. A failure
+        # carrying no refusal records nothing.
+        services.registry.record_refusal(failure, at=services.clock.iso())
+        raise
+    payload = relationship_record(record)
     payload["authorizedSettings"] = recorded or None
     return payload
 
@@ -434,41 +487,28 @@ def _settings_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _refuse_role_disagreement(services, args) -> None:
+def _refuse_role_disagreement(services, writes) -> None:
     """Refuse a registration whose stated roles and settings already contradict each other.
 
     Answers exactly what record_settings would answer afterwards, from the same predicate, so
-    the two cannot disagree. The roles and settings come from the arguments and the files they
-    name; the one thing it reads from the store is the binding each task already holds, because
-    a citation is checked against the role the task will actually be in and that is not always
-    the role the caller named.
+    the two cannot disagree. It is given the settings its caller already parsed rather than
+    re-reading them, so the content checked here is the content recorded afterwards even when
+    an @path file changes underneath. The one thing it reads from the store is the binding each
+    task already holds, because a citation is checked against the role the task will actually
+    be in and that is not always the role the caller named.
     """
     from . import rolepolicy
     from .errors import RefusalReason, RegistrationError
-    from .linkage import CHILD
     from .settings import TaskSettings
 
     policy = rolepolicy.declared()
-    # Each side carries its own exception in the tuple. Recovering it from the settings value
-    # by identity or equality asks the wrong question: two sides can pass the same string, and
-    # then the child is validated against the parent's exception and a legitimate registration
-    # is refused before anything is written.
-    #
-    # The fourth element is the role THIS write would establish. With --project the registration
-    # binds the relationship's child task to its issue scope as a child, so that -- not the role
-    # the caller cited -- is what the citation has to agree with. Comparing the cited role
+    # The role a write would establish arrives with each entry. Comparing the cited role
     # against itself asked a different question and passed every time: a registration citing
-    # parent for the child task committed the relationship and the binding, and only the settings
-    # write after them refused, leaving a live wrong-role assignment this function exists to
-    # prevent and nothing here could undo.
-    for task, raw, role, exception, establishes in (
-        (args.parent_task, args.parent_settings, args.parent_role, args.parent_exception, None),
-        (args.child_task, args.child_settings, args.child_role, args.child_exception,
-         CHILD if args.project else None),
-    ):
-        if not raw:
-            continue
-        settings = dict(_settings_json(raw))
+    # parent for the child task committed the relationship and the binding, and only the
+    # settings write after them refused, leaving a live wrong-role assignment this function
+    # exists to prevent and nothing here could undo.
+    for task, values, role, exception, establishes in writes:
+        settings = dict(values)
         # The same completeness question record_settings asks, asked while there is still
         # nothing to unwind, and asked of every settings value rather than only the ones that
         # also name a role. Without it an incomplete settings file passed here, the relationship
@@ -504,7 +544,8 @@ def cmd_settings_record(services, args) -> dict:
 
     This is the exact interface JUN-92 populates from Run's creation result. Required fields:
     sandbox (the full SandboxPolicy object), approvalPolicy, cwd, runtimeWorkspaceRoots, model,
-    reasoningEffort and environments. Anything missing is refused here rather than at send time.
+    reasoningEffort and environments. Anything missing is refused here rather than at send
+    time, and so is a cwd, model or reasoningEffort recorded as something other than a string.
     """
     if args.clear_exception and args.exception is not None:
         # Asking to cite one and to drop it are two different writes. Letting either win
@@ -521,12 +562,14 @@ def cmd_settings_record(services, args) -> dict:
 
 
 def cmd_settings_show(services, args) -> dict:
+    from .errors import DeliveryRefused
     from .registry import load_settings
 
     settings = load_settings(services.store, args.task)
     if settings is None:
         return {"task": args.task, "settings": None, "usable": False,
-                "deliverable": False, "missing": list(REQUIRED_SETTINGS)}
+                "deliverable": False, "missing": list(REQUIRED_SETTINGS),
+                "recordFinding": None}
     # The role side is reported beside the settings because the two are only meaningful
     # together: a record is stale relative to the policy for the role its task actually holds,
     # and reading one without the other is how a correct record and a wrong one look alike.
@@ -560,16 +603,42 @@ def cmd_settings_show(services, args) -> dict:
         }
     elif bound:
         finding = rolepolicy.check_record(settings, bound, policy)
-    # Two questions, two fields, because folding them together loses one of the answers.
+    # Total, like doctor's own reader: these rows can hold whatever an older writer or a hand
+    # edit left behind, and a diagnosis must not die on one.
+    try:
+        settings.require_usable()
+        unusable = None
+    except DeliveryRefused as refusal:
+        unusable = refusal
+    except Exception as error:  # noqa: BLE001 - total, for the reason above
+        unusable = DeliveryRefused(None, f"{type(error).__name__}: {error}")
+
+    # Three questions, three fields, because folding them together loses two of the answers.
     # "usable" is about the RECORD -- are the required fields there -- and it is paired with
     # "missing", so making a complete record report false would contradict the field beside it
     # and leave no way to say "complete, and refused for another reason". "deliverable" is the
     # question a preflight actually asks. It exists because a consumer written before roles
     # reads "usable", would have read true here, and would have gone on to a send this record
     # cannot carry.
+    #
+    # So "deliverable" is answered by the predicate a preflight really RUNS, not by a
+    # restatement of part of it. Until the recorded string fields were typed, `not missing()`
+    # and require_usable() agreed on every row this could be asked about; they no longer do,
+    # and a row this command called deliverable would be withheld by delivery and reported
+    # refused by doctor. They diverge twice now: a mistyped string field, and an approvalPolicy
+    # this transport cannot carry, which is PRESENT on such a row and therefore invisible to
+    # missing(). Running the predicate here also answers the case that was already wrong before
+    # either of them: a sandbox type with no resume mode. "recordFinding" then says WHICH rule
+    # refused, because a false deliverable beside an empty missing list and no roleFinding
+    # names nothing.
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
-            "deliverable": not settings.missing() and finding is None,
+            "deliverable": unusable is None and finding is None,
+            "recordFinding": None if unusable is None else {
+                # doctor's vocabulary, so the two commands name one refusal alike.
+                "code": unusable.reason.value if unusable.reason else "unexpected",
+                "detail": unusable.detail,
+            },
             "citedRole": rolepolicy.cited_role(settings),
             "citedException": rolepolicy.cited_exception(settings),
             "boundRole": None if contested else bound,
@@ -674,11 +743,142 @@ def cmd_linkage_completion(services, args) -> dict:
 
 
 def cmd_linkage_directive(services, args) -> dict:
+    reference = args.reference
+    if args.correlation and not args.purpose:
+        # The correlation is a FIELD of the envelope pointer, so without a purpose there is no
+        # pointer to put it in and it was silently dropped: the command reported success and
+        # the reply link the caller asked for was simply absent from the stored row.
+        raise SystemExit2(
+            "--correlation is part of an envelope pointer, so it requires --purpose",
+            EXIT_USAGE,
+        )
+    if args.purpose:
+        if reference:
+            raise SystemExit2(
+                "--purpose derives the envelope pointer, so it cannot be given with"
+                " --reference", EXIT_USAGE)
+        reference = envelope.directive_reference(
+            purpose=args.purpose, link_id=args.link, digest=args.digest,
+            correlation_id=args.correlation)
     return services.linkage.record_directive(
         scope_kind=args.scope_kind, scope_key=args.scope, from_task_id=args.from_task,
         from_scope_key=args.from_scope, link_id_value=args.link, digest=args.digest,
-        reference=args.reference,
+        reference=reference,
     )
+
+
+def cmd_supervisor_select(services, args) -> dict:
+    """Whether one event is news for the level above. A read; it sends and records nothing."""
+    return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
+
+
+def cmd_packet_check(services, args) -> dict:
+    """Whether a packet agrees with the record its receiver read. It decides nothing else.
+
+    The reading is SUPPLIED rather than fetched, and the answer says so. That is the honest
+    shape for an offline check: this command has no store, so it cannot be the thing that
+    established the relationship, the generation or the head, and a caller that handed it an
+    agreeing record has proved only that the two files agree. What it does close is the case
+    where nobody compared them at all.
+    """
+    one = _json_document(args.packet, "relay-packet/1 message")
+    record = _json_document(args.record, "receiver's own reading")
+    answer = packets.reception(one, record)
+    answer["recordSource"] = "supplied"
+    # A supplied reading is checked, and an absent one is the honest starting ladder. Those
+    # are different inputs: falling back on falsiness replaced a malformed reading with a
+    # clean one and reported no promotions for it, and passing it through unchecked turned a
+    # valid reception into a host failure. Present means checked; missing means unobserved.
+    supplied = one.get("progression")
+    answer["promotions"] = packets.unsupported_promotions(
+        packets.unobserved() if supplied is None else supplied)
+    return answer
+
+
+def _json_document(path, what) -> dict:
+    """One JSON file from disk, named by what it was supposed to be.
+
+    Separate from _observation_file rather than sharing it: that one names a
+    reporting-observation, and a caller who mistyped a packet path is not helped by being
+    told their packet is not an observation.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit2(
+            f"the {what} at {path!r} could not be read: {type(error).__name__}: {error}",
+            EXIT_USAGE,
+        ) from error
+
+
+def _observation_file(path) -> dict:
+    """One reading from disk, with an unreadable file named rather than raised as itself.
+
+    OSError and ValueError together, because a file this cannot decode and a file this cannot
+    parse are the same answer to the caller - the reading is unusable - and a
+    UnicodeDecodeError escaping as itself would reach a reader as something other than an
+    unreadable observation.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit2(
+            f"the observation at {path!r} could not be read as a"
+            f" reporting-observation/1 record: {type(error).__name__}: {error}",
+            EXIT_USAGE,
+        ) from error
+
+
+def cmd_supervisor_standing(services, args) -> dict:
+    """What a project still owes upward, and the project's own reading beside it.
+
+    This is the answer to an explicit question. Automatic notification being suppressed is not
+    a reason to withhold it, which is why it is a separate command rather than a flag on one.
+
+    An observation is passed in with --observation because a turn that ended without reporting
+    writes no row this store can find; reporting-show is what produces one.
+    """
+    from . import supervision
+
+    readings = [_observation_file(path) for path in args.observation or []]
+    return supervision.status_answer(
+        services.store, services.linkage, services.assignments, args.project,
+        observations=readings)
+
+
+def cmd_supervisor_report_recorded(services, args) -> dict:
+    """Record that a report was produced for an obligation, once.
+
+    The journal entry is what makes the next reading of the same fact converge instead of
+    waking the level above again. It says a report was composed; it does not say one arrived,
+    and nothing in this store could.
+
+    Keyed on the OBLIGATION, which is why an omission can be recorded here at all. A turn that
+    ended without reporting has no event, so an event-only surface could record a report for
+    every kind of news except the one nobody sent - and the next reading of that same omission
+    would have produced another report, indefinitely.
+    """
+    from . import supervision
+    from .report import read as read_work_report
+
+    if args.event:
+        obligation = supervision.from_event(
+            services.store, args.event, read_work_report(services.store, args.event))
+        about = f"event {args.event!r}"
+    else:
+        obligation = supervision.from_observation(_observation_file(args.observation))
+        about = f"the observation at {args.observation!r}"
+    if obligation is None:
+        raise SystemExit2(
+            f"{about} raises no obligation: an event has to be a completion, a new block or a"
+            " decision the user owes, and an observation has to report state unreported. There"
+            " is nothing here to record a report against", EXIT_USAGE)
+    recorded = supervision.record_report(
+        services.store, obligation, at=services.clock.iso(), messageId=args.message,
+        note=args.note or "")
+    return {**recorded, "obligation": obligation}
 
 
 def cmd_linkage_settle(services, args) -> dict:
@@ -772,7 +972,13 @@ def cmd_merge_turn_request(services, args) -> dict:
 
 def cmd_merge_turn_ready(services, args) -> dict:
     return services.merge_turn.declare_ready(
-        args.turn, actor=args.actor, ready=args.ready, candidate_head=args.head)
+        args.turn, actor=args.actor, ready=args.ready, candidate_head=args.head,
+        cause=args.cause or "")
+
+
+def cmd_merge_turn_acknowledge(services, args) -> dict:
+    return services.merge_turn.acknowledge_grant(
+        args.turn, actor=args.actor, grant=args.grant, evidence=args.evidence)
 
 
 def cmd_merge_turn_attest(services, args) -> dict:
@@ -822,9 +1028,40 @@ def cmd_merge_turn_withdraw(services, args) -> dict:
 
 
 def cmd_merge_turn_show(services, args) -> dict:
+    """One selector, named, because three forms resolved by branch order answered silently.
+
+    A caller that passed --parent-task beside --repository got a successful answer about every
+    claim that task holds anywhere, with no sign that the target it named was never consulted.
+    A recovery read that quietly changed scope is worse than one that refuses.
+    """
+    named = [
+        label for label, given in (
+            ("--turn", bool(args.turn)),
+            ("--parent-task", bool(args.parent_task)),
+            ("--repository with --base-ref", bool(args.repository or args.base_ref)),
+        ) if given
+    ]
+    if len(named) != 1:
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "merge-turn-show takes exactly one selector - --turn, --parent-task, or"
+                      " --repository with --base-ref - and this named "
+                      + (", ".join(named) if named else "none"),
+        }, EXIT_REFUSED)
+    if bool(args.repository) != bool(args.base_ref):
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "a target is a repository AND a base ref; --repository and --base-ref"
+                      " are given together or not at all",
+        }, EXIT_REFUSED)
     if args.turn:
         return _with_enforcement(services, services.merge_turn.turn(args.turn) or {
             "ok": False, "reason": "unregistered_scope", "turnId": args.turn})
+    if args.parent_task:
+        return _with_enforcement(
+            services,
+            {"parentTaskId": args.parent_task,
+             "claims": services.merge_turn.outstanding(args.parent_task)})
     return _with_enforcement(
         services, services.merge_turn.target(args.repository, args.base_ref))
 
@@ -1464,7 +1701,10 @@ def cmd_store_challenge(services, args) -> dict:
     value written after the copy was taken exists in exactly one of the two files. That
     ordering is what nothing enforces, though - a copy taken after the write carries the nonce
     too - so `compare_store` grades a found nonce as proof only alongside an agreeing device
-    and inode, and `doctor --expect-nonce` on its own is unproven.
+    and inode AND an agreeing log location, and `doctor --expect-nonce` on its own is unproven.
+    The log location is the one that separates a shared store from one inode reached at two
+    pathnames, where a checkpointed nonce is readable through both while the two participants
+    write into logs of their own.
     """
     if args.write:
         return services.store.write_challenge(actor=args.actor or "cli")
@@ -1530,38 +1770,43 @@ def _sandbox_summary(row) -> dict:
     here rather than described: `TaskSettings.require_usable()` in
     `DeliveryService._settings_for` (delivery.py), the resume-params construction in
     `_guarded_send` (bridge_adapter.py), and `normalise_environments`, which is the one the
-    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising: it exists only
-    as a comparison against a fixed value in the resume verification, so the recorded value is
-    compared against that same value instead.
+    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising on its own: it is
+    a comparison against a fixed value. It reaches `deliverable` anyway, because
+    `require_usable()` now makes that comparison against the recorded row and refuses it, so
+    running the validator answers both kinds.
 
-    The two are reported in different fields because they decide different things. A failing
-    transformation settles the send on the row alone - no host can consume
-    `runtimeWorkspaceRoots: 7` - so it makes `deliverable` false. A violated value constraint
-    settles only what a host that reports the setting BACK will do, and a host that replaces
-    it proceeds, so it lands in `refusedIfPreserved` and leaves `deliverable` describing the
-    preparation. Collapsing them cost a round in the other direction: the receipt denied a
-    send that today's delivery completes when the host normalises the value.
+    This field used to report the two kinds separately, and `refusedIfPreserved` is gone with
+    the reason it existed. It said a row recording another approval policy completed a send
+    against a host that REPLACED the value and was refused only by one that reported it back -
+    which was true, and was the defect: whether the message was delivered depended on what the
+    host did with a fact the record already settled. Now the row is refused before any host is
+    asked, so the field could never again carry a value, and leaving it would describe a send
+    that is no longer attempted.
 
-    Five versions of this field were wrong the same way before those two sentences could be
-    written: each named the answer after the members it had been shown - the sandbox type,
-    then `require_usable()`, then the params construction, then the post-response half, then
-    the constraint that raises nothing at all. The set is not kept by hand here.
+    Six versions of this field were wrong the same way before that could be written: each named
+    the answer after the members it had been shown - the sandbox type, then `require_usable()`,
+    then the params construction, then the post-response half, then the constraint that raises
+    nothing at all, then that constraint reported beside the answer instead of in it. The set is
+    not kept by hand here.
     `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
-    derives both kinds from those two modules and fails if a member of either is added that
-    this does not reach.
+    derives both kinds from those two modules, in both directions - what the response
+    verification refuses and what the record validator refuses, asserted equal - and fails if a
+    member of either is added that this does not reach.
 
     What it does NOT answer is whether the host accepts the parameters. The App Server's own
-    schema is not in this repository, so nothing here can say what it does with a recorded
-    `cwd: 7`: the params are built and sent, and the answer comes back from the wire.
-    `deliverable` is about the constraints delivery imposes on the row, and typing the
-    recorded fields locally would belong in `require_usable()` beside the policy rule.
+    schema is not in this repository, so nothing here can say what it does with a value this
+    package finds well-formed - a model name it does not serve, a `cwd` naming a directory it
+    does not have. Those are built and sent, and the answer comes back from the wire.
+
+    What it does answer grew by one when the recorded string fields were typed. A recorded
+    `cwd: 7` is no longer among them: `require_usable()` refuses it, so it reaches
+    `deliverable` as a failing transformation like any other, and the send is withheld rather
+    than made against an answer only the wire could give.
     """
     import json
 
-    from .errors import DeliveryRefused, RefusalReason
-    from .settings import (
-        AUTHORIZED_APPROVAL_POLICY, TaskSettings, normalise_environments, normalise_policy,
-    )
+    from .errors import DeliveryRefused
+    from .settings import TaskSettings, normalise_environments, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -1602,36 +1847,10 @@ def _sandbox_summary(row) -> dict:
         # die on one. An unexpected failure is still a refusal, reported as what it was.
         refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
 
-    # The constraint kind, reported BESIDE deliverable rather than folded into it, because it
-    # decides something different. A transformation that fails decides the send on the row
-    # alone: no host can rescue `runtimeWorkspaceRoots: 7`. This one does not. Measured: a
-    # resume that reports "on-request" back produces unsupported_approval_policy and no turn,
-    # while a host that answers "never" regardless returns no findings and the send proceeds.
-    # So a row recording another policy cannot be carried AS RECORDED, and folding that into
-    # `deliverable` would have the receipt deny a send that today's delivery would complete
-    # against a host that replaces the value.
-    recorded_policy = settings.get("approvalPolicy")
-    preserved = None
-    if recorded_policy != AUTHORIZED_APPROVAL_POLICY:
-        preserved = {
-            "field": "approvalPolicy",
-            # The finding code the resume verification reports for this, so a receipt and a
-            # delivery journal name it alike.
-            "refusedBy": RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value,
-            "detail": (
-                f"the recorded approvalPolicy is {recorded_policy!r}; a resume that reports it"
-                f" back is refused, so only {AUTHORIZED_APPROVAL_POLICY!r} can be carried as"
-                " recorded and this row completes a send only against a host that replaces it"
-            ),
-        }
     cwd = settings.get("cwd")
     return {
         "readable": True,
         "deliverable": refused is None,
-        # The other kind of constraint: null when nothing in the row would be refused after a
-        # host reports it back, and otherwise the field, the code and why. Separate from
-        # `deliverable` on purpose - see the comment above the check.
-        "refusedIfPreserved": preserved,
         # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
         # journal name the same thing.
         "refusedBy": None if refused is None else (
@@ -1655,10 +1874,14 @@ def _sandbox_summary(row) -> dict:
 def _access_receipt(services, report) -> dict:
     """One participant's observed answer to: which store is this, and may I use it?
 
-    Every field is measured rather than declared. The identity and the device/inode pair come
-    from the probe's own stat; the read and write answers come from a real read-only
-    connection and a real rolled-back write transaction, not from a permission bit; and the
-    sandbox comes from the settings the adapter would carry rather than from configuration.
+    Every field is measured rather than declared. The identity and the device/inode pair are
+    fstat-ed from the descriptor the probe holds open, so they describe the file this command
+    actually reached rather than whatever the name reaches now; the read and write answers
+    come from a real read-only connection and a real rolled-back write transaction opened
+    through that same descriptor, not from a permission bit; and the sandbox comes from the
+    settings the adapter would carry rather than from configuration. SQLite reopens the name
+    it resolves the descriptor to, so store._hold_database is where the remaining window is
+    stated; what this receipt rules out is a move that had already happened when it asked.
 
     It exists to be COMPARED. Two participants put their receipts side by side to find out
     whether they are on one database or two, and a matching path does not settle that: two
@@ -1670,12 +1893,16 @@ def _access_receipt(services, report) -> dict:
     way. A DIFFERENT pair means a different file; an agreeing pair is not sufficient for the
     same one. It is namespace-local, so participants in separate mount namespaces or on
     different hosts can hold one pair while sharing nothing, and one inode can be reached at
-    more than one pathname, which is what decides the write-ahead log. `links` is reported
-    beside the pair because it catches one kind of second pathname, the hardlink; a bind mount
-    adds one without changing it, so a count of one settles nothing. What settles a shared
+    more than one pathname, which is what decides the write-ahead log. That last part is what
+    `logDevice`, `logInode` and `logName` answer: the directory entry this file's `-wal` would
+    be created under, so two participants can compare where their logs GO rather than only
+    which file they opened. `links` is still reported beside the pair, now as the narrower
+    guard it always was - it catches the hardlink, while a file bind mount adds a pathname
+    without changing it, which was measured on this host on 2026-09-22. What settles a shared
     store is `store-challenge` and `doctor --expect-nonce` TOGETHER with the peer's
-    `--expect-inode`: the nonce is the live half, and since a copy taken after the challenge
-    carries it, the physical identity is the half that says the file is still the same one.
+    `--expect-inode` and `--expect-log`: the nonce is the live half, the physical identity says
+    the file is still the same one, and the log location says both participants write into one
+    log rather than two beside one set of bytes.
 
     The identity and the participants come out of ONE read for the same reason. Collected by
     two separate opens, an atomic replacement between them would pair one store's identity
@@ -1742,6 +1969,13 @@ def _access_receipt(services, report) -> dict:
         # How many names this inode has. One agreeing pair is not one live store if the peer
         # may have opened another name for it; compare_store grades that.
         "links": store["links"],
+        # Where a connection on this file writes its write-ahead log: the directory entry it
+        # would create `-wal` under. This is what a second pathname for one inode actually
+        # changes and what the name count cannot see, because a file bind mount leaves the
+        # count at one. A peer sends these three back as --expect-log.
+        "logDevice": store["logDevice"],
+        "logInode": store["logInode"],
+        "logName": store["logName"],
         "selectedBy": {
             "source": services.selection.source,
             "detail": services.selection.detail,
@@ -1763,10 +1997,11 @@ def _contents(services, report) -> dict:
     if not report["access"]["dbReadable"]:
         return {"available": False, "relationships": None, "openAttempts": None,
                 "detail": "the database is not readable from this process"}
-    # Read through the probe's own read-only connection. services.store would construct a
-    # Store, and Store.__init__ opens O_RDWR, switches on WAL and runs the whole schema
-    # script - so asking doctor to COUNT rows in an empty, legacy or unrelated readable
-    # relay.sqlite3 quietly turned it into a relay database. Diagnosis writes nothing.
+    # Read through a descriptor held on the database, the same door the probe used.
+    # services.store would construct a Store, and Store.__init__ opens O_RDWR, switches on WAL
+    # and runs the whole schema script - so asking doctor to COUNT rows in an empty, legacy or
+    # unrelated readable relay.sqlite3 quietly turned it into a relay database. Diagnosis
+    # writes nothing.
     counted = read_only_rows(
         services.selection,
         "SELECT (SELECT COUNT(*) FROM relationships) AS relationships,"
@@ -1796,9 +2031,11 @@ def _issue_reading(services, report, issue_key: str) -> dict:
     halves here is what removes the gap, because one read cannot disagree with itself about
     which file it read.
 
-    Constructs no Store, like the rest of doctor: read_only_rows opens the database read-only
-    and stats the path before and after, so a rename during the read returns no rows at all
-    rather than rows a caller would attribute to the wrong file.
+    Constructs no Store, like the rest of doctor: read_only_rows holds the database open and
+    identifies it by that descriptor, refusing outright when the file it holds is no longer the
+    one at this store's pathname. So a rename this read can observe returns no rows at all
+    rather than rows a caller would attribute to the wrong file; store._hold_database states
+    the in-call window that leaves.
 
     Deliberately narrow. It reports what ONE read-only connection can support - whether a live
     relationship exists here and which child owns it - and leaves the scoped/unscoped/
@@ -1934,6 +2171,14 @@ def cmd_doctor(services, args) -> dict:
     Constructs no Store: probe() answers from stat, a read-only connection and a rolled-back
     write transaction, so a missing, unreadable or read-only state directory is an answer
     instead of the failure that would otherwise replace it.
+
+    The same-store expectations are a conjunction, and a caller that supplies any of them and
+    gets no proof exits non-zero. `--expect-inode` says the peer opened this file;
+    `--expect-log` says the peer's write-ahead log goes where this one's does, which is the
+    only thing that separates one shared store from one inode reached at two pathnames; and
+    `--expect-nonce` is the live half. Each is compared against what the PEER reported - a
+    caller that passes its own readings back in has stopped asking the question, which is true
+    of every one of these flags and not a property of the newest.
     """
     import os
 
@@ -1983,9 +2228,13 @@ def cmd_doctor(services, args) -> dict:
     report["nonce"] = nonce
     comparison = compare_store(
         report["store"], expect_store=args.expect_store, expect_inode=args.expect_inode,
-        nonce=nonce,
+        expect_log=args.expect_log, nonce=nonce,
     )
-    asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
+    # Asked, not answerable. `any` over the values counted only NON-EMPTY ones, so an empty
+    # expectation was a question nobody had asked and its unproven answer still exited 0. The
+    # comparison already grades an unusable value as unproven; this makes the exit agree.
+    asked = any(value is not None for value in (
+        args.expect_store, args.expect_inode, args.expect_log, args.expect_nonce))
     report.update(comparison)
     if (asked and comparison["sameStore"] != "proven") or (
             requested is not None and not report["workerReadiness"]["ready"]):
@@ -2008,9 +2257,16 @@ def _service_for(services):
     """Built from the probe, so status stays an offline command that constructs no Store."""
     from .service import RelayService
 
+    measured = probe(services.selection)["store"]
     return RelayService(
         services.selection, socket_path=services.socket_path,
-        store_id=probe(services.selection)["store"]["storeId"],
+        store_id=measured["storeId"],
+        # A store that is HERE but would not state its identity is not the same as no store.
+        # read_only_rows and the probe now refuse a read they cannot bind to this file, so the
+        # identity comes back None in exactly the case a comparison matters most - the store
+        # being moved under the command, for every move the read can observe. Passing the
+        # distinction keeps ownership from reading that silence as nothing to compare.
+        store_unidentified=measured["exists"] and measured["storeId"] is None,
     )
 
 
@@ -2020,7 +2276,86 @@ def _refuse_unless_ok(payload: dict) -> dict:
     raise PayloadExit(payload, EXIT_REFUSED)
 
 
-def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
+def _finite(value, flag):
+    """A bound has to be a number a comparison can ever be true against.
+
+    `type=float` accepts `nan` and `inf`. `nan` is truthy and every `>=` against it is False
+    forever, so a run given one would never reach its bound - the unbounded mode this daemon
+    is built not to have. `inf` is the same thing spelled honestly. Refused at the surface
+    rather than discovered hours later by a process nobody can explain.
+    """
+    if value is None:
+        return None
+    if not math.isfinite(value):
+        raise SystemExit2(f"{flag} must be a finite number of seconds", EXIT_USAGE)
+    return value
+
+
+def _declared_bound(args):
+    """The one bound this invocation was given, in whichever of the two forms it arrived.
+
+    `--deadline` is a DURATION somebody typed, and it starts counting at this process.
+    `--deadline-monotonic` is the INSTANT a launching process already decided, in this host's
+    and boot's CLOCK_MONOTONIC. Both together is a caller bug: they are two different end
+    times, and silently preferring one would end the run when nobody asked.
+    """
+    duration = _finite(getattr(args, "deadline", None), "--deadline")
+    instant = _finite(getattr(args, "deadline_monotonic", None), "--deadline-monotonic")
+    if duration is not None and instant is not None:
+        raise SystemExit2(
+            "--deadline and --deadline-monotonic are two different bounds; pass one",
+            EXIT_USAGE,
+        )
+    if duration is not None and duration < 0:
+        raise SystemExit2("--deadline cannot be negative", EXIT_USAGE)
+    if instant is not None and instant < 0:
+        # CLOCK_MONOTONIC counts from a point at or before this boot, so it is never negative.
+        # A negative instant is not an end time this host can have had.
+        raise SystemExit2("--deadline-monotonic cannot be negative", EXIT_USAGE)
+    return duration, instant
+
+
+def _bound_already_spent(service, detail):
+    """The ending for a bounded run that took no tick because its bound was already gone.
+
+    A plain success would be counted by the supervisor as a clean segment and reset the failure
+    streak; a plain failure would back it off from a process that did not fail. Neither is what
+    happened, so this has its own exit code and its own line in the journal.
+    """
+    from .service import EXIT_BOUND_SPENT
+
+    service.store_journal_note(f"this run served nothing: {detail}")
+    return PayloadExit(
+        {"ok": False, "reason": "bound_already_spent", "detail": detail}, EXIT_BOUND_SPENT,
+    )
+
+
+def _segment_seconds(args):
+    """How long each worker gets, checked where a person typed it.
+
+    It becomes the worker's own bound, and a worker given a length it must refuse exits before
+    its first tick - which a supervisor reads as an ordinary failure and answers by launching
+    another one. The service stays alive and serves nothing. Refusing the configuration once is
+    the difference between a usage error and a silent outage.
+    """
+    value = _finite(getattr(args, "segment_seconds", None), "--segment-seconds")
+    if value is not None and value <= 0:
+        raise SystemExit2("--segment-seconds must be greater than zero", EXIT_USAGE)
+    return value
+
+
+def _asked_for_no_ticks(args):
+    """A run given a tick budget of zero or less took no tick because it was asked for none.
+
+    `RelayDaemon.run` breaks on the tick count BEFORE it looks at the deadline, so whatever the
+    bound did meanwhile is not what emptied the result. Both places that classify a bound as
+    spent ask this same question, because the two forms of a bound must not disagree about an
+    identical request.
+    """
+    return getattr(args, "max_ticks", None) is not None and args.max_ticks <= 0
+
+
+def _run_bounded(services, service, args, *, require_intent: bool, monotonic=None) -> dict:
     """Hold ownership for exactly as long as this process serves, then let it go.
 
     The daemon is constructed INSIDE the claim so a run that loses the race never opens a
@@ -2029,7 +2364,28 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
     from .daemon import RelayDaemon
     from .service import ServiceRefused, owned_service
 
-    deadline = services.clock.now() + args.deadline if args.deadline else None
+    monotonic = monotonic or time.monotonic
+    duration, instant = _declared_bound(args)
+    if instant is None:
+        # `is not None` rather than truthiness: `--deadline 0` is a bound that is already
+        # spent, and reading it as "no bound given" turned an explicit zero into a run with
+        # no bound at all.
+        deadline = None if duration is None else services.clock.now() + duration
+        bound = None if duration is None else monotonic() + duration
+    else:
+        # Converted against THIS process's monotonic clock, which is the whole point: fork,
+        # interpreter start, imports and argument parsing are already behind us, and they come
+        # out of the bound here instead of being spent before a duration started counting. The
+        # comparison itself stays on the injected wall clock, exactly as a duration's does.
+        remaining = instant - monotonic()
+        if remaining <= 0 and not _asked_for_no_ticks(args):
+            raise _bound_already_spent(
+                service,
+                "the instant this run was given had passed by the time it reached its own"
+                " clock, so it took no tick",
+            )
+        deadline = services.clock.now() + remaining
+        bound = instant
     allow_isolated = getattr(args, "allow_isolated_scope", False)
     # Before the claim, for the same reason _supervise does it: the probe that built this
     # service answers from a file that may not exist yet, and a scope registration recorded
@@ -2054,7 +2410,27 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
             reports = daemon.run(
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
+                # The deadline above is a WALL clock instant, because that is what the daemon
+                # compares against, and wall clocks move: a backward step after the conversion
+                # pushes that instant away and hands the run time nobody granted it. So the run
+                # also gets `stop`, its own additional early exit, reading the monotonic bound
+                # this process was actually given. A tick cannot START past that however the
+                # wall clock behaves; a tick already under way still finishes.
+                stop=None if bound is None else (lambda: monotonic() >= bound),
             )
+            if not reports and bound is not None and monotonic() >= bound \
+                    and not _asked_for_no_ticks(args):
+                # The same ending as the check before the locks, reached one step later. The
+                # bound was still there when this process read its own clock and was gone by
+                # the time the run began - spent adopting the descriptors, taking the claim and
+                # building the adapter - so the loop broke before its first tick. Returning
+                # success here is what let a supervisor count a worker that served nothing as a
+                # clean segment.
+                raise _bound_already_spent(
+                    service,
+                    "the bound was spent while this run was taking its locks and building its"
+                    " adapter, so it began with nothing left and took no tick",
+                )
     except ServiceRefused as refusal:
         raise PayloadExit(
             {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
@@ -2151,10 +2527,13 @@ def cmd_service(services, args) -> dict:
         return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
     if action in ("start", "restart"):
         _require_adapter(services)
+        # Validated where a person typed it, rather than reaching the launched supervisor as
+        # an instant built out of nan.
+        duration, _instant = _declared_bound(args)
         call = service.start if action == "start" else service.restart
         return _refuse_unless_ok(call(
-            allow_isolated=args.allow_isolated_scope, deadline=args.deadline,
-            segment_seconds=args.segment_seconds, max_segments=args.max_segments,
+            allow_isolated=args.allow_isolated_scope, deadline=duration,
+            segment_seconds=_segment_seconds(args), max_segments=args.max_segments,
             actor=args.actor or "cli", takeover=getattr(args, "takeover_scope", False),
         ))
     if action == "run":
@@ -2186,9 +2565,11 @@ def _supervise(services, service, args) -> dict:
         _release_expired_leases(services)
 
     try:
+        duration, instant = _declared_bound(args)
         return service.supervise(
-            allow_isolated=args.allow_isolated_scope, segment_seconds=args.segment_seconds,
-            max_segments=args.max_segments, deadline=args.deadline, on_start=recover,
+            allow_isolated=args.allow_isolated_scope, segment_seconds=_segment_seconds(args),
+            max_segments=args.max_segments, deadline=duration, deadline_monotonic=instant,
+            on_start=recover,
         )
     except ServiceRefused as refusal:
         raise PayloadExit(
@@ -2253,9 +2634,12 @@ def _reachability(services, report) -> dict:
 # ------------------------------------------------------------------ managed marker
 
 # The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
-# Store writes on open; every command below either writes only to the marker filesystem or reads the
-# relay database read-only. The state directory is still resolved, because the coordinator is the
-# party that knows where the store it registered against actually lives.
+# Store writes on open; every command below writes only to the marker filesystem and records
+# nothing in the relay's tables. intent-register is the one that does more than read: it holds the
+# relay's write lock across its generation check and its publication, so an advance cannot commit
+# between them, then releases it with a rollback having written nothing. The state directory is
+# still resolved, because the coordinator is the party that knows where the store it registered
+# against actually lives.
 
 
 def _marker_root(args):
@@ -2765,6 +3149,64 @@ def build_parser() -> argparse.ArgumentParser:
     directive.add_argument("--digest", required=True)
     directive.add_argument("--reference")
     directive.set_defaults(handler=cmd_linkage_directive)
+    directive.add_argument("--purpose",
+                           choices=sorted(envelope.PURPOSES[envelope.SUPERVISOR_TO_PARENT]),
+                           help="derive the envelope pointer for this instruction instead of"
+                                " writing --reference by hand. The pointer's message id is"
+                                " computed from this link and digest, so a pointer belonging"
+                                " to another instruction is refused")
+    directive.add_argument("--correlation",
+                           help="the message this instruction answers, when it answers one")
+
+    select = subparsers.add_parser(
+        "supervisor-select",
+        help="whether one event is news for the level above. A read: it sends nothing,"
+             " queues nothing and records nothing")
+    select.add_argument("--event", required=True)
+    select.add_argument("--recipient",
+                        help="the supervisor task. Without it contactability is not consulted"
+                             " and the answer covers the obligation only")
+    select.set_defaults(handler=cmd_supervisor_select)
+
+    standing = subparsers.add_parser(
+        "supervisor-standing",
+        help="what a project still owes upward, with the project's own reading beside it."
+             " This answers an explicit question and is not suppressed by anything")
+    standing.add_argument("--project", required=True)
+    standing.add_argument("--observation", action="append",
+                          help="a reporting-observation/1 file from reporting-show. A turn that"
+                               " ended without reporting writes no row this store can find, so"
+                               " it is present only when its observation is passed in. Repeat"
+                               " once per reading")
+    standing.set_defaults(handler=cmd_supervisor_standing)
+
+    recorded = subparsers.add_parser(
+        "supervisor-report-recorded",
+        help="record that a report was produced for this event's obligation, once. It says a"
+             " report was composed, never that one arrived")
+    # Exactly one subject. An omission has no event, so an event-only surface could record a
+    # report for every kind of news except the one nobody sent.
+    subject = recorded.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--event")
+    subject.add_argument("--observation",
+                         help="a reporting-observation/1 file from reporting-show, for an"
+                              " obligation left by a turn that ended without reporting")
+    recorded.add_argument("--message", help="the envelope messageId the report was sent under")
+    recorded.add_argument("--note")
+    recorded.set_defaults(handler=cmd_supervisor_report_recorded)
+
+    packet = subparsers.add_parser(
+        "packet-check",
+        help="whether a relay-packet/1 message carries what its purpose requires and agrees"
+             " with the record its receiver read. A read: it opens no store and sends nothing")
+    packet.add_argument("--packet", required=True,
+                        help="the packet, as relay-packet/1 JSON")
+    packet.add_argument("--record", required=True,
+                        help="what the receiver read for ITSELF: the relationship, the current"
+                             " generation, the registered criteria digest and the head its own"
+                             " forge reading reports. A field this record omits comes back"
+                             " unavailable rather than accepted")
+    packet.set_defaults(handler=cmd_packet_check)
 
     settle = subparsers.add_parser("linkage-settle")
     settle.add_argument("--directive", required=True)
@@ -3006,6 +3448,14 @@ def build_parser() -> argparse.ArgumentParser:
     daemon = subparsers.add_parser("daemon")
     daemon.add_argument("--max-ticks", type=int)
     daemon.add_argument("--deadline", type=float)
+    # The INSTANT a launching process already decided this run must stop at, read from
+    # CLOCK_MONOTONIC on this host and this boot. A supervisor writes it when it spawns a
+    # worker, so the worker's own startup is spent from the segment rather than added after
+    # it; a person types --deadline instead. It is not a wall clock and it does not survive a
+    # reboot: that clock restarts near zero, so a value carried into a later boot sits in that
+    # boot's future and names a bound much later than anyone asked for. It fails open, which
+    # is why nothing writes it down and why this is not a number to type by hand.
+    daemon.add_argument("--deadline-monotonic", type=float)
     daemon.add_argument("--allow-isolated-scope", action="store_true")
     daemon.add_argument("--supervised-token")
     daemon.add_argument("--supervised-lock-fd", type=int)
@@ -3027,6 +3477,11 @@ def build_parser() -> argparse.ArgumentParser:
         # The supervisor's own optional bounds, for a test or a deliberately finite run.
         hosted.add_argument("--max-segments", type=int)
         hosted.add_argument("--deadline", type=float)
+        if name == "run":
+            # Only the supervisor takes the instant form, because only the supervisor is ever
+            # launched by another process that had already decided when it must stop. start
+            # and restart are where a person says how long, and they convert it themselves.
+            hosted.add_argument("--deadline-monotonic", type=float)
         hosted.add_argument("--launch-id")
         # For a registration whose store no longer exists - deleted, lost or deliberately
         # replaced. Refused while anything is live on the scope, so this can only ever
@@ -3044,6 +3499,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("--expect-store", help="the store id another participant reported")
     doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
+    doctor.add_argument(
+        "--expect-log",
+        help="the device:inode:name another participant reported for its write-ahead log",
+    )
     doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")
     doctor.add_argument(
         "--issue",
@@ -3173,10 +3632,26 @@ def build_parser() -> argparse.ArgumentParser:
     turn_ready.add_argument("--turn", required=True)
     turn_ready.add_argument("--actor", required=True)
     turn_ready.add_argument("--head", help="restating a different head resets readiness")
+    turn_ready.add_argument("--cause",
+                            help="what changed. A head this package can notice for itself; a"
+                                 " base that moved and a finding that arrived it cannot, so"
+                                 " they are stated here and recorded either way")
     readiness = turn_ready.add_mutually_exclusive_group(required=True)
     readiness.add_argument("--ready", dest="ready", action="store_true")
     readiness.add_argument("--not-ready", dest="ready", action="store_false")
     turn_ready.set_defaults(handler=cmd_merge_turn_ready)
+
+    turn_ack = subparsers.add_parser("merge-turn-acknowledge")
+    turn_ack.add_argument("--turn", required=True)
+    turn_ack.add_argument("--actor", required=True)
+    turn_ack.add_argument("--grant", required=True,
+                          help="the grant id you read. Compared against this tenure's own, so"
+                               " a grant that was returned while you were away is refused"
+                               " here rather than acted on")
+    turn_ack.add_argument("--evidence", required=True,
+                          help="what you read. A bare acknowledgement is the remembered"
+                               " message this replaces")
+    turn_ack.set_defaults(handler=cmd_merge_turn_acknowledge)
 
     turn_attest = subparsers.add_parser("merge-turn-attest")
     turn_attest.add_argument("--turn", required=True)
@@ -3255,6 +3730,10 @@ def build_parser() -> argparse.ArgumentParser:
     turn_show.add_argument("--turn")
     turn_show.add_argument("--repository")
     turn_show.add_argument("--base-ref")
+    turn_show.add_argument("--parent-task",
+                           help="every live claim one task holds, across targets. What a"
+                                " parent that just restarted can ask with the only identifier"
+                                " it still has")
     turn_show.set_defaults(handler=cmd_merge_turn_show)
 
     slot_reserve = subparsers.add_parser("slot-reserve")

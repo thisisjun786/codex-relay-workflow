@@ -10,7 +10,7 @@ side effect.
 
 import json
 
-from .errors import DeliveryRefused, RefusalReason
+from .errors import DeliveryRefused, RefusalReason, RelayError
 from .currency import (
     STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision,
 )
@@ -33,7 +33,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from . import restoration, rolepolicy
+from . import envelope, restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
 )
@@ -368,6 +368,74 @@ class DeliveryService:
             return self._render_revision(row, record, request, report)
         return self._render_completion(row, record, request, report)
 
+    def envelope_context(self, row) -> dict:
+        """The two envelope fields this layer can read and the renderer cannot.
+
+        Who is sending lives on the relationship and which Linear project this belongs to
+        lives on the scope row, and report.py holds neither. Read here, once, from the same
+        store the delivery is already using.
+
+        An ABSENCE degrades to an empty context rather than to an exception. This runs inside
+        the claim transaction, and a message that cannot name its sender is still a message
+        worth sending; the envelope prints unknown for what was not read, which is the honest
+        answer for a relationship this store does not hold.
+
+        A FAULT is not an absence and is not caught. Converting every exception here meant a
+        programming error or a broken database produced a message that looked fine and carried
+        unknown where a real value belonged, with nothing anywhere saying why - the failure
+        this package refuses everywhere else. So only the refusal taxonomy is caught, and a
+        scope lookup that cannot answer a primary-key read inside an open transaction is left
+        to travel: the absent-row case is the None below, not an exception.
+        """
+        try:
+            relationship = self.registry.get(row["relationship_id"])
+        except RelayError:
+            return {}
+        sender = (relationship["parent"] if row["kind"] == REVISION
+                  else relationship["child"]).get("taskId")
+        issue = relationship.get("issueKey")
+        found = self.store.one(
+            "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+            (row["relationship_id"],),
+        )
+        project = found["project_key"] if found is not None else None
+        if project and issue:
+            scope = f"project {project}, issue {issue}"
+        elif issue:
+            scope = (f"issue {issue}; no project scope is recorded for this relationship")
+        else:
+            scope = None
+        return {"senderTaskId": sender,
+                "scope": scope or envelope.absent(
+                    envelope.UNKNOWN, "neither a project nor an issue scope was readable")}
+
+    def supervisor_selection(self, event_id: str, *, recipient=None, now=None) -> dict:
+        """Whether this event is news for the level above, answered from the rows here.
+
+        A read. It sends nothing, queues nothing and records nothing, and it exists on this
+        class because this is where the event, its report and its delivery already are.
+        Producing the report, and recording that one was produced, belong to whoever owns the
+        turn that does it.
+
+        Most events answer no, and that is the point: an ordinary child progressing, a CI run
+        changing and an acknowledgement arriving are all real state changes that the level
+        above does not need a turn for.
+        """
+        from . import supervision
+
+        obligation = supervision.from_event(
+            self.store, event_id, read_work_report(self.store, event_id))
+        if obligation is None:
+            return supervision.suppressed(
+                event_id,
+                "this event is not a completion, a new block or a decision the user owes")
+        # The clock is this service's own. Without it every selection here answered
+        # contactability unmeasured, whatever the host had actually been observed to be, and
+        # the reportable branch was unreachable for every caller of this method.
+        return {**supervision.select(self.store, obligation, recipient=recipient,
+                                     now=self.clock.now() if now is None else now),
+                "obligation": obligation}
+
     def _render_and_account(self, row, record, request, report=None):
         """The bytes, and what became of a declared restoration block in exactly those bytes.
 
@@ -385,7 +453,8 @@ class DeliveryService:
         findings = record.get("criteria") or []
         declared = restoration.declared(findings) is not None
         if report is not None:
-            composed = compose_revision(row, record, request, report)
+            composed = compose_revision(row, record, request, report,
+                                        context=self.envelope_context(row))
             return composed.text, (
                 restoration.project_survivors(findings, composed.survivors)
                 if declared else None
@@ -416,7 +485,8 @@ class DeliveryService:
         # this contract has none, so it renders what it has always rendered rather than being
         # dressed in a shape its own data cannot fill.
         if report is not None:
-            return render_completion(row, record, request, report)
+            return render_completion(row, record, request, report,
+                                     context=self.envelope_context(row))
         lines = [
             "[codex-session-relay] verification request",
             f"requestId: {request}",
@@ -473,7 +543,8 @@ class DeliveryService:
 
     def _render_revision(self, row, record, request, report=None) -> str:
         if report is not None:
-            return render_revision(row, record, request, report)
+            return render_revision(row, record, request, report,
+                                   context=self.envelope_context(row))
         lines = [
             "[codex-session-relay] revision request",
             f"requestId: {request}",
@@ -871,7 +942,10 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence and incompleteness both refuse."""
+        """The recorded settings, validated. Absence, incompleteness, a non-string cwd, model or
+        reasoningEffort, and an approvalPolicy this transport cannot carry all refuse -- the last
+        one on the record rather than on what a host later reports back, because a row asking for
+        an interactive policy settles the send whatever the host would have answered."""
         from .registry import load_settings
 
         settings = load_settings(self.store, task_id)
@@ -928,7 +1002,7 @@ class DeliveryService:
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
                            row=None) -> None:
-        """Withheld before any transport call, naming what is missing.
+        """Withheld before any transport call, naming what the record got wrong.
 
         Not a permanent hold: settings that were never recorded can be recorded, and the next
         pass decides again. Nothing was claimed and nothing was sent, so there is no attempt.

@@ -76,11 +76,14 @@ UNVERIFIABLE_PERMISSION_PROFILE = "unverifiable_permission_profile"
 UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
 UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
-# The only approval policy a resume response may report. It is a VALUE constraint on the
-# recorded row rather than something a transformation can fail on: a host that preserves what
-# it was asked for returns what was recorded, so a row recording anything else is refused
-# after the resume and never reaches turn/start. Named here so the verification below and
-# `doctor`'s receipt read one definition instead of two spellings of it.
+# The only approval policy this transport can carry, on the record and in the response alike.
+# It was compared in one place only for a while -- against the resume RESPONSE -- and what
+# happened to a row recording anything else was then the host's choice: one that preserved the
+# requested policy answered it back, the finding below fired, and the push channel closed; one
+# that normalised it to never answered never, raised nothing, and the send completed. The record
+# already settles that, so require_usable() compares it too and refuses the row before a
+# registration stores it or a send prepares it. The response check stays, because only the host
+# can answer for what the host did with what it was asked for.
 AUTHORIZED_APPROVAL_POLICY = "never"
 
 
@@ -126,7 +129,18 @@ def normalise_environments(environments):
 
 
 class TaskSettings:
-    """Complete or unusable. A partial record cannot say what it is preserving.
+    """Complete or unusable, and presence alone was never the whole of it.
+
+    A record missing a required field cannot say what it is preserving. Neither can one whose
+    cwd, model or reasoningEffort is present and is not a string, because resume_params would
+    copy it onto the wire and only the host could then say what it had done with it.
+    Nor can one whose approvalPolicy is not the authorized literal, and that one is refused for
+    a different reason: it is not a value the host answers for at all, because this transport
+    cannot service an interactive approval. require_usable() decides all three. It does NOT type
+    runtimeWorkspaceRoots or environments, and
+    saying so is not a claim that a wrong shape is caught further on: `runtimeWorkspaceRoots`
+    of "abc" passes here and `list()` turns it into ["a", "b", "c"] on the wire. What those
+    two hold is simply a separate question from this one.
 
     JUN-92 populates this from the creation result Run already receives; it is not a separate
     handshake and it asks for nothing the host did not already report at creation.
@@ -151,12 +165,73 @@ class TaskSettings:
             absent.remove("environments")
         return absent
 
+    def mistyped(self) -> list:
+        """Recorded fields the resume contract types as strings, and this record does not.
+
+        Presence was never the whole question. resume_params copies each of these values
+        straight into ThreadResumeParams, so a recorded `cwd: 7` used to be built and sent, and
+        the only answer about it came back from a host whose schema is not in this repository.
+        The receipt could not say whether the host had accepted it, which is why the rule has to
+        run before the send rather than be read off the response.
+
+        Only meaningful once missing() is empty, and it subscripts self.data to say so:
+        require_usable() orders the two, exactly as resume_params and mismatches already assume
+        a complete record. isinstance excludes bool as well, so True is not read as a model name.
+
+        approvalPolicy is not here. Contract v1 admits the single literal `never`, and
+        require_usable() compares the recorded value against it immediately after this gate, so
+        every value that field could hold and should not -- 7, True, a granular object -- is
+        already refused there, by the more specific of the two codes. A null is not among them:
+        missing() has answered it one gate earlier.
+        """
+        wrong = []
+        if not isinstance(self.data["cwd"], str):
+            wrong.append("cwd")
+        if not isinstance(self.data["model"], str):
+            wrong.append("model")
+        if not isinstance(self.data["reasoningEffort"], str):
+            wrong.append("reasoningEffort")
+        return wrong
+
     def require_usable(self) -> None:
         absent = self.missing()
         if absent:
             raise DeliveryRefused(
                 RefusalReason.SETTINGS_INCOMPLETE,
                 f"missing {', '.join(absent)}",
+            )
+        wrong = self.mistyped()
+        if wrong:
+            # Shape before meaning: what the record IS, then what a particular value means. The
+            # managed admission path already decides in that order, typing model and
+            # reasoningEffort before it looks at the sandbox type. Every offender is named at
+            # once, like missing(), so a hand-edited row costs one round rather than three.
+            raise DeliveryRefused(
+                RefusalReason.SETTINGS_MISTYPED,
+                "; ".join(
+                    f"{field} is {type(self.data[field]).__name__}, not str" for field in wrong
+                ),
+            )
+        if self.data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
+            # Meaning, after shape, and FIRST among the meaning gates, because mismatches()
+            # decides this same field first: a row that is wrong in both this and its sandbox
+            # gets one answer rather than two that depend on which surface refused it.
+            #
+            # Compared against the RECORD and not only against the response, because the record
+            # settles the send on its own. Sent as recorded, a host that preserves the policy
+            # answers it back and the push channel closes, and one that normalises it answers
+            # never and the send completes -- so which of those happened was the host's choice
+            # about a fact this row already contained. The refusal is the same code the
+            # verification reports, so the two surfaces name one situation alike.
+            #
+            # Not a type rule, which is why mistyped() leaves the field alone: this comparison
+            # refuses every wrong value the field can hold, whatever its type, and says the
+            # specific thing about it.
+            raise DeliveryRefused(
+                RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
+                f"the recorded approvalPolicy is {self.data['approvalPolicy']!r}; this transport"
+                " cannot service an interactive approval, so only"
+                f" {AUTHORIZED_APPROVAL_POLICY!r} can be carried as recorded",
             )
         if self.sandbox_mode() is None:
             raise DeliveryRefused(
@@ -213,6 +288,11 @@ class TaskSettings:
         The approval policy is checked FIRST. With an authorized policy of never, a returned
         on-request is both a mismatch and the push-channel-closed case, and raising the generic
         mismatch first would turn a permanently closed channel into a retry loop.
+
+        What is in question here is the HOST's answer, not the record's request. require_usable()
+        has already refused a record asking for anything else, so a finding on this line means
+        the host reported a policy the send did not ask for -- which is exactly the half only the
+        host can settle, and the half no rule on the record can pre-empt.
 
         Within each field, ABSENCE is decided before difference. A host that reported nothing has
         told us nothing about whether the setting was applied, which is a different fact from a

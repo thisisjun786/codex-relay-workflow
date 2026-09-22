@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "reason": "prefix_added",
+    "stripped": null,
+    "title": "[LINA] LINA CORE 실행 호스트 정리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "LINA"
+    ],
+    "observed_title": "LINA CORE 실행 호스트 정리",
+    "project_labels": [
+      "LINA"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Family LINA must not consume a title opening with LINA CORE.",
+  "subcommand": "decide"
+}

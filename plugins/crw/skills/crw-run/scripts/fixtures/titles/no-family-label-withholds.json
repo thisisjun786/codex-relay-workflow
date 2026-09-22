@@ -1,0 +1,18 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "no_family_label",
+    "title": "공통 기획 정리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [],
+    "observed_title": "공통 기획 정리",
+    "project_labels": [],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A project may legitimately carry no product family. That is a confirmation item, not an error.",
+  "subcommand": "decide"
+}

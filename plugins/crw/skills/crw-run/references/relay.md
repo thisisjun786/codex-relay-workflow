@@ -61,8 +61,11 @@ itself measured, against what the probe measured. `same` is the only value to ac
 means the rows came from a file this process did not measure, and it returns `holds: null` and
 exits 2 rather than reporting a relationship you would then adopt out of an unverified store.
 `unknown` means one side could not be established. None of this is proof of store identity on its
-own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
-`--expect-nonce` still exist and still refuse anything short of `proven`.
+own: an id travels with a copy of the bytes, and an agreeing device and inode does not say the
+peer opened the same pathname for it, which is why `--expect-store`, `--expect-inode`,
+`--expect-log` and `--expect-nonce` still exist and still refuse anything short of `proven`.
+`--expect-log` is the newest and carries the part a name count cannot: where the peer's
+write-ahead log is written, since one inode reached at a second pathname keeps a log of its own.
 
 `unknown` is refused the same way `changed` is, whenever the database WAS readable: a caller that
 asked whether these rows came from its store and got no proof must not read exit 0 as yes, which
@@ -479,6 +482,8 @@ and where a parent was never woken at all, nothing surfaces this automatically.
 
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --repository <repo> --base-ref <ref>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-show --parent-task <task>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-acknowledge --turn <id> --actor <task> --grant <id> --evidence <text>
     codex-session-relay --state "$RELAY_STATE" capacity-show [--project <key>] [--parent-task <id>] [--initiative <key>] [--scope <key> --scope-kind initiative|project|store]
     codex-session-relay --state "$RELAY_STATE" region-show --repository <repo> [--revision <rev>] [--project <key>] [--path <path>]
     codex-session-relay --state "$RELAY_STATE" linkage-outstanding --project <key> [--task <id>]
@@ -487,10 +492,28 @@ and where a parent was never woken at all, nothing surfaces this automatically.
 landing, a capacity change, a peer's region and a new attachment. What each answers is here; what
 a pass does with it is there.
 
-`merge-turn-show` takes either selector. `--turn` names one turn, and an id the store does not
-hold answers `ok` false with reason `unregistered_scope` rather than an empty record, so a
-mistyped turn is not read as a released window. `--repository` with `--base-ref` answers about
-that target's window instead of one turn.
+`merge-turn-show` takes exactly one selector, and naming two is refused as `bad_invocation`
+rather than answered about whichever one won: a recovery read that quietly changed scope is
+worse than one that stops. `--turn` names one turn, and an id the store does not hold answers
+`ok` false with reason `unregistered_scope` rather than an empty record, so a mistyped turn
+is not read as a released window. `--repository` with `--base-ref` answers about that
+target's window instead of one turn, and the two are given together or not at all.
+
+`--parent-task` is the one a parent uses on entry, because after a restart or a compaction
+its own task id is the only identifier it still has: every other selector needs a turn or a
+target it no longer remembers. It answers every live claim that task holds across targets,
+each with its grant, its state, and `targetFree` — whether the target could be taken right
+now. Nothing acquires on a parent's behalf, so a waiting claim on a free target is taken by
+declaring readiness again, and an unresolved outcome is reported as unresolved rather than as
+a target anybody may claim.
+
+A turn that reached holding carries a grant addressed to its owner, and
+`merge-turn-acknowledge` is how that owner says it re-read the record rather than acting on
+what it remembered. It is refused when the grant is not the current one — a returned tenure or
+a restated candidate each issue their own — when the turn is no longer holding, when the caller
+is not its holder, or when the owning binding is paused. A granted turn that has not
+acknowledged cannot begin a merge. A claim made before grants were recorded has none, needs
+none, and is not held to this.
 
 `capacity-show` reports the held slots, their total, the count per parent, and any whose recorded
 parent no longer owns the project. `--project`, `--parent-task` and `--initiative` narrow that
@@ -835,3 +858,81 @@ correction; `sync-status` and `sync-retry` manage the queue, and
 
 The wire and record protocol, the invariants, and the package internals live with the package's
 own documents. Read them when changing the relay, not when running an assignment.
+
+The message form both relations share is one of them. `relay-envelope/1` is defined in the
+package's own `docs/envelope.md`, with the workflow rule in
+[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
+Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
+relay carries no supervisor channel, so nothing above the record itself is measured on that
+relation; and what discharges a reporting obligation is the Linear record the supervisor reads,
+confirmed, rather than a report having been written.
+
+Three commands make that readable rather than remembered. They are the whole surface; there is
+no daemon behind them and nothing wakes anybody.
+
+```bash
+# Is this event news for the level above? A read: it sends, queues and records nothing.
+codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
+
+# What does this project still owe upward? An explicit question, never suppressed.
+# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+codex-session-relay supervisor-standing --project <key> [--observation <file>]...
+
+# Record that a report was produced for this event's obligation, once.
+codex-session-relay supervisor-report-recorded --event <id> [--message <messageId>]
+
+# The same, for an obligation a turn left by ending without reporting. It has no event.
+codex-session-relay supervisor-report-recorded --observation <file> [--message <messageId>]
+```
+
+`supervisor-select` answers `report: false` with a reason far more often than it answers true,
+and the reason is the part to read: `no_meaningful_transition` for an ordinary event,
+`already_reported_under_this_obligation` for a fact already reported,
+`already_in_the_record_the_supervisor_reads` once Linear has it confirmed,
+`recipient_is_not_contactable` for a paused or archived supervisor, and
+`recipient_contactability_unmeasured` when nobody has looked recently. Every one of them
+preserves the obligation; none of them discards it.
+
+Without `--recipient` the answer is about the obligation alone and says so with
+`deliverability_was_not_asked_about`: it does not claim anybody is reachable, and it does not
+suppress on a question it was not given the means to ask. Name a recipient and deliverability
+becomes part of the answer, which means a recipient nobody has observed recently - or an
+observation dated in the future, from a clock that went backwards - suppresses the wake rather
+than authorizing one.
+
+`supervisor-report-recorded` says a report was COMPOSED. Whether a turn was created, whether it
+ran, and whether the supervisor acted are three further facts, and no row here carries any of
+them. Recording it is what makes the next reading of the same fact converge instead of waking
+the level above again, so record it when the report actually goes out.
+
+`linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
+the digest rather than leaving it to be written by hand. A pointer belonging to another
+instruction is refused with the contest retained, and one digest cannot carry two purposes.
+
+The packet a parent and a child exchange sits on that same envelope and adds what the
+occasion requires: `relay-packet/1`, in the package's own `docs/packets.md`, with the
+workflow rule in [the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in).
+One command reads it.
+
+```bash
+# Does this packet carry what its purpose requires, and does it agree with what you read?
+# A read: it opens no store, reaches no host and decides nothing about delivery.
+codex-session-relay packet-check --packet <file> --record <file>
+```
+
+`--record` is the reading the receiver did for ITSELF - the relationship, the current
+generation, the registered criteria digest, the head its own forge reading reports. The answer
+says `recordSource: supplied`, and that qualifier is the honest part: this command has no
+store, so it cannot be the thing that established any of those, and handing it an agreeing
+record proves only that two files agree. What it closes is the case where nobody compared
+them at all.
+
+Three dispositions come back and the middle one is the one to read. `accepted` means every
+field the record could answer agreed with it. `refused` names the field and both values.
+`unavailable` means the record could not answer, which is not acceptance: a field the
+receiver could not check is unchecked, and a run that proceeded on it proceeded on nobody's
+authority. A field the record omits produces `unavailable` rather than a pass, so a thin
+record makes less pass rather than more.
+
+A non-PR audit is a first-class shape here. Its artifact is a locator and a digest, it is
+never compared against a head, and it is never asked for a pull request to fill the field.

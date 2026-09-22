@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "reason": "role_out_of_scope",
+    "title": "이니셔티브 감독과 3단계 운영 정식화"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "이니셔티브 감독과 3단계 운영 정식화",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "supervisor",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A supervision task keeps its own name.",
+  "subcommand": "decide"
+}

@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "unchanged",
+    "matched": "bracket_family",
+    "reason": "already_prefixed",
+    "title": "[CRW]"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[CRW]",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A title that is exactly this prefix takes no second one.",
+  "subcommand": "decide"
+}

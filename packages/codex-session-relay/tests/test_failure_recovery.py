@@ -398,6 +398,15 @@ class TheStoreUnderContention(GuardTestCase):
             "read_only_connection now takes a timeout, so the bound can be passed in rather"
             " than fixed here; CRW-96 owns what that should be and this test should follow it",
         )
+        # The same pin, for the opener added beside it. registration_hold takes the write lock
+        # a registration needs and spends the same wait doing it, so a timeout parameter on
+        # either one is how the single declared bound stops being single: the constant would
+        # still be there, and a caller would still be able to ignore it.
+        self.assertEqual(
+            list(inspect.signature(intent.registration_hold.__wrapped__).parameters), ["db_path"],
+            "registration_hold now takes a timeout, so the hold can wait longer than the bound"
+            " this module declares without that being written down anywhere",
+        )
 
 
 class TheWaitBoundReachesEveryReadItGoverns(GuardTestCase):
@@ -413,10 +422,14 @@ class TheWaitBoundReachesEveryReadItGoverns(GuardTestCase):
     def watched(self, bound, work):
         """Run work with the owning constant rebound; report the timeouts and the SQL seen."""
         timeouts, statements = [], []
+        # Every URI opened during the work, kept beside the bounds so a test can ask what KIND
+        # of connection the evaluation took and not only how long it was willing to wait.
+        self.opened = []
         opener = sqlite3.connect
 
         def watching(*args, **kwargs):
             timeouts.append(kwargs.get("timeout"))
+            self.opened.append(args[0] if args else kwargs.get("database"))
             connection = opener(*args, **kwargs)
             connection.set_trace_callback(statements.append)
             return connection
@@ -455,6 +468,21 @@ class TheWaitBoundReachesEveryReadItGoverns(GuardTestCase):
             " means currency's reads did not run on the connection this bound opened, which is"
             f" the reach being asserted: {reads}",
         )
+        # And every one of them was a READ. intent.py now holds a second opener,
+        # registration_hold, which takes the relay's write lock so a registration's generation
+        # check and its publication happen together. guard imports intent, so the source scan
+        # below can no longer say that opener is unreachable from the hook; what it can still
+        # say is that no evaluation opens it. A hook that took the write lock would put a
+        # five-second-budgeted reader behind the daemon's writers and could block an advance.
+        self.assertEqual(
+            [uri for uri in self.opened if "mode=rw" in str(uri)], [],
+            "a Stop evaluation opened the relay store for writing, so the hook can take the"
+            f" registration hold: {self.opened}",
+        )
+        self.assertTrue(
+            all("mode=ro" in str(uri) for uri in self.opened),
+            f"the evaluation opened the store some way other than read-only: {self.opened}",
+        )
 
     def test_the_other_caller_of_the_opener_receives_the_same_bound(self):
         """dispatch_generation_state is the second caller the issue names. Measured, not argued.
@@ -489,7 +517,8 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
     a separate literal in intent.read_only_connection, so changing the declaration changed
     nothing and the values agreeing hid it. These are derived rather than listed: the scan walks
     the package import closure reachable from guard and finds every connection this hook can
-    open, so a second opener added later fails here instead of quietly carrying its own bound.
+    open, so an opener added later either takes the declared bound or fails here instead of
+    quietly carrying one of its own.
 
     Scanned through intent.__file__ rather than a path relative to this test, so what is read is
     the source that is actually imported rather than a copy that might not be.
@@ -539,28 +568,41 @@ class TheWaitBoundIsDeclaredInOnePlace(unittest.TestCase):
                 )
         return sorted(sites.values(), key=lambda site: site[1])
 
-    def test_guard_can_open_a_database_in_exactly_one_place(self):
+    def test_guard_can_open_a_database_only_where_the_bound_is_declared(self):
+        """Every opener the hook can reach lives beside the constant that bounds it.
+
+        Narrowed from "exactly one place" on purpose. CRW-11 added registration_hold, which
+        opens the same store for writing so a generation check and the marker publication that
+        depends on it can be held together. It is in intent.py because that is where
+        register_relationship is, and intent.py is in this closure whether or not the hook ever
+        calls into it. What the count was standing in for is the property kept below: no opener
+        the hook can reach carries a lock wait the constant does not decide. Reachability is a
+        weaker question than execution, and the execution one is answered by
+        TheWaitBoundReachesEveryReadItGoverns, which measures what a real evaluation opens.
+        """
         openers = {
             (module, site[0])
             for module in self.closure()
             for site in self.connect_sites(self.tree(module))
         }
         self.assertEqual(
-            openers, {("intent.py", "read_only_connection")},
-            "the hook can now open a database somewhere else, and that place carries a lock wait"
-            f" of its own: {sorted(openers)}",
+            {module for module, _function in openers}, {"intent.py"},
+            "the hook can now open a database outside the module that declares the bound, so"
+            f" that place carries a lock wait of its own: {sorted(openers)}",
         )
+        self.assertIn(("intent.py", "read_only_connection"), openers)
 
-    def test_that_one_opener_takes_its_bound_from_the_constant_rather_than_a_literal(self):
+    def test_every_opener_takes_its_bound_from_the_constant_rather_than_a_literal(self):
         sites = self.connect_sites(self.tree("intent.py"))
-        self.assertEqual(len(sites), 1, f"intent.py opens more than one connection: {sites}")
-        _function, _line, timeout = sites[0]
-        self.assertIsInstance(
-            timeout, ast.Name,
-            "the lock wait is written at the connect call again, so the constant above it is"
-            " decorative and changing it changes nothing - which is the defect, not a style",
-        )
-        self.assertEqual(timeout.id, "SQLITE_TIMEOUT")
+        self.assertTrue(sites, "intent.py opens nothing, so this scan measured nothing")
+        for function, line, timeout in sites:
+            self.assertIsInstance(
+                timeout, ast.Name,
+                f"the lock wait is written at the connect call in {function} (line {line})"
+                " again, so the constant above it is decorative and changing it changes"
+                " nothing - which is the defect, not a style",
+            )
+            self.assertEqual(timeout.id, "SQLITE_TIMEOUT", function)
 
     def test_the_constant_is_declared_once_in_the_whole_package(self):
         """A second declaration is the defect whether or not the two values agree."""

@@ -441,17 +441,21 @@ class _Transport:
     """
 
     POLL_SECONDS = 0.005
-    # Every stage of one send that the bridge bounds separately, counted rather than guessed.
-    # Two earlier versions of this number were wrong in the same direction - four, then five -
-    # because both assumed a connection is established at most once per send. It is not:
-    # AppServer.call awaits connect() before EVERY request, and connect() rebuilds the socket
-    # whenever its reader task has finished. A connection that drops mid-send is therefore
-    # re-established in front of the NEXT request rather than once at the start.
+    # The phases one request is bounded through, in the order they happen. The bridge holds one
+    # bound per phase; this tuple is both what the relay hands it and what the arithmetic below
+    # counts, so the enforced bounds and the budget cannot drift apart.
     #
-    #   per request:  unix_connect   bounded by open_timeout=self.timeout, only on reconnect
-    #                 initialize     a _request bounded by self.timeout, only on reconnect
-    #                 the request    thread/read, thread/resume or turn/start
-    RPC_STAGES_PER_REQUEST = 3
+    #   establish   _connect_lock, then unix_connect and initialize whenever the reader has
+    #               finished - AppServer.call awaits connect() before EVERY request, so a
+    #               connection that drops mid-send is rebuilt in front of the NEXT one
+    #   transmit    the request frame draining into the socket
+    #   ack         the response coming back
+    #
+    # The count was already three. What it was not, until each phase was actually bounded, was
+    # TRUE: it claimed three separately bounded stages while the websocket write had no bound at
+    # all, so one stage could quietly spend the whole budget the other two were counted into.
+    TRANSFER_PHASES = ("establish", "transmit", "ack")
+    RPC_STAGES_PER_REQUEST = len(TRANSFER_PHASES)
     # _guarded_send makes exactly these three: thread/read, thread/resume, turn/start.
     RPC_REQUESTS_PER_SEND = 3
     # A managed pre-start guard may page thread/list four times for each archive filter,
@@ -753,9 +757,14 @@ class _Transport:
                 pass
             raise HostUnavailable("ledger identity is unknown; refusing to use this ledger")
         if app_server_factory is None:
-            from codex_thread_bridge.rpc import AppServer
+            from codex_thread_bridge.rpc import AppServer, PhaseBounds
 
-            rpc = AppServer(canonical, timeout=self.timeout)
+            # Built from this transport's own phase names, so a phase added here without a bound
+            # over there is a TypeError at startup rather than an unbounded wait in production.
+            rpc = AppServer(
+                canonical, timeout=self.timeout,
+                phase_bounds=PhaseBounds(**dict.fromkeys(self.TRANSFER_PHASES, self.timeout)),
+            )
         else:
             rpc = app_server_factory(canonical)
         if bridge_factory is None:
@@ -928,6 +937,14 @@ class _Refusal(Exception):
         super().__init__(f"{method}: {error.get('message', error.get('code', 'refused'))}")
 
 
+class _NoPhaseTimeout(Exception):
+    """Stands in for PhaseTimeout when the pinned bridge is absent, and is never raised.
+
+    An except clause needs a class either way; binding this one keeps the handler below inert
+    rather than letting it catch something it was not written for.
+    """
+
+
 def _send_identity(thread_id, message):
     """The ledger identity of one send: its operation name and argument fingerprint.
 
@@ -1004,9 +1021,10 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
         return {**(receipt or {}), "replayed": True}
 
     try:
-        from codex_thread_bridge.rpc import RpcError
+        from codex_thread_bridge.rpc import PhaseTimeout, RpcError
     except ImportError:  # pragma: no cover - only when the pinned bridge is absent
         RpcError = _Refusal
+        PhaseTimeout = _NoPhaseTimeout
 
     try:
         receipt["threadId"] = thread_id
@@ -1096,6 +1114,26 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
             receipt.update(status="failed", error=str(error), rpcError=error.error)
     except RpcError as error:
         receipt.update(status="failed", error=str(error), rpcError=getattr(error, "error", None))
+    except PhaseTimeout as error:
+        # Which phase expired decides what this receipt is entitled to claim. An establish
+        # expiry means no connection was ever obtained, so the frame for THIS request was never
+        # written - recording it as a completed failure is what lets the classifier reach
+        # withheld_pre_send instead of parking a delivery that demonstrably never left. The
+        # initialize frame may well have gone out during establishment; it is an observation and
+        # begins no effect, which is why it does not weaken the claim. transmit and ack both
+        # expire AFTER the frame was handed to the socket, so they stay unknown.
+        #
+        # Reached only on thread/read and thread/resume in practice, and only those two get the
+        # honest answer: turn/start keeps held_uncertain because assert_attempt_invariants
+        # forbids sendAttempted "no" on a turn/start operation. Pessimistic, and safe.
+        if error.phase == "establish":
+            receipt.update(
+                status="failed",
+                error=str(error),
+                rpcError={"code": "connection_unavailable", "message": str(error)},
+            )
+        else:
+            receipt.update(status="outcome_unknown", error=f"{type(error).__name__}: {error}")
     except asyncio.CancelledError:
         # Cancelled after a start may already have delivered. Unknown, never non-delivery.
         # Deliberately not retrySafe: an interrupted RPC is not a guard refusal.

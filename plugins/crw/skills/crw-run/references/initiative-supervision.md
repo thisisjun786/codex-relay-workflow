@@ -223,7 +223,10 @@ between tasks.
 
 Two carriers, chosen by whether the parent exists. A project with no parent gets the handoff as the
 first prompt of the new task, prefixed with the project designation so that task runs its own
-[Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
+[Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). That
+binding is what names the new task, and the product-family prefix it puts on that name comes from
+the project's own label rather than from this initiative, which is not a prefix and does not
+rename the supervision task either. An
 existing parent gets it as a [Coordination message](task-packet.md#coordination-message) of kind
 project handoff, carrying the [restoration block](task-packet.md#restoration-block) whether that
 parent is running or idle, for the reason that section gives.

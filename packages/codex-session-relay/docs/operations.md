@@ -111,22 +111,69 @@ is unproven for its own reason.
 
 | Evidence | Verdict |
 |---|---|
-| a nonce readable by the other participant AND an agreeing device/inode | proven |
-| a nonce readable by the other participant, with no physical identity compared | unproven - a copy taken after the challenge carries the nonce |
+| a nonce readable by the other participant AND an agreeing device/inode AND an agreeing log location | proven |
+| a nonce readable by the other participant, with no physical identity or no log location compared | unproven - a copy taken after the challenge carries the nonce, and one inode reached at a second pathname keeps a log of its own |
 | equal store id and equal device/inode, nothing live | unproven - a copy carries the id, and one inode can be reached at more than one pathname |
+| a log location the other participant does not share | unproven - the two were not shown to write into one write-ahead log |
 | an inode with more than one name | unproven - the peer may have opened a different name |
 | a store that states no identity, or a nonce that could not be read, or a nonce read from another file | unproven - absence is not agreement, and an answer that cannot be attributed is not evidence about this store |
 | different store id, different device/inode, or the nonce absent | mismatch |
 
 Insufficient evidence is decided before agreeing evidence, so an inode with more than one
 name is unproven even when a nonce was found: the nonce says the peer's write reached this
-file and cannot say which name the peer keeps writing through. That row catches one case and
-only one - `st_nlink` counts hardlink names, and a bind mount adds a pathname without
-changing it - so one name is not evidence of one pathname either, which is why the row above
-it is unproven rather than proven. `compare_store` grades all of it.
+file and cannot say which name the peer keeps writing through.
 
-`doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` alongside
-`--expect-nonce` is what reaches proven. An unproven result is never reported as healthy.
+The name count catches one case and only one. `st_nlink` counts hardlink names, and a file
+bind mount adds a pathname without changing it - measured on this host on 2026-09-22, where
+such a mount reached `proven` while the two names each grew their own `-wal` and a frame
+written live through one was unreadable through the other. What answers that generally is the
+LOG LOCATION: SQLite writes the log beside the pathname a connection opened, so two
+participants share one log when their opened databases share a directory entry. Each
+participant measures its own and reports it with `store-identity`; the peer sends it back as
+`--expect-log`.
+
+Agreement there is a sufficient condition for one log rather than an equivalence, so a
+DIFFERENCE is unproven rather than a mismatch: the sidecars can themselves be aliased, an
+overlay merged path and its upperdir can differ as directories while the log entry is one
+file, and SQLite documents the `-wal` suffix as what it usually appends. Read under the
+default unix VFS with unaliased sidecars. `compare_store` grades all of it.
+
+`doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` and
+`--expect-log` alongside `--expect-nonce` are what reach proven. Supplying any expectation at
+all and getting no proof exits non-zero, including one whose value is empty or malformed. An
+unproven result is never reported as healthy.
+
+### Which file the evidence came from
+
+All of that grading assumes the answer describes one file. A pathname cannot carry that
+assumption: measuring the identity at the path before and after a read catches a replacement
+that persists and misses one reverted inside the window, because both observations then report
+the original inode while the rows came out of the interloper.
+
+So the diagnostic reads hold the database open. The identity is `fstat`-ed from that
+descriptor, every connection is opened through `/proc/self/fd/N`, and the descriptor is
+required to still name this store - asked again immediately before each connection, because
+`doctor` opens a read connection and a write probe through one descriptor. A read that cannot
+establish this is refused rather than answered: it returns no rows, no identity and a detail,
+and `compare_store` grades that as unproven, never as absence.
+
+This is Linux-specific, the same assumption artifact authorization already makes (I-11). Where
+`/proc/self/fd` is unavailable a read cannot be bound to the file it came from at all, so it
+is refused rather than answered on the weaker measurement.
+
+The answer is bracketed on both sides. SQLite resolves the descriptor to a real name and opens
+that name on its own descriptor - which is what puts `-wal` and `-shm` beside the real file - so
+the connection is also asked which file it opened, through `PRAGMA database_list`, and the
+descriptor is checked again after the read. A store moved before, during or after the read is
+refused rather than answered, and `doctor` withdraws what a moved read had already published.
+
+One limit remains, and no check on this side can observe it: a different file swapped ONTO the
+expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
+locks. What they remove is every move of this store, which is the reachable case.
+
+And a store that is present but will not state its identity is not a store that is absent:
+`doctor` reports it as present and unidentified, and the lifecycle commands treat it as
+unverifiable rather than signalling a service whose store they could not compare.
 
 Status: implemented. Unproven also exits non-zero, because a caller that asked whether this is
 the same store must not read exit 0 as yes. Each participant runs the check in its own sandbox;
@@ -138,6 +185,16 @@ Two process roles. A **worker** is the existing bounded daemon: it runs a set nu
 or until a deadline and then exits, and cannot be constructed unbounded (I-64). A
 **supervisor** owns the locks and launches successive workers, which is what carries an
 assignment past any single process bound.
+
+A bound only means something in the clock of the process enforcing it, so it crosses the
+boundary between those two roles as an instant and not as a duration (I-197). The supervisor
+passes `--deadline-monotonic`, the worker converts it against its own `CLOCK_MONOTONIC` as soon
+as it has one, and the startup the worker has not paid yet comes out of its segment instead of
+landing after it; `service start --deadline N` does the same for the supervisor it launches. A
+process that reaches its own clock past that instant serves nothing and exits `5`, which its
+supervisor reads as neither a clean segment nor a crash: it stops replacing workers, and reports
+`degraded` when its own bound still had room, because a segment shorter than a worker costs to
+start would otherwise churn processes that never serve.
 
 | Command | Effect |
 |---|---|
@@ -342,29 +399,45 @@ flight per recipient, so a call stalled on one recipient no longer blocks a call
 What is still held back is a second send to the SAME recipient, and it is reported
 `thread_busy` without being sent rather than queued behind the first. An abandoned send goes
 on holding its own recipient until the transport's deadline, which is one RPC timeout for
-each stage the bridge bounds separately. A send is three requests — `thread/read`,
-`thread/resume`, `turn/start` — and the client re-establishes the connection in front of any
-of them whose reader has finished, so each can also cost `unix_connect` and `initialize`.
-Two limits worth naming beside that guarantee, because neither is visible from the sentence
-above it.
+each phase of each request. A send is three requests — `thread/read`, `thread/resume`,
+`turn/start` — and the client re-establishes the connection in front of any of them whose
+reader has finished, so each can also cost `unix_connect` and `initialize`.
 
-The isolation begins at the connection. `AppServer._connect_lock` serialises establishment,
-so a stalled `connect()` is still shared by every recipient, reads included, and only what
-happens after a connection exists is isolated per recipient.
+**One transfer is three phases, and each has its own bound.** `establish` covers the wait on
+`AppServer._connect_lock` and the handshake behind it, `transmit` covers the request frame
+draining into the socket, and `ack` covers the response coming back. They used to share one
+budget, which is how a slow establishment for one recipient spent the budget a different
+recipient needed for its own write and response — `_connect_lock` serialises establishment, so
+part of every connect is other recipients rebuilding. Queueing behind them now costs a caller
+its `establish` bound and no more, and the expiry names the phase. A caller refused there
+wrote no frame; on `thread/read` or `thread/resume` that is recorded as `withheld_pre_send`
+and stays retry-safe, instead of parking a delivery that demonstrably never left.
 
-And the deadline buys finiteness, not sufficiency. It is not an upper bound on a send that is
-still making progress and cannot be turned into one by choosing a larger multiple: the same
-timer also covers the time this send spends waiting on that shared connect lock while a
-DIFFERENT recipient rebuilds, and a queue of rebuilds ahead of it has no constant bound. So
-the deadline can fire on a healthy send, and what it leaves behind is final: `_guarded_send`
-writes an `outcome_unknown` receipt on cancellation and re-raises, and nothing replaces that
-row later. Recovering the event from there is reconciliation's job under I-71 in
+Two things this does NOT give, worth naming beside the guarantee.
+
+The connection is shared even though the scheduling is not. There is one `AppServer` and one
+socket. A `transmit` expiry retires that connection rather than reusing it, because a cancelled
+partial write corrupts the outbound stream every recipient shares, and retiring it fails the
+unresolved requests it was carrying — across recipients. Settled requests are kept, and the
+replacement the next `connect()` builds is untouched. Per-recipient scheduling isolation and a
+shared transport failure domain are two different guarantees.
+
+And the deadline still buys finiteness, not sufficiency. Every RPC wait inside a send is now
+bounded by its own phase, but the deadline also covers work no caller-side timer can preempt:
+the bridge ledger's transactions, and a `before_start` guard that does synchronous filesystem
+and SQLite work before its first `await` and so blocks the event loop the timer runs on.
+`guard_rpc_requests` bounds how many host calls such a guard may make, never how long it may
+hold the loop. So the deadline can still fire on a send whose phases were all within their
+bounds, and what it leaves behind is final: `_guarded_send` writes an `outcome_unknown`
+receipt on cancellation and re-raises, and nothing replaces that row later. Recovering the
+event from there is reconciliation's job under I-71 in
 [invariants.md](invariants.md), and what stops a second copy being sent is that `_settle`
 never reschedules `held_uncertain` — an unknown outcome waits to be reconciled instead of
 being retried. It is the delivery state machine that protects the event, not same-id replay:
 `derive_request_id` gives every attempt its own id, so a retry is a new id the retained
-receipt says nothing about. Read this bound as a backstop against a write that never drains,
-not as a promise about how long a working send may take.
+receipt says nothing about. Read this bound as a backstop against the local work no timer can
+interrupt, not as a promise about how long a working send may take — the waits it used to
+stand in for are bounded where they happen now.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision

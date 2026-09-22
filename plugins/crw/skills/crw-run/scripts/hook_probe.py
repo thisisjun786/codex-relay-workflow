@@ -38,7 +38,8 @@ RELEASING = ("in_progress", "blocked_needs_input", "interrupted", "failed")
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 TRACED_FUNCTIONS = ("observe_state", "decide", "derive_assignment_state",
                     "identity_contested", "classify_declaration", "_correlated",
-                    "_covered", "_ambiguity_resolved", "resolve_assignment",
+                    "_correlation_problem", "_covered", "_ambiguity_resolved",
+                    "resolve_assignment",
                     "selected_marker", "_claimant")
 BINDING_WINDOW_MINUTES = 30
 MAX_HOLDS_PER_TURN = 1
@@ -67,17 +68,38 @@ FACT_OBJECTS = ("intent", "bound", "relationship", "resolution")
 # than a discovery: validating only the outer record left a field read to land on a string one level
 # down, which is the same silent detector-disabling failure the outer check exists to prevent.
 NESTED_FACT_LISTS = {"resolutions": ("adjudicated",), "resolution": ("adjudicated",)}
-FACT_IDENTITIES = {"attempts": ("taskId",),
+# Every identity slot a fact may carry, held to the same standard the relay's own reader holds it
+# to (intent.IDENTITY_FIELDS). Kept in step deliberately: a field the relay reports as malformed
+# and this reader reads through answers a different state for the same bytes, and a replay that
+# agrees on every fixture would still be reporting parity it does not have.
+FACT_IDENTITIES = {"intent": ("dispatchRequestIdHash", "dbPath"),
+                   "bound": ("sessionId", "taskId"),
+                   "relationship": ("relationshipId",),
+                   "attempts": ("taskId", "outcome"),
+                   "claims": ("sessionId", "dispatchRequestId"),
+                   "conflicts": ("attemptedSessionId", "attemptedTaskId"),
                    "resolutions": ("chosenTaskId", "chosenSessionId"),
                    "resolution": ("chosenTaskId", "chosenSessionId")}
 
 
-def _malformed_nested(key, record):
-    """A nested list inside a fact, held to the standard the fact itself is held to."""
+def _malformed_identities(key, record):
+    """An identity slot inside a fact that is present and not a string, or None.
+
+    Asked only of the assignment a turn is judged under, because this is what a fact MEANS rather
+    than whether it can be walked.
+    """
     for field in FACT_IDENTITIES.get(key, ()):
-        value = record.get(field)
-        if field in record and not isinstance(value, str):
+        if field in record and not isinstance(record.get(field), str):
             return key + "." + field
+    return None
+
+
+def _malformed_nested_lists(key, record):
+    """A nested list inside a fact, held to the standard the fact itself is held to.
+
+    Structural, so it is asked of every candidate: a field read landing on a string one level down
+    is the same traceback the outer check exists to prevent.
+    """
     for field in NESTED_FACT_LISTS.get(key, ()):
         value = record.get(field)
         if field in record and not isinstance(value, list):
@@ -96,20 +118,73 @@ def _mapping(value):
     return value if isinstance(value, dict) else {}
 
 
+def _shape_traversable(marker):
+    """The first structural problem that would stop SELECTION reading this candidate, or None.
+
+    Only what resolve_assignment actually touches while choosing: the claims list it scans and the
+    intent record it reads declaredAt from. Everything else in a candidate is read after one is
+    chosen, so validating it here judges records selection never opens.
+
+    That scope is the whole point. The relay chooses among candidates by reading claims through
+    isinstance guards and the intent through one more, then applies its shape check to the marker it
+    selected. Checking every container in every candidate instead let a bare-string claim in an
+    assignment nobody is using answer marker_malformed for the workspace and release a turn the
+    current assignment would have blocked. The entries selection skips are skipped here too.
+    """
+    if not isinstance(marker, dict):
+        return None
+    claims = marker.get("claims")
+    if claims is not None and not isinstance(claims, list):
+        return "claims"
+    intent_fact = marker.get("intent")
+    if intent_fact is not None and not isinstance(intent_fact, dict):
+        return "intent"
+    return None
+
+
+def _malformed_selected(marker):
+    """Every shape the selected assignment is held to: containers, entries and identities."""
+    for key in FACT_LISTS:
+        value = marker.get(key)
+        if value is not None and not isinstance(value, list):
+            return key
+        for item in value or []:
+            if not isinstance(item, dict):
+                return key + " entry"
+            nested = _malformed_nested_lists(key, item) or _malformed_identities(key, item)
+            if nested:
+                return nested
+    for key in FACT_OBJECTS:
+        value = marker.get(key)
+        if value is not None and not isinstance(value, dict):
+            return key
+        record = value or {}
+        nested = _malformed_nested_lists(key, record) or _malformed_identities(key, record)
+        if nested:
+            return nested
+    return None
+
+
 def _malformed(observation):
     """The first published record whose shape stops it being readable as a fact, or None.
 
-    Readable and wrongly shaped is its own answer, and it needs one. Letting a `.get` land on a
+    Readable and wrongly shaped is its own answer, and it needs one. Letting a field read land on a
     string ends the hook in a traceback, and a traceback records nothing at all: no observation, no
     state, no row a coordinator can read, and a turn that then looks exactly like an ordinary turn
     end. Anyone able to write a single fact could otherwise switch detection off for a workspace by
     writing a value of the wrong type.
+
+    Scoped the way the relay scopes it. A candidate is held only to what SELECTION must read to
+    choose among candidates; the assignment actually chosen is then held to everything. Validating
+    every entry instead let one stale assignment nobody is using answer for the whole workspace and
+    suppress a hold the current assignment owed, which is the failure the relay's own selection
+    comment warns about.
     """
     for key in ("stop_input", "disposition", "receipt", "marker", "workspace"):
         value = observation.get(key)
         if value is not None and not isinstance(value, dict):
             return key
-    markers = [observation.get("marker")]
+    candidates = [observation.get("marker")]
     workspace = observation.get("workspace")
     if isinstance(workspace, dict):
         assignments = workspace.get("assignments")
@@ -118,28 +193,13 @@ def _malformed(observation):
         for entry in assignments or []:
             if not isinstance(entry, dict):
                 return "workspace.assignments entry"
-            markers.append(entry)
-    for marker in markers:
-        if not isinstance(marker, dict):
-            continue
-        for key in FACT_LISTS:
-            value = marker.get(key)
-            if value is not None and not isinstance(value, list):
-                return key
-            for item in value or []:
-                if not isinstance(item, dict):
-                    return key + " entry"
-                nested = _malformed_nested(key, item)
-                if nested:
-                    return nested
-        for key in FACT_OBJECTS:
-            value = marker.get(key)
-            if value is not None and not isinstance(value, dict):
-                return key
-            nested = _malformed_nested(key, value or {})
-            if nested:
-                return nested
-    return None
+            candidates.append(entry)
+    for candidate in candidates:
+        structural = _shape_traversable(candidate)
+        if structural:
+            return structural
+    selected = selected_marker(observation)
+    return _malformed_selected(selected) if isinstance(selected, dict) else None
 
 
 def _malformed_counters(observation):
@@ -295,21 +355,170 @@ def identity_contested(marker):
     return any(not _covered(fact, applicable) for fact in _competing_facts(marker))
 
 
-def _correlated(marker, session_id):
-    """Whether this session presented the dispatch request id the intent was declared with.
+# Why a session's claim does not correlate with the assignment it sits in. Separate conditions
+# because they are separate repairs; they release identically, so they are labels and not states.
+CLAIM_ABSENT = "claim_absent"
+CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
+CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
+INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+INTENT_ASSIGNMENT_MISMATCH = "intent_assignment_mismatch"
 
-    The intent stores only the hash. Storing the id in the clear would make correlation empty,
-    because any session able to read the directory could then present it.
+
+def _correlation_problem(marker, session_id, assignment=None):
+    """Which correlation condition this session's claim fails, or None when it correlates.
+
+    The chain is preimage -> intent hash -> assignment, and all three links are required. The
+    intent stores only the hash, because storing the id in the clear would make correlation empty:
+    any session able to read the directory could then present it. But the hash and the preimage can
+    be made to agree with each other by anything that can write the marker, so the assignment is
+    the third link, and no writer of the facts inside the assignment chooses it: it is the
+    directory name, and the directory name IS the hash. Narrowly that and no more - whether the
+    enumerated directory is the one the coordinator created is a property of the enumeration.
+
+    Every condition is answered apart from the others: reporting a mismatching claim for an intent
+    that published no hash, or one published under another assignment, sends an operator to settle
+    a claim that is correct.
     """
     claim = next((c for c in (marker.get("claims") or [])
                   if _same_identity(_claimant(c), session_id)), None)
     if not claim:
-        return False
+        return CLAIM_ABSENT
     presented = claim.get("dispatchRequestId")
-    if not presented:
+    if not _named(presented):
+        return CLAIM_DISPATCH_UNNAMED
+    declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
+    if not _named(declared):
+        return INTENT_DISPATCH_UNNAMED
+    if _named(assignment) and not _same_identity(declared, assignment):
+        return INTENT_ASSIGNMENT_MISMATCH
+    digest = _hashed(presented)
+    if digest is None:
+        return CLAIM_DISPATCH_UNNAMED
+    return None if _same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
+
+
+def _correlated(marker, session_id, assignment=None):
+    """Whether this session presented the dispatch request id the intent was declared with.
+
+    The rule itself lives in _correlation_problem; this is that answer read as a yes or no. Written
+    as a delegation rather than as its own copy because the two windows must not be able to
+    disagree, and because a looser test here than in _correlation_problem is exactly the drift this
+    reader exists to detect: a blank preimage passed a truthiness test and failed _named, so one
+    window correlated a claim the other refused.
+    """
+    problem = _correlation_problem(marker, session_id, assignment)
+    if problem is not None:
         return False
-    digest = hashlib.sha256(str(presented).encode("utf-8")).hexdigest()
-    return digest == (marker.get("intent") or {}).get("dispatchRequestIdHash")
+    return True
+
+
+def _obstructed_claim(marker, session_id):
+    """A claim this session owns whose record cannot say which assignment it names, or None.
+
+    Shape before meaning, applied to selection. _selecting_claim asks what a claim NAMES, and a
+    claim whose dispatchRequestId is not a readable value names nothing, so asking it drops the
+    candidate silently and an older assignment is judged while the corrupt successor goes
+    unreported. The candidate is kept so the decision can answer marker_malformed on the assignment
+    that carries the corruption; unlike an unreadable intent this costs no soundness, because the
+    declaration is readable and can still order it.
+
+    Narrow: THIS claim must carry a dispatchRequestId of the wrong type - present, and not a
+    string - which is precisely what the shape check reports for a claim and precisely why its
+    preimage cannot be read. Whether some other fact in the marker is malformed is a different
+    question and does not stand in for it, and an absent preimage is well shaped: a claim naming no
+    dispatch is uncorrelated, not unreadable, and must not select its own directory.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not _same_identity(_claimant(claim), session_id):
+            continue
+        if "dispatchRequestId" in claim and not isinstance(claim["dispatchRequestId"], str):
+            return claim
+    return None
+
+
+def _hashed(preimage):
+    """The assignment a preimage names, or None when it does not name one at all.
+
+    A lone surrogate is a str, so the shape check passes it and UTF-8 encoding then raises. Read
+    straight through, one such value in one stale claim ends the selection walk in a traceback and
+    switches detection off for the whole workspace. A preimage that cannot be encoded names
+    nothing, the same answer a blank one gets.
+    """
+    try:
+        return hashlib.sha256(str(preimage).encode("utf-8")).hexdigest()
+    except (ValueError, TypeError):
+        return None
+
+
+# The instant an undated record sorts below. Named so the two orderings share one floor.
+_EPOCH = datetime(1, 1, 1, tzinfo=timezone.utc)
+
+
+def _selecting_claim(marker, session_id, assignment):
+    """This session's claim that independently names this assignment, or None.
+
+    Which assignment a turn is about, answered without reading the intent. An assignment id is the
+    hash of a dispatch request id, so the claim carries the whole answer: the path authorises the
+    owner, the body confirms the writer meant it, and hashing the preimage says which assignment
+    the claim belongs to.
+
+    Independent of the intent on purpose. Selecting on the intent's content drops a candidate whose
+    intent cannot be read, and an unreadable store must never be reported as an absent one: the
+    reader would skip the current assignment, select an older one and hold against stale state.
+    A claim that hashes elsewhere still selects nothing, which is what stops an uncorrelated claim
+    shadowing an older assignment that owes a hold.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not _same_identity(_claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if not _named(presented):
+            continue
+        if not _same_identity(_hashed(presented), assignment):
+            continue
+        # Read through a record check: an intent that is not a record cannot be asked this, and
+        # asking it anyway ends the selection walk in the traceback the shape rules exist to
+        # prevent. Not a record is also not a contradiction, so the candidate stays.
+        intent_fact = marker.get("intent")
+        # Shape before meaning, and the record has to pass as a whole. A hash read out of an
+        # intent whose other identity slots are wrongly typed is not evidence about anything: the
+        # record cannot be read as a fact, so it cannot contradict the directory either, and
+        # letting it exclude the candidate held an older assignment instead of reporting the
+        # current marker as malformed.
+        readable = isinstance(intent_fact, dict) and all(
+            isinstance(intent_fact[field], str)
+            for field in FACT_IDENTITIES.get("intent", ()) if field in intent_fact
+        )
+        declared = intent_fact.get("dispatchRequestIdHash") if readable else None
+        if _named(declared) and not _same_identity(declared, assignment):
+            # The coordinator's own record says this directory belongs to another assignment, so a
+            # claim agreeing with the directory does not make it this session's. Only a READABLE
+            # contradiction excludes: an absent or unreadable intent says nothing and its candidate
+            # stays, which is what keeps a corrupt current assignment from being skipped.
+            continue
+        return claim
+    return None
+
+
+def _selected_assignment(observation):
+    """The assignment id the selected marker was read under, or None when none was supplied.
+
+    A workspace listing names each assignment, so the resolved one carries its own id. A
+    pre-resolved marker has no directory to read, so a fixture states the assignment or leaves the
+    third correlation link unasked; the relay's own reader always supplies it, because it walked to
+    the directory to get there.
+
+    A workspace entry written without an assignmentId therefore leaves that link unasked rather
+    than failing, and tests less than it looks like it does.
+    """
+    workspace = observation.get("workspace")
+    if workspace is None:
+        return observation.get("assignment")
+    return (selected_marker(observation) or {}).get("assignmentId")
 
 
 def _named(value):
@@ -520,6 +729,21 @@ def resolve_assignment(workspace, session_id):
 
     A session stays with the assignment it claimed. Taking the newest intent unconditionally would
     release a still-running earlier child the moment a later assignment is declared for the path.
+
+    The claim has to name THIS assignment, not merely this session. Read on the claimant alone, an
+    uncorrelated claim written into a newer assignment shadows an older one the session is
+    legitimately bound to: selection prefers the newer directory, the decision path refuses the
+    uncorrelated claim and releases, and the older assignment's undeclared turn never gets looked
+    at. One file would switch holding off for a session correlated and bound somewhere else. The
+    test is the claim against the directory and never against the intent, so a candidate whose
+    intent cannot be read is still selected and still reported rather than skipped.
+
+    The claim says WHICH assignments are this session's. Which of them is CURRENT is the
+    declaration and only the declaration: an assignment comes into existence by being declared, so
+    a successor's declaration necessarily follows its predecessor's. The claim cannot serve, because
+    the child writes it; nor an attempt, which is append-only and arrives on reconciliation; nor a
+    bind, which arrives whenever thread creation finishes. Any of those lets a stale assignment be
+    revived and a Stop judged against its dispositions and hold budget.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -528,14 +752,18 @@ def resolve_assignment(workspace, session_id):
         # the reader on a valid earlier state, which is what the create-once layout already gives.
         if declared is not None:
             published.append((declared, str(assignment.get("assignmentId") or ""), assignment))
-    claimed = [row for row in published
-               if any(_same_identity(_claimant(claim), session_id)
-                      for claim in (row[2].get("claims") or []))]
+    claimed = []
+    for row in published:
+        claim = _selecting_claim(row[2], session_id, row[1])
+        if claim is None:
+            claim = _obstructed_claim(row[2], session_id)
+        if claim is not None:
+            claimed.append(row)
     pool = claimed or published
     if not pool:
         return None
     # Ties break on the assignment id, so every reader of the same listing picks the same one.
-    return max(pool, key=lambda row: (row[0], row[1]))[2]
+    return max(pool, key=lambda row: (row[0] is not None, row[0] or _EPOCH, row[1]))[2]
 
 
 def selected_marker(observation):
@@ -580,7 +808,7 @@ def observe_state(observation):
     if not bound:
         # Binding is coordinator-only, so an unbound session is never the managed child yet.
         # Occupying the workspace is not identity.
-        if not _correlated(marker, session):
+        if not _correlated(marker, session, _selected_assignment(observation)):
             return "dispatch_uncorrelated", "This session presented no matching dispatch request id."
         return "correlated_unbound", (
             "Correlated to the intent but not yet bound by the coordinator. Released; the turn's "
@@ -602,11 +830,27 @@ def observe_state(observation):
     # the creation receipt, so it can bind before the child publishes its claim, and that race must
     # not prompt a session which never claimed this assignment. Checked after the declared outcomes
     # so a turn that did declare keeps the more useful record.
-    if not any(_same_identity(_claimant(claim), session)
-               for claim in marker.get("claims") or []):
+    #
+    # Asked through the correlation rule rather than through the claimant alone, which is the check
+    # the pre-bind path above has always made and this one did not. An assignment id IS the hash of
+    # a dispatch request id, so a claim naming a different dispatch is evidence about a different
+    # assignment, and counting it satisfied the hold precondition with a fact nobody correlated.
+    problem = _correlation_problem(marker, session, _selected_assignment(observation))
+    if problem == CLAIM_ABSENT:
         return "marker_unclaimed", (
             "The coordinator bound this session, but it has not claimed this assignment. Released "
             "and recorded; a hold needs the child's own claim, not only the coordinator's bind.")
+    if problem:
+        # Apart from marker_unclaimed because the two clear differently. An unclaimed marker is the
+        # bind-before-claim race and ends when the child publishes; this never ends by itself,
+        # because claims/<session>/claim.json is create-once and a differing dispatch request id is
+        # a conflict, so the correct claim can no longer be published at that path.
+        return "claim_uncorrelated", (
+            "This session is bound but its claim does not correlate with this assignment ("
+            + problem + "). Released and recorded; every fact this reads is create-once, so it "
+            "does not clear itself and no resolution consumed here will: correlation reads the "
+            "claim and the intent, never the adjudications. Recovery is a new assignment, "
+            "declared for a fresh dispatch request id.")
     if not marker.get("relationship"):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
@@ -653,6 +897,14 @@ def decide(observation):
         if state == "correlated_unbound":
             # The pre-bind window is not blind: keep what the turn would have been judged as,
             # so the coordinator can fold it once the bind lands.
+            result["record"]["pendingObservation"] = classify_declaration(observation)
+        if state == "claim_uncorrelated" and marker:
+            # Which artifact is wrong, kept separate from the decision. The conditions release the
+            # same way and are settled differently, so the class survives in the record rather
+            # than only in the reason text, and what the turn WOULD have been judged as is kept
+            # too - this answer replaces a classification the coordinator still needs.
+            result["record"]["claimEvidence"] = _correlation_problem(
+                marker, stop.get("session_id"), _selected_assignment(observation))
             result["record"]["pendingObservation"] = classify_declaration(observation)
         if marker:
             result["record"]["assignmentState"] = derive_assignment_state(

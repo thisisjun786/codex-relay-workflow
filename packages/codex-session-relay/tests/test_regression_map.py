@@ -231,6 +231,9 @@ SUMMARIES = {
         ((False,), (("declaration default: True", 1),), ("notes", "skipped")),
     ("delivery.py", None, "_rate_limited", "function"):
         ((False,), (("return: False", 1), ("return: True", 1)), ()),
+    # A stated absence is a dict carrying one key, so the false side is reachable from either
+    # input alone - anything that is not a mapping, and any mapping without the key.
+    ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
     ("marker.py", None, "named", "function"): ((False,), (), ()),
     ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
@@ -242,6 +245,9 @@ SUMMARIES = {
     ("service.py", None, "_worker_identified", "function"):
         ((False,), (("return: False", 3),), ()),
     ("service.py", None, "alive", "function"): ((False,), (), ()),
+    # A name is a non-blank string, so the false side is reachable from either input alone:
+    # anything that is not a string, and any string that is blank.
+    ("supervision.py", None, "_named", "function"): ((False,), (), ()),
 }
 
 # Folds where the reduction rule cannot follow it, so the fold leaves a trace anyway.
@@ -259,6 +265,7 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("daemon.py", None, "_already_observed", "function"),
     ("daemon.py", None, "_reads_were_complete", "function"),
     ("daemon.py", None, "_worth_polling", "function"),
+    ("envelope.py", None, "stage_holds", "function"),
     ("guard.py", None, "receipt_matches", "function"),
     ("guard.py", None, "reserve_hold", "function"),
     ("hostadapter.py", "TokenScan", "exhausted", "field"),
@@ -291,6 +298,7 @@ FOLD_FREE_BOOLEANS = (
     ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
+    ("store.py", None, "in_transaction", "function"),
 )
 
 # A write context naming a declared boolean that is not one of the producer forms above. All
@@ -567,6 +575,30 @@ SUMMARY_SITES = (
     ("test_settings_preservation.py", "test_every_settings_refusal_is_a_pre_send_refusal",
      "retry_safe", True, "self.assertTrue(facts.retry_safe)",
      "inside a loop over a written list of refusals, with the pre-send state asserted beside it"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_read_is_a_completed_non_delivery",
+     "retry_safe", True, "self.assertTrue(facts.retry_safe)",
+     "paired: the delivery state, the send-attempted value and the failed operation are all"
+     " asserted beside it, and the record is then put through assert_attempt_invariants, which"
+     " pins retry_safe to exactly this combination rather than letting true stand alone"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_resume_is_also_a_completed_non_delivery",
+     "retry_safe", True, "self.assertTrue(facts.retry_safe)",
+     "the same shape one request later, and the absent resumed block is asserted beside it -"
+     " which is the fact that separates this from a refusal decided FROM a resume response"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_turn_stays_pessimistic",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "false is the summary agreeing with the frozen schema rather than with the receipt: no"
+     " turn/start frame was written either, and the held_uncertain state asserted beside it is"
+     " what makes this a deliberate over-reading rather than an unread value"),
+    ("test_transfer_phases.py", "test_a_transmit_expiry_stays_uncertain",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "paired with the outcome_unknown receipt status and held_uncertain state; the frame had"
+     " already been handed to the socket, so false is the only reading available"),
+    ("test_transfer_phases.py", "test_an_acknowledgement_expiry_stays_uncertain",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "the pre-existing response-wait behaviour, asserted unchanged beside its receipt status"),
     ("test_wp1_regressions.py", "test_a_claim_from_a_live_turn_is_accepted_but_staged",
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
      "paired: the stage is asserted staged on the line above and the turn status below, so an"
@@ -590,6 +622,32 @@ SUMMARY_SITES = (
     ("test_wp1_regressions.py", "test_a_receipt_from_a_completed_turn_is_final_immediately",
      "deliverable", True, "self.assertTrue(self.intake.deliverable(payload['eventId']))",
      "this value pins both conjuncts and the stage is asserted final above it"),
+    ("test_supervisor_envelope.py", "test_a_conditional_acceptance_is_not_a_held_stage",
+     "stage_holds", False, "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",
+     "the stage is set to conditional with its source on the line above, so false is"
+     " attributable to the conditional and not to the stage being absent or unanswered. That"
+     " distinction is the case: a conditional acceptance is the one value a reader is most"
+     " likely to round up to yes"),
+    ("test_supervisor_envelope.py",
+     "test_silence_is_never_agreement_and_a_state_needs_a_source", "stage_holds", False,
+     "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",
+     "paired: stage_holds folds the stage being present with its state equalling yes, and false"
+     " alone cannot tell an unanswered stage from a missing one. The line above asserts the"
+     " state is unmeasured, which names which of the two this is"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", False, "self.assertFalse(envelope.is_absent({'absent': 'probably'}))",
+     "the subject is a literal written into the assertion and it IS a mapping, so the false"
+     " side is attributable to the reason alone rather than to the type check that shares it."
+     " This is the case the symbol was widened for: a word nobody defined used to pass"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", False, "self.assertFalse(envelope.is_absent({'absent': None}))",
+     "the same shape with the reason absent rather than wrong, written out beside the case"
+     " above so the two failing inputs are named apart"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", True, "self.assertTrue(envelope.is_absent(envelope.absent(reason)))",
+     "the positive control, over every declared absence in turn: true pins both conjuncts,"
+     " and it is what stops the two assertions above from being satisfied by a predicate that"
+     " answered false to everything"),
 )
 
 
@@ -1084,6 +1142,22 @@ FAULT_SITES = (
      " inside _claim, with an empty send list as the independent check. The reserved capacity"
      " is in that subset too, so the empty-table checks cannot pass for a reservation that was"
      " never written"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_relationship_commit_leaves_no_settings_behind", "helper",
+     "relationships",
+     "cmd_register composes its writes into ONE transaction, so naming either table reaches"
+     " the same interval; the predicate is what makes the case say which end of it it is"
+     " about. This one kills at the relationship write and asserts authorized_settings was"
+     " in the same set, which is the direction that already held before CRW-173 and is kept"
+     " so neither order can pass this file alone"),
+    ("test_register_atomicity.py",
+     "test_killed_before_the_settings_commit_leaves_no_relationship_behind", "helper",
+     "authorized_settings",
+     "the interval CRW-173 is about. Before the fix this predicate reached the SECOND of two"
+     " transactions and the relationship was already committed; the case asserts"
+     " relationships was in the interrupted set, so it fails again the moment the two writes"
+     " come apart rather than only reporting an empty store, which a registration that never"
+     " started would also produce"),
     ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
      "relationships",
      "register() runs three transactions and this name held only because the relationship"

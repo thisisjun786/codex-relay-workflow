@@ -23,7 +23,12 @@ repository identity. One repository may support several Linear projects, and
 one project may involve several repositories. Resolve names to stable project
 IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
-title alone. A rename or changed initiative relation does not change a binding. An initiative is
+title alone. A rename or changed initiative relation does not change a binding, and a title is not
+read the other way either. The management title carries its project's product-family label by the
+rule in [Set the app presentation and record](#set-the-app-presentation-and-record), so the label
+is derived from the binding and is never evidence of one: a task is not bound to a project because
+its title names that project's family, and a title carrying a different family is a presentation
+gap to report rather than a binding to correct. An initiative is
 itself a target only for an explicit designation to execute its approved projects, which binds at
 that level through [Initiative supervision](../../crw-run/references/initiative-supervision.md);
 cited as context by any other operation it changes no binding.
@@ -72,22 +77,61 @@ A request to make this the fixed management task covers its matching title,
 sidebar pin, and a compact Linear management record. Respect an explicit title,
 no-rename, unpinned, or read-only constraint.
 
-Use a concise project summary as the management task title: the short outcome the
-project exists for, named so the title also reads as the task that manages it.
-Preserve an explicit
-user title. Product family and initiative membership are context, not required
-title prefixes; no initiative or multiple initiatives needs no title-choice
-question. Resolve same-name projects by stable ID under the shared target rules
-before binding. If their management titles would be indistinguishable, append a
-short project-ID suffix. Do not rename the initiative or project itself. This
-convention names the management task; execution-task titles follow
-[Child task titles](../../crw-run/references/task-packet.md#child-task-titles).
+Use a concise project summary as the management task title, led by the linked
+project's product-family label in brackets, as in `[CRW] 설치형 플러그인 전환`: the
+short outcome the project exists for, named so the title also reads as the task
+that manages it. Write the label the project actually carries, exactly as Linear
+spells it, without expanding, translating, abbreviating or changing its case, and
+without a table of families kept beside the workspace's own. Initiative membership
+is still not a prefix, and no initiative or multiple initiatives needs no
+title-choice question. Preserve an explicit user title: the user's wording stays as
+the body and takes the prefix in front of it, while an explicit fixed title, a
+no-rename or a read-only constraint leaves the title as it is. Resolve same-name
+projects by stable ID under the shared target rules before binding. If their
+management titles would be indistinguishable, append a short project-ID suffix. Do
+not rename the initiative or project itself, whose own name needs no product
+prefix. This convention names the Codex management task; an issue child follows
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) and a
+supervision task keeps its own name.
+
+Take the family from the project's product-family label group. The project read
+returns a flat list of label names without the group each belongs to, so the value
+carries its own provenance — the label group where a surface shows it, or the family
+already recorded in this binding with its source — and a list of labels alone is not
+that evidence, because a count is not membership. Exactly one such label is the
+family. None is a legitimate classification rather than an error, and more than one
+is a question; in both cases leave the title unprefixed, record what is missing as
+part of the unverified state below, and ask instead of choosing. Never read the
+family from the repository, the working directory, the task's model or the Linear
+team key, which often spells the same word and is a different field.
+
+Apply the prefix once. A title already carrying this family keeps it — that is this
+bracket alone, or this bracket separated from the body by a space, since a label may
+itself contain a bracket and a longer one can begin the same way — and a family name
+standing separably in front of the title is absorbed rather than repeated.
+Otherwise the body is left exactly as it is: a label joined to what follows it is
+part of the sentence, so the subject in `CRW를 설치형 …` and the issue code in
+`CRW-137 · …` are text rather than prefixes. A leading bracket that is not this
+family is neither overwritten nor stacked behind a second one; report it and take a
+decision on that exact bracket, keeping it as body or replacing it, because an
+obsolete family and a user's own words are indistinguishable from here.
+[parent_title.py](../../crw-run/scripts/parent_title.py) settles these cases offline
+and its `replay` holds it to recorded expectations; it proposes a title and writes
+nothing. Any later surface that shows or edits this prefix reads the same label
+through the same rule and the same helper rather than keeping a mapping of its own.
 
 Discover the supported task rename and sidebar tools and their current schemas.
 Apply changes only to the verified current task, and check its resulting title
 and pin state in the app listing. If a capability is unavailable, complete the
 supported parts and report the gap. Do not edit a session database or global
 configuration to simulate a successful binding.
+
+A rename that fails or is unsupported leaves the title unwritten: record the
+requested title and the limitation, and carry on with the authorized work. A rename
+that is accepted proves transport and nothing more. The title is verified when a
+read by task ID returns the requested string; a read returning anything else is a
+mismatch to report with both strings rather than a success with a caveat, and no
+read at all is unread rather than a failed write.
 
 Reuse a suitable linked coordination document. When only a canonical planning
 document exists, a compact management section there is sufficient. Read scoped,
@@ -102,6 +146,9 @@ Record only what supports recovery:
 - Repository identity and checkout path when relevant.
 - Assignment, delivery limits, and the source/date of the user's designation.
 - Verified app title/pin results and any unsynced or unverified part.
+- The task record read by task ID before and after a rename, showing the fields
+  that read exposes unchanged. Whatever it does not expose is read from its owning
+  surface or recorded unverified, rather than claimed preserved on its behalf.
 
 Read back the saved document and its project relation. Reconcile uncertain
 writes by reading before retrying; an accepted request is not a verified result.
@@ -120,9 +167,12 @@ not assign ownership here. Follow the shared target-resolution rules for
 explicit one-off targets and changes to the persistent link.
 
 Keep the recorded project ID when its name, product labels, or initiative
-relations change. Existing titles with an initiative prefix are presentation,
-not a reason to rebind or rename during recovery. Refresh the title only within
-an authorized presentation change; do not migrate existing bindings implicitly.
+relations change. Existing titles are presentation, whether they carry a
+product-family prefix or an initiative one, and neither is a reason to rebind or
+rename during recovery. A project whose family has changed does not have its prefix
+corrected on sight, and existing parents are not renamed in bulk. Refresh the title
+only within an authorized presentation change; do not migrate existing bindings
+implicitly.
 
 Load the existing owner for the requested operation:
 
@@ -364,8 +414,11 @@ what a record keys on.
 
 Writing the names down settles what they are called and nothing else. A display name in either
 language keys nothing, so no relationship id, assignment, goal, worktree or task title is
-regenerated because this section now spells them out, and titles keep the convention
-[Child task titles](../../crw-run/references/task-packet.md#child-task-titles) already fixes. Read
+regenerated because this section now spells them out, and each level keeps the title convention
+that already fixes it: a verified project parent follows
+[Set the app presentation and record](#set-the-app-presentation-and-record), an issue child follows
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles), and a supervision
+task keeps its own name. Read
 earlier phrasing the same way rather than rewriting it: an initiative task, an initiative
 management task or a 상위 관리 세션 is the supervisor under another description. That is how to read
 those words, not a licence to substitute them wherever they appear, and the two things that merely
@@ -490,6 +543,62 @@ a user-attributed source before the next send, because the record is what a send
 and a value observed on the host is evidence of what the task is running rather than a new
 approval. Until then the send is refused naming the record, and a task the host reports as not
 loaded is left alone rather than resumed under a pair that was never checked against its role.
+
+### The message both relations are read by
+
+A supervisor instructs a parent and a parent reports back; a parent instructs a child and a child
+reports back. The two relations carry different machinery and the same questions, so what
+identifies a message, what the recipient owes because it arrived, and how far it actually got are
+decided once. This section is the workflow rule: which occasion is which, what each form carries,
+and when the level above is woken. The record form itself - the field names, the version, and what
+each state means to the code that builds a message - belongs to the relay, as `relay-envelope/1`
+in `packages/codex-session-relay/docs/envelope.md`, and is read there rather than copied here.
+The words below are the ones that document uses, so a parent and a supervisor mean the same thing
+by them.
+
+**What a message asks for.** A request owes an answer from the recipient. A decision owes one from
+Jun and from nobody else. A notification owes none. A status response answers a question somebody
+put. The word is fixed by the occasion rather than chosen: an initial project assignment, a
+midpoint check, a resume, a scope correction, a decision of Jun's carried down, and a user stop are
+all requests, because each leaves the parent something to do. A decision Jun has already made is
+relayed as a request for exactly that reason - what is owed is the application, not another
+opinion. Upward, a completion and a block are notifications, a decision request is a decision, and
+a midpoint answer is a status response.
+
+A message carries no authority of its own. Being told something does not widen a scope, approve an
+action, or open a goal; authority travels by the assignment, as
+[supervisor, parent and child scope](#supervisor-parent-and-child-scope) already says.
+
+**Supervisor to parent** names the request, the approved scope, the constraints, what changed in a
+decision already made, the result and the reporting condition expected, and who owns the next step.
+**Parent to supervisor** names the result and what changed, the project and issue it is about, the
+evidence, what is blocked now and what that blocks, and the next action with its owner. A decision
+subject appears only when a user decision is genuinely needed, with the reason and what each choice
+costs. Technical judgment, ordinary review fixes and merge approval are the parent's own work and
+are not handed upward; merge order between two parents is
+[CRW-123 direct coordination](#direct-coordination-between-parents).
+
+**When the level above is woken.** A completion, a new real block, and a decision only the user can
+make. Not a CI run changing, not an acknowledgement, not a wait that has not changed, not a child
+progressing normally. A supervisor holds no goal and every wake costs it a turn, so an automatic
+notification that carries no decision is a cost with no reader. A midpoint check is the other path
+and is answered on its own terms: it was asked for, so suppression of automatic notices is not a
+reason to leave it unanswered.
+
+**Five things that are not each other.** A send the transport accepted, a message received, a
+request understood and agreed to, a change actually applied, and a result verified. Silence is none
+of them. A conditional acceptance is not an application, a delivery failure is not a refusal, and
+an unconfirmed or stale revision is not a current one. Where a relation has no mechanism for a
+stage - and the supervisor relation has none above the record itself, because no channel for one
+exists - the answer is that there is nothing to look at rather than that nobody has looked yet.
+
+**A report is not a record.** Producing a report, the transport accepting it, the recipient reading
+it and Linear holding it are four facts. The obligation to report something upward is discharged by
+the record the supervisor reads, and a Linear write that failed leaves it owed however complete the
+report text reads. The same logical result reported twice converges on one identity rather than
+becoming two; a correction or a withdrawal preserves what it corrects and says which decision now
+stands. A recipient that is paused, archived or deliberately out of contact keeps every obligation
+it had and is not woken to collect them.
 ### Record writes and returned proposals
 
 A Linear write belongs to the task whose own record it is, under
@@ -664,6 +773,56 @@ Jun keeps product intent, specifications, plans, accepted decisions, and human-r
 An issue status, assistant proposal, or newer local draft does not silently supersede an accepted document. The user's latest explicit correction can supersede it; preserve that decision source and mark the canonical document stale until updated within authorization. Report conflicts with repository contracts rather than silently rewriting either source.
 
 Local artifacts are drafts, snapshots, or private raw evidence with a link back to Linear, not a competing permanent document source. Preserve unique content and history. Do not bulk migrate/delete repository documents merely to establish this convention. If an audit is read-only, return a proposed Linear update; do not write it automatically.
+
+One fact has one writable canonical location. Every other place that states it carries a summary and a link to that location and is never read as an independent norm, so a passage that disagrees with its canon is out of date rather than a second rule. Three words classify what a document, or a passage inside one, is claiming: `current` is the version in force, `proposal` is text nobody has accepted yet, and `superseded` is a version that once held and is kept for its history. Recency does not decide between them, and an old implementation record never becomes a new product's `current` contract by being the most detailed document anyone can find.
+
+### Where each document type is canonical
+
+Each row fixes one document type's canonical location, the level whose record it is, the scope that location covers, what makes it change, and how the other side refers to it. Owner names who is answerable for keeping that location current, not a separate grant: write authority still comes from the assignment under [supervisor, parent and child scope](#supervisor-parent-and-child-scope), where a standalone issue keeps its own existing owner and no parent is invented for it. This table creates no second ownership rule.
+
+| Document type | Canonical location | Owner | Applies to | Change trigger | Referenced from the other side as |
+| --- | --- | --- | --- | --- | --- |
+| Initiative definition: goal, finish condition, contributing projects' roles | The Linear initiative page body, written to the [initiative body standard](#initiative-body-standard) | The initiative's execution supervisor where one is designated, otherwise the user | The initiative and every project contributing to it | The goal, finish condition or scope changes, or a contributing project's role does | Its stable ID and URL |
+| A project's or issue's own requirements, scope, priority, acceptance criteria and open questions | The Linear project or issue body | The parent, for the project record and the issues it owns; a standalone issue keeps its own existing owner | That project or issue, at the revision read | An accepted requirement, scope or criteria change | The item link, beside the expected behaviour and criteria stated in the pull request's own text, because a private link alone does not carry them |
+| Accepted decisions and dispositions | Linear comments on the item the decision binds | The level whose record that item is | The item and anything citing it | A decision is accepted, or a later explicit correction supersedes it | The comment cited by ID and date from the commit, pull request or repository document it settles |
+| Progress and status | Linear updates on the project or initiative | The level whose record it is | That subject's reporting period | Material progress, under the record rule in [supervisor, parent and child scope](#supervisor-parent-and-child-scope) | Not copied into the repository at all |
+| Architecture, API, schema and module contracts, and the rationale for the technical decision behind them | The implementing repository, versioned with the code that implements them | The implementation owner of the issue whose pull request carries them | That repository at the commit carrying them | The implemented contract changes | The Linear issue citing path and commit, never a copy of the contract |
+| Install, run, test and recovery procedures; development, CI and security rules | The same repository, in its own policy and contribution documents | That repository's maintainer | That repository, at that revision | A command, path, prerequisite or rule changes | A Linear link, which does not restate them |
+| Research and verification verdicts | Linear, in the issue or the linked coordination document | The level that commissioned the work | The question asked, under the conditions recorded | A verdict is reached, or later evidence overturns it | Links to the repository's reproduction and to the raw evidence |
+| Raw, large or private evidence | The durable private evidence root recorded under [OPS-5.4](../../crw-run/references/operations.md#ops-54-evidence-location) | The task that produced it | The run that produced it | A new run replaces it; nothing is edited in place | A citation carrying version or digest, date and access scope, never pasted into Linear or the repository |
+
+The first two rows are levels rather than rivals. The initiative body carries the initiative's own scope, finish condition and each contributing project's role as recorded there, and a project or issue body carries that project's or issue's own requirements and criteria. Project detail is not copied upward, and the initiative's definition is not restated downward.
+
+A research or verification result splits three ways rather than living in one place: the verdict and what was decided from it belong to Linear, the code, configuration and parameters that reproduce it belong to the implementing repository, and the raw output belongs to the evidence store. Work with no code target at all keeps its reproduction in the delivered output identity that [Resolve the implementation repository](#resolve-the-implementation-repository) already holds under the non-PR evidence rules, so having no repository costs it no canonical home. Naming its version, its date and who can reach it is what makes that third part usable later, since a path nobody can open is not evidence. Cite a revision where the source exposes one and its updated-at where it does not; promising a version a connector does not expose produces a reference no one can check.
+
+A project or repository may hold its own explicit rule, and within its own scope that rule wins, because this policy fixes where a type of document lives rather than what a product decides about itself. Read such a rule as narrower rather than competing: a repository's own policy naming its branch, review and release authority is the repository-owned rows above working as intended. Where a project rule genuinely contradicts this one, record the conflict with both sources and route it to [crw-plan](../../crw-plan/SKILL.md) instead of settling it by following whichever document is nearer to hand. Loading this policy migrates nothing on its own.
+
+### Classify an existing document
+
+Before proposing that anything move, write down what exists, one row per document:
+
+| Current location | Content and scope | Canonical location | Disposition (keep / split / migrate / preserve) | Rationale | Conflicts and unverified items |
+| --- | --- | --- | --- | --- | --- |
+
+`keep` is for a document already sitting in its canonical location. `split` is for one document mixing types whose canonical locations differ: each part goes to its own, and what stays behind becomes a summary and a link. `migrate` is for a document that belongs elsewhere whole; move it within authorization and leave a link behind. `preserve` is for history and superseded versions: they stay where they are, marked `superseded` with a date and a link to what replaced them, and are never promoted to `current` to fill a gap in a newer product.
+
+The last column is not an overflow for anything awkward. Two binding sources that disagree is a conflict and takes no disposition until someone settles it, and a document nobody could read is unverified with the read that would settle it named. Both words already carry these meanings for [crw-tidy](../../crw-tidy/SKILL.md), which judges records against the rules stated here, so this table defines no second vocabulary. A classification is a reading rather than an authorization: it moves, rewrites and deletes nothing by itself, and a migration still needs a scope that covers it.
+
+### Keep the two sides consistent
+
+When one side changes, the other is checked before the change is called done, and which side moved decides what follows. Two cases look alike in a diff and are not the same thing.
+
+A **requirements change** is the canonical Linear side moving: an accepted change to scope, criteria or a decision. The implementation and the repository documents describing it are now behind, which is the expected consequence rather than a defect. Check the impact by naming the repository contracts, procedures, tests and open pull requests the changed requirement reaches. The owner of the changed record raises it, and the implementing issue's owner updates the repository side inside its own assignment, while a sub-task returns the proposal rather than writing it, under [record writes and returned proposals](#record-writes-and-returned-proposals). Where a review is already bound to the old criteria, the registered set is updated before the next claim rather than after it, because a verdict recorded against superseded wording rules on the wrong obligation.
+
+An **implementation mismatch** is the repository side diverging from a requirement nobody changed. It is a defect to route and never a licence to rewrite the requirement to match the code. Check the impact by establishing first whether the behaviour is wrong or only the repository's description of it is, since those have different fixes and different owners. [crw-check](../../crw-check/SKILL.md) carries the finding to the task that owns the implementation; where two currently binding sources require incompatible things, that is a contradiction for [crw-logic](../../crw-logic/SKILL.md) rather than a mismatch.
+
+Dated evidence decides which case applies, never which side is easier to edit. Read both sources with their revision or updated-at and compare them with the accepted decision that last moved either one. Where no such record can be found, the classification is unverified with the missing record named, and the requirement stands until something supersedes it.
+
+Verification closes either case. Every cross-reference names the stable ID or path and the revision or updated-at it was read at, and once either side moves, the other is read again to confirm that the reference still resolves and still says what the citing document claims it says, because a link that resolves is not a link that still agrees. Progress and decision records keep following the rule already stated under [supervisor, parent and child scope](#supervisor-parent-and-child-scope), where decisions and dispositions are comments and material progress is an update; this procedure adds no record shape of its own.
+
+### When the implementing repository changes
+
+A repository-owned document's canonical home is the repository that currently implements the contract it describes, resolved through [Resolve the implementation repository](#resolve-the-implementation-repository) at the time it is read, and never the repository it was first written in. When implementation moves, whether by a split, a merge, a rewrite in another language or a successor product, each repository-owned document is resolved again: it migrates with the contract it describes, one whose contract the new repository does not implement stays where it is as `superseded` with its date and a link to its successor, and none of them becomes the new implementation's `current` contract until an issue there accepts it by criteria. Where a split leaves one contract implemented by more than one repository, the document is split along the boundary each repository actually implements; where the contract itself is genuinely shared, the repository that defines and publishes it is canonical for it and the consuming repositories carry a summary and a link. Until a plan names that repository, the document is a conflict with the decision it needs written beside it, never a canon assigned by guess. The Linear rows do not move, because intent belongs to the product rather than to the code that happened to carry it. What changes there is the repository label, and only on the issues whose edit target actually moves, under the [Linear operating model](#linear-operating-model) and only inside an authorized migration. An issue already delivered against the old target keeps the label recording where its work landed; what is repaired on such an issue is the path and commit its citations point at, never the record of where it was delivered.
 
 ### Initiative body standard
 

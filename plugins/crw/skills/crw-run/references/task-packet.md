@@ -22,7 +22,10 @@ PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
 separate from naming. An explicit user-supplied title takes precedence over
-this default. Each implementation packet names its
+this default. This convention names issue children; the management task above them
+is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
+including the product-family prefix that no child title carries.
+Each implementation packet names its
 one issue and intended PR. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
@@ -336,6 +339,58 @@ cannot apply is settled before the task exists instead.
 [Dispatch verification](dispatch-verification.md) holds what each field establishes, what
 it does not, and the classes a missing loop falls into.
 
+### The typed form these fields travel in
+
+The sections above say what an assignment, a correction and a return have to contain. What
+makes that checkable rather than habitual is `relay-packet/1`, defined in the package's own
+`docs/packets.md` and read there rather than restated here, exactly as `relay-envelope/1`
+is. It sits on that same identification region and adds
+the part the envelope deliberately does not know: which typed data a particular occasion
+cannot do without.
+
+Eleven occasions, where there used to be two words. Downward: assignment, revision request,
+resume, receipt confirmation, acceptance, integration result. Upward: completion, review
+ready, blocked, decision request, progress. Each declares its own required data, and a packet
+missing any of it is refused by field name rather than accepted and discovered three rounds
+later. Two of the declarations are restraints rather than requirements and both matter here:
+an assignment does not carry a generation, because a child this dispatch is creating has no
+registration until creation returns its task id; and a progress note carries no artifact,
+because demanding a head from a child with nothing to show is how a plausible one gets
+invented.
+
+A resume is the opposite case. It must state the effective workflow, because model, effort,
+sandbox and approval travel as settings a receipt reads back and the workflow has no
+transport field at all - so a resume that omits it has dropped it, not deferred it. The relay
+refuses a restore section that states anything else and not that.
+
+**What a receiver does with one.** It compares the packet against the record it read for
+itself and gets one of three answers. Accepted, where every field the record could answer
+agreed. Refused, naming the field and both values: another parent, another child, another
+relationship, a superseded link revision, a stale generation, an old criteria digest, a head
+that moved, or a model and effort pair the record holds as refused for this role. Or
+unavailable, where the record could not answer at all - which is neither of the other two,
+because a receiver that could not check something has not checked it, and treating that as
+acceptance is how an unverifiable instruction becomes an applied one.
+
+A correction arriving twice is answered once. The key is the message id together with a
+digest of what the packet actually asks for, so a repeat gets the disposition it already got,
+while one id asking for something different is raised as a collision rather than given the
+earlier answer.
+
+**Seven states, kept apart.** A message read, a send the transport accepted, a relay
+acknowledgement, a criteria verdict, the parent's acceptance, the merge landing and the
+Linear record reaching Done are seven facts with seven different records behind them, and
+`read` has no record at all - nothing in the relay says a recipient read anything. A model
+writing that it has reported is prose and promotes nothing. The packet document holds which
+record answers each, and a state standing above one that is not held is reported as the
+promotion it is.
+
+**Activation is three fields.** The invocation being in the assignment, the child having
+armed it, and a host goal being active are separate facts produced by separate parties, and
+the packet carries them separately so a mode with no evidence reads unverified rather than
+failed. A coordination parent and an authorized non-Loop assignment answer not applicable for
+the loop field by design, and neither is a finding.
+
 ## Non-PR packet
 
 Use this reduced shape for research, design or verification without repository changes.
@@ -531,6 +586,13 @@ returning its result are separate facts the message does not establish. The path
 Keep it short. Name what identifies this message, and reference what the existing relationship
 already holds instead of recopying it, exactly as the restoration block carries pointers rather
 than contents.
+
+What identifies it, and what the recipient owes because it arrived, are the shared form rather
+than this file's invention:
+[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by),
+implemented as `relay-envelope/1`. Take the words from there - request, notification, decision,
+status response - so a parent and a supervisor mean the same thing by them, and keep the five
+delivery states apart in the same way.
 
 One rule covers every value that decides what a receiver does, and it is worth stating once here
 rather than per kind. These transports carry opaque text and no authenticated caller identity, so

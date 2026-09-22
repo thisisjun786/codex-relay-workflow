@@ -6,6 +6,7 @@ import json
 import re
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,46 @@ class TransportError(Exception):
     """A request may have reached the server. Mutations must not be retried."""
 
 
+@dataclass(frozen=True)
+class PhaseBounds:
+    """One finite bound per transfer phase, because a shared budget is not isolation.
+
+    One request is three waits, and they wait on different things. Establishment queues behind
+    `_connect_lock`, so part of it is OTHER callers' reconnections. The write waits on the
+    socket buffer draining. The acknowledgement waits on the host. Charging all three to one
+    budget is what let a slow establishment for one recipient spend the budget a different
+    recipient needed to finish its own send, so each gets its own bound and its own name.
+    """
+
+    establish: float
+    transmit: float
+    ack: float
+
+    @classmethod
+    def from_timeout(cls, timeout: float) -> "PhaseBounds":
+        """One RPC timeout per phase, which is what the stage count always meant."""
+        return cls(establish=timeout, transmit=timeout, ack=timeout)
+
+    @property
+    def per_request(self) -> float:
+        return self.establish + self.transmit + self.ack
+
+
+class PhaseTimeout(TransportError):
+    """A transfer phase outlived its own bound, and says which one.
+
+    A TransportError subclass rather than a sibling: a caller that cannot tell the phases apart
+    keeps the conservative reading it already had. The message stays "<method>: <detail>", which
+    is the shape callers parse to attribute a failure to the request it belongs to.
+    """
+
+    def __init__(self, method: str, phase: str, seconds: float, detail: str):
+        self.method = method
+        self.phase = phase
+        self.seconds = seconds
+        super().__init__(f"{method}: {detail}")
+
+
 class ResponseTooLarge(TransportError):
     """A response frame past this client's limit, which took the connection down with it.
 
@@ -106,18 +147,27 @@ def refused_frame(error: ConnectionClosed):
 
 class AppServer:
     def __init__(
-        self, socket_path: Path, timeout: float = 20, *, max_frame_bytes: int = MAX_FRAME_BYTES
+        self, socket_path: Path, timeout: float = 20, *, max_frame_bytes: int = MAX_FRAME_BYTES,
+        phase_bounds: PhaseBounds | None = None,
     ):
         self.socket_path = socket_path
         self.timeout = timeout
         self.max_frame_bytes = max_frame_bytes
+        # None means "follow whatever timeout currently says". Deliberately not resolved here:
+        # callers set .timeout after construction, and a snapshot would ignore them silently.
+        self._phase_bounds = phase_bounds
         self._ws = None
         self._reader = None
         # The method is kept beside the future so a failure that cannot say which request it
-        # belongs to can at least say what was outstanding.
-        self._pending: dict[int, tuple[str, asyncio.Future]] = {}
+        # belongs to can at least say what was outstanding, and the connection is kept beside
+        # both because this dict outlives any one of them: a reader unwinding must fail its own
+        # connection's requests and not the replacement's.
+        self._pending: dict[int, tuple[str, asyncio.Future, Any]] = {}
         self._counter = 0
         self._connect_lock = asyncio.Lock()
+        # Retirements started out of band, kept so they are neither garbage collected mid-close
+        # nor left for close() to miss. See _retire_out_of_band.
+        self._retiring = set()
         self.info: dict[str, Any] = {}
         # Every server-to-client request this connection refused, newest last and bounded.
         # Kept because "this bridge granted no approval" should be evidence a caller can read,
@@ -130,6 +180,13 @@ class AppServer:
     def refusal_mark(self):
         """A point in the refusal stream, to be handed back to refusals_since."""
         return self.refused_total
+
+    @property
+    def phase_bounds(self) -> PhaseBounds:
+        """The bound each transfer phase gets, derived from timeout unless one was injected."""
+        if self._phase_bounds is not None:
+            return self._phase_bounds
+        return PhaseBounds.from_timeout(self.timeout)
 
     def refusals_since(self, mark: int, thread_id: str | None = None):
         """Refused server-to-client requests recorded after `mark`, attributed where possible.
@@ -175,9 +232,13 @@ class AppServer:
         async with self._connect_lock:
             if self._reader is not None and not self._reader.done():
                 return
-            await self.close()
+            # Handed off rather than awaited, because this runs while _connect_lock is HELD:
+            # spending the old socket's close handshake here would serialise every other
+            # recipient behind it and charge the wait to their establish bound, which is the
+            # cost this phase exists to remove.
+            self._retire_out_of_band(self._ws, self._reader)
             try:
-                self._ws = await unix_connect(
+                ws = await unix_connect(
                     str(self.socket_path),
                     uri="ws://localhost/",
                     open_timeout=self.timeout,
@@ -186,7 +247,10 @@ class AppServer:
                     # Codex 0.153.4 closes Unix handshakes offering permessage-deflate.
                     compression=None,
                 )
-                self._reader = asyncio.create_task(self._receive())
+                self._ws = ws
+                # The reader is told which connection it serves. Reading it back off self would
+                # race a retirement that has already cleared the attribute.
+                self._reader = asyncio.create_task(self._receive(ws))
                 self.info = await self._request(
                     "initialize",
                     {
@@ -196,14 +260,15 @@ class AppServer:
                 )
                 await self._ws.send(json.dumps({"method": "initialized", "params": {}}))
             except BaseException:
-                await self.close()
+                # Same reason, and it matters more here: this is the path a cancelled or timed
+                # out establishment takes, so awaiting the teardown would push the caller past
+                # the very bound that cancelled it, still holding the lock.
+                self._retire_out_of_band(self._ws, self._reader)
                 raise
 
-    async def _receive(self):
+    async def _receive(self, ws):
         failure = "App Server disconnected"
         oversized, frame_bytes = False, None
-        ws = self._ws
-        assert ws is not None
         try:
             async for raw in ws:
                 message = json.loads(raw)
@@ -246,9 +311,13 @@ class AppServer:
         except Exception as error:
             failure = f"App Server transport failed: {type(error).__name__}: {error}"
         finally:
-            waiting = list(self._pending.values())
-            methods = tuple(method for method, _ in waiting)
-            for _, future in waiting:
+            # This connection's requests only. _pending is shared across connections, so a
+            # reader that failed every entry would kill the REPLACEMENT's requests too:
+            # connect() can register a new socket's initialize while this coroutine is still
+            # unwinding. What retiring a connection may fail is what it was actually carrying.
+            carried = [entry for entry in self._pending.values() if entry[2] is ws]
+            methods = tuple(method for method, _, _ in carried)
+            for _, future, _ in carried:
                 if not future.done():
                     future.set_exception(
                         ResponseTooLarge(frame_bytes, self.max_frame_bytes, methods)
@@ -260,19 +329,60 @@ class AppServer:
         ws = self._ws
         if ws is None:
             raise TransportError("App Server is not connected")
+        # Captured with the socket, so a retirement below discards the connection this request
+        # actually used rather than whatever happens to be current by the time it runs.
+        reader = self._reader
+        bounds = self.phase_bounds
         self._counter += 1
         ident = self._counter
         future = asyncio.get_running_loop().create_future()
-        self._pending[ident] = (method, future)
+        self._pending[ident] = (method, future, ws)
         try:
             # Recorded before the write and not after it: a failure inside send does not prove
             # the frame never reached the server, and this is the only place that knows one was
             # about to go out for this method. A request that never gets this far — no socket, no
             # connection — leaves no mark, which is what lets a caller try it again.
             mark_sent(method)
-            await ws.send(json.dumps({"id": ident, "method": method, "params": params}))
-            message = await asyncio.wait_for(future, self.timeout)
-        except (OSError, TimeoutError, ConnectionClosed) as error:
+            try:
+                await asyncio.wait_for(
+                    ws.send(json.dumps({"id": ident, "method": method, "params": params})),
+                    bounds.transmit,
+                )
+            except TimeoutError as error:
+                # The write is the only phase that was never bounded, and it is the one that can
+                # hold a recipient forever: send() yields exactly when the buffer is full.
+                # websockets says so itself — "Canceling send() is discouraged. Instead, you
+                # should close the connection" — because a cancelled write leaves a partial
+                # frame, and the stream it corrupts is shared by every recipient. So the
+                # connection is retired rather than reused, by identity, and the next request
+                # rebuilds. The mark above stands: this may have reached the server.
+                # Handed off, not awaited: a phase bound is what the caller may spend IN that
+                # phase, and awaiting the peer's close handshake here would add close_timeout on
+                # top of a bound it is supposed to cap.
+                self._retire_out_of_band(ws, reader)
+                raise PhaseTimeout(
+                    method, "transmit", bounds.transmit,
+                    f"the request frame did not drain within {bounds.transmit}s and the"
+                    " connection was retired; response unavailable; do not resend",
+                ) from error
+            except asyncio.CancelledError:
+                # Somebody else's deadline rather than ours. The relay's submission backstop and
+                # its shutdown both cancel an in-flight send, and a caller may cancel one too - a
+                # write cut short that way leaves exactly the partial frame the bound above
+                # retires for, so it cannot be treated as the gentler case just because the
+                # exception type differs. Detaching is synchronous ON PURPOSE: it is the step
+                # that stops a later request picking this socket up, and a cancelled coroutine
+                # cannot rely on reaching another await. The close is cleanup and is handed off
+                # rather than awaited, because the caller that cancelled us is already waiting
+                # out its own deadline and must not also pay for the peer's close handshake.
+                self._retire_out_of_band(ws, reader)
+                raise
+            message = await asyncio.wait_for(future, bounds.ack)
+        except TimeoutError as error:
+            raise PhaseTimeout(
+                method, "ack", bounds.ack, "response unavailable; do not resend"
+            ) from error
+        except (OSError, ConnectionClosed) as error:
             raise TransportError(f"{method}: response unavailable; do not resend") from error
         finally:
             self._pending.pop(ident, None)
@@ -289,16 +399,98 @@ class AppServer:
         return message["result"]
 
     async def call(self, method: str, params: dict[str, Any]):
-        await self.connect()
+        bounds = self.phase_bounds
+        # Establishment is bounded on its own because it is the phase that is NOT this caller's
+        # alone: connect() serialises on _connect_lock, so part of this wait is other recipients
+        # rebuilding. Folded into one budget with the write and the response, a queue of their
+        # reconnections spent the budget this send needed, and the deadline then fired on a send
+        # that was still healthy. It now costs this caller its establish bound and no more.
+        try:
+            await asyncio.wait_for(self.connect(), bounds.establish)
+        except TimeoutError as error:
+            raise PhaseTimeout(
+                method, "establish", bounds.establish,
+                f"connection establishment exceeded {bounds.establish}s;"
+                f" no {method} frame was sent",
+            ) from error
+        except PhaseTimeout as error:
+            # A phase that expired INSIDE the handshake. connect() makes exactly one request,
+            # initialize, and it runs under the ordinary transmit and ack bounds - so a bound
+            # shorter than establish reports its own inner phase and a method this caller never
+            # asked for. From here the whole handshake IS establishment, and the fact that
+            # matters downstream is unchanged: this call's own frame was never written. Reported
+            # as such, with the inner phase kept in the text rather than dropped. initialize is
+            # an observation and begins no effect, which is what makes the claim safe; anything
+            # else coming out of connect() would be new and is left to speak for itself.
+            if error.method != "initialize":
+                raise
+            raise PhaseTimeout(
+                method, "establish", bounds.establish,
+                f"connection establishment failed in its {error.phase} phase ({error});"
+                f" no {method} frame was sent",
+            ) from error
         # Reconnect before a new request, never retry an already-sent request.
         return await self._request(method, params)
 
     async def close(self):
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
-        if self._reader is not None:
-            self._reader.cancel()
+        await self._retire(self._ws, self._reader)
+        # Anything handed off by a cancelled write finishes before this client says it closed.
+        outstanding = tuple(self._retiring)
+        if outstanding:
+            # Shielded, because gather propagates cancellation into what it waits on and these
+            # tasks ARE the cleanup that was deliberately moved off a cancelled caller. connect()
+            # no longer reaches here, but an explicit close() under someone's deadline still can,
+            # and cancelling the drain must stop the waiting, not the work.
+            # The cancellation itself still propagates - swallowing it here would leave a caller
+            # believing a close it cancelled ran to completion.
+            await asyncio.shield(asyncio.gather(*outstanding, return_exceptions=True))
+
+    async def _retire(self, ws, reader):
+        """Discard exactly one connection, and never whatever replaced it.
+
+        Both attributes are rebuilt by connect() while this coroutine is suspended in the close
+        below, so clearing them afterwards can erase a live replacement and leave every later
+        request writing to a socket nobody reads. They are therefore cleared BEFORE the awaits,
+        and only while they still name the connection being retired.
+        """
+        self._detach(ws, reader)
+        if ws is not None:
+            await ws.close()
+        if reader is not None:
+            reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._reader
+                await reader
+
+    def _detach(self, ws, reader):
+        """Stop pointing at this connection. Synchronous, so cancellation cannot interrupt it.
+
+        This is the half that carries the safety property: once the attributes no longer name a
+        connection, connect() rebuilds and no later request can write into a stream whose last
+        frame may have been cut in half. Closing the socket afterwards is housekeeping.
+        """
+        if self._ws is ws:
+            self._ws = None
+        if self._reader is reader:
             self._reader = None
+
+    def _retire_out_of_band(self, ws, reader):
+        """Detach now, close on this client's own time rather than the cancelled caller's.
+
+        Awaiting the close here - even shielded - spends the peer's close handshake, up to
+        close_timeout, inside a handler that the caller's deadline is already waiting on. The
+        relay's submission backstop and its shutdown drain both wait for exactly this frame, so
+        they would overrun their advertised bound by that much. Detaching is what makes the
+        socket unreachable, and it has already happened by the time this returns; the teardown
+        is owned here and drained by close().
+        """
+        self._detach(ws, reader)
+        task = asyncio.ensure_future(self._retire(ws, reader))
+        self._retiring.add(task)
+        task.add_done_callback(self._retired)
+
+    def _retired(self, task):
+        self._retiring.discard(task)
+        if not task.cancelled():
+            # Retrieved rather than ignored. A teardown failure is not the caller's error, but an
+            # exception nobody reads is a warning that buries the next one.
+            task.exception()

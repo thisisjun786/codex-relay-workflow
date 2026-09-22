@@ -67,12 +67,16 @@ not see each other. The endpoint hash is derived from the socket path, so passin
 `doctor` reports which rule won, the database it resolved to and the access this process really
 has. To prove two participants share one store rather than two copies of one, take
 `store-identity` on one side and write a nonce with `store-challenge --write`, then check both
-from the other side: `doctor --expect-inode <device>:<inode> --expect-nonce <nonce>`. Each half
-is necessary. An identifier is copied along with the file; a nonce is copied too when the copy
-is taken after the challenge was written; and a device and inode that agree do not say both
-processes opened the same pathname for that inode. Anything short of the pair is reported
-`unproven` and exits non-zero rather than being read as yes. See
-[docs/operations.md](docs/operations.md).
+from the other side: `doctor --expect-inode <device>:<inode> --expect-log <device>:<inode>:<name>
+--expect-nonce <nonce>`. Each part is necessary. An identifier is copied along with the file; a
+nonce is copied too when the copy is taken after the challenge was written; and a device and
+inode that agree do not say both processes opened the same pathname for that inode. That last
+one is what `--expect-log` answers: SQLite writes the write-ahead log beside the pathname a
+connection opened, so two participants share one log when their databases sit under the same
+directory entry, and `store-identity` reports that entry for each side to send. A file bind
+mount reaches one inode at a second pathname without changing the name count, which is why the
+count is not the check. Anything short of all of it is reported `unproven` and exits non-zero
+rather than being read as yes. See [docs/operations.md](docs/operations.md).
 
 ## Authorized execution settings
 
@@ -163,12 +167,21 @@ What happens at send time:
 |---|---|
 | no record for the recipient | withheld before any transport call, `settings_unavailable` |
 | record missing a field | withheld before any transport call, naming the missing fields |
+| record whose `cwd`, `model` or `reasoningEffort` is not text | withheld before any transport call, `settings_mistyped`, naming each field and the type it holds |
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
 | resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |
 | resume returns an approval policy other than `never` | `inbox_only`: stored, not woken |
 | resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
 | resume matches | the turn begins, carrying no overrides |
+
+Those three fields are the ones `ThreadResumeParams` types as strings, and the resume carries
+each recorded value as it stands, so a record holding something else is refused rather than sent
+for a host to interpret. `settings-record` and `register` run the same check, so such a record
+is refused when it is written too; a store holds one only from an older writer or a hand edit.
+`runtimeWorkspaceRoots` and `environments` are not typed there, and that is not a promise that
+a wrong shape is caught further on: `runtimeWorkspaceRoots` of `"abc"` passes and reaches the
+resume as `["a", "b", "c"]`. What those two hold is a separate question from this one.
 
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can
@@ -568,6 +581,52 @@ final tick. The CLI supplies that wait; `RelayDaemon.run` waits only when it is 
 wait with, and the sleeper stays injectable so the cadence tests drive it without real time
 passing. Until this was wired, `daemon --max-ticks 3` returned in 0.155 seconds against a 20 second
 interval and a deadline-only run busy-spun for its whole duration.
+
+A bound that crosses a process boundary is handed over as an INSTANT rather than as a duration. A
+supervisor that has already decided when a worker must stop passes `--deadline-monotonic`, read from
+`CLOCK_MONOTONIC` on this host and this boot, and the worker converts it against its own clock the
+moment it has one. What the worker spends getting there - fork, interpreter start, imports, argument
+parsing, opening the store - then comes out of the segment instead of landing after it. As a duration
+the count restarted at the worker, so the last segment of a bounded run overran by a whole startup;
+earlier segments hid it, because each one's overspend was already deducted from its successor.
+`service start --deadline N` does the same for the supervisor it launches, which means N now includes
+that supervisor's own startup and a very short N can end a launch before it reports itself ready.
+
+The instant is written by the launching process and is not meant to be typed. It names a time in one
+boot on one host, and it fails open rather than closed if it escapes that: `CLOCK_MONOTONIC` restarts
+near zero across a reboot, so a value carried into a later boot sits in that boot's future and names a
+bound much later than anyone asked for. Nothing stores it — the launcher builds it and the child it
+just exec'd reads it — which is why no boot identity is checked. A person writes `--deadline`, which
+is a duration and starts counting where it lands.
+
+A run that reaches its own clock after the instant it was given takes no tick and exits 5, and so
+does one whose bound is gone by the time it has taken its locks and built its adapter. It neither
+served nor failed: a supervisor reading it as a clean segment would reset its failure streak over a
+worker that did nothing, and reading it as a crash would back off from one that did not break. A
+supervisor that sees it stops replacing workers, and says so as `degraded` when its own bound still
+had room - a segment shorter than a worker costs to start would otherwise churn processes forever
+while reporting healthy segments.
+
+Two end times are not a preference: `--deadline` together with `--deadline-monotonic` is refused, as
+is any value no comparison can pass - `nan`, `inf`, or a negative one. `--deadline 0` is a bound with
+nothing in it rather than the absence of one.
+
+`--segment-seconds` is checked the same way, and has to be greater than zero, because it is not a
+bound the supervisor keeps - it is the one it hands to every worker. A worker given a length it must
+refuse exits before its first tick, and a supervisor reads that as an ordinary worker failure and
+launches another, so the service would stay alive and serve nothing for as long as it was left
+running. Only an absent value takes the policy default.
+
+A bound stops a run from STARTING a tick, so a tick already under way finishes and may make several
+deliveries. It is compared on two clocks on purpose. The deadline the daemon reads is a wall instant,
+because that is what it has always read, and a wall clock that steps backwards would push that instant
+away and hand the run time nobody granted it. So the run also carries a `stop` — the daemon's own
+additional early exit — reading the monotonic bound this process was given. The guard is read once per
+loop, so it bounds when a tick may begin to within one poll interval, whatever the wall clock does.
+
+A supervisor whose bound was already gone when it first read a clock does not run recovery either.
+Recovery makes real App Server calls for every unresolved attempt, and a run that cannot serve one
+segment buys that work no segment to be useful in.
 
 ## Activation
 

@@ -141,10 +141,10 @@ Run against a disposable fixture repository, never a real checkout.
 6. Compare the fixture before and after. The source must be unchanged.
 7. Inspect the new checkout for each of the four fixture file states, and for the
    ignored file specifically.
-8. Read the created thread record for cwd, `projectId`, section, model, reasoning
-   effort, approval policy, sandbox, originator and source, and record the workspace
-   roots, source repository, base commit, branch and owner too, since the Setting
-   preservation verdict uses all of them.
+8. Read the created thread record for cwd, `projectId`, section, the title where the
+   record exposes one, model, reasoning effort, approval policy, sandbox, originator
+   and source, and record the workspace roots, source repository, base commit, branch
+   and owner too, since the Setting preservation verdict uses all of them.
 9. With client access, observe where the created task actually appears in the client
    and record the project it is grouped under, kept distinct from any section, pin or
    rename. Without client access, record Project association as unverified: the
@@ -289,6 +289,12 @@ Keep raw receipts outside the repository and record only the shape here.
   nothing in them revealing that the verdict no longer applies.
 - Schema search result, with the number of definitions searched.
 - Creation header showing workdir, model, reasoning effort, approval and sandbox.
+- The observed task title, recorded apart from the project association above. A title,
+  including the product-family prefix
+  [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record)
+  gives a project parent, is presentation and settles no association in either
+  direction, and a later title-only change is checked by re-reading this same record
+  rather than by trusting that the rename touched nothing else.
 - Worktree listing from the source repository, and the resolved checkout path.
 - The worktree owner record that binds the checkout to its owning task.
 - Three separately labelled snapshots, not two: the source checkout before creation,

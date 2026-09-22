@@ -1298,6 +1298,9 @@ class Store:
             )
         # Tests set this to prove a transition rolls back; nothing in production assigns it.
         self.fault_hook = None
+        # How many composing() scopes are open. Zero is the ordinary store, where opening a
+        # transaction inside a transaction is the mistake it has always been.
+        self._composing = 0
 
     # ------------------------------------------------------------------ identity
 
@@ -1318,6 +1321,14 @@ class Store:
         The number of names the inode has travels with them, because the pair alone cannot
         say whether another participant opened THIS name or another one for the same file.
         `compare_store` is where that is graded.
+
+        The log location travels with them for the same reason, and it is what answers the
+        question the count cannot: SQLite writes the write-ahead log beside the pathname a
+        connection opened, so two participants share one log when their opened pathnames share
+        a directory entry. This one is measured from the pathname THIS live connection actually
+        opened, which `PRAGMA database_list` reports, rather than from a held descriptor -
+        `Store` has an open connection and no descriptor to bind to, so like the device and
+        inode above it is path-measured. `probe` and `nonce_lookup` measure it the stricter way.
         """
         try:
             real = self.path.resolve()
@@ -1327,6 +1338,9 @@ class Store:
         except OSError:
             device = inode = real_path = None
             links = None
+        log = _log_location_of(_opened_pathname(self.db)) or {
+            "logDevice": None, "logInode": None, "logName": None,
+        }
         return {
             "exists": True,
             "storeId": self.identity,
@@ -1336,6 +1350,9 @@ class Store:
             "device": device,
             "inode": inode,
             "links": links,
+            "logDevice": log["logDevice"],
+            "logInode": log["logInode"],
+            "logName": log["logName"],
             "schemaVersion": self.meta("version"),
         }
 
@@ -1361,7 +1378,20 @@ class Store:
 
     @contextmanager
     def transaction(self):
-        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record."""
+        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record.
+
+        Inside a composing() scope this JOINS the transaction that scope opened instead of
+        opening one of its own: it yields the same connection and leaves the commit, the
+        rollback and the fault hook to the opener. Everywhere else it is what it was, and
+        that includes opening a transaction inside a transaction, which SQLite refuses on one
+        connection and which stays an error here rather than becoming a silent join. The
+        difference matters because joining changes what a failure costs -- a joined scope that
+        raises leaves its writes in somebody else's transaction, and a refusal raised through
+        one takes any evidence it wrote down with it. See composing().
+        """
+        if self._composing and self.db.in_transaction:
+            yield self.db
+            return
         self.db.execute("BEGIN IMMEDIATE")
         try:
             yield self.db
@@ -1375,6 +1405,42 @@ class Store:
             if self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
+
+    @contextmanager
+    def composing(self):
+        """Make every transaction opened inside this block ONE transaction.
+
+        For a command that is one fact written by several existing writers. cmd_register is
+        the first: it holds the relationship and the execution settings a later send has to
+        preserve, and writing them separately left an interval in which a worker dying
+        between the two commits published a live assignment for a task whose settings nobody
+        had recorded. Neither writer has to know it was composed, which is what keeps
+        registry.register's contract exactly where CRW-127 left it.
+
+        Deliberate, not automatic. Outside this block a nested transaction still raises, so
+        the composition is a named act somebody chose rather than a property the store
+        quietly acquired.
+
+        The counter is released before the transaction ends, so a caller reading
+        in_transaction from the except branch around this block sees the rollback finished
+        and can write what had to outlive it.
+        """
+        with self.transaction() as db:
+            self._composing += 1
+            try:
+                yield db
+            finally:
+                self._composing -= 1
+
+    @property
+    def in_transaction(self) -> bool:
+        """Is a transaction open on this store's connection right now?
+
+        Asked by a writer deciding whether what it just wrote is durable. Inside a composed
+        registration the answer is yes and the write belongs to somebody else's transaction;
+        after that transaction ends the answer is no.
+        """
+        return self.db.in_transaction
 
     def journal(self, kind: str, subject: str = "", detail="", *, at: str = "") -> None:
         self.db.execute(
@@ -1394,6 +1460,244 @@ class Store:
 
 PROVEN, UNPROVEN, MISMATCH = "proven", "unproven", "mismatch"
 
+# The assumption scope.py already makes for I-11. A descriptor can be named, so a read can be
+# bound to the file it came from instead of to a name somebody else controls.
+PROC_FD = "/proc/self/fd"
+
+# A directory can be opened for its identity alone. O_PATH asks only for search permission on
+# the way in and never reads the directory, which is the same Linux assumption PROC_FD makes.
+# Absent, the open falls back to an ordinary read-only one rather than failing the measurement.
+O_PATH = getattr(os, "O_PATH", 0)
+
+
+def _opened_pathname(connection):
+    """The pathname this connection actually opened, or None.
+
+    Asked rather than assumed, because SQLite resolves the name it is given - a symlinked
+    database reaches its target, and the log is then written beside the TARGET. A caller that
+    inferred the log's directory from the path it passed in would be wrong in exactly that case.
+    """
+    try:
+        rows = connection.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error:
+        return None
+    return next((row[2] for row in rows if row[1] == "main" and row[2]), None)
+
+
+def _log_location_of(pathname):
+    """Where a connection on this pathname writes its log: the directory entry, not the string.
+
+    The directory is identified by `device:inode`, which is one number for one directory object
+    however many pathnames reach it - the same value from every mount namespace on this kernel.
+    The name travels with it because the log is `<name>-wal`, and the name is only fixed before
+    resolution: a database reached through a symlink resolves to its target's name.
+
+    Returns the three fields or None. Never raises.
+    """
+    if not pathname:
+        return None
+    directory, name = os.path.split(pathname)
+    try:
+        info = os.stat(directory or ".")
+    except OSError:
+        return None
+    return {"logDevice": info.st_dev, "logInode": info.st_ino, "logName": name}
+
+
+def _expected_path(db_path):
+    """The pathname this store is addressed by, fully resolved, or None.
+
+    Every diagnostic below contracts that failure becomes a field rather than an exception, and
+    `Path.resolve` is not documented as total across the supported range (`>=3.11`). On this
+    checkout's 3.13 and 3.14 a symlink loop resolves without raising, but the breadth is taken
+    rather than argued about, because one escaping exception would break the contract for every
+    caller at once.
+    """
+    try:
+        return str(db_path.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _hold_database(db_path):
+    """Hold the database open, so an answer can name the file it actually came from.
+
+    A pathname cannot carry that claim. Measuring the identity at the path before and after a
+    read catches a replacement that PERSISTS and misses one reverted inside the window: both
+    observations then report the original inode while the rows came from the interloper.
+
+    Holding it moves the claim onto the descriptor, and the descriptor is then required to still
+    name this store. Both halves are needed. Measured on this host on 2026-09-22:
+
+    - normally, SQLite resolves `/proc/self/fd/N` and reports the real path in
+      `PRAGMA database_list`, so `-wal` and `-shm` land beside the real file;
+    - after a rename OVER the path the held inode has no name, and the open fails closed with
+      `OperationalError: unable to open database file` whether or not a file is restored;
+    - after a rename that moves the held inode to ANOTHER name, the open succeeds under that
+      name - and with a live write-ahead log that read raised `disk I/O error` and CREATED a
+      stray `<newname>-wal`, because the log follows the pathname. A diagnostic that promises to
+      write nothing must not reach that state, so a descriptor that no longer names this store
+      is refused before a connection is opened - every relocation that already happened, which
+      is the reachable case, though not one timed inside the call itself.
+
+    Returns `(fd, expected, None)` or `(None, None, detail)`. Never raises.
+
+    Linux-specific, and deliberately the same assumption `scope.AuthorizedFile` already makes.
+    Without `/proc/self/fd` a read cannot be bound to the file it came from at all, so it is
+    refused rather than answered on the weaker measurement.
+    """
+    expected = _expected_path(db_path)
+    if expected is None:
+        return None, None, "the database path could not be resolved, so a read cannot be bound to it"
+    if not os.path.isdir(PROC_FD):
+        return None, None, (
+            f"{PROC_FD} is unavailable, so a read cannot be bound to the database it came from"
+        )
+    try:
+        fd = os.open(db_path, os.O_RDONLY)
+    except OSError as error:
+        return None, None, f"{type(error).__name__}: {error}"
+    moved = _relocation(fd, expected)
+    if moved is not None:
+        os.close(fd)
+        return None, None, moved
+    return fd, expected, None
+
+
+def _relocation(fd, expected):
+    """Why the held file is no longer this store, or None while it still is.
+
+    Asked immediately before EVERY connection rather than once at the open. `probe` opens a
+    read connection and then a write probe through one descriptor, and a rename between them
+    reaches the relocated-log case above, with its failed read and its stray sidecar.
+
+    An observation, not a lock. A rename landing between this answer and SQLite's own open is
+    not caught - the same residual as SQLite resolving the descriptor and then opening the name
+    it found. What the check removes is every relocation that happened before it was asked,
+    which is the reachable case; what it cannot remove is a rename timed inside one call.
+    """
+    try:
+        actual = os.readlink(f"{PROC_FD}/{fd}")
+    except OSError as error:
+        return f"the database this process holds open cannot be named: {error}"
+    if actual != expected:
+        return (
+            f"the database this process holds open is no longer the file at {expected}, so"
+            " nothing was read from it"
+        )
+    return None
+
+
+def _held_identity(fd):
+    """Device, inode and name count of the file we HOLD, or None if it cannot be measured.
+
+    `st_nlink` is the held inode's own count and equals what `stat` reports for any of its
+    names. It is carried for the reason it always was: a shared device and inode cannot say
+    which name another participant opened.
+
+    It is no longer the general answer to that, and `compare_store` says so. A file bind mount
+    reaches one inode at a second pathname without changing this count, which was measured on
+    this host on 2026-09-22. What the count still catches is a name NO participant in a
+    comparison accounted for - a third reader, or a hardlinked backup of the state directory -
+    which is worth keeping because it needs nothing from the peer.
+    """
+    try:
+        info = os.fstat(fd)
+    except OSError:
+        return None
+    return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
+
+
+def _held_log_location(fd, expected):
+    """Where SQLite will write this file's log, bound to the file we HOLD.
+
+    SQLite appends `-wal` to the pathname a connection opened, so the log is created in the
+    directory holding that pathname under that pathname's name. Two participants compute one
+    log pathname when their opened databases share a directory entry, which is what
+    `compare_store` compares - because neither the inode nor the name count can see a second
+    pathname for one inode.
+
+    Measured on this host on 2026-09-22 with a real file bind mount, in a private mount
+    namespace: one inode, `st_nlink` 1, two pathnames, and the second directory grew its own
+    `-wal` and `-shm` while a frame written live through the first name was unreadable through
+    the second. The opposite case is a whole-directory bind mount, where two pathname strings
+    reach one directory object and the live frame WAS readable through both - so the pathname
+    string is not the discriminator and comparing it would refuse a genuinely shared store.
+
+    Bound to the descriptor through the directory entry: the directory is opened for its
+    identity alone, and its entry under this basename must be the very inode we hold, so this
+    is not a second independent observation of a path somebody else controls. What it cannot
+    exclude: Linux offers no descriptor-to-parent link, so the directory is reached by the name
+    the kernel reported for the descriptor, and an ancestor renamed inside that bracket is
+    I-09's existing residual rather than something this closes.
+
+    Nor does it reach an aliased SIDECAR, and that limit is worth stating plainly because it is
+    this function's own hazard one level down. A bind mount over `<name>-wal` leaves this
+    directory, this inode and this basename untouched while SQLite opens a different log, so
+    two participants can agree here and still write into separate logs. It is not closable by
+    the same means: a `-wal` exists only while a connection is open and is unlinked on a clean
+    close, so its identity is not a stable thing two independent invocations could compare -
+    measuring it would refuse the ordinary case, where each participant's log is a different
+    file simply because each opened and closed its own connection. Closing it needs a mechanism
+    this one does not have, not a stricter reading of this one.
+
+    Returns the three fields or None. Never raises.
+    """
+    directory, name = os.path.split(expected)
+    try:
+        dir_fd = os.open(directory or ".", os.O_RDONLY | os.O_DIRECTORY | O_PATH)
+    except OSError:
+        return None
+    try:
+        held = os.fstat(fd)
+        where = os.fstat(dir_fd)
+        # follow_symlinks=False: `expected` is already resolved, so a final component that is
+        # a symlink now is a change under the read, and an entry that is not the held inode
+        # means this directory is not where this file's log would go.
+        entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    finally:
+        os.close(dir_fd)
+    if (entry.st_dev, entry.st_ino) != (held.st_dev, held.st_ino):
+        return None
+    return {"logDevice": where.st_dev, "logInode": where.st_ino, "logName": name}
+
+
+def _held_uri(fd, mode) -> str:
+    """A URI naming the descriptor rather than the path.
+
+    Nothing renameable appears in it, and unlike `Path.as_uri` there is no name to
+    percent-encode: a database whose own name contains `?` or `#` reaches SQLite as a number.
+    """
+    return f"file:{PROC_FD}/{fd}?mode={mode}"
+
+
+def _opened_elsewhere(connection, expected):
+    """Which file SQLite actually opened, when it is not the one we asked for.
+
+    The descriptor is not what SQLite reads through. It resolves `/proc/self/fd/N` to a real
+    pathname and opens THAT, on its own descriptor - which is what puts the write-ahead log
+    beside the real file, and what leaves a window between our check and its open. So the
+    connection is asked which file it opened, and the answer is compared with the pathname this
+    store is addressed by. A connection that resolved to any other name is not this store's.
+
+    `PRAGMA database_list` is the only view of that decision `sqlite3` exposes; it reports the
+    main database's filename as SQLite computed it. A reading that cannot be obtained is itself
+    a refusal, because an unverifiable open is not a verified one.
+    """
+    try:
+        rows = connection.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error as error:
+        return f"the database this connection opened could not be named: {error}"
+    opened = next((row[2] for row in rows if row[1] == "main"), None)
+    if opened != expected:
+        return (
+            f"this connection opened {opened!r} rather than the database at {expected}, so"
+            " nothing was read from it"
+        )
+    return None
+
 
 def probe(selection: StateSelection) -> dict:
     """Describe the selected state WITHOUT constructing a Store.
@@ -1412,7 +1716,7 @@ def probe(selection: StateSelection) -> dict:
     store = {
         "exists": False, "storeId": None, "createdAt": None, "dbPath": str(db_path),
         "realPath": None, "device": None, "inode": None, "links": None,
-        "schemaVersion": None,
+        "logDevice": None, "logInode": None, "logName": None, "schemaVersion": None,
     }
 
     try:
@@ -1431,71 +1735,133 @@ def probe(selection: StateSelection) -> dict:
             notes.append(f"directory write failed: {type(error).__name__}: {error}")
 
     try:
-        info = os.stat(db_path)
+        os.stat(db_path)
         access["dbExists"] = store["exists"] = True
-        store["realPath"] = str(db_path.resolve())
-        store["device"], store["inode"] = info.st_dev, info.st_ino
-        # Names for this inode, counted because a shared pair does not say the other
-        # participant opened the same name. Graded in compare_store.
-        store["links"] = info.st_nlink
+        store["realPath"] = _expected_path(db_path)
+        # Deliberately NOT the identity. This stat answers one question - is a file here - and
+        # it measured whatever the PATH reached. compare_store grades device and inode as
+        # conclusive when they DIFFER, so letting a pathname observation stand in for the
+        # identity turns "this read could not be bound to a file" into "this is definitely a
+        # different store". The identity comes from the held descriptor below or not at all.
     except OSError as error:
         if access["directoryExists"]:
             notes.append(f"database stat failed: {type(error).__name__}: {error}")
 
     if access["dbExists"]:
-        try:
-            connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
+        # The stat above decides only that a file is HERE. It answers for a mode-000 database
+        # that os.open refuses, and calling that one absent would be worse than calling it
+        # unreadable. Everything this report then CLAIMS about the file comes from one
+        # descriptor held across the rest of the section, so nothing the report can observe
+        # leaves the identity, the read and the write probe describing different files. The
+        # windows that remain are SQLite's own, and _hold_database names them.
+        fd, expected, refused = _hold_database(db_path)
+        if fd is None:
+            notes.append(f"the database could not be held open: {refused}")
+        else:
             try:
-                connection.row_factory = sqlite3.Row
-                access["dbReadable"] = True
-                for key, field in (
-                    ("store_id", "storeId"), ("store_created_at", "createdAt"),
-                    ("version", "schemaVersion"),
-                ):
-                    row = connection.execute(
-                        "SELECT value FROM schema_meta WHERE key = ?", (key,)
-                    ).fetchone()
-                    # A store written before identity existed has no row here. Absence is
-                    # reported as absence and never defaulted, because a default could later
-                    # compare equal to another store's and be read as proof.
-                    store[field] = row["value"] if row is not None else None
-            finally:
-                connection.close()
-        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
-            notes.append(f"database read failed: {type(error).__name__}: {error}")
+                held = _held_identity(fd)
+                if held is None:
+                    # Fail closed rather than carry on. Reading the store id through a
+                    # descriptor we cannot identify would hand back an identity with nothing
+                    # to attach it to, and the physical identity stays absent - which
+                    # compare_store grades unproven rather than as a definite mismatch.
+                    notes.append(
+                        "the held database could not be identified, so it was not read"
+                    )
+                else:
+                    store.update(held)
+                    # Equal to the descriptor's own readlink: _hold_database refused unless
+                    # they matched, so this is the path OF THE HELD FILE rather than a second
+                    # observation that could have been paired with another file's inode.
+                    store["realPath"] = expected
+                    # Where a connection on this file writes its log. Assigned one key at a
+                    # time on purpose: the trial preflight's field inventory reads this
+                    # function for dict literals and subscript assignments, and a merged
+                    # update would leave these three invisible to it.
+                    located = _held_log_location(fd, expected)
+                    if located is None:
+                        notes.append(
+                            "the log location of the held database could not be measured"
+                        )
+                    else:
+                        store["logDevice"] = located["logDevice"]
+                        store["logInode"] = located["logInode"]
+                        store["logName"] = located["logName"]
 
-        try:
-            connection = sqlite3.connect(
-                f"{db_path.as_uri()}?mode=rw", uri=True, timeout=5, isolation_level=None
-            )
-            try:
-                connection.execute("BEGIN IMMEDIATE")
-                connection.execute("ROLLBACK")
-                # Acquiring a write transaction is evidence that this process can write NOW.
-                # It is not a promise that a later commit succeeds; a full disk still fails.
-                access["dbWritable"] = True
+                    moved = _relocation(fd, expected)
+                    if moved is not None:
+                        notes.append("database read failed: " + moved)
+                    else:
+                        try:
+                            connection = sqlite3.connect(
+                                _held_uri(fd, "ro"), uri=True, timeout=5)
+                            try:
+                                connection.row_factory = sqlite3.Row
+                                elsewhere = _opened_elsewhere(connection, expected)
+                                if elsewhere is not None:
+                                    notes.append("database read failed: " + elsewhere)
+                                else:
+                                    access["dbReadable"] = True
+                                    for key, field in (
+                                        ("store_id", "storeId"),
+                                        ("store_created_at", "createdAt"),
+                                        ("version", "schemaVersion"),
+                                    ):
+                                        row = connection.execute(
+                                            "SELECT value FROM schema_meta WHERE key = ?",
+                                            (key,),
+                                        ).fetchone()
+                                        # A store written before identity existed has no row
+                                        # here. Absence is reported as absence and never
+                                        # defaulted, because a default could later compare
+                                        # equal to another store's and be read as proof.
+                                        store[field] = row["value"] if row is not None else None
+                            finally:
+                                connection.close()
+                        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+                            notes.append(
+                                f"database read failed: {type(error).__name__}: {error}")
+
+                    # Asked again, and it closes two things. A rename between the two
+                    # connections would put the write probe on a relocated name, where SQLite
+                    # was measured to fail AND leave a stray log behind. It is also the closing
+                    # question for the read that just happened: a store that moved during it
+                    # leaves an identity a caller reads as "the store at this path", so what
+                    # that read published is withdrawn rather than reported.
+                    moved = _relocation(fd, expected)
+                    if moved is not None:
+                        notes.append("the database moved while it was being read: " + moved)
+                        access["dbReadable"] = False
+                        store["storeId"] = store["createdAt"] = None
+                        store["schemaVersion"] = None
+                        store["device"] = store["inode"] = store["links"] = None
+                        store["logDevice"] = store["logInode"] = store["logName"] = None
+                    else:
+                        try:
+                            connection = sqlite3.connect(
+                                _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
+                            )
+                            try:
+                                connection.execute("BEGIN IMMEDIATE")
+                                connection.execute("ROLLBACK")
+                                elsewhere = _opened_elsewhere(connection, expected)
+                                if elsewhere is not None:
+                                    notes.append("database write probe failed: " + elsewhere)
+                                else:
+                                    # Acquiring a write transaction is evidence that this
+                                    # process can write NOW. It is not a promise that a later
+                                    # commit succeeds; a full disk still fails.
+                                    access["dbWritable"] = True
+                            finally:
+                                connection.close()
+                        except (OSError, sqlite3.Error) as error:
+                            notes.append(
+                                f"database write probe failed: {type(error).__name__}: {error}")
             finally:
-                connection.close()
-        except (OSError, sqlite3.Error) as error:
-            notes.append(f"database write probe failed: {type(error).__name__}: {error}")
+                os.close(fd)
 
     access["detail"] = "; ".join(notes) or None
     return {"stateSelection": selection.to_record(), "store": store, "access": access}
-
-
-def _path_identity(db_path):
-    """Device, inode and name count of the file AT THIS PATH, or None if it cannot be stat'd.
-
-    Measured at the path rather than taken from an open connection, which is the whole of what
-    it can promise: two observations of a path catch a replacement that persists past a read,
-    and not one reverted inside the window, because both would then report the original inode.
-    Catching that needs the descriptor the connection holds, and `sqlite3` exposes none.
-    """
-    try:
-        info = os.stat(db_path)
-    except OSError:
-        return None
-    return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
 
 
 def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
@@ -1506,103 +1872,158 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     For diagnosis that is a side effect the command promised not to have: pointing it at an
     empty, legacy or unrelated file would silently adopt it. Every error becomes a field.
 
-    The identity of the file AT THE PATH is measured here, before and after the read, and
-    returned with the rows. A caller that stat'd the path earlier cannot otherwise tell that
-    the rows arrived from a replacement: comparing the store id does not settle it, because
-    the id is minted once and travels with a copy of the bytes. `_path_identity` states what
-    two observations of a path do and do not catch.
+    The identity returned with the rows is the identity of the file this read HELD OPEN, and
+    the read is refused unless that file is still the one at this store's pathname. A caller
+    that stat'd the path earlier cannot otherwise tell that the rows arrived from a
+    replacement: comparing the store id does not settle it, because the id is minted once and
+    travels with a copy of the bytes. `_hold_database` states what the descriptor catches and
+    what it does not.
     """
     db_path = selection.db_path
 
     unknown = {"device": None, "inode": None, "links": None}
-    opened = _path_identity(db_path)
+    fd, expected, refused = _hold_database(db_path)
+    if fd is None:
+        return {**unknown, "readable": False, "rows": [], "detail": refused}
     try:
-        connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
-    except (OSError, sqlite3.Error, ValueError) as error:
-        return {**unknown, "readable": False, "rows": [],
-                "detail": f"{type(error).__name__}: {error}"}
-    try:
-        connection.row_factory = sqlite3.Row
-        rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
-    except sqlite3.Error as error:
-        connection.close()
-        return {**unknown, "readable": True, "rows": [],
-                "detail": f"{type(error).__name__}: {error}"}
-    connection.close()
-    closed = _path_identity(db_path)
-    if opened is None or closed is None:
-        return {**unknown, "readable": True, "rows": [],
-                "detail": "the database could not be identified while it was being read"}
-    if (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
-        # A rename over this path during the read. The rows are from one file and any
-        # comparison a caller makes is against another, which is worth a field rather than
-        # rows a caller cannot attribute.
-        return {**unknown, "readable": True, "rows": [],
-                "detail": (
-                    f"the database was replaced while it was being read: device:inode"
-                    f" {opened['device']}:{opened['inode']} became"
-                    f" {closed['device']}:{closed['inode']}"
-                )}
-    return {**closed, "readable": True, "rows": rows, "detail": None}
+        opened = _held_identity(fd)
+        if opened is None:
+            return {**unknown, "readable": False, "rows": [],
+                    "detail": "the database could not be identified while it was being read"}
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "readable": False, "rows": [], "detail": moved}
+        try:
+            connection = sqlite3.connect(_held_uri(fd, "ro"), uri=True, timeout=5)
+        except (OSError, sqlite3.Error, ValueError) as error:
+            return {**unknown, "readable": False, "rows": [],
+                    "detail": f"{type(error).__name__}: {error}"}
+        try:
+            connection.row_factory = sqlite3.Row
+            # Before the statement runs: which file did SQLite itself open?
+            elsewhere = _opened_elsewhere(connection, expected)
+            if elsewhere is not None:
+                return {**unknown, "readable": False, "rows": [], "detail": elsewhere}
+            rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
+        except sqlite3.Error as error:
+            # Ask why before reporting what. A store moved out from under the read fails the
+            # statement too, and calling that a readable database whose query failed would
+            # describe the symptom while hiding the cause.
+            moved = _relocation(fd, expected)
+            if moved is not None:
+                return {**unknown, "readable": False, "rows": [], "detail": moved}
+            return {**unknown, "readable": True, "rows": [],
+                    "detail": f"{type(error).__name__}: {error}"}
+        finally:
+            connection.close()
+        # Asked once more, now that the read is over. The pre-connect answer says the file was
+        # this store when the read started; without this one, a rename during the read would
+        # still return rows and an identity a caller reads as "the store at this path". The
+        # claim these two make together is that the file was the one at this pathname for the
+        # whole read.
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "readable": False, "rows": [], "detail": moved}
+        # Both of this read's own observations, carried as the larger count, for the reason
+        # nonce_lookup has always carried it: a second name present at the open and unlinked
+        # before the close is the same hazard as one that stayed, because a peer that already
+        # opened the removed alias keeps writing through its own write-ahead log.
+        closed = _held_identity(fd)
+        links = max(seen["links"] for seen in (opened, closed) if seen is not None)
+        return {**opened, "links": links, "readable": True, "rows": rows, "detail": None}
+    finally:
+        os.close(fd)
 
 
 def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
     """Look for a challenge nonce read-only, so a comparison never writes to the store.
 
     The identity of the file it read comes back with the answer, because this is the only
-    evidence `compare_store` grades as proof and it is obtained through a second open of the
-    path - after whatever stat'd it for the receipt. Without that identity, a nonce found in a
-    database that replaced the measured one satisfies the one proving mechanism there is, and
-    a copy carries the challenge row with the bytes, so the replacement need not be crafted.
+    evidence `compare_store` grades as proof. That identity is the HELD file's, and the read
+    is refused unless the held file is still the one at this store's pathname. Without it, a
+    nonce found in a database that replaced the measured one satisfies the one proving
+    mechanism there is, and a copy carries the challenge row with the bytes, so the
+    replacement need not even be crafted.
+
+    `_hold_database` states what that refusal reaches and what it does not; `compare_store`
+    grades an unattributable answer as unproven, never as absence.
     """
     db_path = selection.db_path
-    unknown = {"device": None, "inode": None, "links": None}
-    opened = _path_identity(db_path)
-    try:
-        connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
-    except (OSError, sqlite3.Error) as error:
+    unknown = {"device": None, "inode": None, "links": None,
+               "logDevice": None, "logInode": None, "logName": None}
+    fd, expected, refused = _hold_database(db_path)
+    if fd is None:
         return {**unknown, "nonce": nonce, "found": False, "readable": False,
-                "detail": f"{type(error).__name__}: {error}"}
+                "detail": refused}
     try:
-        connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            "SELECT written_by, written_at FROM store_challenge WHERE nonce = ?", (nonce,)
-        ).fetchone()
-    except sqlite3.Error as error:
-        # NOT readable. A locked, malformed or momentarily unavailable database answers no
-        # question, and calling it readable turns "we could not look" into "it is not there",
-        # which compare_store then grades as a definite store mismatch.
-        return {**unknown, "nonce": nonce, "found": False, "readable": False,
-                "detail": f"{type(error).__name__}: {error}"}
+        opened = _held_identity(fd)
+        if opened is None:
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": "the database could not be identified while the nonce was"
+                              " being read"}
+        # Unreadable rather than absent, for the reason the query failure below gives: an
+        # answer that cannot be attributed to a file is not an answer about any store.
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": moved}
+        try:
+            connection = sqlite3.connect(_held_uri(fd, "ro"), uri=True, timeout=5)
+        except (OSError, sqlite3.Error) as error:
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": f"{type(error).__name__}: {error}"}
+        try:
+            connection.row_factory = sqlite3.Row
+            elsewhere = _opened_elsewhere(connection, expected)
+            if elsewhere is not None:
+                return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                        "detail": elsewhere}
+            row = connection.execute(
+                "SELECT written_by, written_at FROM store_challenge WHERE nonce = ?", (nonce,)
+            ).fetchone()
+        except sqlite3.Error as error:
+            # NOT readable. A locked, malformed or momentarily unavailable database answers no
+            # question, and calling it readable turns "we could not look" into "it is not
+            # there", which compare_store then grades as a definite store mismatch.
+            moved = _relocation(fd, expected)
+            if moved is not None:
+                return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                        "detail": moved}
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": f"{type(error).__name__}: {error}"}
+        finally:
+            connection.close()
+        # The same closing question the row leg asks, and it matters more here: this answer is
+        # the only evidence compare_store grades as proof, so it must not survive the store
+        # moving out from under it mid-read.
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": moved}
+        # Both of this read's own observations, carried as the larger count. A second name
+        # present at the open and unlinked before the close leaves the closing count at one,
+        # and a peer that already opened the removed alias can hold that connection and keep
+        # writing through its own write-ahead log. Reporting only the closing count kept half
+        # of what was measured.
+        closed = _held_identity(fd)
+        # The log location of the file this answer was read through, so compare_store can ask
+        # whether the nonce came from the same log the store it is grading writes into. These
+        # are two independent opens - probe holds its own descriptor - so the answer is not
+        # trivially the probe's, which is the same reason the device and inode travel here.
+        located = _held_log_location(fd, expected) or {
+            "logDevice": None, "logInode": None, "logName": None}
+        seen = {**opened, **located,
+                "links": max(count["links"] for count in (opened, closed) if count is not None)}
+        if row is None:
+            return {**seen, "nonce": nonce, "found": False, "readable": True, "detail": None}
+        return {**seen, "nonce": nonce, "found": True, "readable": True, "detail": None,
+                "writtenBy": row["written_by"], "writtenAt": row["written_at"]}
     finally:
-        connection.close()
-    closed = _path_identity(db_path)
-    if opened is None or closed is None:
-        moved = "the database could not be identified while the nonce was being read"
-    elif (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
-        moved = (
-            f"the database was replaced while the nonce was being read: device:inode"
-            f" {opened['device']}:{opened['inode']} became"
-            f" {closed['device']}:{closed['inode']}"
-        )
-    else:
-        moved = None
-    if moved is not None:
-        # Unreadable rather than absent, for the reason above: an answer that cannot be
-        # attributed to a file is not an answer about any store.
-        return {**unknown, "nonce": nonce, "found": False, "readable": False, "detail": moved}
-    # Both of this read's own observations, carried as the larger count. A second name present
-    # at the open and unlinked before the close leaves the closing count at one, and a peer
-    # that already opened the removed alias can hold that connection and keep writing through
-    # its own write-ahead log. Reporting only the closing count kept half of what was measured.
-    seen = {**closed, "links": max(opened["links"], closed["links"])}
-    if row is None:
-        return {**seen, "nonce": nonce, "found": False, "readable": True, "detail": None}
-    return {**seen, "nonce": nonce, "found": True, "readable": True, "detail": None,
-            "writtenBy": row["written_by"], "writtenAt": row["written_at"]}
+        os.close(fd)
 
 
-def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=None) -> dict:
+def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_log=None,
+                  nonce=None) -> dict:
     """Grade the evidence that this participant and another share ONE store.
 
     Conflicting evidence is decided before agreeing evidence, so an easier comparison that
@@ -1614,10 +2035,21 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     minted once and copied with the bytes, so agreement is never proof. A device and inode
     pair is conclusive when it DIFFERS and insufficient when it agrees, because one inode can
     be reached at more than one pathname and SQLite derives the write-ahead log from the
-    pathname a connection opens. Neither a hardlink name nor a file bind mount is visible from
-    this side: the caller holds its own path and the peer's device and inode, and nothing that
-    says which pathname the peer opened. A nonce is the only live evidence here - the peer's
-    write is readable in the file being read - and it is what the contract designates as proof.
+    pathname a connection opens. What answers THAT is the log location: the directory entry a
+    connection's `-wal` would be created under, which each participant measures for itself and
+    reports, and which two participants agree on exactly when they compute one log pathname.
+    A nonce is the only live evidence here - the peer's write is readable in the file being
+    read - and it is what the contract designates as proof.
+
+    Agreement on the log location is a SUFFICIENT condition for one log rather than an
+    equivalence, and the grades follow that difference. A disagreement is unproven, not a
+    mismatch: it does not establish that the two logs are different FILES, because the sidecars
+    can themselves be aliased, an overlay merged path and its upperdir can differ as directories
+    while the log entry is one file, and SQLite documents the `-wal` suffix as what it usually
+    appends rather than a guarantee. Read under the default unix VFS with unaliased sidecars -
+    and the converse of that assumption is a real gap rather than a formality: a participant
+    with a bind mount over its own `-wal` agrees with this comparison and writes elsewhere.
+    `_held_log_location` says why measuring the log file itself does not fix it.
 
     Being the only proof, it has to be evidence about THIS file. The answer carries the
     identity of the file it was read from, because it comes from a second open of the path,
@@ -1630,13 +2062,18 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     copy taken AFTER the challenge was written carries it with the bytes, and stays stable for
     a whole invocation, so nothing looking for a replacement or a second name sees anything
     wrong. Whether it is still one file is what the physical identity answers. So proof takes
-    both: a found, attributed nonce AND an agreeing device and inode. Neither alone is graded
-    as proof, and each is unproven for its own reason.
+    all three: a found, attributed nonce AND an agreeing device and inode AND an agreeing log
+    location. None of them alone is graded as proof, and each is unproven for its own reason.
+    The store id is not one of the three: supplied and disagreeing it is a mismatch, supplied
+    and agreeing it is agreement, and absent it was not asked - the role it already had.
 
-    The name count is graded beside all of that rather than folded into any of it. It catches
-    one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
-    pathname without changing it. So more than one name refuses, and one name is not evidence
-    of a single pathname - which is exactly why an agreeing pair is not proof by itself.
+    The name count is graded beside all of that rather than folded into any of it, and it no
+    longer carries the second-pathname question alone. `st_nlink` counts hardlink names, and a
+    file bind mount adds a pathname without changing it: measured on this host on 2026-09-22,
+    where exactly that mount reached `proven` on an agreeing pair and a found nonce while the
+    two names kept separate logs. The log location is the general answer; the count is the
+    residual guard for a name NO participant in this comparison accounted for, and the only one
+    left to a caller that sends no log location at all.
     """
     reasons = []
     if expect_store is not None:
@@ -1668,6 +2105,26 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     else:
         # Not compared at all, which is not the same as compared and agreeing.
         physical = None
+    log_location = None
+    if expect_log is not None:
+        # <device>:<inode>:<name>, split at most twice so a database whose own name contains a
+        # colon survives the parse.
+        want = str(expect_log).split(":", 2)
+        mine = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
+        if len(want) != 3 or None in mine:
+            reasons.append((UNPROVEN, "the log location is not comparable here"))
+        elif (str(mine[0]), str(mine[1]), mine[2]) != (want[0], want[1], want[2]):
+            log_location = False
+            reasons.append((UNPROVEN, (
+                f"this database's write-ahead log is written beside {mine[0]}:{mine[1]}/{mine[2]}"
+                f" and the other participant reported {expect_log}, so the two were not shown to"
+                " write into one log"
+            )))
+        else:
+            log_location = True
+            reasons.append((None, (
+                "both participants write their write-ahead log under the same directory entry"
+            )))
     if nonce is not None:
         if nonce.get("readable") is False:
             # Not being able to read is not the same as the nonce being absent. Calling it a
@@ -1677,24 +2134,52 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
         elif nonce.get("found"):
             read_from = (nonce.get("device"), nonce.get("inode"))
             here = (store.get("device"), store.get("inode"))
+            # The same attribution question one level along. `probe` and `nonce_lookup` are two
+            # independent opens, so an answer can carry this store's device and inode and still
+            # have been read through a pathname whose log is a different file. Both sides must
+            # have been measured, and an absent one is refused rather than read as agreement -
+            # the rule the device and inode above already follow, and the one this module
+            # states: absence is never agreement. The two are separate answers, so they are
+            # reported separately: could not look, and looked somewhere else.
+            read_log = (nonce.get("logDevice"), nonce.get("logInode"), nonce.get("logName"))
+            mine_log = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
             if None in read_from or None in here or read_from != here:
                 reasons.append((UNPROVEN, (
                     f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
                     f" this comparison is about {here[0]}:{here[1]}"
                 )))
-            elif physical is not True:
+            elif log_location is True and (None in read_log or None in mine_log):
                 reasons.append((UNPROVEN, (
-                    "a nonce written by another participant is readable here, which does not"
-                    " say the two are one file now: a copy taken after the challenge was"
-                    " written carries the nonce with the bytes. Supply the other"
-                    " participant's --expect-inode so the physical identity is compared too"
+                    "the log location the nonce was read through could not be measured, so the"
+                    " nonce cannot be attributed to the log this comparison is about"
                 )))
-            else:
+            elif log_location is True and read_log != mine_log:
+                reasons.append((UNPROVEN, (
+                    "the nonce was read through a pathname whose write-ahead log is not the one"
+                    " this comparison is about"
+                )))
+            elif physical is True and log_location is True:
                 reasons.append((
                     PROVEN,
                     "a nonce written by another participant is readable here, in the file this"
-                    " comparison is about",
+                    " comparison is about, whose write-ahead log is written where that"
+                    " participant reported writing its own",
                 ))
+            else:
+                # Only name what was never supplied. An expectation that WAS supplied and
+                # disagreed has already refused above, and asking for it again would tell an
+                # operator to send something they just sent.
+                wanted = [flag for flag, seen in (
+                    ("--expect-inode", physical), ("--expect-log", log_location),
+                ) if seen is None]
+                if wanted:
+                    reasons.append((UNPROVEN, (
+                        "a nonce written by another participant is readable here, which does not"
+                        " say the two are one live store: a copy taken after the challenge was"
+                        " written carries the nonce with the bytes, and one inode reached at a"
+                        " second pathname keeps a write-ahead log of its own. Supply the other"
+                        f" participant's {' and '.join(wanted)}"
+                    )))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
 

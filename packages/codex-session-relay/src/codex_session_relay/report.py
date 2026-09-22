@@ -21,7 +21,7 @@ everywhere else.
 import json
 from datetime import datetime
 
-from . import cxc, mergeevidence, restoration
+from . import cxc, envelope, mergeevidence, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
 from .identity import request_id as derive_request_id
 from .transport import (
@@ -78,14 +78,23 @@ ACCEPTANCE_SHOWN = 2400
 # rather than assumed.
 #
 # PROTOCOL_FLOOR is everything else that survives shrinking, and it is MEASURED rather than
-# estimated, by bisecting the smallest budget that renders. The figure is a flat 1342 across
+# estimated, by bisecting the smallest budget that renders. The figure was a flat 1342 across
 # one, four and eight confirmations AND across one and twenty declared required checks. That
 # second invariance is the one worth having: it is what says the confirmations are the only
 # thing this change pins, so no other variable part is hiding inside this constant. Two
 # earlier versions of this accounting failed exactly there, each time because pinning the
 # whole merge-readiness block dragged another variable line in with it. The margin is for the
 # scaffolding changing, and the worst-legal-report test is what fails if it moves past it.
-PROTOCOL_FLOOR = 1400
+#
+# CRW-148 put two envelope lines inside this section's floor, which moves the figure. It was
+# re-measured the same way rather than adjusted until the tests went quiet: the same bisection
+# run against the unchanged renderer and against this one, on one harness, reads 1457 and 1615,
+# and both stay flat across the same confirmation and check counts. So the scaffolding grew by
+# 158 bytes and the constant grew by 158 with it. The absolute numbers differ from the 1342
+# above because a bisection's floor includes the omission line, which names every section that
+# was dropped and is therefore longer for a report carrying more droppable content; the DELTA
+# between two runs of one harness is the part that transfers, which is why it is the part used.
+PROTOCOL_FLOOR = 1558
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
 # Wider than any real exit status or signal, and far inside what can be serialised.
@@ -98,6 +107,94 @@ def _size(text) -> int:
 
 def show_command(event_id: str) -> str:
     return f"codex-session-relay show --event {event_id}"
+
+
+# ------------------------------------------------------------------------- the envelope
+
+# Which shared envelope each rendered direction is. Spelled here rather than passed in, so a
+# caller cannot label a completion as an instruction by supplying the wrong word.
+REVISION_ENVELOPE = (envelope.PARENT_TO_CHILD, "revision_request")
+
+# The purpose PROTOCOL_FLOOR below was measured against. Any other word costs the difference
+# on the announce line, which the composer cannot shorten, so it is charged rather than
+# absorbed into a constant that was bisected against one spelling.
+MEASURED_PURPOSE = "completion"
+
+
+def child_purpose(outcome) -> str:
+    """Which child purpose this event actually is, derived from what the store already holds.
+
+    Every child message used to render as a completion. A blocked turn and a candidate handed
+    over for review arrived under the same word, so a recipient scanning the envelope could
+    not tell an execution that stopped from one asking to be judged, and the difference was
+    recoverable only by reading the outcome further down.
+
+    Derived, never supplied. A caller that could pass the purpose in could label a blocked
+    report a review-ready one, which is the same trade this package refuses everywhere else.
+
+    It reads the RECEIPT'S OUTCOME and nothing else, and the restraint is the point. The
+    purpose is an input to the message id, which relay-envelope/1 promises stays put across
+    retries, restarts and second readings. An earlier version of this also read whether a
+    merge-readiness handoff had been recorded, which is not a property of the event: a
+    resubmission can add one, so the same event would derive a second id and the recipient
+    would owe two obligations where one fact happened. The outcome is asserted once by the
+    child's receipt and never moves, so a purpose derived from it does not either.
+
+    The distinction between a candidate offered for judgement and a result being delivered
+    has not been lost; it lives in relay-packet/1, where review_ready is its own purpose and
+    the packet carries the handoff evidence that makes it one.
+    """
+    if outcome == "blocked_needs_input":
+        return "blocked"
+    return MEASURED_PURPOSE
+
+
+def _column(row, name):
+    """One row access that works for a mapping and for a sqlite3.Row, and answers None.
+
+    A missing column is an absence to state, not an exception to raise: this is rendering, and
+    a message that cannot say who the recipient is is still a message worth delivering.
+    """
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def envelope_of(row, receipt, report, direction, purpose, context=None) -> dict:
+    """The shared identification region for one rendered message.
+
+    Built from the stored row and receipt, never from anything a caller asserts about them.
+    context carries only what THIS layer cannot read - the sending task and the Linear scope
+    live in the registry and the scope table, which the renderer has no handle on - and every
+    field it does not supply is a stated absence rather than a guess.
+    """
+    context = context or {}
+    generation = receipt.get("executionGeneration")
+    revision = receipt.get("revisionHash")
+    basis = None
+    if generation is not None and revision:
+        basis = f"generation {generation}, revision {str(revision)[:12]}"
+    recipient = _column(row, "recipient_task_id")
+    return envelope.region(
+        direction=direction,
+        purpose=purpose,
+        relation_id=row["relationship_id"],
+        sender=context.get("senderTaskId") or envelope.absent(
+            envelope.UNKNOWN, "the sending task was not read from the relationship"),
+        recipient=recipient or envelope.absent(
+            envelope.UNKNOWN, "the delivery row named no recipient"),
+        subject=row["event_id"],
+        # A report being projected before it is stored has no recorded time, and the envelope
+        # says unknown rather than inventing one; see envelope.REQUIRED_ALWAYS.
+        observed_at=report.get("recordedAt"),
+        relation_revision=context.get("relationRevision"),
+        scope=context.get("scope"),
+        basis=basis,
+        evidence=context.get("evidence") or (),
+        correlation_id=context.get("correlationId"),
+        reach=context.get("reach"),
+    )
 
 
 # ------------------------------------------------------------------------ recording
@@ -221,7 +318,8 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     pinned = _acceptance_lines(_accepted_dispositions(handoff))
     if pinned:
         total = sum(_size(line) + 1 for line in pinned)
-        room = _confirmations_room(summary, reason, next_action)
+        room = _confirmations_room(summary, reason, next_action,
+                                   child_purpose(outcome))
         if total > room:
             raise ReceiptRefused(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
@@ -860,6 +958,23 @@ def _check_restore(restore):
             continue
         checked[key] = _bounded(_single_line(value, f"restore {key}"),
                                 f"restore {key}", LABEL_MAX)
+    if checked and not checked.get("mode"):
+        # The one field no transport carries. Model, effort, sandbox and approval travel as
+        # settings and a receipt reads them back; the workflow has no field anywhere, so a
+        # restore block that omits it has not left it to be looked up - it has dropped it,
+        # and the compacted child it reaches resumes under whatever it still happens to
+        # remember. Every other field here is optional because the recipient can recover it
+        # from a record; this one it cannot.
+        #
+        # Checked against what SURVIVED normalisation rather than against what was passed, so
+        # a section whose every value was blank is still no section at all rather than a
+        # refusal. That is the same answer it gave before this rule existed.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a restore section states the effective workflow in mode: it is the one field no "
+            "transport carries, so leaving it out drops it rather than deferring it. Present "
+            f"fields were {sorted(checked)}",
+        )
     return checked
 
 
@@ -1270,7 +1385,7 @@ def _non_verification(status: str) -> str:
 
 # ------------------------------------------------------------------------ rendering
 
-def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Composed:
+def compose_completion(row, receipt, request, report, *, budget=BUDGET, context=None) -> _Composed:
     """Child to parent, led by what the parent has to decide.
 
     Result, then the pull request, then the evidence, then what is still open, then what to
@@ -1281,6 +1396,8 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
     assert_current(report, execution_generation=receipt.get("executionGeneration")
                    or report["executionGeneration"])
     confirmations = _acceptance_lines(_accepted_dispositions(report.get("handoff")))
+    region = envelope_of(row, receipt, report, envelope.CHILD_TO_PARENT,
+                         child_purpose(receipt.get("outcome")), context=context)
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -1315,26 +1432,33 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Comp
             f"  requestId: {request}",
             f"  eventId: {event_id}",
             f"  submission: {report['submissionNo']}  contract: {version_of(report)}",
+            # The two envelope lines sit inside the floor with them. What a recipient owes and
+            # which logical message this is are the two facts it cannot recover by reading
+            # anything else: the rest of this block names records it can go and open.
+            *envelope.announce_lines(region),
             f"  relationshipId: {row['relationship_id']}",
+            *envelope.context_lines(region),
             f"  executionGeneration: {receipt.get('executionGeneration')}",
             f"  attempt: {receipt.get('attempt')}",
             f"  outcome: {receipt.get('outcome')}",
             f"  revisionHash: {receipt.get('revisionHash')}",
-        # The first five lines are ordered so the floor protects exactly what lets a
-        # recipient pick its own submission out of the several that show returns. The rest
-        # of the record can shorten.
-        ], rank=5, essential=True, keep=5),
+        # The first seven lines are ordered so the floor protects exactly what lets a
+        # recipient pick its own submission out of the several that show returns, plus the
+        # two envelope lines that say what this message asks of it. The rest of the record
+        # can shorten.
+        ], rank=5, essential=True, keep=7),
         _Section("respond", _ack_lines(event_id), rank=0, essential=True, keep=7),
     ]
     return _compose(sections, event_id, budget=budget)
 
 
-def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
+def render_completion(row, receipt, request, report, *, budget=BUDGET, context=None) -> str:
     """The bytes alone, for a caller that only has to send them."""
-    return compose_completion(row, receipt, request, report, budget=budget).text
+    return compose_completion(row, receipt, request, report, budget=budget,
+                              context=context).text
 
 
-def compose_revision(row, receipt, request, report, *, budget=BUDGET) -> _Composed:
+def compose_revision(row, receipt, request, report, *, budget=BUDGET, context=None) -> _Composed:
     """Parent to child, shaped as an instruction the child can execute.
 
     DISPATCH-TASK-01 fixes the fields. What leads is the thing that was violated and the
@@ -1345,6 +1469,7 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET) -> _Compos
     generation = receipt.get("executionGeneration")
     assert_current(report, execution_generation=generation or report["executionGeneration"])
     review = report.get("review")
+    region = envelope_of(row, receipt, report, *REVISION_ENVELOPE, context=context)
     head = [
         "[codex-session-relay] revision request",
     ]
@@ -1413,8 +1538,9 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET) -> _Compos
             "",
             f"relay record: requestId {request}, eventId {event_id},"
             f" submission {report['submissionNo']}, contract {version_of(report)}",
+            *envelope.announce_lines(region, compact=True),
             f"Full record: {show_command(event_id)}",
-        ], rank=0, essential=True, keep=3),
+        ], rank=0, essential=True, keep=4),
     ]
     if review:
         # REVIEW-OUTPUT-01 puts the machine-scannable judgment on the FINAL line, so a
@@ -1428,9 +1554,9 @@ def compose_revision(row, receipt, request, report, *, budget=BUDGET) -> _Compos
     return _compose(sections, event_id, budget=budget)
 
 
-def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
+def render_revision(row, receipt, request, report, *, budget=BUDGET, context=None) -> str:
     """The bytes alone, for a caller that only has to send them."""
-    return compose_revision(row, receipt, request, report, budget=budget).text
+    return compose_revision(row, receipt, request, report, budget=budget, context=context).text
 
 
 def _pr_lines(report):
@@ -1785,7 +1911,7 @@ def _verified_at(value):
         return None
     return parsed.isoformat()
 
-def _confirmations_room(summary, reason, next_action) -> int:
+def _confirmations_room(summary, reason, next_action, purpose=MEASURED_PURPOSE) -> int:
     """How many bytes the unelidable confirmations may take on THIS report.
 
     A fixed reserve answered the wrong question. What matters is not whether they are large
@@ -1799,8 +1925,14 @@ def _confirmations_room(summary, reason, next_action) -> int:
     constant standing in for something that varies, and each fix found one more variable part
     underneath. Giving the confirmations their own section is what stopped that, because now
     nothing else changed its floor and nothing else has to be charged here.
+
+    The purpose is charged the same way and for the same reason. The floor was bisected with
+    the word completion on the announce line; now that the word is derived from the outcome,
+    a longer one takes bytes off a line nothing can shorten. Charging the difference keeps
+    the constant meaning what it was measured to mean instead of quietly covering a spread.
     """
-    spoken_for = PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
+    spoken_for = (PROTOCOL_FLOOR + _size(purpose) - _size(MEASURED_PURPOSE)
+                  + _size(summary) + _size(reason) + _size(next_action))
     # Never negative: a report whose other required parts already fill the budget has room
     # for no confirmation at all, and that is a refusal rather than a wrapped-around ceiling.
     return max(0, min(ACCEPTANCE_SHOWN, BUDGET - spoken_for))

@@ -24,7 +24,8 @@ NEW_COMMANDS = (
     "capacity-show", "limit-declare", "merge-turn-attest", "merge-turn-check",
     "merge-turn-land", "merge-turn-ready", "merge-turn-release", "merge-turn-request",
     "merge-turn-request-return", "merge-turn-resolve", "merge-turn-show",
-    "merge-turn-unknown", "merge-turn-withdraw", "region-followup",
+    "merge-turn-unknown", "merge-turn-withdraw", "merge-turn-acknowledge",
+    "region-followup",
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
     "slot-release", "slot-reserve", "usage-observe",
@@ -51,6 +52,14 @@ class CoordinationCliTestCase(RelayTestCase):
         code, _payload = self.run_cli(
             "linkage-bind", "--role", "parent", "--scope", project,
             "--task", task, "--host", host)
+        self.assertEqual(code, cli.EXIT_OK)
+
+    def answer_grant(self, claimed, actor):
+        """What a parent does between being given the turn and using it."""
+        code, _payload = self.run_cli(
+            "merge-turn-acknowledge", "--turn", claimed["turnId"], "--actor", actor,
+            "--grant", claimed["grant"]["grantId"],
+            "--evidence", "read the grant and re-checked the record")
         self.assertEqual(code, cli.EXIT_OK)
 
 
@@ -93,6 +102,7 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
         self.assertEqual(claimed["state"], "holding")
 
         turn = claimed["turnId"]
+        self.answer_grant(claimed, "task-alpha")
         code, checked = self.run_cli(
             "merge-turn-check", "--turn", turn, "--actor", "task-alpha",
             "--head-sha", "head-a", "--base-sha", "base-0",
@@ -119,6 +129,7 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
             "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
             "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
             "--head", "head-a", "--ready")
+        self.answer_grant(claimed, "task-alpha")
         code, payload = self.run_cli(
             "merge-turn-check", "--turn", claimed["turnId"], "--actor", "task-alpha",
             "--head-sha", "head-moved", "--base-sha", "base-0",
@@ -143,6 +154,74 @@ class AFullMergeTurnThroughTheCommandSurface(CoordinationCliTestCase):
             self.assertEqual(code, cli.EXIT_REFUSED, flag)
             self.assertEqual(payload["reason"], "bad_invocation", flag)
             self.assertIn(flag, payload["detail"])
+
+    def test_a_parent_that_came_back_asks_with_the_only_identifier_it_has(self):
+        self.bind("PRJ-A", "task-alpha")
+        _code, claimed = self.run_cli(
+            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
+            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
+            "--head", "head-a", "--pr", "73", "--ready")
+        code, mine = self.run_cli("merge-turn-show", "--parent-task", "task-alpha")
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual([record["turnId"] for record in mine["claims"]],
+                         [claimed["turnId"]])
+        self.assertEqual(mine["claims"][0]["state"], "holding")
+        self.assertFalse(mine["claims"][0]["targetFree"])
+
+    def test_two_selectors_refuse_instead_of_answering_about_one_of_them(self):
+        self.bind("PRJ-A", "task-alpha")
+        for arguments in (
+                ("--parent-task", "task-alpha", "--repository", "owner/repo",
+                 "--base-ref", "dev"),
+                ("--repository", "owner/repo"),
+                (),
+        ):
+            code, payload = self.run_cli("merge-turn-show", *arguments)
+            self.assertEqual(code, cli.EXIT_REFUSED, arguments)
+            self.assertEqual(payload["reason"], "bad_invocation", arguments)
+
+    def test_acknowledging_a_grant_twice_converges_on_one_record(self):
+        self.bind("PRJ-A", "task-alpha")
+        _code, claimed = self.run_cli(
+            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
+            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
+            "--head", "head-a", "--ready")
+        grant = claimed["grant"]["grantId"]
+        for _ in range(2):
+            code, answered = self.run_cli(
+                "merge-turn-acknowledge", "--turn", claimed["turnId"],
+                "--actor", "task-alpha", "--grant", grant,
+                "--evidence", "read it and re-checked the head")
+            self.assertEqual(code, cli.EXIT_OK)
+        entries = [entry for entry in answered["ledger"]
+                   if entry["evidenceKind"] == "grant_acknowledged"]
+        self.assertEqual(len(entries), 1)
+
+    def test_a_grant_that_is_not_this_tenures_is_refused_at_the_surface(self):
+        self.bind("PRJ-A", "task-alpha")
+        _code, claimed = self.run_cli(
+            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
+            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
+            "--head", "head-a", "--ready")
+        code, payload = self.run_cli(
+            "merge-turn-acknowledge", "--turn", claimed["turnId"], "--actor", "task-alpha",
+            "--grant", "mtg-somethingelse", "--evidence", "I still had the old one")
+        self.assertEqual(code, cli.EXIT_REFUSED)
+        self.assertEqual(payload["reason"], "merge_turn_not_held")
+
+    def test_a_stated_cause_travels_with_the_readiness_it_withdrew(self):
+        self.bind("PRJ-A", "task-alpha")
+        _code, claimed = self.run_cli(
+            "merge-turn-request", "--repository", "owner/repo", "--base-ref", "dev",
+            "--project", "PRJ-A", "--task", "task-alpha", "--host", "host-a",
+            "--head", "head-a", "--ready")
+        code, answer = self.run_cli(
+            "merge-turn-ready", "--turn", claimed["turnId"], "--actor", "task-alpha",
+            "--not-ready", "--cause", "the base moved to base-7")
+        self.assertEqual(code, cli.EXIT_OK)
+        entry = next(e for e in answer["ledger"]
+                     if e["evidenceKind"] == "readiness_withdrawn")
+        self.assertEqual(entry["evidence"], "the base moved to base-7")
 
 
 class TheCapacityAndRegionSurfaces(CoordinationCliTestCase):

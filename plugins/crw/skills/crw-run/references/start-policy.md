@@ -211,11 +211,13 @@ because one of them passing says nothing about the other two.
    against the transport that produced it, because the two answer differently and the record
    says which one applies. The thread bridge declares this value and never transmits it,
    defaulting an omitted declaration to `never`, so there the refusal is a declaration mismatch
-   and naming the policy the task is actually on is what reaches it. The session relay instead
-   transmits the recorded policy and admits only `never`, treating a returned `on-request` as a
-   push channel that is closed rather than one that is mismatched, so declaring correctly does
-   not open it: that recipient is `inbox_only`, which is a terminal delivery state no retry
-   revisits.
+   and naming the policy the task is actually on is what reaches it. The session relay admits
+   only `never`, and it decides that twice. A RECORD stating another policy is refused where it
+   is written and again before any send, `unsupported_approval_policy` with nothing
+   transmitted, so declaring correctly does not open the channel — it makes the row
+   unrecordable, and the repair is the task's policy rather than the declaration. A recorded
+   `never` whose HOST reports `on-request` back is the other half: that recipient is
+   `inbox_only`, a terminal delivery state no retry revisits.
 
 Each result lands in its own recorded field: goal support in `host_compatibility`, the delivery
 path in `observation_path`, and approval-policy compatibility in `approval_policy`. Three results,

@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "none",
+    "reason": "prefix_added",
+    "title": "[CRW] 설치·3단계 운영 마무리"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "설치·3단계 운영 마무리",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "descriptive"
+  },
+  "note": "Settled by Jun on 2026-09-22: a title the user described keeps its wording as the body and takes the prefix in front of it, while a title the user fixed exactly, or a parent where renaming is forbidden, is left alone. This fixture holds the first half; user-fixed-title-is-left-alone holds the second.",
+  "subcommand": "decide"
+}
