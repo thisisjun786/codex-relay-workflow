@@ -500,6 +500,16 @@ def check(one, *, required=None) -> None:
                 "the policy states " + ", ".join(missing) + " as nothing; the workflow in"
                 " particular has no transport field, so an unstated one is dropped rather"
                 " than defaulted")
+        for name in POLICY_FIELDS:
+            value = one[POLICY].get(name)
+            if value is not None and not isinstance(value, str):
+                # Presence was the whole test, so an object-valued model passed and was then
+                # compared against the refused pairs by string form - where two values that
+                # are not settings can agree with each other and neither is a setting.
+                raise PacketRefused(
+                    RefusalReason.SETTINGS_MISTYPED,
+                    "the policy " + name + " is text, not a " + type(value).__name__
+                    + "; a setting nobody can render is not one a receipt can read back")
     if _present(one.get(ARTIFACT)) is not None:
         _check_artifact(one[ARTIFACT])
     if _present(one.get(BODY)) is not None:
