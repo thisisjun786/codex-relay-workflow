@@ -167,17 +167,22 @@ class RegistrationRacesTheGenerationItNames(GuardTestCase):
             return
 
         self.assertTrue(published, f"registration returned {results.get('register')!r}")
-        # Publication is NOT evidence that the dispatch was current when it landed, and this
-        # test does not pretend otherwise. register_relationship reads the generation state and
-        # then publishes as two operations with nothing held between them, so an advance
-        # committing in that window returns success over a generation the store has already
-        # moved past. Asserting the absence of that race would be asserting a property the
-        # source does not have; it is recorded in docs/contention-regression.md instead.
-        #
-        # What must hold either way is that the disagreement stays VISIBLE. The reader answers
-        # stale or current and never absent, so the next evaluation reads the contradiction out
-        # of the store rather than taking the marker's word, and the published fact is left
-        # intact rather than rewritten behind it.
+        # Publication IS evidence that the dispatch was current when it landed. CRW-11 put the
+        # generation check and this publication under one hold on the relay's write lock, so the
+        # advance either committed first - and the branch above refused as stale, publishing
+        # nothing - or waited until the fact had landed. The generation the fact names is the one
+        # it was registered under, whatever the store has moved on to since. The interleavings
+        # themselves are held still and asserted in test_registration_hold.py; this case stays a
+        # racing one, so what it adds is that every ordering ends in one of the two.
+        self.assertEqual(
+            facts["relationship"]["executionGeneration"], 1,
+            "the published registration names a generation other than the one its dispatch"
+            " opened, so the hold did not cover the publication",
+        )
+        # What must hold either way is that the disagreement stays VISIBLE once an advance does
+        # land. The reader answers stale or current and never absent, so the next evaluation
+        # reads the contradiction out of the store rather than taking the marker's word, and the
+        # published fact is left intact rather than rewritten behind it.
         self.assertIn(
             state, (intent.DISPATCH_CURRENT, intent.DISPATCH_STALE),
             f"a published registration left the dispatch reading {state!r}, so nothing"

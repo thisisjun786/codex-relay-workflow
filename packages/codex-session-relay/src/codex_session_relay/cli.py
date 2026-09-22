@@ -2282,9 +2282,12 @@ def _reachability(services, report) -> dict:
 # ------------------------------------------------------------------ managed marker
 
 # The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
-# Store writes on open; every command below either writes only to the marker filesystem or reads the
-# relay database read-only. The state directory is still resolved, because the coordinator is the
-# party that knows where the store it registered against actually lives.
+# Store writes on open; every command below writes only to the marker filesystem and records
+# nothing in the relay's tables. intent-register is the one that does more than read: it holds the
+# relay's write lock across its generation check and its publication, so an advance cannot commit
+# between them, then releases it with a rollback having written nothing. The state directory is
+# still resolved, because the coordinator is the party that knows where the store it registered
+# against actually lives.
 
 
 def _marker_root(args):
