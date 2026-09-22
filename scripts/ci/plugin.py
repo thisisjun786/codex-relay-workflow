@@ -916,7 +916,8 @@ def main():
         return 0
     print("Package " + str(result["version"]) + " at "
           + str(result.get("resolved", result.get("path"))) + ": " + str(result["files"])
-          + " files, digest " + result["digest"][:16])
+          + " files, digest " + result["digest"][:16]
+          + ". The version's suffix is these same files digested with that suffix elided")
     print("Skill names under the plugin namespace: " + ", ".join(result["expectedSkillNames"]))
     if result.get("worktreeDrift"):
         print("Working tree differs from the revision payload: "
