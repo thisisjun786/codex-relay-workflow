@@ -231,11 +231,17 @@ def review_digest(review):
 class MergeTurn:
     """Claims on a shared merge target, and the lifecycle of the one that holds it."""
 
-    def __init__(self, store, clock, linkage):
+    def __init__(self, store, clock, linkage, *, delivery=None):
         self.store = store
         self.clock = clock
         self.linkage = linkage
         self.conflicts = Conflicts(store)
+        # Optional for the reason DeliveryService's own linkage is optional: absent, every
+        # caller written before this keeps its exact behaviour, down to the bytes of the grant
+        # envelope. Supplied, a grant that a parent did NOT cause is also pushed to it through
+        # the relay's existing queue. It is never used to read or write anything about an
+        # assignment's work - only to address this notice.
+        self.delivery = delivery
 
     # ---------------------------------------------------------------- reading
 
@@ -681,7 +687,8 @@ class MergeTurn:
                 " rolled back rather than half written")
 
     def _grant_in(self, db, *, turn, tenure, target, repository, base_ref, recipient, head,
-                  state, granted_from, at):
+                  state, granted_from, at, relationship_id=None, project_key=None,
+                  wake=False):
         """The notice that a parent now holds this target, written WITH the acquisition.
 
         Addressed, not broadcast. actor_task_id carries the RECIPIENT rather than whoever's
@@ -690,11 +697,25 @@ class MergeTurn:
         same transaction, so a project that changed hands between a release and the promotion
         that followed it is never notified at an address that is already stale.
 
-        What this is not. It is not a push and it is not a second queue: nothing here wakes a
-        parent that is not running. It is durable, its identity is logical, and it converges,
-        so a retry, a restart and a duplicate reading all describe one grant - and a parent
-        finds it by re-reading its own claims on entry, which is the wake path's own rule that
-        the queue is the truth and a wake is only a hint.
+        The ledger row itself is still not a push. It is durable, its identity is logical and
+        it converges, so a retry, a restart and a duplicate reading all describe one grant, and
+        a parent finds it by re-reading its own claims on entry.
+
+        That is enough for a parent that comes back, and a parent that did not CAUSE this grant
+        may not come back at all. So wake also hands the notice to the relay's existing queue,
+        and ONLY a promotion sets it: a claim and a late-ready acquisition are the recipient's
+        own call, and messaging a parent about something it has just done is the heartbeat this
+        contract family refuses.
+
+        The wake is resolved BEFORE the ledger row is written, never after. _write_ledger
+        compares a reserved row's stored evidence field by field on readback, so an envelope
+        amended once it is written is a contradiction that rolls the whole promotion back -
+        and the promotion is somebody's merge turn. Every input to the event's identity is
+        known here, so nothing has to be amended.
+
+        An address that cannot be found is not an error. The grant is written either way and
+        the envelope says which happened, so a reader of the turn can tell a notice that was
+        never addressable from one that was sent.
         """
         sequence = db.execute(
             "SELECT COUNT(*) AS seen FROM merge_turn_ledger"
@@ -702,17 +723,45 @@ class MergeTurn:
             (turn, GRANT),
         ).fetchone()["seen"] + 1
         grant = grant_id(turn, tenure, sequence)
+        envelope = {
+            "kind": "merge_turn_grant", "grantId": grant, "turnId": turn,
+            "tenure": tenure, "sequence": sequence,
+            "targetKey": target, "repository": repository,
+            "baseRef": base_ref, "recipientTaskId": recipient, "candidateHead": head,
+            "grantedFrom": granted_from,
+        }
+        queued = None
+        if wake and self.delivery is not None:
+            channel = self.delivery.grant_channel_in(
+                db, relationship_id=relationship_id, recipient_task_id=recipient,
+                grant=grant, project_key=project_key)
+            if channel.get("eventId"):
+                envelope["wake"] = {"eventId": channel["eventId"]}
+                queued = channel
+            else:
+                envelope["wake"] = {"refused": channel["refused"]}
+                self.store.journal(
+                    "merge_turn_wake_unaddressed", turn,
+                    {"grantId": grant, "recipientTaskId": recipient,
+                     "reason": channel["refused"]}, at=at)
+        evidence = json.dumps(
+            envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         self._write_ledger(
             db, turn, kind=ATTESTATION, from_state=state, to_state=None,
             evidence_kind=GRANT, actor=recipient,
-            evidence=json.dumps(
-                {"kind": "merge_turn_grant", "grantId": grant, "turnId": turn,
-                 "tenure": tenure, "sequence": sequence,
-                 "targetKey": target, "repository": repository,
-                 "baseRef": base_ref, "recipientTaskId": recipient, "candidateHead": head,
-                 "grantedFrom": granted_from},
-                sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+            evidence=evidence,
             idempotency_key=GRANT + ":" + grant, at=at)
+        if queued is not None:
+            # After the ledger write, so the notice a recipient reads and the row this store
+            # keeps are the same bytes, and inside the same transaction, so a promotion that
+            # rolls back takes its wake with it.
+            self.delivery.queue_grant_in(
+                db, event_id=queued["eventId"], relationship_id=queued["relationshipId"],
+                recipient_task_id=recipient, receipt=evidence, grant=grant, at=at)
+            self.store.journal(
+                "merge_turn_wake_queued", turn,
+                {"grantId": grant, "eventId": queued["eventId"],
+                 "recipientTaskId": recipient}, at=at)
         return grant
 
     # ---------------------------------------------------------------- claiming
@@ -1214,7 +1263,13 @@ class MergeTurn:
                     db, turn=candidate["turn_id"], tenure=candidate["tenure"], target=target,
                     repository=candidate["repository"], base_ref=candidate["base_ref"],
                     recipient=owner, head=candidate["candidate_head"], state=HOLDING,
-                    granted_from="promotion", at=at)
+                    granted_from="promotion", at=at,
+                    # The one grant its recipient did not ask for. Every other grant answers a
+                    # call that parent just made, so it is awake by construction; this one is
+                    # handed to a parent whose last act was to wait, and waiting is exactly
+                    # what an idle task looks like.
+                    relationship_id=candidate["relationship_id"],
+                    project_key=candidate["project_key"], wake=True)
                 return candidate["turn_id"]
             stale = refusal or self._stale_owner(candidate, owner, candidate["holder_task_id"])
             self._close_in(
@@ -1627,3 +1682,53 @@ class MergeTurn:
         return {"released": self.turn(turn),
                 "promoted": self.turn(promoted) if promoted else None,
                 "ledger": self.ledger(turn)}
+
+
+# Why a queued grant notice is no longer worth sending. Read by the delivery layer, which owns
+# no opinion about merge turns and should not acquire one.
+MERGE_TURN_ABSENT = "merge_turn_absent"
+MERGE_TURN_CLOSED = "merge_turn_closed"
+MERGE_TURN_REGRANTED = "merge_turn_regranted"
+MERGE_TURN_GRANT_ANSWERED = "merge_turn_grant_answered"
+# The notice itself could not be read as one. This store wrote it, so this means the row has
+# been damaged or hand-edited; it is named rather than folded into absent, because the repair
+# is not the same one.
+MERGE_TURN_GRANT_UNREADABLE = "merge_turn_grant_unreadable"
+
+
+def grant_supersession_in(db, turn, grant):
+    """Whether a grant notice still has anything to tell its recipient, read inside a write.
+
+    A grant's currency is its OWN turn. The assignment's execution generation says nothing
+    about who may merge into a shared branch, so measuring this notice against it both
+    suppressed wakes that were still true and let stale ones through. This is the one place
+    that rule lives, so the pre-send check, the re-check inside the atomic claim and the
+    operator-facing report cannot disagree about it.
+
+    Four answers, and between them they cover every state a turn can legally be in. A turn
+    that no longer OCCUPIES its target has nothing to hand over. A turn whose newest grant is
+    a different one has moved to another candidate, and the newer notice is the one worth
+    delivering. A grant already acknowledged has been acted on. And a turn this store cannot
+    find is fail-closed on purpose: there is no acknowledgement and no return the message
+    could ask for, so sending it would ask a parent to act on something nobody can read.
+
+    None means it is still current, which is the only answer that sends anything.
+    """
+    row = db.execute(
+        "SELECT state, tenure FROM merge_turns WHERE turn_id = ?", (turn,)).fetchone()
+    if row is None:
+        return MERGE_TURN_ABSENT
+    if row["state"] not in OCCUPYING:
+        return MERGE_TURN_CLOSED
+    answered = db.execute(
+        "SELECT 1 FROM merge_turn_ledger WHERE turn_id = ? AND idempotency_key = ?",
+        (turn, GRANT_ACKNOWLEDGED + ":" + grant)).fetchone()
+    if answered is not None:
+        return MERGE_TURN_GRANT_ANSWERED
+    current = MergeTurn._current_grant_in(db, turn, row["tenure"])
+    # A turn with no readable grant at all does not make this one stale. That is a store whose
+    # ledger cannot be read as this module's own, and the recogniser already reports it; it is
+    # not evidence that some newer grant replaced this notice.
+    if current is not None and current != grant:
+        return MERGE_TURN_REGRANTED
+    return None
