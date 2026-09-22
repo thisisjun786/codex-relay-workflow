@@ -855,3 +855,53 @@ correction; `sync-status` and `sync-retry` manage the queue, and
 
 The wire and record protocol, the invariants, and the package internals live with the package's
 own documents. Read them when changing the relay, not when running an assignment.
+
+The message form both relations share is one of them. `relay-envelope/1` is defined in the
+package's own `docs/envelope.md`, with the workflow rule in
+[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
+Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
+relay carries no supervisor channel, so nothing above the record itself is measured on that
+relation; and what discharges a reporting obligation is the Linear record the supervisor reads,
+confirmed, rather than a report having been written.
+
+Three commands make that readable rather than remembered. They are the whole surface; there is
+no daemon behind them and nothing wakes anybody.
+
+```bash
+# Is this event news for the level above? A read: it sends, queues and records nothing.
+codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
+
+# What does this project still owe upward? An explicit question, never suppressed.
+# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+codex-session-relay supervisor-standing --project <key> [--observation <file>]...
+
+# Record that a report was produced for this event's obligation, once.
+codex-session-relay supervisor-report-recorded --event <id> [--message <messageId>]
+
+# The same, for an obligation a turn left by ending without reporting. It has no event.
+codex-session-relay supervisor-report-recorded --observation <file> [--message <messageId>]
+```
+
+`supervisor-select` answers `report: false` with a reason far more often than it answers true,
+and the reason is the part to read: `no_meaningful_transition` for an ordinary event,
+`already_reported_under_this_obligation` for a fact already reported,
+`already_in_the_record_the_supervisor_reads` once Linear has it confirmed,
+`recipient_is_not_contactable` for a paused or archived supervisor, and
+`recipient_contactability_unmeasured` when nobody has looked recently. Every one of them
+preserves the obligation; none of them discards it.
+
+Without `--recipient` the answer is about the obligation alone and says so with
+`deliverability_was_not_asked_about`: it does not claim anybody is reachable, and it does not
+suppress on a question it was not given the means to ask. Name a recipient and deliverability
+becomes part of the answer, which means a recipient nobody has observed recently - or an
+observation dated in the future, from a clock that went backwards - suppresses the wake rather
+than authorizing one.
+
+`supervisor-report-recorded` says a report was COMPOSED. Whether a turn was created, whether it
+ran, and whether the supervisor acted are three further facts, and no row here carries any of
+them. Recording it is what makes the next reading of the same fact converge instead of waking
+the level above again, so record it when the report actually goes out.
+
+`linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
+the digest rather than leaving it to be written by hand. A pointer belonging to another
+instruction is refused with the contest retained, and one digest cannot carry two purposes.

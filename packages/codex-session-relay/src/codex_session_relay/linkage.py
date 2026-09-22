@@ -25,6 +25,7 @@ same transaction and the exception is raised after it closes.
 
 import json
 
+from . import envelope
 from .errors import LinkageError, RefusalReason
 from .identity import sha256_hex
 
@@ -112,6 +113,53 @@ def directive_id(scope_kind, scope_key, from_scope_key, digest, revision):
     return "dir-" + sha256_hex(
         "|".join((scope_kind, scope_key, from_scope_key, digest, str(revision)))
     )[:ID_WIDTH]
+
+
+def _pointer_disagreement(stored, incoming):
+    """Whether two envelope pointers on one directive id are about different instructions.
+
+    Three cases, because "neither is ours" and "only one is" are not the same answer.
+
+    Both parse: they disagree when they name a different purpose or answer a different
+    message, which is what the derived id cannot tell apart on its own.
+
+    Only the INCOMING one parses: the stored row predates this contract or carries an
+    operator's note, and the caller is asking for a purpose and a correlation that row has no
+    room for. Treating that as agreement returned the old row and reported success while the
+    requested envelope fields simply vanished, so it is refused and the later instruction takes
+    its own digest. Migrating the row instead would rewrite an instruction already recorded,
+    which this module refuses everywhere.
+
+    Only the STORED one parses, or neither: the caller asserted no purpose, so it claims
+    nothing this row could contradict, and the existing record is returned exactly as an
+    ordinary replay returns it.
+
+    The correlation counts too. A replay that keeps its purpose and answers a DIFFERENT message
+    is a different instruction, and returning the stored row for it handed the caller a
+    directive that answers the message it replaced.
+    """
+    first, second = envelope.parse_reference(stored), envelope.parse_reference(incoming)
+    if second is None:
+        return None
+    if first is None:
+        return ("this directive id is already recorded with a reference that is not an"
+                " envelope pointer (" + repr(stored) + "), so the purpose "
+                + repr(second["purpose"]) + " and the correlation "
+                + repr(second["correlationId"]) + " you are asking for have nowhere to go on"
+                " it. The recorded instruction is preserved; a later one is recorded as its"
+                " own directive with its own digest")
+    if (first["purpose"], first["correlationId"]) == (second["purpose"],
+                                                      second["correlationId"]):
+        return None
+    if first["purpose"] == second["purpose"]:
+        return ("this directive id already answers " + repr(first["correlationId"])
+                + " and the incoming pointer answers " + repr(second["correlationId"])
+                + "; one digest cannot answer two messages, so the later one is recorded as"
+                " its own directive with its own digest")
+    return ("this directive id already records the purpose " + repr(first["purpose"])
+            + " and the incoming pointer names " + repr(second["purpose"])
+            + "; one digest cannot be two instructions, so the later one is recorded as its"
+            " own directive with its own digest")
 
 
 class _Refusal:
@@ -1295,6 +1343,20 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=edge["upper_task_id"], challenger=from_task_id,
                 )
+            elif envelope.contradiction(reference, link_id=link_id_value, digest=digest):
+                # A reference that is one of ours is checked by RE-DERIVING its message id from
+                # this row's own link and digest, rather than by comparing copies of them. The
+                # pointer carries no duplicate of anything, so there is nothing to drift; what
+                # it carries is derived FROM those facts, and a pointer that derives something
+                # else belongs to another instruction. A column that is not ours - an
+                # operator's note, or anything written before this contract - contradicts
+                # nothing and is stored exactly as it was given.
+                refusal = _Refusal(
+                    RefusalReason.LINK_CONFLICT,
+                    envelope.contradiction(reference, link_id=link_id_value, digest=digest),
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=str(link_id_value), challenger=str(reference),
+                )
             if refusal is None:
                 did = directive_id(scope_kind, scope_key, from_scope_key, digest,
                                    edge["revision"])
@@ -1306,20 +1368,37 @@ class Linkage:
                     "SELECT * FROM scope_directives WHERE directive_id = ?", (did,)
                 ).fetchone()
                 if replay is not None:
-                    return self._directive_record(replay)
-                db.execute(
-                    "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
-                    " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
-                    " revision, disposition, decided_by, decided_at, recorded_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
-                    (did, scope_kind, scope_key, from_task_id, from_scope_key, link_id_value,
-                     edge["link_kind"], digest, reference, edge["revision"], now),
-                )
-                self.store.journal(
-                    "directive_recorded", did,
-                    {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
-                     "linkKind": edge["link_kind"]}, at=now,
-                )
+                    # The stored id derives from the scope, the origin, the digest and the link
+                    # revision, and not from what the instruction was FOR. Two directives with
+                    # one digest and different purposes therefore collide here, and returning
+                    # the first silently answered a caller about somebody else's instruction.
+                    # The pointer is what distinguishes them, so it is compared; a disagreement
+                    # is recorded as a contest and refused, exactly like a settled directive
+                    # being re-decided.
+                    disagreement = _pointer_disagreement(replay["reference"], reference)
+                    if disagreement is None:
+                        return self._directive_record(replay)
+                    refusal = _Refusal(
+                        RefusalReason.LINK_CONFLICT, disagreement,
+                        scope_kind=scope_kind, scope_key=scope_key,
+                        incumbent=str(replay["reference"]), challenger=str(reference),
+                    )
+                    self._record_conflict_in(db, refusal, at=now)
+                else:
+                    db.execute(
+                        "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
+                        " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
+                        " revision, disposition, decided_by, decided_at, recorded_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
+                        (did, scope_kind, scope_key, from_task_id, from_scope_key,
+                         link_id_value, edge["link_kind"], digest, reference, edge["revision"],
+                         now),
+                    )
+                    self.store.journal(
+                        "directive_recorded", did,
+                        {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
+                         "linkKind": edge["link_kind"]}, at=now,
+                    )
             else:
                 self._record_conflict_in(db, refusal, at=now)
         if refusal is not None:
