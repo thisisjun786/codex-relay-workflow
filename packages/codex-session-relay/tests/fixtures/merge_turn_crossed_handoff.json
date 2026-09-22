@@ -1,0 +1,62 @@
+{
+  "source": "CRW-164. Reconstructed from the CRW supervision thread and the three parents' own reports, read at 2026-09-21 00:55 KST.",
+  "provenance": "A reconstruction, replayed against this store. It was never observed inside this store, it was not rerun on any host, and it does not reverse the landing it describes. What it is for is that the shape stays refused.",
+  "repository": "thisisjun786/codex-relay-workflow",
+  "baseRef": "dev",
+  "parents": [
+    {
+      "project": "PRJ-hierarchy",
+      "task": "task-hierarchy",
+      "host": "host-h",
+      "pr": 73,
+      "head": "head-73",
+      "observed": "held the merge turn while the required CI on its candidate was still running"
+    },
+    {
+      "project": "PRJ-plugin",
+      "task": "task-plugin",
+      "host": "host-p",
+      "pr": 68,
+      "head": "head-68",
+      "observed": "reported that it was waiting for the window"
+    },
+    {
+      "project": "PRJ-docs",
+      "task": "task-docs",
+      "host": "host-d",
+      "pr": 70,
+      "head": "head-70",
+      "observed": "reported that it was waiting for the window"
+    },
+    {
+      "project": "PRJ-status",
+      "task": "task-status",
+      "host": "host-s",
+      "pr": 69,
+      "head": "head-69",
+      "observed": "the crossing: asked for the turn back, and was reported by a peer as having been given it"
+    }
+  ],
+  "steps": [
+    {
+      "step": "the hierarchy parent claims the shared target and takes it, because nobody held it",
+      "invariant": "exactly one holder, and the other three queue rather than being refused"
+    },
+    {
+      "step": "its required CI has not finished, so its restatement is refused",
+      "invariant": "the refusal is retained and the turn stays holding; a refused check is not a release"
+    },
+    {
+      "step": "the status parent asks for the turn back and the transport accepts the message",
+      "invariant": "the asking and the acceptance are recorded, and neither moves the turn"
+    },
+    {
+      "step": "a peer reports that the window was handed over",
+      "invariant": "the store's holder is unchanged; a peer's account of a handover is not a handover"
+    },
+    {
+      "step": "the hierarchy parent returns the turn itself",
+      "invariant": "exactly one waiter is promoted, in request order, and the grant names that parent and no other"
+    }
+  ]
+}

@@ -479,6 +479,8 @@ and where a parent was never woken at all, nothing surfaces this automatically.
 
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --turn <id>
     codex-session-relay --state "$RELAY_STATE" merge-turn-show --repository <repo> --base-ref <ref>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-show --parent-task <task>
+    codex-session-relay --state "$RELAY_STATE" merge-turn-acknowledge --turn <id> --actor <task> --grant <id> --evidence <text>
     codex-session-relay --state "$RELAY_STATE" capacity-show [--project <key>] [--parent-task <id>] [--initiative <key>] [--scope <key> --scope-kind initiative|project|store]
     codex-session-relay --state "$RELAY_STATE" region-show --repository <repo> [--revision <rev>] [--project <key>] [--path <path>]
     codex-session-relay --state "$RELAY_STATE" linkage-outstanding --project <key> [--task <id>]
@@ -487,10 +489,28 @@ and where a parent was never woken at all, nothing surfaces this automatically.
 landing, a capacity change, a peer's region and a new attachment. What each answers is here; what
 a pass does with it is there.
 
-`merge-turn-show` takes either selector. `--turn` names one turn, and an id the store does not
-hold answers `ok` false with reason `unregistered_scope` rather than an empty record, so a
-mistyped turn is not read as a released window. `--repository` with `--base-ref` answers about
-that target's window instead of one turn.
+`merge-turn-show` takes exactly one selector, and naming two is refused as `bad_invocation`
+rather than answered about whichever one won: a recovery read that quietly changed scope is
+worse than one that stops. `--turn` names one turn, and an id the store does not hold answers
+`ok` false with reason `unregistered_scope` rather than an empty record, so a mistyped turn
+is not read as a released window. `--repository` with `--base-ref` answers about that
+target's window instead of one turn, and the two are given together or not at all.
+
+`--parent-task` is the one a parent uses on entry, because after a restart or a compaction
+its own task id is the only identifier it still has: every other selector needs a turn or a
+target it no longer remembers. It answers every live claim that task holds across targets,
+each with its grant, its state, and `targetFree` — whether the target could be taken right
+now. Nothing acquires on a parent's behalf, so a waiting claim on a free target is taken by
+declaring readiness again, and an unresolved outcome is reported as unresolved rather than as
+a target anybody may claim.
+
+A turn that reached holding carries a grant addressed to its owner, and
+`merge-turn-acknowledge` is how that owner says it re-read the record rather than acting on
+what it remembered. It is refused when the grant is not the current one — a returned tenure or
+a restated candidate each issue their own — when the turn is no longer holding, when the caller
+is not its holder, or when the owning binding is paused. A granted turn that has not
+acknowledged cannot begin a merge. A claim made before grants were recorded has none, needs
+none, and is not held to this.
 
 `capacity-show` reports the held slots, their total, the count per parent, and any whose recorded
 parent no longer owns the project. `--project`, `--parent-task` and `--initiative` narrow that
