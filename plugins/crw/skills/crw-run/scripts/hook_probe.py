@@ -372,9 +372,14 @@ def _obstructed_claim(marker, session_id):
     that carries the corruption; unlike an unreadable intent this costs no soundness, because the
     declaration is readable and can still order it.
 
-    Narrow: the offending claim must be this session's own and its preimage must be the unreadable
-    part. A well-formed claim naming a foreign dispatch still selects nothing.
+    Narrow: the marker must be malformed, the offending claim must be this session's own, and its
+    preimage must be the unreadable part. A well-formed claim naming a foreign dispatch still
+    selects nothing - and neither does an unencodable preimage in a marker that is otherwise well
+    shaped, because a lone surrogate is a string and passes the shape check. The relay requires the
+    same precondition, so leaving it out here answered a different decision for the same bytes.
     """
+    if not _malformed({"marker": marker}):
+        return None
     for claim in marker.get("claims") or []:
         if not isinstance(claim, dict):
             continue
