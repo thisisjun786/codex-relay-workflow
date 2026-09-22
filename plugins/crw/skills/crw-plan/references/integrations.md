@@ -543,6 +543,62 @@ a user-attributed source before the next send, because the record is what a send
 and a value observed on the host is evidence of what the task is running rather than a new
 approval. Until then the send is refused naming the record, and a task the host reports as not
 loaded is left alone rather than resumed under a pair that was never checked against its role.
+
+### The message both relations are read by
+
+A supervisor instructs a parent and a parent reports back; a parent instructs a child and a child
+reports back. The two relations carry different machinery and the same questions, so what
+identifies a message, what the recipient owes because it arrived, and how far it actually got are
+decided once. This section is the workflow rule: which occasion is which, what each form carries,
+and when the level above is woken. The record form itself - the field names, the version, and what
+each state means to the code that builds a message - belongs to the relay, as `relay-envelope/1`
+in `packages/codex-session-relay/docs/envelope.md`, and is read there rather than copied here.
+The words below are the ones that document uses, so a parent and a supervisor mean the same thing
+by them.
+
+**What a message asks for.** A request owes an answer from the recipient. A decision owes one from
+Jun and from nobody else. A notification owes none. A status response answers a question somebody
+put. The word is fixed by the occasion rather than chosen: an initial project assignment, a
+midpoint check, a resume, a scope correction, a decision of Jun's carried down, and a user stop are
+all requests, because each leaves the parent something to do. A decision Jun has already made is
+relayed as a request for exactly that reason - what is owed is the application, not another
+opinion. Upward, a completion and a block are notifications, a decision request is a decision, and
+a midpoint answer is a status response.
+
+A message carries no authority of its own. Being told something does not widen a scope, approve an
+action, or open a goal; authority travels by the assignment, as
+[supervisor, parent and child scope](#supervisor-parent-and-child-scope) already says.
+
+**Supervisor to parent** names the request, the approved scope, the constraints, what changed in a
+decision already made, the result and the reporting condition expected, and who owns the next step.
+**Parent to supervisor** names the result and what changed, the project and issue it is about, the
+evidence, what is blocked now and what that blocks, and the next action with its owner. A decision
+subject appears only when a user decision is genuinely needed, with the reason and what each choice
+costs. Technical judgment, ordinary review fixes and merge approval are the parent's own work and
+are not handed upward; merge order between two parents is
+[CRW-123 direct coordination](#direct-coordination-between-parents).
+
+**When the level above is woken.** A completion, a new real block, and a decision only the user can
+make. Not a CI run changing, not an acknowledgement, not a wait that has not changed, not a child
+progressing normally. A supervisor holds no goal and every wake costs it a turn, so an automatic
+notification that carries no decision is a cost with no reader. A midpoint check is the other path
+and is answered on its own terms: it was asked for, so suppression of automatic notices is not a
+reason to leave it unanswered.
+
+**Five things that are not each other.** A send the transport accepted, a message received, a
+request understood and agreed to, a change actually applied, and a result verified. Silence is none
+of them. A conditional acceptance is not an application, a delivery failure is not a refusal, and
+an unconfirmed or stale revision is not a current one. Where a relation has no mechanism for a
+stage - and the supervisor relation has none above the record itself, because no channel for one
+exists - the answer is that there is nothing to look at rather than that nobody has looked yet.
+
+**A report is not a record.** Producing a report, the transport accepting it, the recipient reading
+it and Linear holding it are four facts. The obligation to report something upward is discharged by
+the record the supervisor reads, and a Linear write that failed leaves it owed however complete the
+report text reads. The same logical result reported twice converges on one identity rather than
+becoming two; a correction or a withdrawal preserves what it corrects and says which decision now
+stands. A recipient that is paused, archived or deliberately out of contact keeps every obligation
+it had and is not woken to collect them.
 ### Record writes and returned proposals
 
 A Linear write belongs to the task whose own record it is, under

@@ -1480,8 +1480,14 @@ class VerdictPosition(Directions):
         # read_all for a recipient holding only these bytes.
         self.assertIn("submission 1", message)
         self.assertIn("requestId del-y-a1", message)
-        tighter = report.render_revision(row, receipt, "del-y-a1", stored, budget=2000)
+        # 2000 before CRW-148, which is 17 bytes above what this correction could be reduced
+        # to. The envelope line is inside the relay-record floor now, so the same message
+        # bisects to 2106 rather than 1983 and the tighter budget moves with it. What the case
+        # asserts is unchanged: something was elided, the identity survived, and the verdict is
+        # still the final line.
+        tighter = report.render_revision(row, receipt, "del-y-a1", stored, budget=2200)
         self.assertIn("submission 1", tighter)
+        self.assertIn("messageId", tighter, "and the message identity is not what got cut")
         self.assertEqual(tighter.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=2)")
 
     def test_a_correction_cannot_approve_and_demand_changes_at_once(self):
