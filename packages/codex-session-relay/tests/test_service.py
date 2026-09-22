@@ -2298,11 +2298,11 @@ class BoundsAcrossAProcessBoundary(ServiceTestCase):
         self.assertLess(clock.elapsed - bound, 0.5 + 1e-6)
 
     def test_an_instant_already_spent_starts_nothing_at_all(self):
-        """A bound left over from an earlier boot reads as spent, and that is the safe reading.
+        """A supervisor whose own startup outlasted the bound it was given serves nothing.
 
-        CLOCK_MONOTONIC restarts near zero across a reboot, so a stale value lands in the past.
-        Refusing to serve on a number this process cannot interpret is the only alternative to
-        running unbounded on it.
+        The instant is in the past by the time this loop reads a clock, which is the whole
+        point of converting it here: the alternative would be a supervisor that starts a full
+        worker on a bound its launcher had already spent.
         """
         service = self.service("g")
         service.enable(actor="test")
@@ -2461,3 +2461,20 @@ class BoundsAcrossAProcessBoundary(ServiceTestCase):
                         allow_isolated=True, spawn=lambda **_k: FakeWorker(0),
                         sleeper=lambda _s: None, max_segments=1, deadline_monotonic=value,
                     )
+
+    def test_an_instant_below_zero_is_not_a_time_this_host_has_had(self):
+        """CLOCK_MONOTONIC counts from a point at or before this boot, so it is never negative.
+
+        Treated as merely already spent it would look like an ordinary expired bound, which is
+        a real state; this one is a value that cannot have come from the clock it claims.
+        """
+        service = self.service("o")
+        service.enable(actor="test")
+
+        with self.assertRaises(ValueError) as caught:
+            service.supervise(
+                allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=lambda _s: None,
+                max_segments=1, deadline_monotonic=-1.0,
+            )
+
+        self.assertIn("cannot be negative", str(caught.exception))

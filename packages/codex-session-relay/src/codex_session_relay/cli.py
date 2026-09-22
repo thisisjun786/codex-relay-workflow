@@ -2247,6 +2247,10 @@ def _declared_bound(args):
         )
     if duration is not None and duration < 0:
         raise SystemExit2("--deadline cannot be negative", EXIT_USAGE)
+    if instant is not None and instant < 0:
+        # CLOCK_MONOTONIC counts from a point at or before this boot, so it is never negative.
+        # A negative instant is not an end time this host can have had.
+        raise SystemExit2("--deadline-monotonic cannot be negative", EXIT_USAGE)
     return duration, instant
 
 
@@ -2319,13 +2323,18 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
             )
-            if not reports and deadline is not None and services.clock.now() >= deadline:
+            if (not reports and deadline is not None and services.clock.now() >= deadline
+                    and (args.max_ticks is None or args.max_ticks > 0)):
                 # The same ending as the check before the locks, reached one step later. The
                 # bound was still there when this process read its own clock and was gone by
                 # the time the run began - spent adopting the descriptors, taking the claim and
                 # building the adapter - so the loop broke before its first tick. Returning
                 # success here is what let a supervisor count a worker that served nothing as a
                 # clean segment.
+                #
+                # A tick budget of zero or less is excluded because `run` breaks on the tick
+                # count BEFORE it looks at the deadline: that run took no tick because it was
+                # asked for none, and a bound that happened to pass meanwhile did not cause it.
                 raise _bound_already_spent(
                     service,
                     "the bound was spent while this run was taking its locks and building its"
@@ -3339,7 +3348,9 @@ def build_parser() -> argparse.ArgumentParser:
     # CLOCK_MONOTONIC on this host and this boot. A supervisor writes it when it spawns a
     # worker, so the worker's own startup is spent from the segment rather than added after
     # it; a person types --deadline instead. It is not a wall clock and it does not survive a
-    # reboot - a stale value reads as already spent, which stops rather than runs unbounded.
+    # reboot: that clock restarts near zero, so a value carried into a later boot sits in that
+    # boot's future and names a bound much later than anyone asked for. It fails open, which
+    # is why nothing writes it down and why this is not a number to type by hand.
     daemon.add_argument("--deadline-monotonic", type=float)
     daemon.add_argument("--allow-isolated-scope", action="store_true")
     daemon.add_argument("--supervised-token")

@@ -589,8 +589,11 @@ earlier segments hid it, because each one's overspend was already deducted from 
 that supervisor's own startup and a very short N can end a launch before it reports itself ready.
 
 The instant is written by the launching process and is not meant to be typed. It names a time in one
-boot on one host, nothing stores it, and a value carried anywhere else names a time that boot's clock
-will not reach. A person writes `--deadline`, which is a duration and starts counting where it lands.
+boot on one host, and it fails open rather than closed if it escapes that: `CLOCK_MONOTONIC` restarts
+near zero across a reboot, so a value carried into a later boot sits in that boot's future and names a
+bound much later than anyone asked for. Nothing stores it — the launcher builds it and the child it
+just exec'd reads it — which is why no boot identity is checked. A person writes `--deadline`, which
+is a duration and starts counting where it lands.
 
 A run that reaches its own clock after the instant it was given takes no tick and exits 5, and so
 does one whose bound is gone by the time it has taken its locks and built its adapter. It neither
@@ -601,9 +604,14 @@ had room - a segment shorter than a worker costs to start would otherwise churn 
 while reporting healthy segments.
 
 Two end times are not a preference: `--deadline` together with `--deadline-monotonic` is refused, as
-is any value no comparison can pass - `nan`, `inf`, or a negative duration. `--deadline 0` is a bound
-with nothing in it rather than the absence of one. And the bound stops a run from STARTING a tick; a
-tick already under way finishes, and it may make several deliveries.
+is any value no comparison can pass - `nan`, `inf`, or a negative one. `--deadline 0` is a bound with
+nothing in it rather than the absence of one.
+
+A bound stops a run from STARTING a tick, so a tick already under way finishes and may make several
+deliveries. And it stops it in the clock the run compares against: a worker converts its instant into
+a wall deadline, exactly as a duration has always become one, so a wall clock stepping backwards after
+that conversion can still let it begin a tick past the supervisor's own end. That exposure is not new
+here and is recorded in `docs/invariants.md` rather than implied.
 
 ## Activation
 

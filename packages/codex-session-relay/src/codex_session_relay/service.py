@@ -1448,8 +1448,11 @@ class RelayService:
             # unbounded run this loop is built not to have. inf says the same thing plainly.
             if value is not None and not math.isfinite(value):
                 raise ValueError(f"{name} must be a finite number of seconds")
-        if deadline is not None and deadline < 0:
-            raise ValueError("deadline cannot be negative; it is a length, not a direction")
+            # Neither form can be negative: a duration is a length rather than a direction, and
+            # CLOCK_MONOTONIC counts from a point at or before this boot, so an instant on this
+            # host is never below zero.
+            if value is not None and value < 0:
+                raise ValueError(f"{name} cannot be negative")
         policy = policy or RetryPolicy()
         sleeper = sleeper or time.sleep
         monotonic = monotonic or time.monotonic
@@ -1499,10 +1502,12 @@ class RelayService:
                 if deadline_monotonic is not None:
                     # The last moment before the loop begins, so everything this process spent
                     # reaching it - fork, interpreter start, imports, the gate checks and the
-                    # claim above - comes OUT of the bound rather than being added to it. A
-                    # value left over from an earlier boot reads as already spent, because
-                    # CLOCK_MONOTONIC restarts near zero: this stops, rather than running
-                    # unbounded on a number it cannot interpret.
+                    # claim above - comes OUT of the bound rather than being added to it. The
+                    # instant means this only for a child its launcher just exec'd on the same
+                    # host and boot: CLOCK_MONOTONIC restarts near zero, so a value carried
+                    # into a later boot sits in that boot's FUTURE and would name a bound much
+                    # later than anyone asked for. Nothing stores it, which is why no boot
+                    # identity is checked here.
                     deadline = max(0.0, deadline_monotonic - started)
                 # This supervisor's own end, in its own clock. Every worker's instant is capped
                 # at it below, so the 0.1 floor on a segment cannot hand a worker a bound that

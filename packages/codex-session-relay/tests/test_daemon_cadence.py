@@ -256,7 +256,8 @@ class TheFormOfTheBound(unittest.TestCase):
         """
         for field, value in (("deadline", float("nan")), ("deadline", float("inf")),
                              ("deadline", -1.0), ("deadline_monotonic", float("nan")),
-                             ("deadline_monotonic", float("inf"))):
+                             ("deadline_monotonic", float("inf")),
+                             ("deadline_monotonic", -1.0)):
             with self.subTest(field=field, value=value):
                 services, args = build_services(self, **{field: value})
                 with self.assertRaises(SystemExit2) as caught:
@@ -320,3 +321,18 @@ class TheFormOfTheBound(unittest.TestCase):
             self.deadline_given_to(services, args, monotonic=lambda: 5_000.0)
 
         self.assertEqual(caught.exception.code, EXIT_BOUND_SPENT)
+
+    def test_a_tick_budget_of_zero_is_not_a_bound_that_ran_out(self):
+        """Two different reasons for taking no tick, and only one of them is a spent bound.
+
+        RelayDaemon.run breaks on the tick count BEFORE it looks at the deadline, so a run asked
+        for no ticks takes none whatever the clock says. Reading the empty result alone would
+        report a bound that ran out, and the supervisor would stop replacing workers over a
+        budget somebody set deliberately.
+        """
+        services, args = build_services(self, deadline=0.0, max_ticks=0)
+
+        result = self.deadline_given_to(services, args, monotonic=lambda: 5_000.0)
+
+        # The bound really has passed - the assertion is that this is not what ended the run.
+        self.assertLessEqual(result, services.clock.now())
