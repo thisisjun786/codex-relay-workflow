@@ -401,6 +401,59 @@ task unless the evidence is preserved outside it.
 
 ## Delivery has preconditions beyond emitting
 
+### What the command-line path does and does not carry, measured 2026-09-22
+
+A real issue child was created on this path and supervised to a pull request, and the
+informative part was that its first turn died rather than finished. Record these as CLI
+facts. None of them is a relay leg, and under a DIRECT assignment with no relay
+registration the relay round trip stays unverified whatever these show.
+
+- A turn that dies EMITS NOTHING. When the child's turn failed on a provider capacity
+  error, the `-o` last-message file was left empty, no final agent message was written,
+  and `turn.completed` never appeared. Any handoff convention that lives in the final
+  message, including a status sentinel, is lost exactly when the parent most needs it.
+  Put the child's running state in a file outside the checkout and treat the final
+  message as a convenience.
+- The parent is never told. There is no wake and no notification; the parent learns by
+  polling. Distinguish the three states it must tell apart — a live process whose
+  rollout is still growing, a dead one, and a live one that has stopped progressing —
+  because only the first is safe to leave alone.
+- What survives is the durable state, and it is enough to recover from: the thread row
+  with its model, effort, approval mode and working directory intact, the managed
+  checkout, the branch and every commit, plus whatever the child wrote outside the
+  checkout. What is lost is the final message and any in-flight subagent result.
+- The host goal is moved to `blocked` automatically when the turn fails, and the child
+  CANNOT restore it: the goal tool accepts only complete or blocked. A resumed child
+  therefore works under a goal it cannot return to active. Expect that, and do not read
+  it as the child having given up.
+
+### The create and resume surfaces do not accept the same flags
+
+`codex exec` accepts `-s/--sandbox`; `codex exec resume` does NOT. Passing it there
+fails the whole invocation before any turn starts, with "unexpected argument '-s'" and
+exit 2. Carry the sandbox as the configuration key instead. Check each flag against the
+subcommand you are actually calling, and budget for the fact that a rejected invocation
+can still consume an attempt if attempts are counted at intent.
+
+With the model, effort and approval overrides passed explicitly on resume, all four
+settings read back unchanged afterwards, and the working directory was preserved because
+the resume ran from inside the managed checkout. Record that as an override reapplied
+rather than as a setting preserved: passing the values and then reading them back does
+not show what an un-overridden resume would have inherited.
+
+### Reading the child's CI without being fooled by a superseded run
+
+A concurrency rule that cancels in-progress runs produces, at ONE head sha, both a
+cancelled run and a live one. The cancelled run's aggregate gate still reports FAILURE
+to the pull request, because its own dependencies were cancelled underneath it — its log
+says a required job "did not succeed", which reads exactly like a real failure. This
+was observed twice on the same pull request.
+
+So a check listing that mixes runs cannot settle whether a head is green. Select by run
+identity: list the runs for that sha, take the newest non-cancelled one, and read that
+run's conclusions. Re-read after every push, because a conclusion recorded at an earlier
+head says nothing about the current one.
+
 Treat "the receipt was not delivered" as an unfinished diagnosis. Record which
 precondition stopped it.
 
