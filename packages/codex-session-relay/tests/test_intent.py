@@ -339,6 +339,192 @@ class Registration(IntentTestCase):
             self.assertEqual(caught.exception.reason, RefusalReason.UNKNOWN_GENERATION)
 
 
+class TheRegistrationHold(IntentTestCase):
+    """What the relay's write lock buys, and what it costs.
+
+    Registration used to read the generation state, close the database, and publish afterwards.
+    The two operations had nothing held between them, so an advance committing in the interval
+    returned success over a generation the store had already moved past. The check and the
+    publication now happen under one BEGIN IMMEDIATE on the relay. These are the consequences
+    visible from a single thread; the interleavings themselves are in
+    test_registration_contention.py.
+    """
+
+    def test_the_published_fact_records_the_generation_it_was_registered_under(self):
+        """A registration is a statement about one generation rather than about now."""
+        self.declare()
+        self.bind()
+
+        registered = self.register()
+
+        self.assertEqual(registered["outcome"], marker.PUBLISHED)
+        self.assertEqual(registered["executionGeneration"], 1)
+        self.assertEqual(self.facts()["relationship"]["executionGeneration"], 1)
+
+    def test_a_fact_published_before_the_generation_was_recorded_replays_as_unchanged(self):
+        """The create-once comparison must not read an added field as a contradiction.
+
+        A marker written before this change carries relationshipId and at, and nothing else. If
+        executionGeneration joined the compared fields, replaying that registration would report
+        a coordinator publishing over a registration that already stands - which is the one
+        outcome somebody has to settle - instead of the retry it actually is.
+        """
+        self.declare()
+        self.bind()
+        self.open_generation()
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": "rel-0123456789abcdef", "at": T0},
+            root=self.root,
+        )
+
+        replayed = self.register(opened=False)
+
+        self.assertEqual(replayed["outcome"], intent.UNCHANGED)
+        self.assertNotIn("executionGeneration", self.facts()["relationship"])
+        self.assertEqual(
+            self.register(relationship_id="rel-ffffffffffffffff")["outcome"], intent.CONFLICT,
+            "a different relationship stopped being a contradiction, so the comparison now"
+            " agrees with everything",
+        )
+
+    def test_a_store_that_does_not_exist_is_refused_and_is_not_created(self):
+        """The hold opens mode=rw and never rwc.
+
+        Store() would have been the obvious way to take a write lock, and it creates the
+        database and runs the schema on open. That would turn "the relay has no such store"
+        into a new empty store answering absent to every question, which is a refusal the
+        caller could not tell from a real one.
+        """
+        self.declare()
+        self.bind()
+        missing = Path(self.tmp) / "state" / "no-such-store.sqlite3"
+
+        with self.assertRaises(RelayError) as caught:
+            intent.register_relationship(
+                self.root, workspace=self.workspace, assignment=self.assignment,
+                relationship_id="rel-0123456789abcdef", dispatch_request_id=DISPATCH, at=T0,
+                db_path=str(missing),
+            )
+
+        self.assertEqual(caught.exception.reason, RefusalReason.UNREGISTERED_RELATIONSHIP)
+        self.assertFalse(missing.exists(), "the refusal created the store it could not find")
+        self.assertNotIn("relationship", self.facts())
+
+    def test_a_replay_carrying_the_same_generation_is_unchanged(self):
+        """The equal case, stated on its own rather than inferred from create-once.
+
+        The generation is compared now, so the ordinary replay has to be pinned where the
+        comparison can see it: this is the case that fails if a present, agreeing value were
+        ever read as a contradiction.
+        """
+        self.declare()
+        self.bind()
+
+        first = self.register()
+        second = self.register(opened=False)
+
+        self.assertEqual(first["outcome"], marker.PUBLISHED)
+        self.assertEqual(second["outcome"], intent.UNCHANGED)
+        self.assertEqual(second["executionGeneration"], 1)
+        self.assertEqual(self.facts()["relationship"]["executionGeneration"], 1)
+
+    def test_a_fact_naming_another_generation_is_a_contradiction_not_a_replay(self):
+        """A create-once fact is immutable, so the caller must not be handed its own answer.
+
+        The relationship id agrees and the generation does not. Reported as unchanged, the
+        coordinator would be told its registration stands at the generation this call just read
+        under the lock, while the fact that actually stands names a different one - and the
+        publication cannot be corrected, so nothing later fixes it.
+
+        Reachable without anybody misbehaving: the generation a dispatch opened is fixed for a
+        given store, but the marker filesystem outlives the store. A store restored from an
+        older copy, or rebuilt from scratch, starts its generations again underneath a marker
+        that already recorded a later one.
+        """
+        self.declare()
+        self.bind()
+        self.open_generation()
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": "rel-0123456789abcdef", "executionGeneration": 2, "at": T0},
+            root=self.root,
+        )
+
+        replayed = self.register(opened=False)
+
+        self.assertEqual(replayed["outcome"], intent.CONFLICT)
+        self.assertEqual(
+            replayed["executionGeneration"], 1,
+            "the returned record must name the generation this call read under the lock, which",
+        )
+        self.assertEqual(
+            self.facts()["relationship"]["executionGeneration"], 2,
+            "the stored fact was rewritten behind the conflict; a create-once publication is",
+        )
+
+    def test_a_store_another_writer_is_holding_is_refused_within_the_declared_bound(self):
+        """A hold nobody can take is a refusal, not a wait and not a publication.
+
+        The cost of this design, stated rather than hidden: a registration that cannot take the
+        lock refuses where it used to read past the writer and publish anyway. It is bounded by
+        the one declared wait, so it cannot spend a hook's whole budget, and it is retryable -
+        the publication is create-once, so a later attempt replays to unchanged.
+
+        The bound is asserted where it can be asserted without a clock: intent.SQLITE_TIMEOUT is
+        declared once and registration_hold takes no timeout parameter, both pinned in
+        test_failure_recovery.py. Reading a clock here would move this whole module into the
+        map's real-time inventory to measure a constant that is already fixed in source.
+        """
+        self.declare()
+        self.bind()
+        self.open_generation()
+        self.store.db.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(RelayError) as caught:
+                self.register(opened=False)
+        finally:
+            self.store.db.execute("ROLLBACK")
+
+        self.assertEqual(caught.exception.reason, RefusalReason.UNREGISTERED_RELATIONSHIP)
+        self.assertIn(
+            "write lock could not be taken", str(caught.exception),
+            "the refusal does not say the lock was what stopped it, so an operator cannot tell"
+            f" this apart from a store that is not there: {caught.exception}",
+        )
+        self.assertNotIn(
+            "relationship", self.facts(),
+            "a registration that could not take the hold published anyway, so the hold decides"
+            " nothing",
+        )
+
+    def test_the_hold_records_nothing_in_the_relay(self):
+        """It exists to exclude other writers, so it must end in a rollback and not a commit."""
+        self.declare()
+        self.bind()
+        self.open_generation()
+        before = (
+            self.store.all("SELECT * FROM relationships"),
+            self.store.all("SELECT * FROM generations"),
+            self.store.one("SELECT COUNT(*) AS n FROM journal")["n"],
+        )
+
+        self.assertEqual(self.register(opened=False)["outcome"], marker.PUBLISHED)
+
+        self.assertEqual(
+            (
+                self.store.all("SELECT * FROM relationships"),
+                self.store.all("SELECT * FROM generations"),
+                self.store.one("SELECT COUNT(*) AS n FROM journal")["n"],
+            ),
+            before,
+            "registration changed the relay's own tables; the hold is supposed to take the lock"
+            " and write nothing",
+        )
+
+
 class Claims(IntentTestCase):
     def test_the_claimant_comes_from_the_path_and_the_body_must_agree(self):
         self.declare()
