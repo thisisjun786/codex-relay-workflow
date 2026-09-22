@@ -22,6 +22,15 @@ EXPECTED_TABLES = {
 }
 
 
+def log_location(measured, *, inode=None):
+    """What a participant sends as `--expect-log`, from what it measured about itself."""
+    return "%s:%s:%s" % (
+        measured["logDevice"],
+        measured["logInode"] if inode is None else inode,
+        measured["logName"],
+    )
+
+
 class Schema(RelayTestCase):
     def test_schema_v1_carries_every_table_the_later_phases_need(self):
         names = {r[0] for r in self.store.all("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -580,7 +589,8 @@ class Identity(unittest.TestCase):
         mine = self.store.locate()
         self.assertEqual(
             compare_store(
-                mine, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=here,
+                mine, expect_inode=f"{mine['device']}:{mine['inode']}",
+                expect_log=log_location(mine), nonce=here,
             )["sameStore"],
             "proven",
         )
@@ -678,9 +688,13 @@ class Identity(unittest.TestCase):
         written = self.store.write_challenge(actor="parent")
         found = nonce_lookup(resolve_state_dir(alias), written["nonce"])
         self.assertTrue(found["found"], "the alias reaches the same file")
+        # Both spellings resolve to one pathname, so both connections write one log - which is
+        # what makes this the positive case for the log location rather than a second name.
+        self.assertEqual(log_location(through_alias), log_location(mine))
         self.assertEqual(
             compare_store(
-                through_alias, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=found,
+                through_alias, expect_inode=f"{mine['device']}:{mine['inode']}",
+                expect_log=log_location(mine), nonce=found,
             )["sameStore"],
             "proven",
         )
@@ -695,10 +709,14 @@ class Identity(unittest.TestCase):
         holds its own path and the peer's device and inode, and nothing that says which name
         the peer opened.
 
-        The bind mount itself is not exercised here. This host refuses an unprivileged mount
-        namespace - `unshare -rm` fails writing `/proc/self/uid_map` - so what is asserted is
-        the grading rule, not the mount. The rule is written not to depend on telling the two
-        cases apart, which is why it is asserted on an ordinary single-named store.
+        The bind mount is not made here: this host refuses an unprivileged mount namespace
+        (`unshare -rm` fails writing `/proc/self/uid_map`) and a test suite may not take a
+        privileged one. It HAS since been measured, in a private mount namespace on
+        2026-09-22, and it behaved as this docstring predicted - one name, one pair, a
+        checkpointed nonce readable through both, and `proven` at exit 0 while the two
+        directories each grew their own `-wal`. That is what the log location now refuses; see
+        the two tests below it. What is asserted here is still the narrower rule this test was
+        written for, on an ordinary single-named store: an agreeing pair alone is not proof.
         """
         mine = self.store.locate()
         self.assertEqual(mine["links"], 1, "this case is about a single-named inode")
@@ -798,6 +816,143 @@ class Identity(unittest.TestCase):
         graded = compare_store(probe(resolve_state_dir(other))["store"], nonce=found)
         self.assertEqual(graded["sameStore"], "unproven", graded)
         self.assertIn("names", graded["detail"], graded)
+
+    def test_a_second_pathname_no_name_count_can_see_is_still_refused(self):
+        """The bind mount, in the shape it was measured in.
+
+        A file bind mount reaches one inode at a second pathname without changing `st_nlink`,
+        so every check this side can make alone agrees: one name, one device and inode, and a
+        checkpointed nonce readable through both. Measured on this host on 2026-09-22 inside a
+        private mount namespace, exactly that reached `proven` at exit 0 - and each directory
+        grew its own `-wal` and `-shm`, with a frame written live through the first name
+        unreadable through the second. Two logs, graded as proof.
+
+        The mount is not made here, for the reason the test above gives. What is reproduced is
+        the measured SHAPE: everything agrees except the directory entry the log goes under.
+        The recorded run and its raw captures live outside this repository.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        found = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        self.assertEqual(measured["links"], 1, "the bind mount leaves ONE name, or this is not it")
+        self.assertTrue(found["found"], found)
+
+        # The peer opened the other pathname, so its log goes under another directory entry.
+        peer = log_location(measured, inode=measured["logInode"] + 1)
+        graded = compare_store(
+            measured, expect_store=measured["storeId"],
+            expect_inode=f"{measured['device']}:{measured['inode']}",
+            expect_log=peer, nonce=found,
+        )
+
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a second pathname no count can see was graded as proof of a shared live store",
+        )
+        # Both locations, so an operator can see which two directories are in play rather
+        # than only that something disagreed.
+        self.assertIn(peer, graded["detail"], graded)
+        self.assertIn(str(measured["logInode"]), graded["detail"], graded)
+
+    def test_two_pathnames_that_share_one_log_are_still_one_store(self):
+        """The case that decides why this is a directory entry and not a pathname.
+
+        A whole-directory bind mount also gives one inode two pathname strings - and there the
+        two participants DO share a log. Measured the same day: a frame written live through
+        one name was readable through the other, and both resolved into one directory object.
+        A container reaching the host's state directory at another path is that shape. So the
+        comparison must refuse the test above and accept this one, which a pathname string
+        cannot do: it differs in both.
+
+        `compare_store` is therefore asserted to not consult `realPath` at all.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        found = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        expectations = {
+            "expect_inode": f"{measured['device']}:{measured['inode']}",
+            "expect_log": log_location(measured),
+            "nonce": found,
+        }
+
+        elsewhere = dict(measured, realPath="/mounted/somewhere/else/relay.sqlite3")
+        self.assertNotEqual(elsewhere["realPath"], measured["realPath"])
+        self.assertEqual(
+            compare_store(elsewhere, **expectations)["sameStore"], "proven",
+            "two pathnames for one shared log were refused, which would refuse a container",
+        )
+
+        # And the agreeing branch is really reached rather than skipped: move the location
+        # and the same inputs refuse.
+        moved = dict(expectations, expect_log=log_location(measured, inode=measured["logInode"] + 1))
+        self.assertEqual(compare_store(elsewhere, **moved)["sameStore"], "unproven")
+
+    def test_a_nonce_is_not_proof_until_the_log_location_has_been_compared(self):
+        """Absence of the comparison is not agreement, and the refusal says what to send.
+
+        A caller holding only the older expectations is not wrong about them - it simply has
+        not asked the question that separates one store from one inode at two pathnames, and a
+        verdict that cannot tell those apart must not be `proven`.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        found = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        pair = f"{measured['device']}:{measured['inode']}"
+
+        graded = compare_store(measured, expect_inode=pair, nonce=found)
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("--expect-log", graded["detail"], graded)
+        # The one that WAS supplied is not asked for again.
+        self.assertNotIn("--expect-inode", graded["detail"], graded)
+
+        # Neither supplied: both are named, and the older message still reads as it did.
+        neither = compare_store(measured, nonce=found)
+        self.assertEqual(neither["sameStore"], "unproven", neither)
+        self.assertIn("--expect-inode", neither["detail"], neither)
+        self.assertIn("--expect-log", neither["detail"], neither)
+
+    def test_a_log_location_that_cannot_be_used_is_not_comparable_rather_than_different(self):
+        """Could not compare is not compared and disagreed, the rule the pair already follows.
+
+        A malformed value and an unmeasurable one are the same answer: this side cannot say.
+        Grading either as a difference would report a second pathname that nobody observed.
+        """
+        measured = probe(resolve_state_dir(self.a))["store"]
+        for unusable in ("", "1:2", "nonsense"):
+            graded = compare_store(measured, expect_log=unusable)
+            self.assertEqual(graded["sameStore"], "unproven", (unusable, graded))
+            self.assertIn("not comparable here", graded["detail"], (unusable, graded))
+
+        unmeasured = dict(measured, logDevice=None, logInode=None, logName=None)
+        graded = compare_store(unmeasured, expect_log=log_location(measured))
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("not comparable here", graded["detail"], graded)
+
+    def test_a_nonce_read_through_another_log_is_not_attributed_to_this_one(self):
+        """The attribution the device and inode already get, one level along.
+
+        `probe` and `nonce_lookup` are two independent opens of the pathname, so an answer can
+        carry this store's device and inode and still have been read through a name whose log
+        is a different file - a `--state` pointing at a symlink or mount point that is
+        re-pointed between the two calls reaches it. Without this the log arm would compare
+        only the probe's location with the peer's, and proof would rest on a nonce read
+        somewhere else.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        found = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        read_elsewhere = dict(found, logInode=found["logInode"] + 1)
+
+        graded = compare_store(
+            measured, expect_inode=f"{measured['device']}:{measured['inode']}",
+            expect_log=log_location(measured), nonce=read_elsewhere,
+        )
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("read through a pathname", graded["detail"], graded)
 
     def test_a_nonce_read_from_a_replacement_does_not_prove_the_measured_store(self):
         """The only evidence graded as proof, bound to the file it was read from.

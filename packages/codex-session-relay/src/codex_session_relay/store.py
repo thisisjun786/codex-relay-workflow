@@ -1321,6 +1321,14 @@ class Store:
         The number of names the inode has travels with them, because the pair alone cannot
         say whether another participant opened THIS name or another one for the same file.
         `compare_store` is where that is graded.
+
+        The log location travels with them for the same reason, and it is what answers the
+        question the count cannot: SQLite writes the write-ahead log beside the pathname a
+        connection opened, so two participants share one log when their opened pathnames share
+        a directory entry. This one is measured from the pathname THIS live connection actually
+        opened, which `PRAGMA database_list` reports, rather than from a held descriptor -
+        `Store` has an open connection and no descriptor to bind to, so like the device and
+        inode above it is path-measured. `probe` and `nonce_lookup` measure it the stricter way.
         """
         try:
             real = self.path.resolve()
@@ -1330,6 +1338,9 @@ class Store:
         except OSError:
             device = inode = real_path = None
             links = None
+        log = _log_location_of(_opened_pathname(self.db)) or {
+            "logDevice": None, "logInode": None, "logName": None,
+        }
         return {
             "exists": True,
             "storeId": self.identity,
@@ -1339,6 +1350,9 @@ class Store:
             "device": device,
             "inode": inode,
             "links": links,
+            "logDevice": log["logDevice"],
+            "logInode": log["logInode"],
+            "logName": log["logName"],
             "schemaVersion": self.meta("version"),
         }
 
@@ -1450,6 +1464,45 @@ PROVEN, UNPROVEN, MISMATCH = "proven", "unproven", "mismatch"
 # bound to the file it came from instead of to a name somebody else controls.
 PROC_FD = "/proc/self/fd"
 
+# A directory can be opened for its identity alone. O_PATH asks only for search permission on
+# the way in and never reads the directory, which is the same Linux assumption PROC_FD makes.
+# Absent, the open falls back to an ordinary read-only one rather than failing the measurement.
+O_PATH = getattr(os, "O_PATH", 0)
+
+
+def _opened_pathname(connection):
+    """The pathname this connection actually opened, or None.
+
+    Asked rather than assumed, because SQLite resolves the name it is given - a symlinked
+    database reaches its target, and the log is then written beside the TARGET. A caller that
+    inferred the log's directory from the path it passed in would be wrong in exactly that case.
+    """
+    try:
+        rows = connection.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error:
+        return None
+    return next((row[2] for row in rows if row[1] == "main" and row[2]), None)
+
+
+def _log_location_of(pathname):
+    """Where a connection on this pathname writes its log: the directory entry, not the string.
+
+    The directory is identified by `device:inode`, which is one number for one directory object
+    however many pathnames reach it - the same value from every mount namespace on this kernel.
+    The name travels with it because the log is `<name>-wal`, and the name is only fixed before
+    resolution: a database reached through a symlink resolves to its target's name.
+
+    Returns the three fields or None. Never raises.
+    """
+    if not pathname:
+        return None
+    directory, name = os.path.split(pathname)
+    try:
+        info = os.stat(directory or ".")
+    except OSError:
+        return None
+    return {"logDevice": info.st_dev, "logInode": info.st_ino, "logName": name}
+
 
 def _expected_path(db_path):
     """The pathname this store is addressed by, fully resolved, or None.
@@ -1541,12 +1594,64 @@ def _held_identity(fd):
     `st_nlink` is the held inode's own count and equals what `stat` reports for any of its
     names. It is carried for the reason it always was: a shared device and inode cannot say
     which name another participant opened.
+
+    It is no longer the general answer to that, and `compare_store` says so. A file bind mount
+    reaches one inode at a second pathname without changing this count, which was measured on
+    this host on 2026-09-22. What the count still catches is a name NO participant in a
+    comparison accounted for - a third reader, or a hardlinked backup of the state directory -
+    which is worth keeping because it needs nothing from the peer.
     """
     try:
         info = os.fstat(fd)
     except OSError:
         return None
     return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
+
+
+def _held_log_location(fd, expected):
+    """Where SQLite will write this file's log, bound to the file we HOLD.
+
+    SQLite appends `-wal` to the pathname a connection opened, so the log is created in the
+    directory holding that pathname under that pathname's name. Two participants compute one
+    log pathname when their opened databases share a directory entry, which is what
+    `compare_store` compares - because neither the inode nor the name count can see a second
+    pathname for one inode.
+
+    Measured on this host on 2026-09-22 with a real file bind mount, in a private mount
+    namespace: one inode, `st_nlink` 1, two pathnames, and the second directory grew its own
+    `-wal` and `-shm` while a frame written live through the first name was unreadable through
+    the second. The opposite case is a whole-directory bind mount, where two pathname strings
+    reach one directory object and the live frame WAS readable through both - so the pathname
+    string is not the discriminator and comparing it would refuse a genuinely shared store.
+
+    Bound to the descriptor through the directory entry: the directory is opened for its
+    identity alone, and its entry under this basename must be the very inode we hold, so this
+    is not a second independent observation of a path somebody else controls. What it cannot
+    exclude: Linux offers no descriptor-to-parent link, so the directory is reached by the name
+    the kernel reported for the descriptor, and an ancestor renamed inside that bracket is
+    I-09's existing residual rather than something this closes.
+
+    Returns the three fields or None. Never raises.
+    """
+    directory, name = os.path.split(expected)
+    try:
+        dir_fd = os.open(directory or ".", os.O_RDONLY | os.O_DIRECTORY | O_PATH)
+    except OSError:
+        return None
+    try:
+        held = os.fstat(fd)
+        where = os.fstat(dir_fd)
+        # follow_symlinks=False: `expected` is already resolved, so a final component that is
+        # a symlink now is a change under the read, and an entry that is not the held inode
+        # means this directory is not where this file's log would go.
+        entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return None
+    finally:
+        os.close(dir_fd)
+    if (entry.st_dev, entry.st_ino) != (held.st_dev, held.st_ino):
+        return None
+    return {"logDevice": where.st_dev, "logInode": where.st_ino, "logName": name}
 
 
 def _held_uri(fd, mode) -> str:
@@ -1601,7 +1706,7 @@ def probe(selection: StateSelection) -> dict:
     store = {
         "exists": False, "storeId": None, "createdAt": None, "dbPath": str(db_path),
         "realPath": None, "device": None, "inode": None, "links": None,
-        "schemaVersion": None,
+        "logDevice": None, "logInode": None, "logName": None, "schemaVersion": None,
     }
 
     try:
@@ -1659,6 +1764,19 @@ def probe(selection: StateSelection) -> dict:
                     # they matched, so this is the path OF THE HELD FILE rather than a second
                     # observation that could have been paired with another file's inode.
                     store["realPath"] = expected
+                    # Where a connection on this file writes its log. Assigned one key at a
+                    # time on purpose: the trial preflight's field inventory reads this
+                    # function for dict literals and subscript assignments, and a merged
+                    # update would leave these three invisible to it.
+                    located = _held_log_location(fd, expected)
+                    if located is None:
+                        notes.append(
+                            "the log location of the held database could not be measured"
+                        )
+                    else:
+                        store["logDevice"] = located["logDevice"]
+                        store["logInode"] = located["logInode"]
+                        store["logName"] = located["logName"]
 
                     moved = _relocation(fd, expected)
                     if moved is not None:
@@ -1707,6 +1825,7 @@ def probe(selection: StateSelection) -> dict:
                         store["storeId"] = store["createdAt"] = None
                         store["schemaVersion"] = None
                         store["device"] = store["inode"] = store["links"] = None
+                        store["logDevice"] = store["logInode"] = store["logName"] = None
                     else:
                         try:
                             connection = sqlite3.connect(
@@ -1820,7 +1939,8 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
     grades an unattributable answer as unproven, never as absence.
     """
     db_path = selection.db_path
-    unknown = {"device": None, "inode": None, "links": None}
+    unknown = {"device": None, "inode": None, "links": None,
+               "logDevice": None, "logInode": None, "logName": None}
     fd, expected, refused = _hold_database(db_path)
     if fd is None:
         return {**unknown, "nonce": nonce, "found": False, "readable": False,
@@ -1876,7 +1996,13 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         # writing through its own write-ahead log. Reporting only the closing count kept half
         # of what was measured.
         closed = _held_identity(fd)
-        seen = {**opened,
+        # The log location of the file this answer was read through, so compare_store can ask
+        # whether the nonce came from the same log the store it is grading writes into. These
+        # are two independent opens - probe holds its own descriptor - so the answer is not
+        # trivially the probe's, which is the same reason the device and inode travel here.
+        located = _held_log_location(fd, expected) or {
+            "logDevice": None, "logInode": None, "logName": None}
+        seen = {**opened, **located,
                 "links": max(count["links"] for count in (opened, closed) if count is not None)}
         if row is None:
             return {**seen, "nonce": nonce, "found": False, "readable": True, "detail": None}
@@ -1886,7 +2012,23 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         os.close(fd)
 
 
-def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=None) -> dict:
+def _read_through_another_log(nonce: dict, store: dict) -> bool:
+    """Was this nonce read through a pathname whose log is not the compared store's?
+
+    True only when BOTH locations were measured and they differ. An absent measurement is not a
+    disagreement - saying so would turn \"could not look\" into \"somewhere else\" - and it is
+    refused where it belongs instead, by the log arm reporting that the location is not
+    comparable here.
+    """
+    read_from = (nonce.get("logDevice"), nonce.get("logInode"), nonce.get("logName"))
+    mine = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
+    if None in read_from or None in mine:
+        return False
+    return read_from != mine
+
+
+def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_log=None,
+                  nonce=None) -> dict:
     """Grade the evidence that this participant and another share ONE store.
 
     Conflicting evidence is decided before agreeing evidence, so an easier comparison that
@@ -1898,10 +2040,18 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     minted once and copied with the bytes, so agreement is never proof. A device and inode
     pair is conclusive when it DIFFERS and insufficient when it agrees, because one inode can
     be reached at more than one pathname and SQLite derives the write-ahead log from the
-    pathname a connection opens. Neither a hardlink name nor a file bind mount is visible from
-    this side: the caller holds its own path and the peer's device and inode, and nothing that
-    says which pathname the peer opened. A nonce is the only live evidence here - the peer's
-    write is readable in the file being read - and it is what the contract designates as proof.
+    pathname a connection opens. What answers THAT is the log location: the directory entry a
+    connection's `-wal` would be created under, which each participant measures for itself and
+    reports, and which two participants agree on exactly when they compute one log pathname.
+    A nonce is the only live evidence here - the peer's write is readable in the file being
+    read - and it is what the contract designates as proof.
+
+    Agreement on the log location is a SUFFICIENT condition for one log rather than an
+    equivalence, and the grades follow that difference. A disagreement is unproven, not a
+    mismatch: it does not establish that the two logs are different FILES, because the sidecars
+    can themselves be aliased, an overlay merged path and its upperdir can differ as directories
+    while the log entry is one file, and SQLite documents the `-wal` suffix as what it usually
+    appends rather than a guarantee. Read under the default unix VFS with unaliased sidecars.
 
     Being the only proof, it has to be evidence about THIS file. The answer carries the
     identity of the file it was read from, because it comes from a second open of the path,
@@ -1914,13 +2064,18 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     copy taken AFTER the challenge was written carries it with the bytes, and stays stable for
     a whole invocation, so nothing looking for a replacement or a second name sees anything
     wrong. Whether it is still one file is what the physical identity answers. So proof takes
-    both: a found, attributed nonce AND an agreeing device and inode. Neither alone is graded
-    as proof, and each is unproven for its own reason.
+    all three: a found, attributed nonce AND an agreeing device and inode AND an agreeing log
+    location. None of them alone is graded as proof, and each is unproven for its own reason.
+    The store id is not one of the three: supplied and disagreeing it is a mismatch, supplied
+    and agreeing it is agreement, and absent it was not asked - the role it already had.
 
-    The name count is graded beside all of that rather than folded into any of it. It catches
-    one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
-    pathname without changing it. So more than one name refuses, and one name is not evidence
-    of a single pathname - which is exactly why an agreeing pair is not proof by itself.
+    The name count is graded beside all of that rather than folded into any of it, and it no
+    longer carries the second-pathname question alone. `st_nlink` counts hardlink names, and a
+    file bind mount adds a pathname without changing it: measured on this host on 2026-09-22,
+    where exactly that mount reached `proven` on an agreeing pair and a found nonce while the
+    two names kept separate logs. The log location is the general answer; the count is the
+    residual guard for a name NO participant in this comparison accounted for, and the only one
+    left to a caller that sends no log location at all.
     """
     reasons = []
     if expect_store is not None:
@@ -1952,6 +2107,26 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     else:
         # Not compared at all, which is not the same as compared and agreeing.
         physical = None
+    log_location = None
+    if expect_log is not None:
+        # <device>:<inode>:<name>, split at most twice so a database whose own name contains a
+        # colon survives the parse.
+        want = str(expect_log).split(":", 2)
+        mine = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
+        if len(want) != 3 or None in mine:
+            reasons.append((UNPROVEN, "the log location is not comparable here"))
+        elif (str(mine[0]), str(mine[1]), mine[2]) != (want[0], want[1], want[2]):
+            log_location = False
+            reasons.append((UNPROVEN, (
+                f"this database's write-ahead log is written beside {mine[0]}:{mine[1]}/{mine[2]}"
+                f" and the other participant reported {expect_log}, so the two were not shown to"
+                " write into one log"
+            )))
+        else:
+            log_location = True
+            reasons.append((None, (
+                "both participants write their write-ahead log under the same directory entry"
+            )))
     if nonce is not None:
         if nonce.get("readable") is False:
             # Not being able to read is not the same as the nonce being absent. Calling it a
@@ -1966,19 +2141,36 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
                     f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
                     f" this comparison is about {here[0]}:{here[1]}"
                 )))
-            elif physical is not True:
+            elif _read_through_another_log(nonce, store):
+                # The same attribution question one level along. probe and nonce_lookup are two
+                # independent opens, so an answer can carry this store's device and inode and
+                # still have been read through a pathname whose log is a different file.
                 reasons.append((UNPROVEN, (
-                    "a nonce written by another participant is readable here, which does not"
-                    " say the two are one file now: a copy taken after the challenge was"
-                    " written carries the nonce with the bytes. Supply the other"
-                    " participant's --expect-inode so the physical identity is compared too"
+                    "the nonce was read through a pathname whose write-ahead log is not the one"
+                    " this comparison is about"
                 )))
-            else:
+            elif physical is True and log_location is True:
                 reasons.append((
                     PROVEN,
                     "a nonce written by another participant is readable here, in the file this"
-                    " comparison is about",
+                    " comparison is about, whose write-ahead log is written where that"
+                    " participant reported writing its own",
                 ))
+            else:
+                # Only name what was never supplied. An expectation that WAS supplied and
+                # disagreed has already refused above, and asking for it again would tell an
+                # operator to send something they just sent.
+                wanted = [flag for flag, seen in (
+                    ("--expect-inode", physical), ("--expect-log", log_location),
+                ) if seen is None]
+                if wanted:
+                    reasons.append((UNPROVEN, (
+                        "a nonce written by another participant is readable here, which does not"
+                        " say the two are one live store: a copy taken after the challenge was"
+                        " written carries the nonce with the bytes, and one inode reached at a"
+                        " second pathname keeps a write-ahead log of its own. Supply the other"
+                        f" participant's {' and '.join(wanted)}"
+                    )))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
 
