@@ -326,8 +326,12 @@ async def test_a_write_that_never_drains_is_bounded_and_retires_its_connection(f
 
         assert caught.value.phase == "transmit"
         assert "do not resend" in str(caught.value)
-        assert blocked.closed, "a cancelled partial write left the shared socket in use"
         assert client._ws is None, "the retired connection is still the current one"
+        # Detached at once; the close follows on this client's own time rather than inside the
+        # bound it just expired. close() is what drains it.
+        assert client._retiring, "the teardown was dropped rather than handed off"
+        await client.close()
+        assert blocked.closed, "a cancelled partial write left the shared socket open"
     finally:
         await client.close()
 
@@ -513,3 +517,88 @@ async def test_a_cancelled_write_does_not_pay_for_the_close_handshake(fake_serve
         closing.set()
         await client.close()
 
+async def test_a_transmit_expiry_returns_inside_its_own_bound(fake_server):
+    """A phase bound is what the caller may spend IN that phase, teardown included or not.
+
+    Awaiting the retirement before raising added the peer's close handshake - up to
+    close_timeout - on top of the bound that had just expired, which is the overrun the bound
+    exists to prevent.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=5, transmit=0.2, ack=5))
+    closing = asyncio.Event()
+    try:
+        await client.connect()
+        live = client._ws
+
+        class SlowToClose:
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def send(self, _payload):
+                await asyncio.Event().wait()
+
+            async def close(self):
+                await closing.wait()
+                await self._inner.close()
+
+            def __aiter__(self):
+                return self._inner.__aiter__()
+
+        client._ws = SlowToClose(live)
+
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(PhaseTimeout) as caught:
+            await client.call("thread/read", {"threadId": "thread-1"})
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert caught.value.phase == "transmit"
+        assert elapsed < 1, f"the transmit bound was 0.2s and the caller waited {elapsed}s"
+        assert client._ws is None
+    finally:
+        closing.set()
+        await client.close()
+
+
+async def test_a_cancelled_close_stops_waiting_without_stopping_the_teardown(fake_server):
+    """gather propagates cancellation into what it waits on, and here that is the cleanup.
+
+    connect() no longer drains, but an explicit close() under somebody's deadline still can, and
+    cancelling the wait must not cancel the work that was moved off a cancelled caller in the
+    first place.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5)
+    closing = asyncio.Event()
+    try:
+        await client.connect()
+        live, reader = client._ws, client._reader
+
+        class SlowToClose:
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def close(self):
+                await closing.wait()
+                await self._inner.close()
+
+        client._retire_out_of_band(SlowToClose(live), None)
+        retirement, = tuple(client._retiring)
+
+        closing_call = asyncio.create_task(client.close())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        closing_call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing_call
+
+        assert not retirement.cancelled(), "cancelling the drain cancelled the teardown"
+        assert not retirement.done(), "the teardown finished before its close was released"
+
+        closing.set()
+        await retirement
+        assert not client._retiring
+    finally:
+        closing.set()
+        client._ws, client._reader = live, reader
+        await client.close()

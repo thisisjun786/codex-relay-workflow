@@ -232,7 +232,11 @@ class AppServer:
         async with self._connect_lock:
             if self._reader is not None and not self._reader.done():
                 return
-            await self.close()
+            # Handed off rather than awaited, because this runs while _connect_lock is HELD:
+            # spending the old socket's close handshake here would serialise every other
+            # recipient behind it and charge the wait to their establish bound, which is the
+            # cost this phase exists to remove.
+            self._retire_out_of_band(self._ws, self._reader)
             try:
                 ws = await unix_connect(
                     str(self.socket_path),
@@ -256,7 +260,10 @@ class AppServer:
                 )
                 await self._ws.send(json.dumps({"method": "initialized", "params": {}}))
             except BaseException:
-                await self.close()
+                # Same reason, and it matters more here: this is the path a cancelled or timed
+                # out establishment takes, so awaiting the teardown would push the caller past
+                # the very bound that cancelled it, still holding the lock.
+                self._retire_out_of_band(self._ws, self._reader)
                 raise
 
     async def _receive(self, ws):
@@ -349,7 +356,10 @@ class AppServer:
                 # frame, and the stream it corrupts is shared by every recipient. So the
                 # connection is retired rather than reused, by identity, and the next request
                 # rebuilds. The mark above stands: this may have reached the server.
-                await self._retire(ws, reader)
+                # Handed off, not awaited: a phase bound is what the caller may spend IN that
+                # phase, and awaiting the peer's close handshake here would add close_timeout on
+                # top of a bound it is supposed to cap.
+                self._retire_out_of_band(ws, reader)
                 raise PhaseTimeout(
                     method, "transmit", bounds.transmit,
                     f"the request frame did not drain within {bounds.transmit}s and the"
@@ -427,7 +437,13 @@ class AppServer:
         # Anything handed off by a cancelled write finishes before this client says it closed.
         outstanding = tuple(self._retiring)
         if outstanding:
-            await asyncio.gather(*outstanding, return_exceptions=True)
+            # Shielded, because gather propagates cancellation into what it waits on and these
+            # tasks ARE the cleanup that was deliberately moved off a cancelled caller. connect()
+            # no longer reaches here, but an explicit close() under someone's deadline still can,
+            # and cancelling the drain must stop the waiting, not the work.
+            # The cancellation itself still propagates - swallowing it here would leave a caller
+            # believing a close it cancelled ran to completion.
+            await asyncio.shield(asyncio.gather(*outstanding, return_exceptions=True))
 
     async def _retire(self, ws, reader):
         """Discard exactly one connection, and never whatever replaced it.
