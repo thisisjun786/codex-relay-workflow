@@ -687,7 +687,8 @@ class MergeTurn:
                 " rolled back rather than half written")
 
     def _grant_in(self, db, *, turn, tenure, target, repository, base_ref, recipient, head,
-                  state, granted_from, at, relationship_id=None, wake=False):
+                  state, granted_from, at, relationship_id=None, project_key=None,
+                  wake=False):
         """The notice that a parent now holds this target, written WITH the acquisition.
 
         Addressed, not broadcast. actor_task_id carries the RECIPIENT rather than whoever's
@@ -732,7 +733,8 @@ class MergeTurn:
         queued = None
         if wake and self.delivery is not None:
             channel = self.delivery.grant_channel_in(
-                db, relationship_id=relationship_id, recipient_task_id=recipient, grant=grant)
+                db, relationship_id=relationship_id, recipient_task_id=recipient,
+                grant=grant, project_key=project_key)
             if channel.get("eventId"):
                 envelope["wake"] = {"eventId": channel["eventId"]}
                 queued = channel
@@ -1266,7 +1268,8 @@ class MergeTurn:
                     # call that parent just made, so it is awake by construction; this one is
                     # handed to a parent whose last act was to wait, and waiting is exactly
                     # what an idle task looks like.
-                    relationship_id=candidate["relationship_id"], wake=True)
+                    relationship_id=candidate["relationship_id"],
+                    project_key=candidate["project_key"], wake=True)
                 return candidate["turn_id"]
             stale = refusal or self._stale_owner(candidate, owner, candidate["holder_task_id"])
             self._close_in(

@@ -382,6 +382,36 @@ class AnUnaddressableGrantIsRecordedRatherThanLost(MergeTurnWakeTestCase):
         self.assertIn("is not in the recipients", self.grant_of(turn)["wake"]["refused"])
         self.assertEqual(self.wakes(), [])
 
+    def attach(self, project_key):
+        """Record which project this assignment belongs to.
+
+        Staged directly rather than driven through linkage.attach_in, because what is under
+        test is the wake READING the attachment, not the route that writes it.
+        """
+        self.store.db.execute(
+            "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at)"
+            " VALUES (?,?,?) ON CONFLICT(relationship_id)"
+            " DO UPDATE SET project_key = excluded.project_key",
+            (self.rid, project_key, self.clock.iso()))
+
+    def test_an_assignment_attached_to_another_project_does_not_carry_this_turns_wake(self):
+        # A parent can own more than one project, so its assignment under one of them passes
+        # every authorization check for a turn under another: active, addressed to it, and
+        # authorizing it as a recipient. It is still the wrong ledger. _relationship_refusal
+        # already refuses to MERGE such a turn as FOREIGN_SCOPE, so a wake pushed through it
+        # would file this target's notice in another project's stream and invite the
+        # recipient to do something begin_merge then refuses.
+        self.attach("PRJ-C")
+        turn = self.promoted()
+        self.assertEqual(self.turns.turn(turn)["state"], "holding")
+        self.assertIn("attached to project", self.grant_of(turn)["wake"]["refused"])
+        self.assertEqual(self.wakes(), [])
+
+    def test_an_assignment_attached_to_this_turns_own_project_still_carries_it(self):
+        self.attach(PROJECT_A)
+        turn = self.promoted()
+        self.assertEqual(self.grant_of(turn)["wake"]["eventId"], self.wakes()[0]["event_id"])
+
 
 class TheCollaboratorIsOptional(MergeTurnWakeTestCase):
     def test_without_a_delivery_service_the_grant_is_exactly_what_it_was(self):

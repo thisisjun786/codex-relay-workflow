@@ -300,7 +300,8 @@ class DeliveryService:
         # path. So this is where a newly deliverable event announces what it replaces.
         self.annotate_predecessors_in(db, event_id)
 
-    def grant_channel_in(self, db, *, relationship_id, recipient_task_id, grant):
+    def grant_channel_in(self, db, *, relationship_id, recipient_task_id, grant,
+                         project_key=None):
         """Whether this grant has an authorized way to reach its recipient, and by which event.
 
         Decided BEFORE anything is written, and decided by reading rather than by trying: the
@@ -318,6 +319,13 @@ class DeliveryService:
         that fails late: registration only requires the list to be non-empty, so a parent
         missing from its own assignment's recipients would be refused at every send attempt
         forever instead of once, here, with a reason.
+
+        The project is checked for a different reason: not authorization, but actionability.
+        mergeturn._relationship_refusal already refuses to MERGE a turn whose assignment is
+        attached to another project, so a wake pushed through that assignment would file a
+        notice about this target in another project's ledger and invite the recipient to do
+        something begin_merge will then refuse. A relationship with no recorded attachment is
+        left alone, which is the same tolerance the merge-side rule has.
         """
         if not relationship_id:
             return {"refused": "the turn names no assignment"}
@@ -331,6 +339,13 @@ class DeliveryService:
         if row["parent_task_id"] != recipient_task_id:
             return {"refused": f"assignment {relationship_id!r} is addressed to parent "
                                f"{row['parent_task_id']!r}, not to {recipient_task_id!r}"}
+        scope = db.execute(
+            "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+            (relationship_id,)).fetchone()
+        if project_key and scope is not None and scope["project_key"] != project_key:
+            return {"refused": f"assignment {relationship_id!r} is attached to project "
+                               f"{scope['project_key']!r}, not to this turn's "
+                               f"{project_key!r}"}
         try:
             allowed = json.loads(row["allowed_recipients"])
         except (TypeError, ValueError):
