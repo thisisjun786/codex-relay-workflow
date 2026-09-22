@@ -534,7 +534,8 @@ def cmd_settings_record(services, args) -> dict:
 
     This is the exact interface JUN-92 populates from Run's creation result. Required fields:
     sandbox (the full SandboxPolicy object), approvalPolicy, cwd, runtimeWorkspaceRoots, model,
-    reasoningEffort and environments. Anything missing is refused here rather than at send time.
+    reasoningEffort and environments. Anything missing is refused here rather than at send
+    time, and so is a cwd, model or reasoningEffort recorded as something other than a string.
     """
     if args.clear_exception and args.exception is not None:
         # Asking to cite one and to drop it are two different writes. Letting either win
@@ -551,12 +552,14 @@ def cmd_settings_record(services, args) -> dict:
 
 
 def cmd_settings_show(services, args) -> dict:
+    from .errors import DeliveryRefused
     from .registry import load_settings
 
     settings = load_settings(services.store, args.task)
     if settings is None:
         return {"task": args.task, "settings": None, "usable": False,
-                "deliverable": False, "missing": list(REQUIRED_SETTINGS)}
+                "deliverable": False, "missing": list(REQUIRED_SETTINGS),
+                "recordFinding": None}
     # The role side is reported beside the settings because the two are only meaningful
     # together: a record is stale relative to the policy for the role its task actually holds,
     # and reading one without the other is how a correct record and a wrong one look alike.
@@ -590,16 +593,39 @@ def cmd_settings_show(services, args) -> dict:
         }
     elif bound:
         finding = rolepolicy.check_record(settings, bound, policy)
-    # Two questions, two fields, because folding them together loses one of the answers.
+    # Total, like doctor's own reader: these rows can hold whatever an older writer or a hand
+    # edit left behind, and a diagnosis must not die on one.
+    try:
+        settings.require_usable()
+        unusable = None
+    except DeliveryRefused as refusal:
+        unusable = refusal
+    except Exception as error:  # noqa: BLE001 - total, for the reason above
+        unusable = DeliveryRefused(None, f"{type(error).__name__}: {error}")
+
+    # Three questions, three fields, because folding them together loses two of the answers.
     # "usable" is about the RECORD -- are the required fields there -- and it is paired with
     # "missing", so making a complete record report false would contradict the field beside it
     # and leave no way to say "complete, and refused for another reason". "deliverable" is the
     # question a preflight actually asks. It exists because a consumer written before roles
     # reads "usable", would have read true here, and would have gone on to a send this record
     # cannot carry.
+    #
+    # So "deliverable" is answered by the predicate a preflight really RUNS, not by a
+    # restatement of part of it. Until the recorded string fields were typed, `not missing()`
+    # and require_usable() agreed on every row this could be asked about; they no longer do,
+    # and a row this command called deliverable would be withheld by delivery and reported
+    # refused by doctor. Running it here also answers the case that was already wrong before
+    # that: a sandbox type with no resume mode. "recordFinding" then says WHICH rule refused,
+    # because a false deliverable beside an empty missing list and no roleFinding names nothing.
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
-            "deliverable": not settings.missing() and finding is None,
+            "deliverable": unusable is None and finding is None,
+            "recordFinding": None if unusable is None else {
+                # doctor's vocabulary, so the two commands name one refusal alike.
+                "code": unusable.reason.value if unusable.reason else "unexpected",
+                "detail": unusable.detail,
+            },
             "citedRole": rolepolicy.cited_role(settings),
             "citedException": rolepolicy.cited_exception(settings),
             "boundRole": None if contested else bound,
@@ -1618,10 +1644,14 @@ def _sandbox_summary(row) -> dict:
     this does not reach.
 
     What it does NOT answer is whether the host accepts the parameters. The App Server's own
-    schema is not in this repository, so nothing here can say what it does with a recorded
-    `cwd: 7`: the params are built and sent, and the answer comes back from the wire.
-    `deliverable` is about the constraints delivery imposes on the row, and typing the
-    recorded fields locally would belong in `require_usable()` beside the policy rule.
+    schema is not in this repository, so nothing here can say what it does with a value this
+    package finds well-formed - a model name it does not serve, a `cwd` naming a directory it
+    does not have. Those are built and sent, and the answer comes back from the wire.
+
+    What it does answer grew by one when the recorded string fields were typed. A recorded
+    `cwd: 7` is no longer among them: `require_usable()` refuses it, so it reaches
+    `deliverable` as a failing transformation like any other, and the send is withheld rather
+    than made against an answer only the wire could give.
     """
     import json
 
