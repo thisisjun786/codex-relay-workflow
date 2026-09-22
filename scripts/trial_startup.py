@@ -58,7 +58,16 @@ from crw_runtime import check, definition, hostrecord, reading  # noqa: E402
 
 SOURCE = "live-trial-startup"
 CHECKER_VERSION = 1
-RECORD_VERSION = 1
+# 2: the store block gained the log location, which REQUIRED_FIELDS now insists on. A record
+# written for version 1 cannot supply it, and a preflight that quietly accepted one would ask
+# doctor a question it can no longer answer with proof.
+RECORD_VERSION = 2
+# What a FINISHED trial can still be graded at. Ledger grading reads the trial root and the
+# window and nothing else, and version 2 changed neither, so refusing a completed version-1 run
+# would destroy evidence that is exactly as readable as the day it was written. It is the same
+# reason ledger mode already declines to require the installed relay or the captures: those are
+# facts about afterwards, and so is a preflight schema that moved on.
+LEDGER_RECORD_VERSIONS = (1, 2)
 
 # The start record may lower these and may not raise them. A record that chose its own ceiling
 # would be choosing how stale its own evidence may be, which is the question the bound exists to
@@ -259,6 +268,10 @@ REQUIRED_FIELDS = (
     ("relay", "launcher"), ("relay", "launcherSha256"), ("relay", "stateDirectory"),
     ("relay", "socket"),
     ("store", "storeId"), ("store", "device"), ("store", "inode"), ("store", "challengeNonce"),
+    # Where the participant that wrote the challenge puts its write-ahead log. Without it the
+    # relay grades an agreeing device and inode with a found nonce as unproven, because one
+    # inode reached at a second pathname keeps a log of its own.
+    ("store", "logDevice"), ("store", "logInode"), ("store", "logName"),
     ("supervisor", "pid"), ("supervisor", "witness"), ("supervisor", "launchedAt"),
     ("assignment", "relationshipId"), ("assignment", "parentTaskId"),
     ("assignment", "childTaskId"), ("assignment", "issueKey"),
@@ -959,9 +972,11 @@ def load_start(path, *, environment=None, mode="preflight"):
     if record.get("source") != "live-trial-start":
         raise Refused("this file does not stamp itself as a live trial start record",
                       path=str(start), source=record.get("source"))
-    if record.get("recordVersion") != RECORD_VERSION:
+    supported = LEDGER_RECORD_VERSIONS if mode == "ledger" else (RECORD_VERSION,)
+    if record.get("recordVersion") not in supported:
         raise Refused("unsupported record version", path=str(start),
-                      recordVersion=record.get("recordVersion"))
+                      recordVersion=record.get("recordVersion"),
+                      supported=list(supported))
 
     trial_root = absolute(record.get("trialRoot"), "trialRoot")
     if not trial_root.is_dir():
@@ -2143,12 +2158,25 @@ def settings_now(record, relay, seen):
     return cells, rows
 
 
+def _log_location(store):
+    """The store block's log location, in the shape `doctor --expect-log` reads.
+
+    Built from three declared fields rather than read as one, because that is how
+    `store-identity` reports them and how an operator copies them into the record. A missing
+    part would arrive as the string "None", which the relay grades as not comparable rather
+    than as agreement; REQUIRED_FIELDS is what stops a record getting this far without them.
+    """
+    return "%s:%s:%s" % (
+        store.get("logDevice"), store.get("logInode"), store.get("logName"))
+
+
 def reading_store(record, relay):
     """The relay's own same-store verdict, not a comparison rebuilt here."""
     cells = []
     store = record.get("store") or {}
     probe = relay.relay("doctor", "--expect-store", store.get("storeId"),
                         "--expect-inode", str(store.get("device")) + ":" + str(store.get("inode")),
+                        "--expect-log", _log_location(store),
                         "--expect-nonce", store.get("challengeNonce"))
     payload = probe["payload"] or {}
     verdict = field(payload, "sameStore")
@@ -2160,7 +2188,8 @@ def reading_store(record, relay):
                         evidence=("the relay grades this as " + str(shown(verdict)) + ". A matching"
                                   " store id and inode alone is unproven: proof takes the nonce"
                                   " another participant wrote, found beside an agreeing device and"
-                                  " inode")))
+                                  " inode AND an agreeing log location, which is what separates one"
+                                  " store from one inode reached at two pathnames")))
 
     created = field(payload, "store", "createdAt")
     when = maybe_moment(created) if created is not MISSING else None
@@ -2274,7 +2303,12 @@ def reading_store(record, relay):
         nonce_agrees = same(asked, store.get("challengeNonce"))
         agrees = (same(field(peer, "store", "storeId"), store.get("storeId"))
                   and same(field(peer, "store", "device"), store.get("device"))
-                  and same(field(peer, "store", "inode"), store.get("inode")))
+                  and same(field(peer, "store", "inode"), store.get("inode"))
+                  # And where its log goes, which is what separates a peer sharing this store
+                  # from a peer holding a second pathname for the same inode.
+                  and same(field(peer, "store", "logDevice"), store.get("logDevice"))
+                  and same(field(peer, "store", "logInode"), store.get("logInode"))
+                  and same(field(peer, "store", "logName"), store.get("logName")))
         # The same OPS-3.5 requirement, per peer: a participant that cannot write the state
         # directory cannot run even a read-only-looking relay command, so proving it holds the
         # same store says nothing about whether it can use it.
@@ -2340,7 +2374,10 @@ def reading_store(record, relay):
                                or ledger_unread
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
-                               or field(peer, "store", "inode") is MISSING) else peer_same
+                               or field(peer, "store", "inode") is MISSING
+                               or field(peer, "store", "logDevice") is MISSING
+                               or field(peer, "store", "logInode") is MISSING
+                               or field(peer, "store", "logName") is MISSING) else peer_same
         # doctor does not name the participant that ran it, so two peers legitimately produce
         # identical payloads and this is reported rather than graded. What it costs is stated in
         # the stand-ins: the attribution of a capture to a participant is the operator's.
@@ -3434,6 +3471,7 @@ def store_still_the_same(record, relay):
     store = record.get("store") or {}
     probe = relay.relay("doctor", "--expect-store", store.get("storeId"),
                         "--expect-inode", str(store.get("device")) + ":" + str(store.get("inode")),
+                        "--expect-log", _log_location(store),
                         "--expect-nonce", store.get("challengeNonce"))
     payload = probe["payload"] or {}
     verdict = field(payload, "sameStore")

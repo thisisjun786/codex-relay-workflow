@@ -231,6 +231,10 @@ class World:
     PARENT_A, CHILD_A = "task-parent-a", "task-child-a"
     PARENT_B, CHILD_B = "task-parent-b", "task-child-b"
     STORE_ID, DEVICE, INODE, NONCE = "store0000000001", 64512, 4242, "nonce-01"
+    # Where a connection on that database writes its log: the directory entry, and the name
+    # under which `-wal` is created beside it. One inode is reachable at more than one
+    # pathname, so this is what says two participants write into one log rather than two.
+    LOG_DEVICE, LOG_INODE, LOG_NAME = 64512, 4200, "relay.sqlite3"
 
     def __init__(self, base, *, one_repository=False):
         self.root = Path(tempfile.mkdtemp(dir=str(base), prefix="crw111-"))
@@ -415,6 +419,8 @@ class World:
             "doctor": {"payload": {
                 "sameStore": "proven",
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
+                          "logDevice": self.LOG_DEVICE, "logInode": self.LOG_INODE,
+                          "logName": self.LOG_NAME,
                           "createdAt": "2020-01-01T00:00:00Z",
                           # The database itself, not only the directory around it: every command
                           # opens it read-write on construction.
@@ -513,6 +519,8 @@ class World:
                 "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE,
                           "inode": self.INODE,
+                          "logDevice": self.LOG_DEVICE, "logInode": self.LOG_INODE,
+                          "logName": self.LOG_NAME,
                           # OPS-3.4: proof is doctor from each participating process reporting
                           # the packet's own stateDirectory. probe() fills this from the
                           # selection, so every doctor payload says which database that process
@@ -571,12 +579,13 @@ class World:
                            for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B)},
         }
         return {
-            "source": "live-trial-start", "recordVersion": 1, "trialRoot": str(self.trial),
+            "source": "live-trial-start", "recordVersion": 2, "trialRoot": str(self.trial),
             "relay": {"launcher": str(self.launcher),
                       "launcherSha256": startup.digest_of(self.launcher),
                       "stateDirectory": str(self.state / "relay"), "socket": str(self.root / "sock")},
             "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
-                      "challengeNonce": self.NONCE},
+                      "logDevice": self.LOG_DEVICE, "logInode": self.LOG_INODE,
+                      "logName": self.LOG_NAME, "challengeNonce": self.NONCE},
             "supervisor": {"pid": os.getpid(), "witness": str(self.trial / "supervisor.jsonl"),
                            "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.01,
                            "witnessAdvanceSeconds": 0.01, "service": False},
@@ -974,6 +983,7 @@ class StoreIdentity(TrialCase):
             "sameStore": "proven",
             "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
             "store": {"storeId": "another-store", "device": 1, "inode": 2,
+                      "logDevice": 1, "logInode": 3, "logName": "relay.sqlite3",
                       "dbPath": str(self.world.state / "relay" / "relay.sqlite3"),
                       "observedAccess": {"read": True, "write": True,
                                          "directoryWritable": True}},
@@ -1017,6 +1027,10 @@ class StoreIdentity(TrialCase):
         call = next(json.loads(line) for line in self.world.calls.read_text().splitlines()
                     if json.loads(line)["subcommand"] == "doctor")
         self.assertIn("--expect-store", call["argv"])
+        self.assertIn("--expect-log", call["argv"])
+        self.assertIn(
+            f"{World.LOG_DEVICE}:{World.LOG_INODE}:{World.LOG_NAME}", call["argv"],
+        )
         self.assertIn("--expect-nonce", call["argv"])
         self.assertIn(World.NONCE, call["argv"])
 
@@ -1164,6 +1178,24 @@ class Ledger(TrialCase):
         code, payload, stderr = self.world.run_cli("ledger")
         self.assertEqual(code, 1, stderr)
         self.assertFalse(payload["window"]["windowIsClean"])
+
+    def test_a_trial_that_finished_under_the_older_record_is_still_gradable(self):
+        """A preflight schema that moved on is a fact about afterwards.
+
+        Ledger grading reads the trial root and the window and nothing else, which is why it
+        already declines to require the installed relay or the captures. The record version
+        that carries the store's log location is a preflight requirement, so refusing a run
+        that completed before it would destroy evidence still exactly as readable as the day
+        it was written.
+        """
+        self.base_lines()
+        start = self.world.trial / "start.json"
+        older = json.loads(start.read_text(encoding="utf-8"))
+        older["recordVersion"] = 1
+        start.write_text(json.dumps(older), encoding="utf-8")
+        code, payload, stderr = self.world.run_cli("ledger")
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue(payload["window"]["windowIsClean"], payload)
 
     def test_a_label_disagreeing_with_its_own_timestamp_is_refused(self):
         now, opened, closed = self.base_lines()
@@ -1373,7 +1405,8 @@ class PayloadContract(TrialCase):
         ("cli.py", "cmd_doctor"): ("ledger", "nonce", "actorReachability"),
         ("cli.py", "_reachability"): ("socketConnect", "stateDirectoryWritable"),
         ("cli.py", "_ledger_location"): ("configured", "split"),
-        ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode", "dbPath"),
+        ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode", "dbPath",
+                                "logDevice", "logInode", "logName"),
         ("cli.py", "_access_receipt"): ("observedAccess", "write"),
         ("store.py", "compare_store"): ("sameStore",),
         ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId",
@@ -3003,7 +3036,7 @@ class TwentyFifthHostedRound(TrialCase):
         documented["captures"] = captures
         documented["window"] = dict(world.record["window"])
         self.assertEqual(documented["source"], "live-trial-start")
-        self.assertEqual(documented["recordVersion"], 1)
+        self.assertEqual(documented["recordVersion"], 2)
 
         written = world.trial / "documented-start.json"
         written.write_text(json.dumps(documented), encoding="utf-8")

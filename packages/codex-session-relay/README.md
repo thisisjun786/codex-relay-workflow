@@ -67,12 +67,16 @@ not see each other. The endpoint hash is derived from the socket path, so passin
 `doctor` reports which rule won, the database it resolved to and the access this process really
 has. To prove two participants share one store rather than two copies of one, take
 `store-identity` on one side and write a nonce with `store-challenge --write`, then check both
-from the other side: `doctor --expect-inode <device>:<inode> --expect-nonce <nonce>`. Each half
-is necessary. An identifier is copied along with the file; a nonce is copied too when the copy
-is taken after the challenge was written; and a device and inode that agree do not say both
-processes opened the same pathname for that inode. Anything short of the pair is reported
-`unproven` and exits non-zero rather than being read as yes. See
-[docs/operations.md](docs/operations.md).
+from the other side: `doctor --expect-inode <device>:<inode> --expect-log <device>:<inode>:<name>
+--expect-nonce <nonce>`. Each part is necessary. An identifier is copied along with the file; a
+nonce is copied too when the copy is taken after the challenge was written; and a device and
+inode that agree do not say both processes opened the same pathname for that inode. That last
+one is what `--expect-log` answers: SQLite writes the write-ahead log beside the pathname a
+connection opened, so two participants share one log when their databases sit under the same
+directory entry, and `store-identity` reports that entry for each side to send. A file bind
+mount reaches one inode at a second pathname without changing the name count, which is why the
+count is not the check. Anything short of all of it is reported `unproven` and exits non-zero
+rather than being read as yes. See [docs/operations.md](docs/operations.md).
 
 ## Authorized execution settings
 
