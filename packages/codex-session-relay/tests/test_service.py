@@ -20,8 +20,8 @@ from unittest import mock
 from codex_session_relay import service as service_module
 from codex_session_relay.policy import RetryPolicy
 from codex_session_relay.service import (
-    ISOLATED, PRODUCTION, ProcessHandle, RelayService, ScopeRegistry, ServiceRefused,
-    installation_id, owned_service, production_scope_root, resolve_scope_root,
+    EXIT_BOUND_SPENT, ISOLATED, PRODUCTION, ProcessHandle, RelayService, ScopeRegistry,
+    ServiceRefused, installation_id, owned_service, production_scope_root, resolve_scope_root,
 )
 from codex_session_relay.store import Store, probe as store_probe, resolve_state_dir
 
@@ -2240,3 +2240,477 @@ class UnidentifiableStore(ServiceTestCase):
 
         self.assertIsNone(built.store_id)
         self.assertTrue(built.store_unidentified)
+
+
+class BoundsAcrossAProcessBoundary(ServiceTestCase):
+    """What a supervisor hands a worker when it has already decided when the worker must stop.
+
+    A bound is measured in the clock of the process that enforces it, and every worker is a
+    separate process with its own. Handed across that boundary as a DURATION it restarts at the
+    worker's clock, so everything the worker spends getting there - fork, interpreter start,
+    imports, argument parsing, opening the store - lands on top of the bound instead of coming
+    out of it. Only the last segment shows it: the remaining is recomputed at the top of every
+    iteration, so an earlier worker's startup is already deducted from its successor and the
+    final one has no successor to deduct from.
+
+    These drive ScriptedClock, so nothing here waits on real time. `worker_bound` below stands
+    in for what `cli._run_bounded` does with each form of the bound, and the exit code the
+    stand-in returns is derived from that reading rather than handed to it. That the real CLI
+    has exactly those two readings is pinned separately, by
+    test_daemon_cadence.TheFormOfTheBound; the argv that carries them is pinned by the two
+    launcher tests at the end of this class. Without those this class would only be confirming
+    its own stand-in.
+    """
+
+    SEGMENT = 30 * 60
+    BOUND = FOUR_HOURS + 15 * 60
+    STARTUP = 45.0
+
+    def worker_bound(self, call, clock):
+        """What a worker gives itself, read at ITS start rather than at the supervisor's."""
+        if call.get("deadline_monotonic") is not None:
+            # An instant: the startup interval is behind it already and comes out of this.
+            return max(0.0, call["deadline_monotonic"] - clock())
+        # A duration: the count restarts here, with the startup already spent.
+        return call["segment_seconds"]
+
+    def run_with_a_slow_spawn(self, service, *, startup, deadline=None, reading=None,
+                              segment_seconds=None, max_segments=40):
+        """Supervise workers that each pay a startup interval before their own clock exists."""
+        clock = ScriptedClock()
+        launches = []
+        reading = reading or self.worker_bound
+
+        def spawn(**call):
+            launches.append(call)
+            clock.advance(startup)
+            granted = reading(call, clock)
+            clock.advance(granted)
+            # The ending cli._run_bounded gives a worker that reached its own clock past the
+            # instant it was handed: no tick was taken, so it is neither a clean segment nor a
+            # crash.
+            return FakeWorker(EXIT_BOUND_SPENT if granted <= 0 else 0)
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=clock.advance,
+            segment_seconds=segment_seconds or self.SEGMENT, max_segments=max_segments,
+            deadline=deadline, monotonic=clock,
+        )
+        return outcome, launches, clock
+
+    def test_a_slow_spawn_no_longer_pushes_the_run_past_its_bound(self):
+        """The defect: forty-five seconds of startup, spent from the segment rather than after."""
+        service = self.service("a")
+        service.enable(actor="test")
+
+        _outcome, launches, clock = self.run_with_a_slow_spawn(
+            service, startup=self.STARTUP, deadline=self.BOUND,
+        )
+
+        self.assertAlmostEqual(
+            clock.elapsed, self.BOUND, places=6,
+            msg="the run ended somewhere other than the bound its owner gave it",
+        )
+        self.assertTrue(
+            all(call["deadline_monotonic"] is not None for call in launches),
+            "a bounded supervisor handed a worker a duration",
+        )
+
+    def test_read_as_a_duration_the_same_run_overruns_by_one_startup(self):
+        """What the instant buys, measured against the reading it replaced.
+
+        This stand-in ignores the instant and does what `--deadline N` does: it starts counting
+        at the worker's own clock. If the harness above could not tell the two readings apart,
+        the previous test would pass whatever the supervisor handed down.
+        """
+        service = self.service("b")
+        service.enable(actor="test")
+
+        _outcome, _launches, clock = self.run_with_a_slow_spawn(
+            service, startup=self.STARTUP, deadline=self.BOUND,
+            reading=lambda call, _clock: call["segment_seconds"],
+        )
+
+        self.assertAlmostEqual(clock.elapsed, self.BOUND + self.STARTUP, places=6)
+
+    def test_a_supervisor_with_no_bound_hands_its_worker_a_duration(self):
+        """Nothing is being enforced, so segment_seconds is a LENGTH and not an end.
+
+        Leaving this path alone is deliberate: it is the ordinary continuous service, and the
+        defect is about a bound, not about how long a segment happens to be.
+        """
+        service = self.service("c")
+        service.enable(actor="test")
+
+        _outcome, launches, _clock = self.run_with_a_slow_spawn(
+            service, startup=self.STARTUP, deadline=None, max_segments=3,
+        )
+
+        self.assertEqual(len(launches), 3)
+        self.assertTrue(all(call["deadline_monotonic"] is None for call in launches))
+
+    def test_the_floor_under_a_segment_cannot_outlive_the_bound_it_clamps(self):
+        """max(0.1, ...) rounds a remainder under a tenth of a second back up to one.
+
+        Read as a duration that only ever overshot by the rounding. Read as an instant it would
+        be a worker told to stop after the supervisor enforcing the bound already has, so the
+        instant is capped at the supervisor's own end while the floor stays what it is.
+        """
+        service = self.service("d")
+        service.enable(actor="test")
+        # One whole segment, one restart delay, and then less than the floor.
+        bound = self.SEGMENT + 2.0 + 0.05
+
+        _outcome, launches, clock = self.run_with_a_slow_spawn(
+            service, startup=0.0, deadline=bound, segment_seconds=self.SEGMENT,
+        )
+
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[-1]["segment_seconds"], 0.1, "the floor stopped being a floor")
+        self.assertAlmostEqual(
+            launches[-1]["deadline_monotonic"], ScriptedClock.START + bound, places=6,
+            msg="the worker was given an instant past the bound being enforced",
+        )
+        self.assertAlmostEqual(
+            clock.elapsed, bound, places=6,
+            msg="the rounded-up floor was spent past the bound instead of being capped at it",
+        )
+
+    def test_a_worker_that_never_served_is_named_rather_than_replaced(self):
+        """A segment shorter than a worker costs to start would otherwise churn in silence.
+
+        The worker reaches its own clock past the instant, takes no tick and ends as spent.
+        Counted as a clean segment it would reset the failure streak and report [0, 0, ...] for
+        a service doing no work at all, for as long as the bound had room.
+        """
+        service = self.service("e")
+        service.enable(actor="test")
+
+        outcome, launches, _clock = self.run_with_a_slow_spawn(
+            service, startup=0.5, deadline=3600.0, segment_seconds=0.2,
+        )
+
+        self.assertEqual(len(launches), 1, "a worker that never served was replaced anyway")
+        self.assertEqual(outcome["segments"], [EXIT_BOUND_SPENT])
+        self.assertIn("costs more to start", outcome["degraded"] or "")
+        self.assertIn(
+            "costs more to start",
+            (service.selection.path / "daemon.log").read_text(encoding="utf-8"),
+            "the reason was reported to the caller but never written down",
+        )
+
+    def test_the_tail_of_a_bounded_run_is_not_reported_as_a_fault(self):
+        """The same ending, where the bound really is spent.
+
+        A worker whose startup outlasts the last sliver of a bound served nothing either, but
+        there was nothing left for it to serve and the loop was ending regardless. What stays
+        outside the bound here is the spawn itself: an instant can stop a worker from serving
+        past it, and cannot un-spend the cost of starting a process already launched.
+        """
+        service = self.service("f")
+        service.enable(actor="test")
+        bound = self.SEGMENT + 2.0 + 0.05
+
+        outcome, launches, clock = self.run_with_a_slow_spawn(
+            service, startup=0.5, deadline=bound, segment_seconds=self.SEGMENT,
+        )
+
+        self.assertEqual(outcome["segments"], [0, EXIT_BOUND_SPENT])
+        self.assertIsNone(outcome["degraded"], "the ordinary tail was reported as a fault")
+        self.assertEqual(len(launches), 2)
+        self.assertGreater(
+            clock.elapsed, bound,
+            "this assertion is the honest half: the residue is one process start that served"
+            " nothing, and it is bounded by a startup rather than by a segment",
+        )
+        self.assertLess(clock.elapsed - bound, 0.5 + 1e-6)
+
+    def test_an_instant_already_spent_starts_nothing_at_all(self):
+        """A supervisor whose own startup outlasted the bound it was given serves nothing.
+
+        The instant is in the past by the time this loop reads a clock, which is the whole
+        point of converting it here: the alternative would be a supervisor that starts a full
+        worker on a bound its launcher had already spent.
+        """
+        service = self.service("g")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        launches = []
+
+        outcome = service.supervise(
+            allow_isolated=True, sleeper=clock.advance, segment_seconds=self.SEGMENT,
+            max_segments=40, monotonic=clock, deadline_monotonic=clock() - 5.0,
+            spawn=lambda **call: launches.append(call) or FakeWorker(0),
+        )
+
+        self.assertEqual(launches, [], "a supervisor whose bound was spent launched a worker")
+        self.assertEqual(outcome["segments"], [])
+        self.assertIsNone(
+            service.record().get("readyAt"),
+            "a service on its way out published itself as ready to serve",
+        )
+
+    def test_an_instant_is_converted_at_the_last_moment_before_the_loop(self):
+        """Whatever this supervisor spent starting comes out of the bound, not on top of it."""
+        service = self.service("h")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        # Twelve seconds of this process's own startup are already behind it when supervise
+        # takes its first reading, because the launcher decided the instant before the fork.
+        instant = clock() + 30.0
+        clock.advance(12.0)
+        launches = []
+
+        service.supervise(
+            allow_isolated=True, sleeper=clock.advance, segment_seconds=self.SEGMENT,
+            max_segments=1, monotonic=clock, deadline_monotonic=instant,
+            spawn=lambda **call: launches.append(call) or FakeWorker(0),
+        )
+
+        self.assertEqual(len(launches), 1)
+        self.assertAlmostEqual(
+            launches[0]["deadline_monotonic"], instant, places=6,
+            msg="the worker's instant drifted past the one this supervisor was given",
+        )
+        self.assertAlmostEqual(launches[0]["segment_seconds"], 18.0, places=6)
+
+    def test_two_bounds_at_once_is_a_caller_bug(self):
+        """They are two different end times, and preferring either silently is a wrong answer."""
+        service = self.service("i")
+        service.enable(actor="test")
+
+        with self.assertRaises(ValueError) as caught:
+            service.supervise(
+                allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=lambda _s: None,
+                max_segments=1, deadline=10.0, deadline_monotonic=time.monotonic() + 10.0,
+            )
+
+        self.assertIn("two different bounds", str(caught.exception))
+
+    def _worker_argv(self, service, **call):
+        """The argv spawn_worker would build, without starting anything."""
+        captured = {}
+
+        def popen(argv, **_kwargs):
+            captured["argv"] = argv
+            return FakeWorker(0)
+
+        with mock.patch.object(subprocess, "Popen", popen):
+            service.spawn_worker(lock_fd=0, scope_fd=None, token="tok", allow_isolated=True,
+                                 **call)
+        return captured["argv"]
+
+    def _launch_argv(self, service, **kwargs):
+        """The argv default_launcher would build, without starting anything."""
+        captured = {}
+
+        class Fake:
+            pid = os.getpid()
+            returncode = None
+
+            def poll(self):
+                return None
+
+        def popen(argv, **_kwargs):
+            captured["argv"] = argv
+            return Fake()
+
+        with mock.patch.object(subprocess, "Popen", popen):
+            service.default_launcher(service, allow_isolated=True, **kwargs)
+        return captured["argv"]
+
+    def test_the_worker_is_told_when_to_stop_not_how_long_to_run(self):
+        service = self.service("j")
+
+        argv = self._worker_argv(service, segment_seconds=1800.0, deadline_monotonic=4242.5)
+
+        self.assertIn("--deadline-monotonic", argv)
+        self.assertEqual(argv[argv.index("--deadline-monotonic") + 1], repr(4242.5))
+        self.assertNotIn("--deadline", argv)
+
+    def test_a_worker_under_no_bound_is_still_given_a_segment_length(self):
+        service = self.service("k")
+
+        argv = self._worker_argv(service, segment_seconds=1800.0)
+
+        self.assertIn("--deadline", argv)
+        self.assertEqual(argv[argv.index("--deadline") + 1], "1800.0")
+        self.assertNotIn("--deadline-monotonic", argv)
+
+    def test_the_launcher_hands_the_supervisor_an_instant_too(self):
+        """The same defect one level up, and the same answer.
+
+        `start --deadline N` launches a supervisor that would otherwise begin counting N after
+        its own fork, interpreter start, gate checks and scope claim.
+        """
+        service = self.service("l")
+        service.enable(actor="test")
+
+        before = time.monotonic()
+        argv = self._launch_argv(service, deadline=90.0)
+        after = time.monotonic()
+
+        self.assertNotIn("--deadline", argv)
+        instant = float(argv[argv.index("--deadline-monotonic") + 1])
+        self.assertGreaterEqual(instant, before + 90.0)
+        self.assertLessEqual(instant, after + 90.0)
+
+    def test_a_launcher_with_no_bound_passes_none_at_all(self):
+        service = self.service("m")
+        service.enable(actor="test")
+
+        argv = self._launch_argv(service)
+
+        self.assertNotIn("--deadline-monotonic", argv)
+        self.assertNotIn("--deadline", argv)
+
+    def test_the_length_and_the_instant_come_from_one_reading_of_the_clock(self):
+        """Two readings are two different nows.
+
+        The instant is the granted length expressed as an end time, so building it from a
+        later reading than the length was measured against would hand the worker a segment
+        starting at a moment that had already gone. The gap is small and the cap at the
+        supervisor's own end hides it on the last segment, which is what would have kept it
+        out of sight - and it is the same mistake this class exists to close, one scale down.
+        """
+        service = self.service("p")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        launches = []
+
+        def spawn(**call):
+            launches.append(clock())
+            launches.append(call)
+            clock.advance(call["segment_seconds"])
+            return FakeWorker(0)
+
+        service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, deadline=self.BOUND,
+            monotonic=clock,
+        )
+
+        at_spawn, call = launches
+        self.assertAlmostEqual(
+            call["deadline_monotonic"], at_spawn + call["segment_seconds"], places=9,
+            msg="the instant was built from a different reading than the length it expresses",
+        )
+
+    def test_recovery_does_not_run_for_a_bound_that_was_already_gone(self):
+        """on_start makes real App Server calls for every unresolved attempt.
+
+        A supervisor whose instant had passed before it could read a clock will not serve a
+        single segment, so paying for exhaustive recovery first is work done on behalf of
+        nobody - and on a slow host that work is what made the bound late in the first place.
+        The check after on_start stays as well: recovery can spend a bound that was there when
+        it began.
+        """
+        service = self.service("q")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        recovered = []
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, monotonic=clock,
+            deadline_monotonic=clock() - 5.0, on_start=lambda: recovered.append(True),
+        )
+
+        self.assertEqual(recovered, [], "recovery ran for a supervisor that could not serve")
+        self.assertEqual(outcome["segments"], [])
+
+    def test_recovery_still_runs_when_the_bound_has_time_in_it(self):
+        """The guard above must not become a supervisor that never recovers."""
+        service = self.service("r")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        recovered = []
+
+        service.supervise(
+            allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, monotonic=clock,
+            deadline_monotonic=clock() + 600.0, on_start=lambda: recovered.append(True),
+        )
+
+        self.assertEqual(recovered, [True])
+
+    def test_a_segment_no_worker_could_accept_is_refused_before_any_worker_runs(self):
+        """A length is not a bound the supervisor keeps; it is the one it hands out.
+
+        A worker given nan, inf, zero or a negative length refuses it and exits before its first
+        tick. The supervisor reads that as an ordinary worker failure and answers by launching
+        another - and another - so the service stays alive, backs off, and serves nothing for as
+        long as the owner leaves it running. Refusing the configuration once is the difference
+        between a usage error and a silent outage.
+        """
+        service = self.service("s")
+        service.enable(actor="test")
+        launches = []
+
+        for value in (float("nan"), float("inf"), 0.0, -1.0):
+            with self.subTest(segment_seconds=value):
+                with self.assertRaises(ValueError) as caught:
+                    service.supervise(
+                        allow_isolated=True, sleeper=lambda _s: None, max_segments=1,
+                        segment_seconds=value,
+                        spawn=lambda **call: launches.append(call) or FakeWorker(0),
+                    )
+                self.assertIn("finite number greater than zero", str(caught.exception))
+
+        self.assertEqual(launches, [], "a worker was launched for a length it would refuse")
+
+    def test_an_absent_segment_still_takes_the_policy_default(self):
+        """The default belongs to an absent value. The guard above must not eat it."""
+        service = self.service("t")
+        service.enable(actor="test")
+        launches = []
+
+        service.supervise(
+            allow_isolated=True, sleeper=lambda _s: None, max_segments=1,
+            spawn=lambda **call: launches.append(call) or FakeWorker(0),
+        )
+
+        self.assertEqual(launches[0]["segment_seconds"], RetryPolicy().segment_seconds)
+
+    def test_a_bound_no_comparison_can_pass_is_refused_by_the_api_as_well(self):
+        """The CLI is not the only caller of supervise.
+
+        Every comparison against nan is False, so a supervisor given one would never reach its
+        bound: the unbounded run this loop exists not to have. Refusing it at the surface a
+        person types is not enough when the surface a program calls is still open.
+        """
+        service = self.service("n")
+        service.enable(actor="test")
+
+        for value in (float("nan"), float("inf"), -1.0):
+            with self.subTest(deadline=value):
+                with self.assertRaises(ValueError):
+                    service.supervise(
+                        allow_isolated=True, spawn=lambda **_k: FakeWorker(0),
+                        sleeper=lambda _s: None, max_segments=1, deadline=value,
+                    )
+
+        for value in (float("nan"), float("inf")):
+            with self.subTest(deadline_monotonic=value):
+                with self.assertRaises(ValueError):
+                    service.supervise(
+                        allow_isolated=True, spawn=lambda **_k: FakeWorker(0),
+                        sleeper=lambda _s: None, max_segments=1, deadline_monotonic=value,
+                    )
+
+    def test_an_instant_below_zero_is_not_a_time_this_host_has_had(self):
+        """CLOCK_MONOTONIC counts from a point at or before this boot, so it is never negative.
+
+        Treated as merely already spent it would look like an ordinary expired bound, which is
+        a real state; this one is a value that cannot have come from the clock it claims.
+        """
+        service = self.service("o")
+        service.enable(actor="test")
+
+        with self.assertRaises(ValueError) as caught:
+            service.supervise(
+                allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=lambda _s: None,
+                max_segments=1, deadline_monotonic=-1.0,
+            )
+
+        self.assertIn("cannot be negative", str(caught.exception))
