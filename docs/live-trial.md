@@ -244,7 +244,11 @@ directory is where a probe leaves a new empty store behind instead of failing. T
 readings are what catch that. Exit 0 means no judgment in the document said false, 1 means one did, and
 2 means it refused before it could assemble a result and printed the refusal instead.
 
-The start record is one JSON object under the trial root, with absolute paths throughout:
+The start record is one JSON object under the trial root, with absolute paths throughout. The
+whole `store` block except the challenge nonce is copied from one participant's `store-identity`,
+the three `log*` fields among them: they say where that participant's write-ahead log is written,
+and the preflight sends them back as `doctor --expect-log`.
+
 
     {
       "source": "live-trial-start",
@@ -346,7 +350,11 @@ installation at all: a trial that finished stays gradable after the relay it ran
 or removed.
 
 The nonce is not written by the checker. During preparation one participant writes a challenge into
-the store and the rest read it back, which is what turns an agreeing store id and inode into proof.
+the store and the rest read it back, which is what turns an agreeing store id, device and inode,
+and log location into proof. The log location is the newest of those and the one a name count
+cannot stand in for: it says where each participant's write-ahead log is written, so one database
+reached at two pathnames - which a file bind mount produces without changing the name count - is
+refused rather than proved.
 
 ## What this does not answer
 
