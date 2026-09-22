@@ -342,29 +342,45 @@ flight per recipient, so a call stalled on one recipient no longer blocks a call
 What is still held back is a second send to the SAME recipient, and it is reported
 `thread_busy` without being sent rather than queued behind the first. An abandoned send goes
 on holding its own recipient until the transport's deadline, which is one RPC timeout for
-each stage the bridge bounds separately. A send is three requests — `thread/read`,
-`thread/resume`, `turn/start` — and the client re-establishes the connection in front of any
-of them whose reader has finished, so each can also cost `unix_connect` and `initialize`.
-Two limits worth naming beside that guarantee, because neither is visible from the sentence
-above it.
+each phase of each request. A send is three requests — `thread/read`, `thread/resume`,
+`turn/start` — and the client re-establishes the connection in front of any of them whose
+reader has finished, so each can also cost `unix_connect` and `initialize`.
 
-The isolation begins at the connection. `AppServer._connect_lock` serialises establishment,
-so a stalled `connect()` is still shared by every recipient, reads included, and only what
-happens after a connection exists is isolated per recipient.
+**One transfer is three phases, and each has its own bound.** `establish` covers the wait on
+`AppServer._connect_lock` and the handshake behind it, `transmit` covers the request frame
+draining into the socket, and `ack` covers the response coming back. They used to share one
+budget, which is how a slow establishment for one recipient spent the budget a different
+recipient needed for its own write and response — `_connect_lock` serialises establishment, so
+part of every connect is other recipients rebuilding. Queueing behind them now costs a caller
+its `establish` bound and no more, and the expiry names the phase. A caller refused there
+wrote no frame; on `thread/read` or `thread/resume` that is recorded as `withheld_pre_send`
+and stays retry-safe, instead of parking a delivery that demonstrably never left.
 
-And the deadline buys finiteness, not sufficiency. It is not an upper bound on a send that is
-still making progress and cannot be turned into one by choosing a larger multiple: the same
-timer also covers the time this send spends waiting on that shared connect lock while a
-DIFFERENT recipient rebuilds, and a queue of rebuilds ahead of it has no constant bound. So
-the deadline can fire on a healthy send, and what it leaves behind is final: `_guarded_send`
-writes an `outcome_unknown` receipt on cancellation and re-raises, and nothing replaces that
-row later. Recovering the event from there is reconciliation's job under I-71 in
+Two things this does NOT give, worth naming beside the guarantee.
+
+The connection is shared even though the scheduling is not. There is one `AppServer` and one
+socket. A `transmit` expiry retires that connection rather than reusing it, because a cancelled
+partial write corrupts the outbound stream every recipient shares, and retiring it fails the
+unresolved requests it was carrying — across recipients. Settled requests are kept, and the
+replacement the next `connect()` builds is untouched. Per-recipient scheduling isolation and a
+shared transport failure domain are two different guarantees.
+
+And the deadline still buys finiteness, not sufficiency. Every RPC wait inside a send is now
+bounded by its own phase, but the deadline also covers work no caller-side timer can preempt:
+the bridge ledger's transactions, and a `before_start` guard that does synchronous filesystem
+and SQLite work before its first `await` and so blocks the event loop the timer runs on.
+`guard_rpc_requests` bounds how many host calls such a guard may make, never how long it may
+hold the loop. So the deadline can still fire on a send whose phases were all within their
+bounds, and what it leaves behind is final: `_guarded_send` writes an `outcome_unknown`
+receipt on cancellation and re-raises, and nothing replaces that row later. Recovering the
+event from there is reconciliation's job under I-71 in
 [invariants.md](invariants.md), and what stops a second copy being sent is that `_settle`
 never reschedules `held_uncertain` — an unknown outcome waits to be reconciled instead of
 being retried. It is the delivery state machine that protects the event, not same-id replay:
 `derive_request_id` gives every attempt its own id, so a retry is a new id the retained
-receipt says nothing about. Read this bound as a backstop against a write that never drains,
-not as a promise about how long a working send may take.
+receipt says nothing about. Read this bound as a backstop against the local work no timer can
+interrupt, not as a promise about how long a working send may take — the waits it used to
+stand in for are bounded where they happen now.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision

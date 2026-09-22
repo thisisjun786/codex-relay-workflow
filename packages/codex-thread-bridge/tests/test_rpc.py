@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import tempfile
 from pathlib import Path
@@ -10,6 +11,8 @@ from codex_thread_bridge.effects import recording
 from codex_thread_bridge.rpc import (
     MAX_FRAME_BYTES,
     AppServer,
+    PhaseBounds,
+    PhaseTimeout,
     ResponseTooLarge,
     RpcError,
     TransportError,
@@ -192,4 +195,198 @@ async def test_an_item_read_is_an_observation_like_every_other_read(fake_server)
         assert effects.attempted == []
         assert effects.observed == ["initialize", "thread/items/list"]
     finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------- transfer phases (CRW-20)
+#
+# One request is three waits on three different things, and until these bounds existed they
+# shared one budget held by the caller. That is what let a slow connection establishment for one
+# recipient spend the budget a DIFFERENT recipient needed to finish its own send: connect()
+# serialises on _connect_lock, so part of every establishment is other callers' reconnections.
+
+
+async def test_establishment_is_bounded_on_its_own_and_names_the_phase(fake_server):
+    """A handshake that never completes costs the caller its establish bound and nothing else."""
+    fake, path = fake_server
+    fake.pause_after = "initialize"
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=0.2, transmit=5, ack=5))
+    try:
+        with recording() as effects:
+            with pytest.raises(PhaseTimeout) as caught:
+                await client.call("thread/read", {"threadId": "thread-1"})
+        assert caught.value.phase == "establish"
+        assert caught.value.method == "thread/read"
+        # The requested frame was never written, which is the whole claim the receipt makes.
+        assert effects.attempted == []
+        assert "no thread/read frame was sent" in str(caught.value)
+    finally:
+        fake.release.set()
+        await client.close()
+
+
+async def test_a_stalled_establishment_does_not_spend_another_call_s_send_budget(fake_server):
+    """The residue CRW-20 records, as a test.
+
+    A is inside connect() holding _connect_lock. B is a different recipient's call on the same
+    client - the relay builds exactly one AppServer - so B queues behind A's handshake. Before
+    the phases were bounded that wait was charged to B's single budget, and B could arrive at
+    turn/start with nothing left. Now it costs B its establish bound, B provably writes nothing,
+    and the transport is still usable the moment the stall clears.
+    """
+    fake, path = fake_server
+    fake.pause_after = "initialize"
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=0.2, transmit=5, ack=5))
+    try:
+        stalled = asyncio.create_task(client.call("thread/goal/get", {"threadId": "thread-1"}))
+        await asyncio.wait_for(fake.paused.wait(), 5)
+
+        started = asyncio.get_running_loop().time()
+        with recording() as effects:
+            with pytest.raises(PhaseTimeout) as caught:
+                await client.call("thread/read", {"threadId": "thread-1"})
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert caught.value.phase == "establish"
+        assert effects.attempted == []
+        # Causal, not a stopwatch: B never started a handshake of its own. The only initialize
+        # on the wire is A's, so every second B waited was spent queued behind A on
+        # _connect_lock - which is precisely the wait that used to come out of B's send budget.
+        assert fake.count("initialize") == 1
+        # Bounded by the phase it was actually waiting in, not by the three phases of three
+        # requests it would have been charged under one fused budget.
+        assert elapsed < 3 * PhaseBounds(0.2, 5, 5).per_request
+
+        with pytest.raises(PhaseTimeout):
+            await stalled
+    finally:
+        fake.release.set()
+        await client.close()
+
+    # And the stall was not terminal: a fresh client on the same socket completes normally.
+    recovered = AppServer(path, timeout=5)
+    try:
+        assert await recovered.call("thread/goal/get", {"threadId": "thread-1"}) == {"goal": None}
+    finally:
+        await recovered.close()
+
+
+async def test_the_acknowledgement_bound_keeps_its_do_not_resend_wording(fake_server):
+    """The response wait was always bounded. It is now attributable as well, and says the same."""
+    fake, path = fake_server
+    one_thread(fake)
+    fake.pause_after = "thread/read"
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=5, transmit=5, ack=0.2))
+    try:
+        with pytest.raises(TransportError, match="do not resend") as caught:
+            await client.call("thread/read", {"threadId": "thread-1"})
+        assert isinstance(caught.value, PhaseTimeout)
+        assert caught.value.phase == "ack"
+    finally:
+        fake.release.set()
+        await client.close()
+
+
+async def test_a_write_that_never_drains_is_bounded_and_retires_its_connection(fake_server):
+    """The one phase that had no bound at all.
+
+    websockets only yields inside send() when the write buffer is full, and its own guidance is
+    that a cancelled send must not reuse the connection - a partial frame corrupts the stream
+    every recipient shares. So the bound retires the socket rather than writing the next request
+    into it.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=5, transmit=0.2, ack=5))
+    try:
+        await client.connect()
+        live = client._ws
+
+        class Blocked:
+            """The live connection, with a write that never drains."""
+
+            def __init__(self, inner):
+                self._inner = inner
+                self.closed = False
+
+            async def send(self, _payload):
+                await asyncio.Event().wait()
+
+            async def close(self):
+                self.closed = True
+                await self._inner.close()
+
+            def __aiter__(self):
+                return self._inner.__aiter__()
+
+        blocked = Blocked(live)
+        client._ws = blocked
+
+        with pytest.raises(PhaseTimeout) as caught:
+            await client.call("thread/read", {"threadId": "thread-1"})
+
+        assert caught.value.phase == "transmit"
+        assert "do not resend" in str(caught.value)
+        assert blocked.closed, "a cancelled partial write left the shared socket in use"
+        assert client._ws is None, "the retired connection is still the current one"
+    finally:
+        await client.close()
+
+
+async def test_retiring_a_connection_spares_the_one_that_replaced_it(fake_server):
+    """Retirement is by identity, because the attributes it clears are rebuilt behind its back.
+
+    connect() can build a replacement while a retirement is suspended in close(). A retirement
+    that cleared the attributes unconditionally would erase that replacement and leave every
+    later request writing to a socket nobody reads.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5)
+    try:
+        await client.connect()
+        stale_ws, stale_reader = client._ws, client._reader
+
+        # Force a rebuild, exactly as a dropped reader does in production.
+        stale_reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stale_reader
+        await client.connect()
+        live_ws, live_reader = client._ws, client._reader
+        assert live_ws is not stale_ws
+
+        await client._retire(stale_ws, stale_reader)
+
+        assert client._ws is live_ws, "a stale retirement erased the live connection"
+        assert client._reader is live_reader
+        assert await client.call("thread/goal/get", {"threadId": "thread-1"}) == {"goal": None}
+    finally:
+        await client.close()
+
+
+async def test_a_retired_reader_fails_only_the_requests_it_was_carrying(fake_server):
+    """_pending outlives any one connection, so its finaliser has to know which rows are its own.
+
+    Without the connection tag the unwinding reader fails every outstanding entry, including the
+    initialize the replacement has just registered - the requests survive the pointer fix and die
+    to this one instead.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5)
+    try:
+        await client.connect()
+        reader, carried_by = client._reader, client._ws
+        replacement = object()
+
+        loop = asyncio.get_running_loop()
+        mine, theirs = loop.create_future(), loop.create_future()
+        client._pending[9001] = ("thread/read", mine, carried_by)
+        client._pending[9002] = ("initialize", theirs, replacement)
+
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
+
+        assert mine.done() and isinstance(mine.exception(), TransportError)
+        assert not theirs.done(), "the replacement's request was failed by the old reader"
+    finally:
+        client._pending.clear()
         await client.close()
