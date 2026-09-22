@@ -92,6 +92,14 @@ IDENTITY_FIELDS = {
 SINGLE = ("intent", "bound", "relationship")
 LISTED = ("attempts", "claims", "conflicts", "resolutions")
 
+# Every numeric slot a fact may carry. A present value must be a positive integer, the rule
+# receipts._validate already applies to the generation on a receipt: bool IS an int in Python and
+# would compare equal to 0 or 1, and a float or a numeric string would read as a mismatch against
+# a generation it may actually name. A stamp this reader cannot weigh is reported rather than
+# compared, because a fact that decides a hold has to be a fact first. Absent is not malformed:
+# a relationship fact published before the field existed carries none.
+NUMBER_FIELDS = {"relationship": ("executionGeneration",)}
+
 
 def _moment(value):
     from datetime import datetime, timezone
@@ -142,6 +150,12 @@ def malformed(marker) -> str | None:
         for item in items:
             for field in IDENTITY_FIELDS.get(key, ()):
                 if field in item and not isinstance(item[field], str):
+                    return key + "." + field
+            for field in NUMBER_FIELDS.get(key, ()):
+                if field not in item:
+                    continue
+                value = item[field]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                     return key + "." + field
             # The adjudication list is READ to decide coverage, so validating the resolution and
             # not its nested list leaves the same silent failure one level down.
@@ -846,10 +860,13 @@ def dispatch_generation_state(db_path, relationship_id: str, dispatch_request_id
     Finding the row is not enough. generations keeps one row per generation, so a relationship that
     has moved on still has the older dispatch's row, and asking only whether one exists proves that
     SOME generation used this dispatch rather than the live one. lookup_receipt computes the head
-    over the relationship's current execution_generation, so a stale assignment registered that way
-    would release turns on the strength of work belonging to a later generation. Stale is therefore
-    a separate answer from absent, which is what the contract asks for: an old generation is one of
-    the states that has to be distinguished rather than folded into "not registered".
+    over the relationship's current execution_generation, so a stale assignment registered here
+    would name a generation the store has already moved past. The guard compares the generation the
+    published fact records against the live one, which catches an advance landing after the
+    registration; this refusal is what stops a dispatch that was ALREADY stale from publishing the
+    fact that comparison reads. Stale is therefore a separate answer from absent, which is what the
+    contract asks for: an old generation is one of the states that has to be distinguished rather
+    than folded into "not registered".
     """
     connection = read_only_connection(db_path)
     if connection is None:
@@ -1115,10 +1132,15 @@ def register_relationship(
     The generation check and the publication happen under ONE hold on the relay's write lock.
     Checked first and published afterwards, they were two operations with nothing held between
     them, and an advance committing in that interval returned success over a generation the store
-    had already moved past, leaving the marker naming it. Nothing corrects that later: guard reads
-    only the relationship id out of this fact, so the stale-versus-current distinction the
-    contract requires is drawn here or nowhere. Under the hold an advance either commits before
-    the read, which then reports stale and publishes nothing, or waits until the fact has landed.
+    had already moved past, leaving the marker naming it. Under the hold an advance either commits
+    before the read, which then reports stale and publishes nothing, or waits until the fact has
+    landed.
+
+    This refusal is the first of two checks rather than the only one: guard.lookup_receipt weighs
+    the generation this fact records against the store's current one, so a registration superseded
+    AFTER it landed cannot be answered by the live generation's receipts either. This one still
+    has to hold, because it is the only one taken under the write lock, and a registration refused
+    here publishes no fact for the guard to weigh at all.
 
     The fact records the generation it was registered under. A registration is a statement about
     one generation rather than about "now", and a reader that has both the fact and the store can

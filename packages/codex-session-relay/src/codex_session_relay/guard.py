@@ -2,8 +2,9 @@
 
 Three producers have to agree before a completion authorises parent verification, and none of them
 is a sentence and none is a turn boundary: the child declares a disposition for THIS turn, the relay
-holds a receipt naming this session, this turn and this assignment's relationship, and the host
-reports that the turn ended normally. last_assistant_message is deliberately never read.
+holds a receipt naming this session, this turn and this assignment's relationship, under the
+generation that assignment registered, and the host reports that the turn ended normally.
+last_assistant_message is deliberately never read.
 
 This module is the only one here that touches the relay database, and it touches it read-only,
 through a mode=ro URI. That is not a stylistic choice. Store.__init__ opens the file O_RDWR, runs the
@@ -50,6 +51,11 @@ SESSION_WINDOW_MINUTES = 60
 
 # The only three classifications a hold may ever be issued for.
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
+
+# The receipt evidence meaning the registration and the store disagree about which generation this
+# assignment is for. Named once because observe_state reads it back to answer with the recovery
+# instead of repeating an instruction the child cannot act on.
+GENERATION_MISMATCH = "registration_generation_mismatch"
 
 BLOCK = "block"
 RELEASE = "release"
@@ -162,7 +168,7 @@ def deliverable_state(payload, manifest_ref, roots):
         return DELIVERABLE_CHANGED, None, type(error).__name__ + ": " + str(error)
 
 
-def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
+def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_generation=None):
     """The reviewable receipt this turn produced, and whether it stands at the current head.
 
     The head is computed FIRST and the matching event is then fetched by its id. Selecting a row by
@@ -174,6 +180,16 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
     must be NAMED: the relationship the assignment published, the session, and the turn. A receipt
     from an earlier turn or another session can still stand at the head while the turn in front of
     us produced nothing.
+
+    execution_generation is the generation the assignment REGISTERED, read off the marker's
+    create-once relationship fact and never derived here. The head below is computed over the
+    relationship's CURRENT generation, so without it a registration that was legitimately current
+    when it landed is answered by whatever the live generation produced afterwards - and the three
+    identities do not catch that, because a correction generation opened against the same dispatch
+    turn admits that turn as its own anchor, so the later generation's receipt names this session
+    and this turn. Weighed inside the snapshot below, so the generation compared IS the one the
+    head was computed over. None means the fact carries no stamp, having been published before the
+    field existed, and an absent stamp is compared against nothing.
 
     stage deliberately admits staged. A child emits from inside its own turn, so the host reports
     that turn as inProgress and the event is stored staged; it is finalized only after the daemon
@@ -219,6 +235,34 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
             return dict(base, evidence="relationship_absent"), True
         if relationship["status"] != "active" or relationship["superseded_by"]:
             return dict(base, evidence="relationship_not_active"), True
+        if (
+            execution_generation is not None
+            and execution_generation != relationship["execution_generation"]
+        ):
+            # A registration is a statement about ONE generation, and this is not the generation
+            # the head below would be computed over. Answered BEFORE the head is computed, so the
+            # cause reported is the registration rather than whatever the live generation happens
+            # to hold: an advance carrying no reviewable revision of its own would otherwise read
+            # as no_reviewable_revision and send the child to emit a receipt that could not
+            # satisfy this assignment however many times it emitted one.
+            #
+            # A mismatch and not "superseded": a store restored or rebuilt under a surviving
+            # marker can name a generation EARLIER than the fact does, and calling that
+            # supersession would tell an operator the relationship moved on when it moved back.
+            #
+            # What this compares is the ORDINAL. It does not establish that the live generation
+            # was opened by THIS assignment's dispatch - a rebuilt store reusing an ordinal under
+            # another dispatch passes it - and that predicate belongs to registration, which
+            # refuses a stale or absent dispatch under the relay's write lock.
+            return dict(
+                base,
+                evidence=GENERATION_MISMATCH,
+                detail=(
+                    "the assignment registered generation " + str(execution_generation)
+                    + " and the relationship now stands on generation "
+                    + str(relationship["execution_generation"])
+                ),
+            ), True
         head = head_revision(connection, relationship_id, relationship["execution_generation"])
         if head.get("evidence") in AMBIGUOUS:
             # Not "no receipt". The lineage this generation declares does not identify a single
@@ -617,6 +661,22 @@ def observe_state(observation):
             "This workspace is managed but its relationship is not registered. Register it, or "
             "record a disposition explaining why it cannot be."
         )
+    if declaration == "receipt_missing" and (
+        (observation.get("receipt") or {}).get("evidence") == GENERATION_MISMATCH
+    ):
+        # The same omission, holding the same way; not the same instruction. The ordinary
+        # receipt_missing reason tells the child to emit the receipt, and here no receipt it
+        # emits can ever satisfy this assignment: relationship.json is create-once, so the
+        # assignment cannot be re-registered onto the live generation. A hold a child cannot act
+        # on is a hold it cannot clear, which is why this names the recovery instead.
+        return "receipt_missing", (
+            "This assignment's registration names a generation the relay has moved off: "
+            + str((observation.get("receipt") or {}).get("detail"))
+            + ". No receipt this session emits can satisfy it, because the registration fact is "
+            "create-once and cannot be republished onto the live generation, and a receipt "
+            "earned there belongs to work this assignment never registered. Recovery is a new "
+            "assignment, declared for a fresh dispatch request id."
+        )
     if declaration == "receipt_missing":
         return "receipt_missing", (
             "Readiness is declared but no receipt stands at the current head revision for this "
@@ -893,6 +953,7 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
                 relationship_id=registered.get("relationshipId"),
                 session_id=session_id,
                 turn_id=turn_id,
+                execution_generation=registered.get("executionGeneration"),
             )
             if not readable:
                 # Named apart from the store. A database we could not open and a deliverable we

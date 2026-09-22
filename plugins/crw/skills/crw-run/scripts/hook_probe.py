@@ -36,6 +36,11 @@ CONTRACT = Path(__file__).resolve().parent.parent / "references" / "hook-contrac
 RELEASING = ("in_progress", "blocked_needs_input", "interrupted", "failed")
 # The three omissions this contract detects. Everything else releases.
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
+# The receipt evidence meaning the registration and the store disagree about which generation the
+# assignment is for. Mirrors guard.GENERATION_MISMATCH: the runtime answers that omission with the
+# recovery rather than with an instruction to emit a receipt, and a probe that kept the generic
+# reason would report a contract this implementation does not keep.
+GENERATION_MISMATCH = "registration_generation_mismatch"
 TRACED_FUNCTIONS = ("observe_state", "decide", "derive_assignment_state",
                     "identity_contested", "classify_declaration", "_correlated",
                     "_correlation_problem", "_covered", "_ambiguity_resolved",
@@ -80,6 +85,10 @@ FACT_IDENTITIES = {"intent": ("dispatchRequestIdHash", "dbPath"),
                    "conflicts": ("attemptedSessionId", "attemptedTaskId"),
                    "resolutions": ("chosenTaskId", "chosenSessionId"),
                    "resolution": ("chosenTaskId", "chosenSessionId")}
+# Every numeric slot a fact may carry, held to the standard the relay's own reader holds it to
+# (intent.NUMBER_FIELDS), for the reason FACT_IDENTITIES is kept in step: a stamp the relay reports
+# as malformed and this reader compares anyway answers a different state for the same bytes.
+FACT_NUMBERS = {"relationship": ("executionGeneration",)}
 
 
 def _malformed_identities(key, record):
@@ -90,6 +99,21 @@ def _malformed_identities(key, record):
     """
     for field in FACT_IDENTITIES.get(key, ()):
         if field in record and not isinstance(record.get(field), str):
+            return key + "." + field
+    return None
+
+
+def _malformed_numbers(key, record):
+    """A numeric slot inside a fact that is present and not a positive integer, or None.
+
+    bool is an int in Python and would pass as 0 or 1, so it is excluded before the range test.
+    Absent is not malformed: a relationship fact published before the field existed carries none.
+    """
+    for field in FACT_NUMBERS.get(key, ()):
+        if field not in record:
+            continue
+        value = record.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return key + "." + field
     return None
 
@@ -151,7 +175,8 @@ def _malformed_selected(marker):
         for item in value or []:
             if not isinstance(item, dict):
                 return key + " entry"
-            nested = _malformed_nested_lists(key, item) or _malformed_identities(key, item)
+            nested = (_malformed_nested_lists(key, item) or _malformed_identities(key, item)
+                      or _malformed_numbers(key, item))
             if nested:
                 return nested
     for key in FACT_OBJECTS:
@@ -159,7 +184,8 @@ def _malformed_selected(marker):
         if value is not None and not isinstance(value, dict):
             return key
         record = value or {}
-        nested = _malformed_nested_lists(key, record) or _malformed_identities(key, record)
+        nested = (_malformed_nested_lists(key, record) or _malformed_identities(key, record)
+                  or _malformed_numbers(key, record))
         if nested:
             return nested
     return None
@@ -855,6 +881,20 @@ def observe_state(observation):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
             "record a disposition explaining why it cannot be.")
+    if declaration == "receipt_missing" and (
+        _mapping(observation.get("receipt")).get("evidence") == GENERATION_MISMATCH
+    ):
+        # The same omission, held the same way; not the same instruction. No receipt this session
+        # emits can satisfy an assignment whose registration names a generation the relay moved
+        # off, because relationship.json is create-once and cannot be republished onto the live
+        # generation. A hold a child cannot act on is a hold it cannot clear.
+        return "receipt_missing", (
+            "This assignment's registration names a generation the relay has moved off: "
+            + str(_mapping(observation.get("receipt")).get("detail"))
+            + ". No receipt this session emits can satisfy it, because the registration fact is "
+            "create-once and cannot be republished onto the live generation, and a receipt "
+            "earned there belongs to work this assignment never registered. Recovery is a new "
+            "assignment, declared for a fresh dispatch request id.")
     if declaration == "receipt_missing":
         return "receipt_missing", (
             "Readiness is declared but no receipt exists at the current head revision. "
@@ -912,6 +952,16 @@ def decide(observation):
             # Always recorded, both ways: the coordinator needs to distinguish "checked and not
             # contested" from "nobody looked".
             result["record"]["identityContested"] = identity_contested(marker)
+        receipt = _mapping(observation.get("receipt"))
+        if receipt.get("evidence"):
+            # Why there is no usable receipt, kept apart from the decision and recorded in BOTH
+            # places the runtime records it (guard.py). Mirroring only one of them would leave the
+            # other unverifiable, which is the same parity gap one level up.
+            result["receiptEvidence"] = receipt["evidence"]
+            result["record"]["receiptEvidence"] = receipt["evidence"]
+            if receipt.get("detail"):
+                result["receiptDetail"] = receipt["detail"]
+                result["record"]["receiptDetail"] = receipt["detail"]
         result["hook_output"] = (
             {"decision": "block", "reason": final_reason, "continue": True}
             if decision == "block" else {}
@@ -1056,11 +1106,16 @@ def command_decide(args):
     return 0
 
 
+# What _check_one actually compares when a fixture declares the key.
+COMPARED_KEYS = ("decision", "state", "observation", "reason",
+                 "receiptEvidence", "receiptDetail")
+
+
 def _check_one(label, observation, expected, report):
     actual = decide(observation or {})
     mismatch = {
         key: (expected[key], actual.get(key))
-        for key in ("decision", "state", "observation")
+        for key in COMPARED_KEYS
         if key in expected and expected[key] != actual.get(key)
     }
     for key, want in (expected.get("record") or {}).items():
@@ -1073,6 +1128,69 @@ def _check_one(label, observation, expected, report):
     report.append(f"ok   {label}: {actual['decision']} {actual['state']} "
                   f"(observed {actual['observation']})")
     return True
+
+
+# What the oracle is REQUIRED to compare. Declared apart from COMPARED_KEYS on purpose: a key
+# deleted from one side must not quietly disappear from the other, which is exactly how a
+# self-check shrinks its own denominator and passes for free.
+ORACLE_REQUIRED_KEYS = ("decision", "state", "observation", "reason",
+                        "receiptEvidence", "receiptDetail")
+
+
+def _oracle_self_check():
+    """Prove the oracle can FAIL before trusting the run in which it passes.
+
+    A fixture cannot test the reader that reads it: drop a key from COMPARED_KEYS and every
+    fixture declaring it reports matched forever, with nothing anywhere going red. So the two key
+    sets are compared exactly in both directions, and then each required key is given a
+    deliberately wrong expectation and must be rejected.
+
+    The expectation handed to _check_one equals the actual answer on every other compared key and
+    declares no record block, so the ONLY difference available is the corrupted key: a False here
+    cannot come from anything else, which is what makes it evidence that THAT key is compared.
+
+    Returns (failures, proven).
+    """
+    difference = set(COMPARED_KEYS) ^ set(ORACLE_REQUIRED_KEYS)
+    if difference:
+        return ["the compared and the required key sets differ on "
+                + ", ".join(sorted(difference))], 0
+    at = "2026-01-01T00:05:00+00:00"
+    observation = {
+        "stop_input": {"cwd": "/workspace/example", "session_id": "session-1111",
+                       "turn_id": "turn-0001", "stop_hook_active": False},
+        "marker": {
+            "intent": {"declaredAt": "2026-01-01T00:00:00+00:00",
+                       "dispatchRequestIdHash": _hashed("dispatch-0001"),
+                       "issue": "JUN-000", "workspace": "/workspace/example"},
+            "bound": {"at": at, "sessionId": "session-1111", "taskId": "task-1111"},
+            "claims": [{"at": at, "dispatchRequestId": "dispatch-0001",
+                        "factId": "claims/session-1111/claim.json",
+                        "firstTurnId": "turn-0001", "sessionId": "session-1111"}],
+            "relationship": {"at": at, "relationshipId": "rel-example",
+                             "executionGeneration": 1},
+        },
+        "disposition": {"outcome": "ready_for_review", "sessionId": "session-1111",
+                        "turnId": "turn-0001"},
+        "receipt": {"relationshipId": "rel-example", "sessionId": "session-1111",
+                    "turnId": "turn-0001", "atCurrentHead": False,
+                    "evidence": GENERATION_MISMATCH,
+                    "detail": "the assignment registered generation 1 and the relationship now"
+                              " stands on generation 2"},
+        "now": at,
+    }
+    actual = decide(observation)
+    failures = []
+    for key in ORACLE_REQUIRED_KEYS:
+        if key not in actual:
+            failures.append("the self-check observation never produces " + key
+                            + ", so nothing here proves it is compared")
+            continue
+        expected = {name: actual[name] for name in ORACLE_REQUIRED_KEYS if name in actual}
+        expected[key] = "a value this answer cannot have"
+        if _check_one("oracle self-check " + key, observation, expected, []):
+            failures.append(key + " is declared compared and a wrong value was accepted")
+    return failures, len(ORACLE_REQUIRED_KEYS)
 
 
 def packet_questions(contract_path=None):
@@ -1278,6 +1396,15 @@ def command_replay(args):
     failures = 0
     checked = 0
     skipped = []
+    # Before the tracer, deliberately: the self-check calls decide and observe_state itself, and
+    # counting those returns would inflate the fixture coverage reported below with sites no
+    # fixture reached.
+    oracle_failures, proven = _oracle_self_check()
+    for line in oracle_failures:
+        print("FAIL oracle self-check: " + line)
+    if oracle_failures:
+        return 1
+    print(f"ok   oracle self-check: {proven} compared keys proven load-bearing")
     sites = return_sites()
     reached = set()
     previous = sys.gettrace()

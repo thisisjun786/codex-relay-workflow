@@ -202,7 +202,8 @@ def _current(facts, disposition, selection, session, turn, now):
     if disposition and disposition.get("outcome") == guard.READY:
         receipt, readable = guard.lookup_receipt(
             str(selection.db_path), relationship_id=facts["relationship"]["relationshipId"],
-            session_id=session, turn_id=turn)
+            session_id=session, turn_id=turn,
+            execution_generation=facts["relationship"].get("executionGeneration"))
         if not readable:
             raise Unmeasured("receipt_unreadable")
     observation = {"stop_input": {"session_id": session, "turn_id": turn},
