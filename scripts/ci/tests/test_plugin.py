@@ -60,6 +60,13 @@ def payload(files):
     return {name: ("100644", data.encode()) for name, data in files.items()}
 
 
+def recorded(files):
+    """A fixture whose manifest names its own payload, the way a release manifest has to."""
+    declared = json.loads(files[plugin.MANIFEST])
+    version = plugin.payload_version(payload(files), declared["version"])
+    return dict(files, **{plugin.MANIFEST: json.dumps(dict(declared, version=version))})
+
+
 SKILL = "---\nname: crw-run\ndescription: d\n---\n"
 
 
@@ -76,12 +83,12 @@ INTERFACE = (
     '  default_prompt: "$%s do the thing"\n'
 )
 
-GOOD = {
+GOOD = recorded({
     ".codex-plugin/plugin.json": json.dumps(manifest()),
     "skills/crw-run/SKILL.md": SKILL,
     "skills/crw-run/agents/openai.yaml": INTERFACE % "crw-run",
     "LICENSE": "MIT",
-}
+})
 
 
 class ManifestTests(unittest.TestCase):
@@ -181,7 +188,9 @@ class ManifestTests(unittest.TestCase):
         good = manifest()
         good["interface"].update({"websiteURL": "https://example.invalid", "brandColor": "#D7010F",
                                   "logo": "./assets/logo.png"})
-        shipped = payload({**GOOD, "assets/logo.png": "png"})
+        files = recorded({**GOOD, plugin.MANIFEST: json.dumps(good), "assets/logo.png": "png"})
+        good = json.loads(files[plugin.MANIFEST])
+        shipped = payload(files)
         self.assertEqual(plugin.manifest_errors(good, "crw", "t", shipped), [])
         for field, value, expected in (("websiteURL", "http://insecure.invalid", "https URL"),
                                        ("brandColor", "red", "#RRGGBB"),
@@ -372,6 +381,57 @@ class DigestTests(unittest.TestCase):
         self.assertNotEqual(plugin.digest(left), plugin.digest(right))
 
 
+class PayloadVersionTests(unittest.TestCase):
+    """The version is the only payload identity an operator sees, so it has to be one."""
+
+    def version_of(self, files):
+        return json.loads(files[plugin.MANIFEST])["version"]
+
+    def test_one_changed_shipped_file_changes_the_version(self):
+        self.assertNotEqual(self.version_of(GOOD),
+                            self.version_of(recorded(dict(GOOD, LICENSE="MIT\n"))))
+
+    def test_an_unchanged_payload_derives_the_same_version(self):
+        self.assertEqual(recorded(GOOD), GOOD)
+
+    def test_the_recorded_suffix_is_elided_before_the_digest_is_taken(self):
+        # The manifest ships inside the payload it names. Without the elision, recording
+        # the digest would change the digest, and the value would never settle.
+        version = self.version_of(GOOD)
+        self.assertRegex(version, r"^0\.1\.0\+[0-9a-f]{12}$")
+        self.assertEqual(plugin.payload_version(payload(GOOD), version), version)
+        self.assertEqual(plugin.version_payload(payload(GOOD), version)[plugin.MANIFEST][1],
+                         json.dumps(manifest()).encode())
+
+    def test_a_suffix_recorded_for_other_bytes_is_refused_and_the_right_one_named(self):
+        stale = dict(json.loads(GOOD[plugin.MANIFEST]), version="0.1.0+000000000000")
+        files = dict(GOOD, **{plugin.MANIFEST: json.dumps(stale)})
+        errors = plugin.manifest_errors(stale, "crw", "t", payload(files))
+        self.assertTrue(any("does not name this payload" in e for e in errors), errors)
+        self.assertTrue(any(self.version_of(GOOD) in e for e in errors), errors)
+
+    def test_a_shipped_file_may_not_repeat_the_suffix(self):
+        # Two places holding the same derived value cannot both be updated to agree.
+        suffix = self.version_of(GOOD).partition("+")[2]
+        files = dict(GOOD, **{"skills/crw-run/references/built.md": "built from " + suffix})
+        errors = plugin.manifest_errors(json.loads(GOOD[plugin.MANIFEST]), "crw", "t",
+                                        payload(files))
+        self.assertTrue(any("repeats the payload suffix" in e for e in errors), errors)
+
+    def test_a_manifest_that_spells_its_version_twice_cannot_be_derived_from(self):
+        declared = json.loads(GOOD[plugin.MANIFEST])
+        declared["description"] = declared["version"]
+        files = dict(GOOD, **{plugin.MANIFEST: json.dumps(declared)})
+        errors = plugin.manifest_errors(declared, "crw", "t", payload(files))
+        self.assertTrue(any("elided" in e for e in errors), errors)
+
+    def test_a_version_without_a_suffix_is_refused(self):
+        plain = manifest()
+        files = dict(GOOD, **{plugin.MANIFEST: json.dumps(plain)})
+        errors = plugin.manifest_errors(plain, "crw", "t", payload(files))
+        self.assertTrue(any("does not name this payload" in e for e in errors), errors)
+
+
 class SyntheticRepositoryTests(unittest.TestCase):
     """The release payload must come from the revision, not from the working tree."""
 
@@ -396,8 +456,8 @@ class SyntheticRepositoryTests(unittest.TestCase):
                             "commit", "-q", "-m", "package"], check=True)
         return root
 
-    def run_in(self, root):
-        return subprocess.run([sys.executable, str(root / "scripts/ci/plugin.py")],
+    def run_in(self, root, *args):
+        return subprocess.run([sys.executable, str(root / "scripts/ci/plugin.py"), *args],
                               cwd=root, capture_output=True, text=True)
 
     def test_healthy_synthetic_package_passes(self):
@@ -505,6 +565,31 @@ class SyntheticRepositoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("semantic version", result.stderr)
 
+    def test_a_release_payload_must_declare_its_own_digest(self):
+        # One shipped file edited after the version was recorded. Both trees would install
+        # under one cache directory and `codex plugin list` would show one version.
+        files = dict(GOOD)
+        files["skills/crw-run/SKILL.md"] = SKILL + "\nAn extra paragraph.\n"
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_in(self.build(folder, files))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("does not name this payload", result.stderr)
+
+    def test_record_version_writes_the_derived_suffix_and_then_settles(self):
+        files = dict(GOOD, **{".codex-plugin/plugin.json": json.dumps(manifest())})
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder, files)
+            written = root / "plugins/crw/.codex-plugin/plugin.json"
+            first = self.run_in(root, "--record-version")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertRegex(json.loads(written.read_text())["version"],
+                             r"^0\.1\.0\+[0-9a-f]{12}$")
+            settled = written.read_text(encoding="utf-8")
+            again = self.run_in(root, "--record-version")
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("already recorded", again.stdout)
+            self.assertEqual(written.read_text(encoding="utf-8"), settled)
+
 
 class CommandTests(unittest.TestCase):
     def run_script(self, *args):
@@ -561,6 +646,16 @@ class CommandTests(unittest.TestCase):
             result = self.run_script("--payload", str(root))
             self.assertEqual(result.returncode, 1)
             self.assertIn("empty directory", result.stderr)
+
+    def test_installed_payload_must_declare_the_version_it_is_filed_under(self):
+        # The cache directory is the version, so this is how an operator asks which bytes
+        # the directory in front of them actually holds.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "crw"
+            self.write_payload(root, dict(GOOD, LICENSE="MIT, with a later edit"))
+            result = self.run_script("--payload", str(root))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("does not name this payload", result.stderr)
 
 
 if __name__ == "__main__":
