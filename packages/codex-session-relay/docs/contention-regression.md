@@ -35,7 +35,7 @@ reproduce.
 
 | # | Scenario | Reused evidence | New evidence | Clock |
 |---|---|---|---|---|
-| 1 | Registration aborted before and after it completes, a lost creation response, duplicate and late binding, wrong owner or generation | `test_intent.py` DerivedState, Binding, Registration; `test_guard.py` UnmanagedAndUnclaimed, Declarations; `test_registry.py` Generations; `test_assignment.py` DuplicateAssignment | `test_registration_contention.py` | injected |
+| 1 | Registration aborted before and after it completes, a lost creation response, duplicate and late binding, wrong owner or generation | `test_intent.py` DerivedState, Binding, Registration; `test_guard.py` UnmanagedAndUnclaimed, Declarations; `test_registry.py` Generations; `test_assignment.py` DuplicateAssignment | `test_registration_contention.py`; `test_registration_hold.py` | injected |
 | 2 | Daemon exit and restart, and connection loss, around emit, delivery and acknowledgement, recovered from the persisted waiting records | `test_ack_reconcile.py` RestartRecovery; `test_delivery.py` RestartPreservation; `test_enqueue_durability.py` EnqueueDurability; `test_daemon.py` ReconcileGate; `test_wp1_regressions.py` TransactionRecovery; `test_ack_reconcile.py` VerdictAtomicity | `test_failure_recovery.py` | mixed |
 | 3 | Guard timeout, guard error, and the block limit reached, with no infinite repetition and work processed after recovery | `test_guard.py` Bounds, FailureSeparation; `test_guard_property.py` FailureIsNotANormalState | `test_failure_recovery.py` | mixed |
 | 4 | needs_changes continuing into the next generation of the same accountable task, with duplicate, out-of-order and late events causing no additional execution | `test_anchor_binding.py` AnchorBinding; `test_supersession.py` PreSendSupersession; `test_receipts.py` GenerationAndScopeRefusals; `test_rereview_deadlock.py` ReReviewIsReachable | none; met by reuse | injected |
@@ -94,6 +94,7 @@ overstatement this map exists to avoid.
 | Module | Cases | Covers |
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
+| `test_registration_hold.py` | 3 | 1 |
 | `test_failure_recovery.py` | 14 | 2, 3 |
 | `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
