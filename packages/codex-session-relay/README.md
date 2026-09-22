@@ -688,5 +688,7 @@ These are recorded because behaviour depends on them.
 - `docs/linkage.md` — the three-level execution linkage and peer links. Relay-owned records,
   outside the frozen contract, with the transaction protocol they are written under.
 - `docs/invariants.md` — every invariant and the code that enforces it.
+- `docs/faults.md` — the operational fault ledger: one breakage, one record, one Linear issue,
+  closed only by reverification.
 - `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
   stuck delivery. Each section says whether the behaviour is implemented or planned.

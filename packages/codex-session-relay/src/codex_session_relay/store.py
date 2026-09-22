@@ -974,6 +974,146 @@ CREATE UNIQUE INDEX IF NOT EXISTS managed_start_one_pending_issue
     ON managed_start_requests (issue_key)
     WHERE state IN ('reserved', 'create_armed');
 
+-- Operational faults: the machinery failing to do its job, as opposed to a child failing at
+-- its task. One row per distinct BREAKAGE and never one per incident, which is what makes
+-- the difference between a record somebody reads and a Linear project nobody can.
+--
+-- Separate tables rather than a second subject_kind on sync_outbox. That outbox writes into
+-- a document whose reference is already known and makes every write a conditional
+-- replacement of an owned container; a fault's first write CREATES the thing it will later
+-- be addressed by, so it cannot borrow either property.
+CREATE TABLE IF NOT EXISTS fault_ledger (
+    fault_id         TEXT PRIMARY KEY,
+    product          TEXT NOT NULL,
+    fault_class      TEXT NOT NULL,
+    component        TEXT NOT NULL,
+    severity         TEXT NOT NULL,
+    signature        TEXT NOT NULL,
+    scope            TEXT NOT NULL,
+    scope_key        TEXT NOT NULL,
+    state            TEXT NOT NULL,
+    cycle            INTEGER NOT NULL DEFAULT 1,
+    occurrence_count INTEGER NOT NULL DEFAULT 0,
+    reopen_count     INTEGER NOT NULL DEFAULT 0,
+    detail           TEXT,
+    suppression      TEXT,
+    external_ref     TEXT,
+    first_seen_at    TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL,
+    cleared_at       TEXT,
+    published_at     TEXT,
+    resolved_at      TEXT,
+    updated_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fault_ledger_scope ON fault_ledger (scope_key, state);
+
+-- Append-only, one row per distinct occurrence. The unique key is what stops a sweep that
+-- reads the same stuck row on every tick from counting thousands of occurrences an hour and
+-- escalating a fault past every threshold on nothing.
+--
+-- evidence is a SNAPSHOT of what was observed, not a pointer to it. The rows a fault is read
+-- from are mutable - a poll row's error is overwritten on its next attempt, a failed
+-- synchronisation row changes state when it finally succeeds - so a pointer followed later
+-- can contradict the record it was filed as evidence for.
+--
+-- Order is by rowid. recorded_ts is this store's own clock and measures elapsed windows;
+-- observed_at belongs to whoever observed it and decides nothing.
+CREATE TABLE IF NOT EXISTS fault_occurrences (
+    occurrence_id   TEXT PRIMARY KEY,
+    fault_id        TEXT NOT NULL,
+    occurrence_key  TEXT NOT NULL,
+    severity        TEXT NOT NULL,
+    cleared         INTEGER NOT NULL DEFAULT 0,
+    detail          TEXT,
+    evidence        TEXT NOT NULL,
+    evidence_digest TEXT NOT NULL,
+    truncated       INTEGER NOT NULL DEFAULT 0,
+    observed_at     TEXT,
+    recorded_at     TEXT NOT NULL,
+    recorded_ts     REAL NOT NULL,
+    UNIQUE (fault_id, occurrence_key)
+);
+-- On the fault alone. Order is by rowid, which SQLite cannot be asked to index because the
+-- table is already stored in it.
+CREATE INDEX IF NOT EXISTS fault_occurrences_fault ON fault_occurrences (fault_id);
+
+-- Fixes and reverifications, append-only and per cycle. A fix alone resolves nothing; what
+-- resolves a fault is a reverification recorded AFTER the newest fix with no occurrence
+-- after it, and both comparisons are made on rowid.
+CREATE TABLE IF NOT EXISTS fault_remediations (
+    remediation_id TEXT PRIMARY KEY,
+    fault_id       TEXT NOT NULL,
+    cycle          INTEGER NOT NULL,
+    kind           TEXT NOT NULL,
+    ref            TEXT NOT NULL,
+    method         TEXT,
+    outcome        TEXT,
+    detail         TEXT,
+    recorded_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault_id);
+
+-- Where a scope's fault issues are filed. An unconfigured scope is not an error: the fault
+-- stays recorded and its publication waits, because filing into a guessed project is worse.
+CREATE TABLE IF NOT EXISTS fault_targets (
+    scope_key   TEXT PRIMARY KEY,
+    tracker_ref TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+-- The outbox. issued_at is the column this table exists for: once a create has been handed
+-- out, an expiring lease can never return the row to pending, because a create whose
+-- response was lost is indistinguishable from one that never happened and retrying it
+-- blindly is how one fault becomes two issues.
+CREATE TABLE IF NOT EXISTS fault_publications (
+    publication_id  TEXT PRIMARY KEY,
+    fault_id        TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    trigger_key     TEXT NOT NULL,
+    tracker_ref     TEXT,
+    external_ref    TEXT,
+    summary         TEXT NOT NULL,
+    identity_digest TEXT NOT NULL,
+    state           TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at REAL,
+    claim_token     TEXT,
+    lease_owner     TEXT,
+    lease_until     REAL,
+    issued_at       TEXT,
+    last_error      TEXT,
+    external_result TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    confirmed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS fault_publications_ready
+    ON fault_publications (state, next_attempt_at);
+
+-- One order for everything that happens to a fault. An occurrence lives in one table and a
+-- remediation in another, and SQLite rowids are per-table, so "was this reverification
+-- recorded after that fix" has no answer without a shared sequence. AUTOINCREMENT because a
+-- reused sequence number would silently reorder the history this decides resolution from.
+--
+-- kind is occurrence, cleared, fix or reverification. Cleared is kept apart from occurrence
+-- so that a clearing observation cannot be read as the recurrence that refuses a resolution.
+--
+-- recorded_ts is here and not only on the occurrence, because this table is the one that is
+-- never pruned. Counting a threshold from the evidence rows would mean an operator pruning
+-- old evidence could lower a count and change what the next observation decides.
+CREATE TABLE IF NOT EXISTS fault_timeline (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    fault_id    TEXT NOT NULL,
+    cycle       INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    ref_id      TEXT,
+    detail      TEXT,
+    recorded_at TEXT NOT NULL,
+    recorded_ts REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS fault_timeline_fault ON fault_timeline (fault_id, kind);
+
+
 
 """
 
