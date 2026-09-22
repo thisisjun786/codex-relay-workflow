@@ -69,17 +69,23 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
 
 1. The rows are disjoint and so are the claims. A supervisor message lives in its own table
    keyed by message id; the parent-child claim names `deliveries` by event id. Neither engine
-   can claim the other's row, and a supervisor message has no receipt, no acknowledgement and
-   no verdict.
-2. A report is staged only from a fact the store already holds as final - the obligation
-   derivation requires `stage = 'final'` and no suppression - so an upward report can never
-   precede the record it reports.
-3. The per-recipient hourly bound and the per-recipient transport lock are SHARED, on purpose.
-   They bound how often one task may be woken, and two queues feeding one task must not each
-   get their own budget. The consequence, said rather than implied: where one task is both a
-   parent and a supervisor, a report can wait behind parent-child traffic to that same task.
-4. Within one recipient the oldest staged message is claimed first, so two facts reach the
-   level above in the order they arose.
+   can claim the other's row. A supervisor message has a transport receipt like any send, and
+   it has no completion receipt, no acknowledgement and no verdict, which is the difference
+   that matters: nothing here is answered by the recipient's own record.
+2. An event-derived report is staged only from a fact the store already holds as final - that
+   derivation requires `stage = 'final'` and no suppression - so it cannot precede the record
+   it reports. An omission is the other path and has no event in this store at all: it comes
+   from a reporting observation the caller passes in, and what vouches for it is that reading.
+3. The per-recipient hourly bound is SHARED between the two queues on purpose. It bounds how
+   often one task may be woken, and two queues feeding one task must not each get their own
+   budget. The consequence, said rather than implied: where one task is both a parent and a
+   supervisor, a report can wait behind parent-child traffic to that same task. The transport
+   lock is shared in the same way within one adapter worker, which is where it lives; it is
+   not a process-wide or durable lock.
+4. Within one recipient the oldest CURRENTLY CLAIMABLE message is claimed first. That is
+   weaker than arrival order and deliberately so: an older message that is held or still
+   inside its backoff does not block the one behind it, because a permanently held report
+   would otherwise stop a project reporting anything at all.
 
 ### Durable staging
 
@@ -93,26 +99,45 @@ whether to produce one.
 
 ### The readback, and exactly what it establishes
 
-A delivered message is not a read one. The recipient answers from inside its own turn with
-`sha256(messageId|<its own turn id>)`. The delivered bytes carry the message id, because a
-recipient has to be able to quote it, and they cannot carry the turn id, because that turn does
-not exist until the message arrives. So an echo of every delivered field still cannot produce
-the proof - the property `ack.acknowledge` already rests on.
+A delivered message is not a read one. The message asks the recipient to answer from inside its
+own turn with `sha256(messageId|<its own turn id>)`. That is an INSTRUCTION and not an enforced
+property: the command receives a deterministic hash, nothing authenticates the caller, and
+nothing establishes that the named turn produced it. What the proof does rule out is an echo:
+the delivered bytes carry the message id, because a recipient has to be able to quote it, and
+they cannot carry the turn id, because that turn does not exist until the message arrives. That
+is the whole of what it rules out, and it is the property `ack.acknowledge` already rests on.
 
-A verified readback says three things. The bytes this send froze are in the recipient's own
-transcript, found by scanning it for the request id - evidence independent of our own receipt. A
-turn the host lists on the recipient's thread answered. And that turn did not begin before the
-send.
+A verified readback says exactly three things, in these words:
 
-It does not say who wrote the answer. This transport carries opaque text and no authenticated
-caller, and the turn a send opens is a turn the sender already knows the id of, so a readback
-from that turn rests on nothing the sender could not have produced alone. That is also the
-ORDINARY case, because the message is what wakes the supervisor - so which turn answered is
-recorded as `relay_opened` or `recipient_opened` rather than averaged into one word, and a
-reader can see how much was established instead of being told a number.
+- a bounded scan of the recipient's items - at most 200 of them - found THIS attempt's request
+  id. Not the frozen message, which is never compared; not necessarily in the turn that
+  answered, which is never correlated. What it is good for is that it does not come from our
+  own send receipt.
+- the host lists the named turn on the recipient's thread, that turn can be read, and it
+  carries a start time.
+- the named turn is not CERTAINLY earlier than the send. The turn this send opened skips that
+  comparison entirely, and for any other turn only a start that precedes the send by more than
+  the host's timestamp precision is refused.
 
-A readback that does not verify is still recorded. Hiding it would lose the fact that somebody
-answered; what it does not do is move the message to read.
+It does not say who wrote the answer, that the turn answered anything, or that the supervisor
+acted. The turn a send opens is one the sender already knows the id of, so a readback from that
+turn rests on nothing the sender could not have produced alone - and that is the ORDINARY case,
+because the message is what wakes the supervisor. So which turn answered is recorded as
+`relay_opened`, `recipient_opened` or `unknown` rather than averaged into one word, and a reader
+can see how much was established instead of being told a number. `unknown` is reachable: the
+origin is named only when the delivered attempt carries a turn id, and `inbox_only` carries
+none.
+
+There are five verification answers: `host_read`, `transcript_unconfirmed` for a real turn whose
+transcript scan did not confirm the message, `turn_not_found`, `turn_predates_send`, and
+`unverified_turn` where no host could be read at all.
+
+A readback that does not verify is written down, on the path that inserts or updates a row -
+the one taken when no settled `host_read` row exists yet. Hiding it would lose the fact that
+somebody answered; what it does not do is move the message to read. Once a settled row exists,
+a later readback is answered from it on a fast path BEFORE the proof is checked, so it is
+neither verified nor recorded, and a settled verdict cannot be replaced - the guard for that is
+the re-read inside the write transaction, not the check before it.
 
 ### The five stages
 
@@ -138,20 +163,33 @@ supervisor reads for itself, confirmed.
 # Freeze what is owed upward. Staging is not sending.
 codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
 codex-session-relay supervisor-stage --project <key> [--observation <file>]...
+codex-session-relay supervisor-stage --observation <file>
 
-# One attempt, through the same host rules a delivery obeys.
-codex-session-relay supervisor-send --message <id>
+# One attempt, through the same host rules a delivery obeys. --socket is global, so it comes
+# before the subcommand; after it argparse refuses.
+codex-session-relay --socket <path> supervisor-send --message <id>
 
-# The recipient confirming it read one, from inside its own turn.
-codex-session-relay supervisor-read --message <id> --turn <your turn id> --proof <proof>
+# The recipient answering. The message ASKS for a turn id of its own; nothing enforces that.
+codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> --proof <p>
 
 # What was staged, every attempt, and what came back.
 codex-session-relay supervisor-show --message <id>
 ```
 
-`supervisor-stage` and `supervisor-show` reach no host. `supervisor-send` resumes the
-supervisor's thread and `supervisor-read` checks the host's turn list and transcript, so both
-are host-required.
+`supervisor-stage` and `supervisor-show` reach no host. The other two are host-required and
+refuse without `--socket`, exiting 4 with usage JSON and writing nothing to the channel - the
+list of host-required commands is what `doctor` reports and enforces nothing, so the refusal
+is its own check. Supplying the option proves an argument was supplied, not that a host is
+reachable.
+
+Neither reaches the host unconditionally. `supervisor-send` returns `sent: false` without
+touching the adapter when the message is held, inside its backoff, or already sent, and only
+resumes the supervisor's thread past those. `supervisor-read` checks the host's turn list and
+the recipient's transcript only when the message has no settled readback; with one it answers
+from the stored row before the proof is checked and without using an adapter at all.
+
+`supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
+rather than ignoring the one it cannot use.
 
 ## What this does not do
 
@@ -159,6 +197,13 @@ Nothing here wakes anybody on a timer. There is no daemon pass behind these comm
 goes out inside the parent's own turn. An uncertain send is never retried automatically either,
 because there is no reconciler for this queue and a second send that lands is a second wake for
 one fact; it stays `held_uncertain`, which is not claimable, and says so.
+
+A send interrupted between its claim and its transport receipt is the same answer reached a
+different way. The claim commits first, so a process that stops existing in between leaves the
+row in `sending` with a lease nobody will settle. An expired lease moves it to
+`held_uncertain`, which authorises no resend, because nothing observed what that send did.
+`stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
+when `attempt()` is called for that message again.
 
 ## Scope of these claims
 

@@ -868,8 +868,8 @@ a supervisor agreeing, acting or confirming is not a fact the relay holds; and w
 reporting obligation is the Linear record the supervisor reads, confirmed, rather than a report
 having been written, sent or even read.
 
-Three commands make that readable rather than remembered. They are the whole surface; there is
-no daemon behind them and nothing wakes anybody.
+Three commands make that readable rather than remembered. None of them sends anything and none
+wakes anybody; four more below do the sending, and there is no daemon behind any of them.
 
 ```bash
 # Is this event news for the level above? A read: it sends, queues and records nothing.
@@ -906,30 +906,40 @@ ran, and whether the supervisor acted are three further facts, and no row here c
 them. Recording it is what makes the next reading of the same fact converge instead of waking
 the level above again, so record it when the report actually goes out.
 
-Four more actually send one. They are the channel CRW-215 added, and `supervisor-stage` records
-the report itself, so a run that stages does not also call `supervisor-report-recorded`.
+Four more are the channel CRW-215 added. Only `supervisor-send` attempts a transport, and it
+answers `sent: false` without touching the host when the message is held, inside its backoff
+or already sent. `supervisor-stage` records the report itself, so a run that stages does not
+also call `supervisor-report-recorded`.
 
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.
 codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
 codex-session-relay supervisor-stage --project <key> [--observation <file>]...
+codex-session-relay supervisor-stage --observation <file>
 
-# One attempt at one staged message, through the same host rules a delivery obeys.
-codex-session-relay supervisor-send --message <id>
+# One attempt at one staged message. --socket is global and goes before the subcommand;
+# without it the command exits 4 and writes nothing.
+codex-session-relay --socket <path> supervisor-send --message <id>
 
-# The recipient confirming it read one, from INSIDE its own turn.
-codex-session-relay supervisor-read --message <id> --turn <your turn id> --proof <proof>
+# The recipient answering. The message asks for a turn id of its own; nothing enforces it.
+codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> --proof <p>
 
 # What was staged, every attempt, and what came back.
 codex-session-relay supervisor-show --message <id>
 ```
 
 The proof is `sha256(messageId|<your own turn id>)`, which the delivered bytes cannot contain,
-so quoting the message back does not produce it. A verified readback says the bytes are in the
-recipient's transcript and that a real turn on its thread answered no earlier than the send. It
-does not say who wrote the answer, and it does not discharge anything: the obligation stands
+so quoting the message back does not produce it. That is the whole of what it rules out:
+nothing authenticates the caller and nothing establishes that the named turn produced it.
+
+A verified readback says a bounded scan of at most 200 of the recipient's items found that
+attempt's request id, and that the host lists the named turn on the recipient's thread, that
+the turn can be read, and that it carries a start time which is not CERTAINLY earlier than the
+send - a comparison the turn the send itself opened skips. It does not say the turn answered,
+who wrote the answer, or that anybody acted, and it discharges nothing: the obligation stands
 until Linear confirms. Nothing here is automatic - there is no daemon behind these commands, so
-a report goes out inside the parent's own turn.
+a report is expected to go out inside the parent's own turn, which is an instruction to the
+parent rather than something the relay enforces.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another

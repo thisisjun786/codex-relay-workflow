@@ -805,10 +805,21 @@ def cmd_supervisor_stage(services, args) -> dict:
     from .report import read as read_work_report
 
     if args.project:
+        if args.recipient:
+            raise SystemExit2(
+                "--recipient names the supervisor ONE message is addressed to, and --project"
+                " stages every standing obligation, each resolved through its own"
+                " relationship. Ignoring the one you typed is how a caller learns too late"
+                " that it was never checked", EXIT_USAGE)
         readings = [_observation_file(path) for path in args.observation or []]
         return services.supervisor_channel.stage_standing(
             args.project, observations=readings)
     if args.event:
+        if args.observation:
+            raise SystemExit2(
+                "--event and --observation are two different subjects: one obligation comes"
+                " from an event in this store and the other from a turn that left no event at"
+                " all. Name one", EXIT_USAGE)
         obligation = supervision.from_event(
             services.store, args.event, read_work_report(services.store, args.event))
         about = "event " + repr(args.event)
@@ -834,7 +845,11 @@ def cmd_supervisor_stage(services, args) -> dict:
 
 
 def cmd_supervisor_send(services, args) -> dict:
-    """One attempt at one staged message. Reaches the host; nothing here is automatic."""
+    """One attempt at one staged message. Nothing here is automatic.
+
+    It reaches the host only past its own guards: a message that is held, inside its backoff or
+    already sent answers sent: false without the adapter being touched.
+    """
     _require_host(services, "supervisor-send",
                   "a send observes the recipient's lifecycle and resumes its thread. Without"
                   " a host every read fails, which reads as an unmeasured recipient and would"
@@ -851,9 +866,15 @@ def cmd_supervisor_send(services, args) -> dict:
 
 
 def cmd_supervisor_read(services, args) -> dict:
-    """The recipient confirming it read one, from inside its own turn.
+    """The recipient answering a message it was sent.
 
-    The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain.
+    The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain,
+    so an echo cannot produce it. That is all it establishes: nothing authenticates the caller
+    and nothing shows the named turn produced the proof, so answering from inside your own turn
+    is an instruction rather than a property this checks.
+
+    A message that already has a verified readback answers from the stored row, before the
+    proof is checked and without reaching the host.
     """
     _require_host(services, "supervisor-read",
                   "a readback is checked against the host's own turn list and the recipient's"
@@ -3330,14 +3351,17 @@ def build_parser() -> argparse.ArgumentParser:
     send = subparsers.add_parser(
         "supervisor-send",
         help="one attempt at one staged message, through the same host rules a delivery"
-             " obeys. A busy recipient is never interrupted")
+             " obeys. A busy recipient is never interrupted, and a held, backed-off or"
+             " already-sent message answers sent: false without reaching the host")
     send.add_argument("--message", required=True)
     send.set_defaults(handler=cmd_supervisor_send)
 
     readback = subparsers.add_parser(
         "supervisor-read",
-        help="the recipient confirming it read one, from inside its own turn. The proof is"
-             " sha256(messageId|your own turn id), which the delivered bytes cannot contain")
+        help="the recipient answering a message. The proof is sha256(messageId|your own turn"
+             " id), which the delivered bytes cannot contain, so an echo cannot produce it;"
+             " nothing authenticates the caller, so answering from your own turn is an"
+             " instruction rather than a checked property")
     readback.add_argument("--message", required=True)
     readback.add_argument("--turn", required=True, help="your own turn id")
     readback.add_argument("--proof", required=True)

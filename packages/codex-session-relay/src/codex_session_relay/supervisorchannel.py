@@ -654,19 +654,6 @@ class SupervisorChannel:
                 hold = self.policy.cap_reason("send")
         at = self.clock.iso()
         with self.store.transaction() as db:
-            # Re-read FIRST, inside the write. The check above happens outside the lock and
-            # can be raced: two readbacks of one message both passed it, and whichever
-            # committed second replaced the first - so an unverified answer could overwrite a
-            # verified one and the message would drop back out of read. A verified readback is
-            # settled, whatever the second caller brought.
-            already = db.execute(
-                "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,)
-            ).fetchone()
-            if already is not None and already["verified"] == HOST_READ:
-                return {"schema": VERSION, "messageId": message_id, "recorded": False,
-                        "verified": already["verified"],
-                        "readTurnId": already["read_turn_id"],
-                        "detail": already["detail"], "readAt": already["read_at"]}
             db.execute(
                 "UPDATE supervisor_attempts SET state = ?, send_attempted = ?, retry_safe = ?,"
                 " turn_id = ?, record = ?, observed_at = ? WHERE request_id = ?",
@@ -774,11 +761,13 @@ class SupervisorChannel:
                 "a readback names the turn it was written in; without one there is nothing to"
                 " check against the host",
             )
-        existing = self.store.one(
-            "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
-        if existing is not None and existing["verified"] == HOST_READ:
+        existing = self._settled_readback(message_id)
+        if existing is not None:
             # Settled. A second reading of one message is the same fact, and answering it with
             # what stands is what makes an uncertain submission safe to settle by asking.
+            # This is a fast path and it returns BEFORE the proof is checked, so a later
+            # proof-valid answer is not recorded and a later mismatch is not refused. That is
+            # deliberate and it is why the row below says what it says.
             return {"schema": VERSION, "messageId": message_id, "recorded": False,
                     "verified": existing["verified"], "readTurnId": existing["read_turn_id"],
                     "detail": existing["detail"], "readAt": existing["read_at"]}
@@ -810,6 +799,23 @@ class SupervisorChannel:
                                    " inconclusive rather than absence"))))
         at = self.clock.iso()
         with self.store.transaction() as db:
+            # Re-read FIRST, inside the write, because the check above happens outside the
+            # lock and can be raced: two readbacks of one message both pass it, and whichever
+            # commits second replaces the first - so an unverified answer overwrites a
+            # verified one while the message row stays read, which is the two records
+            # disagreeing about the same fact. A verified readback is settled, whatever the
+            # second caller brought. BEGIN IMMEDIATE serialises the writers, so the loser of
+            # the race reads the winner's row here rather than its own stale absence.
+            settled = db.execute(
+                "SELECT * FROM supervisor_readbacks WHERE message_id = ? AND verified = ?",
+                (message_id, HOST_READ),
+            ).fetchone()
+            if settled is not None:
+                return {"schema": VERSION, "messageId": message_id, "recorded": False,
+                        "verified": settled["verified"],
+                        "readTurnId": settled["read_turn_id"],
+                        "detail": settled["detail"], "readAt": settled["read_at"],
+                        "raced": True}
             db.execute(
                 "INSERT INTO supervisor_readbacks (message_id, read_turn_id, proof, verified,"
                 " request_id, detail, read_at) VALUES (?,?,?,?,?,?,?)"
@@ -838,6 +844,20 @@ class SupervisorChannel:
                           " transcript and that a real turn on its thread answered with a value"
                           " these bytes do not contain. It does not say who wrote the answer:"
                           " this transport carries opaque text and no authenticated caller"}
+
+
+    def _settled_readback(self, message_id):
+        """The verified readback this message already has, or None.
+
+        Its own method so a case can make it answer nothing, which is exactly what a caller
+        that lost a race sees: it looked, found nothing, and by the time it writes somebody
+        else has settled the message. A sequential test cannot reach that state, and the guard
+        inside the write is what actually holds - this read is only an optimisation that saves
+        the host work when the answer is already settled.
+        """
+        return self.store.one(
+            "SELECT * FROM supervisor_readbacks WHERE message_id = ? AND verified = ?",
+            (message_id, HOST_READ))
 
     def _verify_read_turn(self, row, attempt, read_turn_id, adapter):
         """A readback has to come from a real turn that did not start before the send.

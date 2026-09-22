@@ -29,7 +29,7 @@ from codex_session_relay.registry import record_settings
 from codex_session_relay.store import Store
 from codex_session_relay.supervisorchannel import SupervisorChannel
 from codex_session_relay.transport import (
-    DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, QUEUED, WITHHELD_PRE_SEND,
+    DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, WITHHELD_PRE_SEND,
 )
 
 from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase, task_settings
@@ -668,6 +668,41 @@ class TheHostRequiredCommandsRefuseWithoutOne(ChannelTestCase):
         for name in ("supervisor-stage", "supervisor-show"):
             self.assertIn(name, cli.OFFLINE_COMMANDS)
 
+    def test_a_subject_that_cannot_be_used_is_refused_rather_than_ignored(self):
+        """Silently dropping an argument somebody typed is how a check goes unnoticed."""
+        from codex_session_relay import cli
+
+        services = self._Services(self.channel)
+        event = type("Args", (), {"event": "abc", "project": None, "observation": ["a.json"],
+                                  "recipient": None})()
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_supervisor_stage(services, event)
+        self.assertIn("--observation", str(caught.exception))
+
+        project = type("Args", (), {"event": None, "project": PROJECT, "observation": None,
+                                    "recipient": "01someone"})()
+        with self.assertRaises(cli.SystemExit2) as second:
+            cli.cmd_supervisor_stage(services, project)
+        self.assertIn("--recipient", str(second.exception))
+
+    def test_a_standalone_observation_is_a_subject_of_its_own(self):
+        from codex_session_relay import cli
+
+        parser = cli.build_parser()
+        args = parser.parse_args(["supervisor-stage", "--observation", "a.json"])
+        self.assertEqual(args.observation, ["a.json"])
+        self.assertIsNone(args.event)
+        self.assertIsNone(args.project)
+
+    def test_the_socket_is_global_and_belongs_before_the_subcommand(self):
+        from codex_session_relay import cli
+
+        parser = cli.build_parser()
+        args = parser.parse_args(["--socket", "/tmp/s", "supervisor-send", "--message", "m"])
+        self.assertEqual(args.socket, "/tmp/s")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["supervisor-send", "--message", "m", "--socket", "/tmp/s"])
+
     def test_project_staging_accepts_the_readings_only_it_can_see(self):
         """A turn that ended without reporting writes no row any query here can find."""
         from codex_session_relay import cli
@@ -678,3 +713,80 @@ class TheHostRequiredCommandsRefuseWithoutOne(ChannelTestCase):
              "--observation", "b.json"])
         self.assertEqual(args.project, PROJECT)
         self.assertEqual(args.observation, ["a.json", "b.json"])
+
+
+class TheReadbackRaceIsClosedInTheWrite(ChannelTestCase):
+    """The guard that matters is the one inside the transaction.
+
+    A sequential second call is answered by the precheck, so it passes whether or not the write
+    is guarded - which is how the first attempt at this fix shipped in the wrong method and a
+    green test said nothing. These cases make the precheck answer nothing, which is exactly what
+    a caller that lost the race sees, and then assert what the write did.
+    """
+
+    def raced(self, message_id, turn_id):
+        """read_back with the precheck blinded, so only the in-transaction guard can refuse."""
+        original = self.channel._settled_readback
+        self.channel._settled_readback = lambda _message_id: None
+        try:
+            return self.channel.read_back(
+                message_id, read_turn_id=turn_id,
+                proof=supervisor_read_proof(message_id, turn_id), adapter=self.adapter)
+        finally:
+            self.channel._settled_readback = original
+
+    def test_a_verified_readback_survives_a_racing_unverified_one(self):
+        _one, message_id, record = self.delivered()
+        self.assertEqual(self.read_back(message_id, record["turnId"])["verified"],
+                         channel_module.HOST_READ)
+
+        answer = self.raced(message_id, "turn-nobody-has")
+        self.assertFalse(answer["recorded"])
+        self.assertTrue(answer.get("raced"))
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+
+        stored = self.store.one(
+            "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
+        self.assertEqual(stored["verified"], channel_module.HOST_READ)
+        self.assertEqual(stored["read_turn_id"], record["turnId"])
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ,
+                         "the message row and the readback row say the same thing")
+        self.assertTrue(
+            envelope.stage_holds(self.channel.reach(message_id), envelope.RECEIVED))
+
+    def test_an_unsettled_row_is_still_updated_by_the_next_answer(self):
+        """The guard refuses a settled row, not every row: an unverified one is replaced."""
+        _one, message_id, record = self.delivered()
+        self.assertEqual(self.read_back(message_id, "turn-nobody-has")["verified"],
+                         channel_module.TURN_NOT_FOUND)
+        answer = self.raced(message_id, record["turnId"])
+        self.assertTrue(answer["recorded"])
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(
+            len(self.store.all("SELECT message_id FROM supervisor_readbacks")), 1)
+
+    def test_a_settled_message_answers_without_checking_the_proof_it_was_handed(self):
+        """The fast path returns before the proof is checked, and the row says so."""
+        _one, message_id, record = self.delivered()
+        self.read_back(message_id, record["turnId"])
+        answer = self.channel.read_back(
+            message_id, read_turn_id="turn-anything", proof="not-a-proof",
+            adapter=self.adapter)
+        self.assertFalse(answer["recorded"])
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(answer["readTurnId"], record["turnId"])
+
+
+class WhichTurnAnsweredCanBeUnknown(ChannelTestCase):
+    def test_a_delivered_attempt_with_no_turn_id_leaves_the_origin_unknown(self):
+        """inbox_only is a delivered state and carries no turn id, so unknown is reachable."""
+        _one, message_id, record = self.delivered()
+        self.store.db.execute(
+            "UPDATE supervisor_attempts SET state = ?, turn_id = NULL WHERE message_id = ?",
+            (INBOX_ONLY, message_id))
+        self.store.db.execute(
+            "UPDATE supervisor_messages SET state = ? WHERE message_id = ?",
+            (INBOX_ONLY, message_id))
+        self.store.db.commit()
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["turnOrigin"], channel_module.ORIGIN_UNKNOWN)

@@ -648,6 +648,14 @@ SUMMARY_SITES = (
      "true pins both conjuncts, and the case is about what SURVIVED: the stored readback is"
      " asserted host_read on the line above, so this reads the ladder derived from it rather"
      " than from the unverified answer that arrived second"),
+    ("test_supervisor_channel.py",
+     "test_a_verified_readback_survives_a_racing_unverified_one", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(self.channel.reach(message_id),"
+     " envelope.RECEIVED))",
+     "the same folding, in the case that reaches the in-transaction guard rather than the"
+     " precheck. The stored row is asserted host_read and the message state read on the two"
+     " lines above, so true here reads a ladder derived from the survivor; and the case fails"
+     " when the guard is mutated out, which is what says the assertion is load-bearing"),
     ("test_supervisor_envelope.py",
      "test_silence_is_never_agreement_and_a_state_needs_a_source", "stage_holds", False,
      "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",
