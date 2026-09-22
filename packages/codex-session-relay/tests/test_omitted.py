@@ -213,6 +213,27 @@ class Reporting(GuardTestCase):
     def test_marker_absent_is_unmanaged(self):
         self.assertEqual(self.read()["reportingState"], "unmanaged")
 
+    def test_an_unmanaged_reading_names_no_relationship_and_supervision_absorbs_it(self):
+        """CRW-213: the shape this function actually returns is what a consumer has to take.
+
+        The answer is produced before a relationship has been resolved, so the record carries no
+        relationshipId at all - only its selectors, turn included. A consumer that asked whose a
+        reading was before asking what it said therefore called this ordinary record unusable,
+        and every routine midpoint check warned about a reading that was perfectly well read.
+        Asserted here, against the real producer, because every fixture that hand-built a
+        reading supplied a relationshipId and so could not see it.
+        """
+        from codex_session_relay import supervision
+        from codex_session_relay.linkage import Linkage
+
+        reading = self.read()
+        self.assertEqual(reading["reportingState"], "unmanaged")
+        self.assertNotIn("relationshipId", reading)
+        self.assertEqual(reading["selectors"]["turn"], DISPATCH_TURN)
+        answer = supervision.standing_for(self.store, Linkage(self.store, self.clock), "CRW",
+                                          observations=[reading])
+        self.assertEqual((answer["standing"], answer["gaps"]), ([], []))
+
     def test_bad_stop_identity_is_not_an_omission(self):
         self.managed()
         self.evaluate()
