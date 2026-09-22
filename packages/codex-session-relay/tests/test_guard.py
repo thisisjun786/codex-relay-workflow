@@ -772,6 +772,39 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
+    def test_a_forged_intent_in_a_newer_assignment_does_not_take_the_turn(self):
+        """The shadowing class reached through the intent instead of through the claim.
+
+        The claim here agrees with the directory it sits in, so it passes the claim-to-directory
+        test - and the coordinator's own record in that directory names a different dispatch. The
+        candidate was therefore selected, failed correlation, released, and an older assignment
+        that was correlated, bound and registered kept an owed hold nobody looked for.
+
+        Only a READABLE contradiction excludes. An absent, unreadable or malformed intent says
+        nothing and leaves its candidate in the running, which is what keeps a corrupt current
+        assignment from being skipped - the failure the other direction of this rule produces.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "intent.json", {
+            "declaredAt": self.LATER_DECLARED, "issue": "REL-2",
+            "dispatchRequestIdHash": marker.assignment_id("a-foreign-dispatch"),
+            "workspace": str(self.workspace), "dbPath": str(self.store.path),
+        })
+        intent.publish_claim(
+            self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
+            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN,
+            at=self.LATER_CLAIMED,
+        )
+        intent.bind(self.markers, workspace=self.workspace, assignment=later,
+                    session_id=CHILD, task_id=CHILD, at=self.LATER_BOUND)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment,
+                         "a forged intent in a newer assignment took the turn")
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
     def test_a_claim_with_no_preimage_beside_unrelated_corruption_selects_nothing(self):
         """The precision the malformed-successor repair depends on.
 

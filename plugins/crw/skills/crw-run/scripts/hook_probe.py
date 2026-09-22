@@ -478,8 +478,20 @@ def _selecting_claim(marker, session_id, assignment):
         presented = claim.get("dispatchRequestId")
         if not _named(presented):
             continue
-        if _same_identity(_hashed(presented), assignment):
-            return claim
+        if not _same_identity(_hashed(presented), assignment):
+            continue
+        # Read through a record check: an intent that is not a record cannot be asked this, and
+        # asking it anyway ends the selection walk in the traceback the shape rules exist to
+        # prevent. Not a record is also not a contradiction, so the candidate stays.
+        intent_fact = marker.get("intent")
+        declared = intent_fact.get("dispatchRequestIdHash") if isinstance(intent_fact, dict) else None
+        if _named(declared) and not _same_identity(declared, assignment):
+            # The coordinator's own record says this directory belongs to another assignment, so a
+            # claim agreeing with the directory does not make it this session's. Only a READABLE
+            # contradiction excludes: an absent or unreadable intent says nothing and its candidate
+            # stays, which is what keeps a corrupt current assignment from being skipped.
+            continue
+        return claim
     return None
 
 
