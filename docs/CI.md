@@ -59,6 +59,14 @@ fields are checked against its https, colour and asset shapes, so those
 ingestion-shape mismatches are rejected here too. The working tree is checked with
 the same rules as the revision, because a local marketplace installs it.
 
+It also refuses a version two payloads could share. The manifest version carries the
+payload's digest as build metadata, `0.4.0+640ccf7eadf4`, and the check re-derives that
+suffix from the bytes and rejects a stale one, naming the value to record. The same rule
+applies to the release payload, the working tree and an installed cache directory, which is
+what lets `--payload <dir>` answer which bytes a cache holds rather than which name it sits
+under. `--record-version` writes the derived suffix into the working-tree manifest, so the
+recorded digest is never typed; see [plugin packaging](plugin-packaging.md#the-version-names-the-payload).
+
 `--json` prints the payload digest and the namespaced skill names derived from the
 revision, and `--payload <dir>` applies the same rules to an installed cache tree,
 so an installed package can be compared with the source it came from. Passing is
