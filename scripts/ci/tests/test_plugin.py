@@ -668,6 +668,10 @@ class CommandTests(unittest.TestCase):
             result = self.run_script("--payload", str(root))
             self.assertEqual(result.returncode, 1)
             self.assertIn("does not name this payload", result.stderr)
+            # Nothing writes to an installed cache, so the remedy offered has to be one that
+            # exists for it rather than a command that edits a working tree somewhere else.
+            self.assertNotIn("--record-version", result.stderr)
+            self.assertIn("install the package again", result.stderr)
 
 
 if __name__ == "__main__":

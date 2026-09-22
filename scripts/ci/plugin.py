@@ -31,6 +31,9 @@ MANIFEST = ".codex-plugin/plugin.json"
 # installer still copies it.
 ALWAYS = {".codex-plugin", "LICENSE"}
 REQUIRED_FILES = (MANIFEST, "LICENSE")
+# The label for a tree that was installed rather than authored. Nothing writes to one, so the
+# refusals it earns have to offer a remedy that exists for it.
+INSTALLED = "installed"
 LICENSE_ID = "MIT"
 IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 SEMVER = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
@@ -210,6 +213,14 @@ def version_errors(manifest, payload, label):
                 " one place that suffix belongs" for name in repeated]
     if version == expected:
         return []
+    if label == INSTALLED:
+        # An installed cache is a copy; naming --record-version here would send an operator to
+        # a working tree that is not the thing in front of them. What this reading establishes
+        # is that the directory does not hold the package its version names.
+        return [label + " manifest: version " + repr(version) + " does not name this payload,"
+                " which is " + repr(expected) + ". These bytes are not the ones published under"
+                " that version: install the package again, or treat this cache as changed since"
+                " it was installed"]
     return [label + " manifest: version " + repr(version) + " does not name this payload."
             " Record " + repr(expected) + "; `--record-version` writes it into the working"
             " tree manifest. The suffix is this payload's own digest, because two packages"
@@ -780,11 +791,11 @@ def report_payload(payload, manifest, found, extra):
 
 def check_installed(path):
     payload, errors = directory_payload(path)
-    manifest = read_manifest(payload, "installed")
+    manifest = read_manifest(payload, INSTALLED)
     # The installed directory is named by version, so only the packaged facts apply here.
-    errors += manifest_errors(manifest, None, "installed", payload)
-    errors += hygiene(payload, manifest, "installed")
-    skill_errors, found = skills(payload, manifest, "installed")
+    errors += manifest_errors(manifest, None, INSTALLED, payload)
+    errors += hygiene(payload, manifest, INSTALLED)
+    skill_errors, found = skills(payload, manifest, INSTALLED)
     return errors + skill_errors, report_payload(payload, manifest, found,
                                                  {"source": "payload", "path": str(path)})
 
