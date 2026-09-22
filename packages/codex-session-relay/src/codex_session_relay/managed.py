@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import marker
 from .criteria import finding_id
-from .settings import REQUIRED, TaskSettings
+from .settings import AUTHORIZED_APPROVAL_POLICY, REQUIRED, TaskSettings
 
 SCHEMA = "managed-start/1"
 BOOTSTRAP_VERSION = 1
@@ -68,10 +68,16 @@ def _settings(data, at):
     _object(data, REQUIRED, ("expectedPermissionProfile",), at=at)
     for field in ("model", "reasoningEffort"):
         _text(data[field], f"{at}.{field}", 500)
-    if data["approvalPolicy"] != "never":
+    if data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
         # This relay transport cannot service interactive approval or preserve it on
-        # resume. Refuse the unsupported path before creating any task.
-        raise ValueError(f"{at}.approvalPolicy must explicitly be never for this transport")
+        # resume. Refuse the unsupported path before creating any task. require_usable() below
+        # refuses the same value; this runs first so the message names the REQUEST field and
+        # nothing is created on the way to it. The literal is read from one definition rather
+        # than spelled a second time here, which is how the two could have drifted apart.
+        raise ValueError(
+            f"{at}.approvalPolicy must explicitly be {AUTHORIZED_APPROVAL_POLICY}"
+            " for this transport"
+        )
     _path(data["cwd"], f"{at}.cwd")
     roots = _strings(data["runtimeWorkspaceRoots"], f"{at}.runtimeWorkspaceRoots")
     for root in roots:
