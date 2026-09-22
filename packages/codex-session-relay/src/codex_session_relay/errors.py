@@ -64,8 +64,10 @@ class RefusalReason(str, Enum):
     # repair here, and a row refused for this reason reports an EMPTY missing list beside it.
     SETTINGS_MISTYPED = "settings_mistyped"
     UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
-    # Same string as the finding code the resume verification reports, so a receipt naming
-    # this refusal and a delivery journal recording it read alike.
+    # One code for one situation, on both sides of it: require_usable() raises this for a
+    # RECORD asking for a policy this transport cannot carry, and the resume verification
+    # reports the same string for a RESPONSE reporting one, so a receipt naming the refusal and
+    # a delivery journal recording it read alike.
     UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
     # Role policy. Separate from the settings group above because these are questions about the
