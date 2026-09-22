@@ -1135,6 +1135,16 @@ class FaultLedger:
             if problems:
                 raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH, "; ".join(problems))
             reference = external_ref or row["external_ref"]
+            if row["kind"] == OPEN_RECORD and not reference:
+                # Confirming a create without the identifier it created leaves the ledger
+                # owning no issue, and every later comment then waits forever for a reference
+                # that will never arrive. The write landed; what is missing is the caller
+                # saying WHAT it landed as.
+                raise FaultRefused(
+                    RefusalReason.FAULT_READBACK_MISMATCH,
+                    "a confirmed create must name the issue it created, or every later"
+                    " comment on this fault is queued against nothing",
+                )
             db.execute(
                 "UPDATE fault_publications SET state = ?, external_ref = ?, confirmed_at = ?,"
                 "  claim_token = NULL, lease_owner = NULL, lease_until = NULL,"

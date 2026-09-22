@@ -598,6 +598,105 @@ class NoSubcommandShadowsAGlobalOption(unittest.TestCase):
         self.assertGreater(checked, 40, f"only {checked} subcommands were checked")
 
 
+class ReviewFindings(RelayTestCase):
+    """Each of these is a defect an independent review found. Each keeps its own test."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+
+    def register_scope(self, project="CRW"):
+        """A real registered relationship, placed in a project, as the registry writes it."""
+        self.register()
+        relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO relationship_scope (relationship_id, project_key,"
+                "  recorded_at) VALUES (?,?,?)", (relationship, project, self.clock.iso()))
+        return relationship
+
+    def stall(self, event_id, *, relationship, recipient="01parent-task"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event_id, relationship, "completion_event", recipient, recipient, "queued", 1,
+                 "channel_closed", self.clock.iso(), self.clock.iso()),
+            )
+
+    def test_a_fault_is_filed_in_the_project_its_relationship_belongs_to(self):
+        """A daemon sweeps a store holding several projects and passes no scope of its own."""
+        relationship = self.register_scope(project="CRW")
+        self.stall("event-a", relationship=relationship)
+        batch = faultsweep.sweep(self.store)
+        self.assertEqual("CRW", batch["observations"][0]["scope"]["projectKey"])
+        faultsweep.record_all(self.ledger, batch)
+        row = self.store.all("SELECT scope_key FROM fault_ledger")[0]
+        self.assertEqual("crw:CRW", row["scope_key"])
+
+    def test_a_source_that_filled_its_page_clears_nothing(self):
+        """A truncated read establishes nothing about absence, so it may not withdraw a fault."""
+        relationship = self.register_scope()
+        for index in range(faultsweep.SWEEP_LIMIT):
+            self.stall(f"event-{index}", relationship=relationship,
+                       recipient=f"task-{index}")
+        first = faultsweep.sweep(self.store)
+        self.assertNotIn("delivery_stalled", first["completeSources"])
+        faultsweep.record_all(self.ledger, first)
+        self.stall("event-extra", relationship=relationship,
+                   recipient="task-extra")
+        second = faultsweep.sweep(self.store)
+        self.assertEqual([], second["clears"])
+        self.assertEqual(
+            0, self.store.one("SELECT COUNT(*) AS n FROM fault_ledger WHERE state = ?",
+                              (faults.WITHDRAWN,))["n"])
+
+    def test_a_create_cannot_be_confirmed_without_naming_the_issue_it_created(self):
+        """Otherwise the ledger owns no issue and every later comment waits forever."""
+        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.record(omission("a"))
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        operation = self.ledger.operation(job, claim_token=claim["claimToken"])
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.complete(job, claim_token=claim["claimToken"],
+                                 readback=operation["block"])
+        self.assertEqual("fault_readback_mismatch", refusal.exception.reason.value)
+
+    def test_an_old_poll_of_another_turn_does_not_make_a_healthy_anchor_look_stalled(self):
+        relationship = self.register_scope()
+        with self.store.transaction() as db:
+            db.execute(
+                "DELETE FROM poll_observations")
+            db.execute(
+                "INSERT OR REPLACE INTO generations (relationship_id, execution_generation,"
+                "  dispatch_request_id, anchor_state, dispatch_turn_id, opened_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (relationship, 9, "req-fault-1", "bound", "turn-current",
+                 self.clock.iso()))
+            db.execute(
+                "INSERT INTO poll_observations (relationship_id, execution_generation,"
+                "  turn_id, last_status, last_polled_at, last_attempt_at, last_error)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (relationship, 9, "turn-old", "failed", None, self.clock.iso(), "boom"))
+            db.execute(
+                "INSERT INTO poll_observations (relationship_id, execution_generation,"
+                "  turn_id, last_status, last_polled_at, last_attempt_at, last_error)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (relationship, 9, "turn-current", "inProgress", self.clock.iso(),
+                 self.clock.iso(), None))
+        # The registry's own generation 1 has never been polled at all and is correctly
+        # derived; what must NOT appear is generation 9, whose current anchor polls fine and
+        # whose only failure belongs to a turn the scheduler has moved on from.
+        stalled = faultsweep.observation_faults(self.store, product=PRODUCT, scope={})
+        self.assertEqual([], [entry for entry in stalled
+                              if entry["signature"]["generation"] == 9])
+        self.assertTrue(stalled, "the never-polled anchor is still derived")
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -300,4 +300,3 @@ Status: implemented in this package, with the suite as the proof. Detection and 
 the daemon tick; the Linear write is performed by a credential holder outside this package.
 Nothing here is evidence about an installed runtime, a live service, or anything that has
 actually been written to Linear.
-

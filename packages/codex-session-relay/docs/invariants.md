@@ -357,4 +357,3 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-211 | Pruning evidence cannot change what the next observation decides: thresholds are counted from the timeline, which is never pruned | `FaultLedger._suppression` over `fault_timeline`; `prune` journals what it removed | implemented |
 | I-212 | The fault path reaches no network. The relay records what must be written; a credential holder writes it | asserted from the source in `tests/test_faults.py` | implemented |
 | I-213 | The sweep is bounded per source, and the tick counts only newly recorded occurrences, so a steady-state failure does not hold the loop at its fastest cadence | `faultsweep.SWEEP_LIMIT`; `RelayDaemon._sweep_faults` folding into `TickReport.quiet` | implemented |
-

@@ -44,6 +44,34 @@ def _named(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def scope_of(store, relationship_id, base=None, cache=None) -> dict:
+    """Where a fault about this relationship is filed, read from the relationship's own scope.
+
+    Derived per row rather than taken from one scope the caller passed in. A daemon sweeps a
+    store holding several projects, and a single scope key made every automatic fault file
+    under the bare product - so a target configured for crw:CRW matched none of them and the
+    publications stayed permanently ineligible. That is the whole automation failing quietly.
+    """
+    answer = dict(base or {})
+    if not _named(relationship_id):
+        return answer
+    if cache is not None and relationship_id in cache:
+        return {**answer, **cache[relationship_id]}
+    row = store.one(
+        "SELECT r.issue_key, s.project_key FROM relationships r"
+        "  LEFT JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
+        " WHERE r.relationship_id = ?", (relationship_id,))
+    found = {}
+    if row is not None:
+        if row["project_key"]:
+            found["projectKey"] = row["project_key"]
+        if row["issue_key"]:
+            found["issueKey"] = row["issue_key"]
+    if cache is not None:
+        cache[relationship_id] = found
+    return {**answer, **found}
+
+
 def _evidence(kind, ref, observed) -> dict:
     """Evidence as a SNAPSHOT. The rows below are all overwritten in place by their owners."""
     return {"kind": kind, "ref": ref, "observed": observed}
@@ -75,6 +103,7 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None) ->
         (*SETTLED_DELIVERY, limit),
     )
     observations = []
+    cache = {}
     for row in rows:
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
         signature = {"recipient": row["recipient_task_id"], "cause": row["hold_reason"],
@@ -84,7 +113,7 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None) ->
             severity=faults.BROKEN if capped else faults.DEGRADED,
             signature=signature,
             occurrence_key=f"delivery:{row['last_request'] or row['event_id']}",
-            scope=scope,
+            scope=scope_of(store, row["relationship_id"], scope, cache),
             detail=f"a delivery to {row['recipient_task_id']} is held: {row['hold_reason']}",
             evidence=[_evidence("row", f"deliveries:{row['event_id']}", {
                 "state": row["state"], "holdReason": row["hold_reason"],
@@ -106,11 +135,13 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
         "  FROM sync_outbox WHERE state = ? ORDER BY sync_id LIMIT ?",
         (faults.FAILED, limit),
     )
+    cache = {}
     return [faults.observation(
         product=product, fault_class="record_sync_failed", severity=faults.BROKEN,
         signature={"target": row["target"], "targetRef": row["target_ref"]},
         occurrence_key=f"sync:{row['sync_id']}:{row['attempts']}",
-        scope={**dict(scope or {}), "issueKey": row["issue_key"]},
+        scope={**scope_of(store, row["relationship_id"], scope, cache),
+               "issueKey": row["issue_key"]},
         detail=f"a {row['target']} write exhausted its attempts",
         evidence=[_evidence("row", f"sync_outbox:{row['sync_id']}", {
             "attempts": row["attempts"], "lastError": row["last_error"],
@@ -141,6 +172,9 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
         "  LEFT JOIN poll_observations p"
         "    ON p.relationship_id = g.relationship_id"
         "   AND p.execution_generation = g.execution_generation"
+        # This generation's own anchor, not every poll ever recorded under it: an old failed
+        # turn would otherwise report a healthy anchor as stalled forever.
+        "   AND p.turn_id = g.dispatch_turn_id"
         " WHERE g.anchor_state = 'bound' AND g.dispatch_turn_id IS NOT NULL"
         "   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
         "                    WHERE s.relationship_id = g.relationship_id"
@@ -150,6 +184,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
         (limit,),
     )
     observations = []
+    cache = {}
     for row in rows:
         turn = row["turn_id"] or row["dispatch_turn_id"]
         never = row["last_polled_at"] is None
@@ -160,7 +195,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
                        "generation": row["execution_generation"]},
             occurrence_key=(f"poll:{row['relationship_id']}:{row['execution_generation']}"
                             f":{turn}:{row['last_attempt_at']}"),
-            scope=scope,
+            scope=scope_of(store, row["relationship_id"], scope, cache),
             detail=("this anchor has never been successfully polled" if never else
                     "the most recent poll of this anchor failed"),
             evidence=[_evidence("row", f"poll_observations:{row['relationship_id']}", {
@@ -172,7 +207,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
     return observations
 
 
-def reading_faults(readings, *, product, scope) -> list:
+def reading_faults(readings, *, product, scope, store=None) -> list:
     """What CRW-180's reporting readings owe, including the ones that clear.
 
     Only a reading that says REPORTED clears an omission. unmeasured does not: a failed
@@ -180,6 +215,7 @@ def reading_faults(readings, *, product, scope) -> list:
     on the strength of a file nobody could read.
     """
     observations = []
+    cache = {}
     for reading in readings or ():
         if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
             continue
@@ -190,11 +226,12 @@ def reading_faults(readings, *, product, scope) -> list:
         if not (_named(relationship) and _named(turn)):
             continue
         signature = {"relationship": relationship, "turn": turn}
+        placed = scope_of(store, relationship, scope, cache) if store is not None else scope
         if state == UNREPORTED:
             observations.append(faults.observation(
                 product=product, fault_class="report_omitted", severity=faults.BROKEN,
                 signature=signature, occurrence_key=f"observation:{relationship}:{turn}",
-                scope=scope,
+                scope=placed,
                 detail="an admitted turn settled without a report, so what it owed is owed",
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
                     "reportingState": state, "reason": reading.get("reason"),
@@ -206,7 +243,7 @@ def reading_faults(readings, *, product, scope) -> list:
                 product=product, fault_class="report_omitted", severity=faults.BROKEN,
                 signature=signature,
                 occurrence_key=f"observation:{relationship}:{turn}:reported",
-                scope=scope, cleared=True,
+                scope=placed, cleared=True,
                 detail="a later reading of this turn found its report",
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {"reportingState": state})],
             ))
@@ -215,7 +252,7 @@ def reading_faults(readings, *, product, scope) -> list:
                 product=product, fault_class="observation_unmeasured", severity=faults.NOTICE,
                 signature={"relationship": relationship},
                 occurrence_key=f"unmeasured:{relationship}:{turn}",
-                scope=scope,
+                scope=placed,
                 detail="nothing was established about whether a report was owed here",
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
                     "reportingState": state, "reason": reading.get("reason")})],
@@ -225,35 +262,53 @@ def reading_faults(readings, *, product, scope) -> list:
 
 def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
           policy=None) -> dict:
-    """Every fault this store currently shows, plus the clears its own absence establishes."""
+    """Every fault this store currently shows, plus the clears its own absence establishes.
+
+    A source that filled its page is NOT complete, and an incomplete read establishes nothing
+    about absence: clearing from it would withdraw a still-broken fault that happened to sort
+    past the bound. Only the classes whose source was read to the end can clear.
+    """
     scope = dict(scope or {})
-    derived = (delivery_faults(store, product=product, scope=scope, limit=limit, policy=policy)
-               + sync_faults(store, product=product, scope=scope, limit=limit)
-               + observation_faults(store, product=product, scope=scope, limit=limit))
-    observations = derived + reading_faults(readings, product=product, scope=scope)
+    by_class = {
+        "delivery_stalled": delivery_faults(store, product=product, scope=scope, limit=limit,
+                                            policy=policy),
+        "record_sync_failed": sync_faults(store, product=product, scope=scope, limit=limit),
+        "observation_stalled": observation_faults(store, product=product, scope=scope,
+                                                  limit=limit),
+    }
+    complete = tuple(name for name, rows in by_class.items() if len(rows) < limit)
+    derived = [entry for rows in by_class.values() for entry in rows]
+    observations = derived + reading_faults(readings, product=product, scope=scope,
+                                            store=store)
     return {
         "observations": observations,
-        "clears": recovered(store, derived, product=product, scope=scope, limit=limit),
-        "limits": f"each source is read at most {limit} rows. A class this sweep does not"
-                  f" derive is never cleared by its absence here",
+        "clears": recovered(store, derived, product=product, scope=scope, limit=limit,
+                            complete=complete),
+        "completeSources": list(complete),
+        "limits": f"each source is read at most {limit} rows. A source that filled its page"
+                  f" cannot clear anything, and a class this sweep does not derive is never"
+                  f" cleared by its absence here",
     }
 
 
-def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT) -> list:
-    """Open faults this sweep read the source for and no longer produces.
+def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DERIVED) -> list:
+    """Open faults this sweep read the source for, to the end, and no longer produces.
 
-    The absence is POSITIVE: these are the classes whose rows this pass actually read. A fault
-    of a class the pass does not derive is not in this answer at all, which is the difference
-    between having looked and not having looked.
+    The absence is POSITIVE: these are the classes whose rows this pass actually read in full.
+    A class the pass does not derive, or whose read stopped at its bound, is not in this answer
+    at all - which is the difference between having looked and not having looked.
     """
+    complete = tuple(name for name in complete if name in DERIVED)
+    if not complete:
+        return []
     present = {entry["faultClass"] + "|" + faults.canonical_signature(entry["signature"])
                for entry in derived}
     rows = store.all(
         "SELECT fault_id, fault_class, signature, cycle FROM fault_ledger"
         " WHERE product = ? AND state IN (?,?,?) AND cleared_at IS NULL"
-        "   AND fault_class IN (" + ",".join("?" * len(DERIVED)) + ")"
+        "   AND fault_class IN (" + ",".join("?" * len(complete)) + ")"
         " ORDER BY rowid LIMIT ?",
-        (product, faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, *DERIVED, limit),
+        (product, faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, *complete, limit),
     )
     clears = []
     for row in rows:

@@ -234,9 +234,23 @@ class TaskSettings:
                 f" {AUTHORIZED_APPROVAL_POLICY!r} can be carried as recorded",
             )
         if self.sandbox_mode() is None:
+            # Two wordings for one decision. sandbox_mode() alone decides; the shape test below
+            # only chooses what to SAY, because a row holding the bare mode name "workspaceWrite"
+            # and a row holding {"type": "externalSandbox"} are wrong in different ways and the
+            # repair differs. Saying "'workspaceWrite' has no ThreadResumeParams.sandbox mode"
+            # would be false of that name -- it is one -- and would send an operator looking for
+            # another sandbox type instead of re-recording the policy object.
+            recorded = self.data["sandbox"]
+            if not isinstance(recorded, dict):
+                raise DeliveryRefused(
+                    RefusalReason.UNSUPPORTED_SANDBOX_TYPE,
+                    f"the recorded sandbox is {type(recorded).__name__}, not the policy object a"
+                    " creation result reports, so it does not record the full policy a resume"
+                    " would have to restore",
+                )
             raise DeliveryRefused(
                 RefusalReason.UNSUPPORTED_SANDBOX_TYPE,
-                f"{self.data['sandbox'].get('type')!r} has no"
+                f"{recorded.get('type')!r} has no"
                 " ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
             )
         if normalise_policy(self.data["sandbox"]) is None:
@@ -250,8 +264,26 @@ class TaskSettings:
             )
 
     def sandbox_mode(self):
-        policy = self.data.get("sandbox") or {}
-        return RESUME_SANDBOX_MODE.get(policy.get("type"))
+        """Total, for the same reason normalise_policy() is, and load-bearing for its caller.
+
+        These rows can hold whatever an older writer or a hand edit left behind, and a value this
+        function cannot read has to come BACK as None so a gate can refuse it. It used to raise
+        instead: a sandbox recorded as the bare string "workspaceWrite", or as a list, reached
+        .get() and left an AttributeError where require_usable() owes its caller a DeliveryRefused,
+        and a {"type": {...}} reached the lookup below and raised TypeError on an unhashable key --
+        which is the case normalise_policy() already guards one screen above. Registration,
+        delivery and settings-show all validate through require_usable(), so each of them answered
+        a legacy row with a traceback or a generic "unexpected" finding rather than with the
+        refusal this package already had for an unreadable policy.
+        """
+        policy = self.data.get("sandbox")
+        if not isinstance(policy, dict):
+            return None
+        kind = policy.get("type")
+        # Not just a non-string: an unhashable one raises on the lookup below.
+        if not isinstance(kind, str):
+            return None
+        return RESUME_SANDBOX_MODE.get(kind)
 
     # --------------------------------------------------------------- params
 

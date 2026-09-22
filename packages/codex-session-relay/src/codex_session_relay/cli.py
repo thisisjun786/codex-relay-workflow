@@ -69,6 +69,12 @@ OFFLINE_COMMANDS = (
     "linkage-completion", "linkage-down", "linkage-handover", "linkage-outstanding",
     "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
+    # The fault ledger reads and writes this store and never calls the host. The Linear write
+    # it queues is performed elsewhere by a credential holder, which is a different question
+    # from whether these commands need an App Server: they do not.
+    "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
+    "fault-reverify", "fault-resolve", "fault-next", "fault-claim", "fault-operation",
+    "fault-reconcile", "fault-complete", "fault-fail", "fault-retry", "fault-prune",
     "service status", "service enable", "service disable", "service stop",
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
