@@ -116,14 +116,24 @@ candidates and the recovery commands, and the payload says in `stopNotJudged` th
 neither classified nor recorded.
 
 The two halves of that refusal are not worth the same. The different-socket half removes a wrong
-answer: that store exists and opens, its rows belong to another installation, and a relationship
-missing from it reads as `receipt_missing`, which holds a child that has finished. The ambiguous
-and unidentified halves do not, today — those selections are returned only when no canonical
-database is there yet, so the fallback names a file nothing can open, and the guard already
-answers `state_unreadable` and releases. For them the refusal trades a recorded release for a
-diagnosis: the candidate stores and the commands that tell them apart, instead of "receipts
-unreadable". Giving up the marker observation for that Stop is the cost, and it is the reason
-this boundary is written down here rather than left to the code.
+answer where it can speak at all: that store exists and opens, its rows belong to another
+installation, and a relationship missing from it reads as `receipt_missing`, which holds a child
+that has finished. Where it cannot speak is the installed Stop hook, and that is a limit rather
+than a detail. A store's provenance is a socket, so the comparison needs one to compare against,
+and `stopadapter.guard_argv` passes `--marker-root`, an optional `--db-path` and an optional
+`--mode` and no socket at all; the packaged copy mirrors it. On that path `services.socket_path`
+is `None`, nothing is compared, and an inherited `CODEX_SESSION_RELAY_STATE` reaching another
+installation's store is classified against it exactly as before. Closing that means carrying the
+expected socket through the hook configuration and both adapter copies, which changes the
+installed configuration's own contract, so it is tracked on its own. An operator or coordinator
+invocation that passes `--socket` is refused today.
+
+The ambiguous and unidentified halves do not remove a wrong answer either, today. Those selections
+are returned only when no canonical database is there yet, so the fallback names a file nothing can
+open, and the guard already answers `state_unreadable` and releases. For them the refusal trades a
+recorded release for a diagnosis: the candidate stores and the commands that tell them apart,
+instead of "receipts unreadable". Giving up the marker observation for that Stop is the cost, and
+it is the reason this boundary is written down here rather than left to the code.
 
 Neither half holds anything. A hook adapter reads an exit of 2 carrying the relay's own error
 record as the relay refusing a request it understood, prints no decision, and lets the turn end.

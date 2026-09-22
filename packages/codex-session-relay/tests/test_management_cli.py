@@ -425,6 +425,28 @@ class GuardStoreSelection(MarkerCli):
         self.assertEqual(refused["stateDirectory"], pinned)
         self.assertIn("stopNotJudged", refused)
 
+    def test_the_mismatch_half_needs_a_socket_and_the_installed_hook_passes_none(self):
+        """The limitation, pinned as a fact rather than described in prose.
+
+        A store's provenance is a socket, so the comparison needs one to compare against.
+        stopadapter.guard_argv builds --marker-root, an optional --db-path and an optional --mode,
+        and no --socket; the packaged copy in scripts/crw_runtime/completion.py mirrors it. So on
+        the installed hook path Services.socket_path is None, nothing can be compared, and a state
+        override reaching another installation's store is classified against that store exactly as
+        it was before this change.
+
+        Reported on PR #129. Closing it means carrying the expected socket through the hook
+        configuration and both adapter copies, which changes the installed configuration's own
+        contract and belongs to its own issue. This case exists so the gap cannot be mistaken for
+        coverage, and it is the case that issue has to change.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        pinned = self.store_recording_another_socket()
+        verdict = self.guard_cli("--state", pinned)
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertTrue(verdict["recordedAs"])
+        self.assertTrue(self.observations(assignment).exists())
+
     # ------------------------------------------------- selections somebody did make
 
     def test_an_explicit_db_path_keeps_the_exemption_under_the_same_ambiguity(self):
