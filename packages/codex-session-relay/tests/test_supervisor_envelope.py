@@ -264,6 +264,59 @@ class TheDirectivePointer(unittest.TestCase):
         self.assertEqual(envelope.parse_reference(good)["correlationId"], "msg-1")
 
 
+class TheDirectiveCommand(LinkageTestCase):
+    """A correlation with nowhere to go used to be dropped while the command reported success."""
+
+    def record(self, **overrides):
+        from argparse import Namespace
+        from codex_session_relay import cli
+
+        execution = getattr(self, "_edge", None) or self.supervise()
+        self._edge = execution
+        arguments = {"scope_kind": linkage_module.PROJECT, "scope": PROJECT,
+                     "from_task": SUPERVISOR_TASK, "from_scope": INITIATIVE,
+                     "link": execution["linkId"], "digest": "d-one", "reference": None,
+                     "purpose": None, "correlation": None}
+        arguments.update(overrides)
+        return cli.cmd_linkage_directive(self._services(), Namespace(**arguments))
+
+    def _services(self):
+        case = self
+
+        class _Services:
+            linkage = case.linkage
+
+        return _Services()
+
+    def test_a_correlation_without_a_purpose_is_refused_rather_than_dropped(self):
+        from codex_session_relay import cli
+
+        with self.assertRaises(cli.SystemExit2) as caught:
+            self.record(correlation="msg-1")
+        self.assertIn("requires --purpose", str(caught.exception))
+        self.assertIsNone(
+            self.store.one("SELECT directive_id FROM scope_directives WHERE digest = ?",
+                           ("d-one",)),
+            "and nothing was stored for the instruction that was refused")
+
+    def test_a_purpose_carries_the_correlation_into_the_stored_pointer(self):
+        row = self.record(purpose="scope_correction", correlation="msg-1")
+        self.assertEqual(envelope.parse_reference(row["reference"]),
+                         {"direction": envelope.SUPERVISOR_TO_PARENT,
+                          "purpose": "scope_correction",
+                          "messageId": envelope.message_id(
+                              direction=envelope.SUPERVISOR_TO_PARENT,
+                              relation_id=self._edge["linkId"], purpose="scope_correction",
+                              subject="d-one"),
+                          "correlationId": "msg-1"})
+
+    def test_a_purpose_and_a_hand_written_reference_together_are_refused(self):
+        from codex_session_relay import cli
+
+        with self.assertRaises(cli.SystemExit2):
+            self.record(purpose="scope_correction", reference="see Tuesday")
+
+
 class TheRenderedMessage(DeliveryTestCase):
     def recorded(self, **overrides):
         _relationship, event_id = self.queued_event()

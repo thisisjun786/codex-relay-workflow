@@ -750,3 +750,42 @@ class TheCommandsAParentActuallyRuns(ReportingTestCase):
         for name in ("supervisor-select", "supervisor-standing", "supervisor-report-recorded"):
             self.assertIn(name, cli.OFFLINE_COMMANDS, name)
             self.assertNotIn(name, cli.HOST_REQUIRED_COMMANDS, name)
+
+
+class AnAbsenceIsNotAFault(ReportingTestCase):
+    """envelope_context turned every exception into unknown context, diagnosis included."""
+
+    def test_a_relationship_this_store_does_not_hold_is_an_absence(self):
+        event_id = self.reported()
+        row = dict(self.delivery.get(event_id))
+        row["relationship_id"] = "rel-0000000000000000"
+        self.assertEqual(self.delivery.envelope_context(row), {},
+                         "an unregistered relationship is what unknown context is for")
+
+    def test_a_programming_fault_is_not_dressed_as_unknown_context(self):
+        event_id = self.reported()
+        row = dict(self.delivery.get(event_id))
+        del row["kind"]
+        with self.assertRaises(KeyError):
+            self.delivery.envelope_context(row)
+
+    def test_a_store_that_cannot_answer_is_not_dressed_as_unknown_context(self):
+        import sqlite3
+
+        event_id = self.reported()
+        row = self.delivery.get(event_id)
+
+        def refuse(sql, params=()):
+            raise sqlite3.OperationalError("database is locked")
+
+        original = self.store.one
+        self.store.one = refuse
+        self.addCleanup(setattr, self.store, "one", original)
+        with self.assertRaises(sqlite3.OperationalError):
+            self.delivery.envelope_context(row)
+
+    def test_an_ordinary_row_still_reads_its_sender_and_scope(self):
+        event_id = self.reported()
+        context = self.delivery.envelope_context(self.delivery.get(event_id))
+        self.assertEqual(context["senderTaskId"], CHILD)
+        self.assertIn("REL-1", context["scope"])
