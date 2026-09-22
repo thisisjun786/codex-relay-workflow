@@ -1054,7 +1054,8 @@ class RelayService:
         answer = {"variable": rolepolicy.ENVIRONMENT_VARIABLE, "path": None, "source": None,
                   "record": declared, "environment": stated or None,
                   "declaredAt": record["declaredAt"], "declaredBy": record["declaredBy"],
-                  "state": None, "digest": None, "detail": None, "hint": None}
+                  "state": None, "digest": None, "persisted": None, "detail": None,
+                  "hint": None}
         if record["unreadable"]:
             answer["source"] = "unreadable_record"
             answer["detail"] = record["unreadable"]
@@ -1077,9 +1078,11 @@ class RelayService:
             )
             return answer
         if declared:
-            answer.update(path=declared, source="record")
+            answer.update(path=declared, source="record", persisted=True)
         elif stated:
-            answer.update(path=stated, source="environment")
+            # Machine-readable, because the difference between these two sources is the whole
+            # subject: one survives a restart typed anywhere, the other is this shell's.
+            answer.update(path=stated, source="environment", persisted=False)
             answer["hint"] = (
                 "this launch takes the policy from this process's environment and nothing"
                 " records it, so a restart typed anywhere else loses it. Record it with"

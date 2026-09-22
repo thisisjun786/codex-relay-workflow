@@ -158,6 +158,7 @@ class WhatALaunchCarries(LaunchPolicyCase):
         self.assertIsNotNone(child.poll(), "the running service was not actually restarted")
         self.assertEqual(environment[rolepolicy.ENVIRONMENT_VARIABLE], self.policy_path)
         self.assertEqual(payload["start"]["launchPolicy"]["source"], "record")
+        self.assertTrue(payload["start"]["launchPolicy"]["persisted"])
         self.assertEqual(payload["start"]["launchPolicy"]["digest"], self.digest)
 
     def test_the_child_can_actually_read_the_policy_it_is_handed(self):
@@ -181,6 +182,7 @@ class WhatALaunchCarries(LaunchPolicyCase):
 
         self.assertEqual(environment[rolepolicy.ENVIRONMENT_VARIABLE], self.policy_path)
         self.assertEqual(payload["launchPolicy"]["source"], "environment")
+        self.assertFalse(payload["launchPolicy"]["persisted"])
         self.assertIn("service declare", payload["launchPolicy"]["hint"])
         # Nothing was recorded. A start that quietly wrote down whatever shell it was typed
         # from would pin one export as this service's policy for every restart after it.
@@ -204,18 +206,35 @@ class WhatALaunchCarries(LaunchPolicyCase):
     def test_the_launch_uses_the_reading_it_was_frozen_with(self):
         """A declaration written mid-launch does not change the launch already decided.
 
-        Without this the resolution taken before a restart stopped the service and the one
-        taken when its replacement was built could differ, and the difference would land after
-        the service was already down.
+        Both windows a restart opens are exercised: between its own reading and the start it
+        hands that reading to, and between the start's decision and the launcher building an
+        environment from it. Without the freeze the later reading wins, and it lands after the
+        service has already been stopped.
         """
         service = self.enabled_service()
         service.declare_launch_policy(self.policy_path, actor="test")
-        with caller_environment(None):
-            service.launch_environment = service.resolve_launch_policy()
-            service.declare_launch_policy(self.other_policy, actor="test")
-            environment = self.launcher_environment(service)
+        stop = service.stop
+        captured = {}
 
-        self.assertEqual(environment[rolepolicy.ENVIRONMENT_VARIABLE], self.policy_path)
+        def stop_and_redeclare(**call):
+            service.declare_launch_policy(self.other_policy, actor="test")
+            return stop(**call)
+
+        def launcher_that_redeclares(target, **kwargs):
+            service.declare_launch_policy(self.other_policy, actor="test")
+            return service.default_launcher(target, **kwargs)
+
+        def popen(argv, **kwargs):
+            captured["env"] = kwargs["env"]
+            return Unstarted()
+
+        service.stop = stop_and_redeclare
+        with caller_environment(None), mock.patch.object(subprocess, "Popen", popen):
+            service.restart(allow_isolated=True, actor="test", timeout=0.4, poll=0.02,
+                            launcher=launcher_that_redeclares)
+
+        self.assertEqual(captured["env"][rolepolicy.ENVIRONMENT_VARIABLE], self.policy_path)
+        self.assertEqual(service.resolve_launch_policy({})["path"], self.other_policy)
 
 
 class TwoAnswersAreRefused(LaunchPolicyCase):
@@ -401,8 +420,8 @@ class WhatStatusSays(LaunchPolicyCase):
 
 
 class ThroughTheCommandLine(LaunchPolicyCase):
-    def cli(self, *args, expect=0, environment=None):
-        state = str(self.service("cli").selection.path)
+    def cli(self, *args, expect=0, environment=None, state=None):
+        state = state or str(self.service("cli").selection.path)
         call = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
         call.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         call.pop("CODEX_SESSION_RELAY_STATE", None)
@@ -414,6 +433,22 @@ class ThroughTheCommandLine(LaunchPolicyCase):
         self.assertEqual(finished.returncode, expect,
                          f"exit {finished.returncode}: {finished.stdout}{finished.stderr}")
         return json.loads(finished.stdout)
+
+    def test_a_foreground_run_is_refused_before_it_serves_anything(self):
+        """service run is the daemon, not a caller of it, and main applies the declaration.
+
+        Reached through the real entry point on purpose: the ordering is the substance here.
+        The refusal lands before the command's own host requirements, which is what says the
+        policy was resolved before this process took its snapshot rather than after.
+        """
+        self.cli("service", "declare", "--execution-policy", self.policy_path)
+
+        refused = self.cli("service", "run", "--max-segments", "1", expect=2,
+                           environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy})
+
+        self.assertEqual(refused["reason"], "launch_policy_conflict")
+
+
 
     def test_declaring_needs_no_app_server_and_is_reported_as_offline(self):
         declared = self.cli("service", "declare", "--execution-policy", self.policy_path,
@@ -444,3 +479,44 @@ class ThroughTheCommandLine(LaunchPolicyCase):
         self.cli("service", "declare", "--forget-execution-policy")
 
         self.assertIsNone(self.cli("service", "status")["launchPolicy"]["record"])
+
+
+class ASupervisorStartedHere(LaunchPolicyCase):
+    """`service run` is the same daemon `service start` spawns, one level down.
+
+    It was reading whatever shell it came from, which is the reported defect in the shape a
+    unit file is most likely to meet: an ExecStart that names the command but not the policy.
+    """
+
+    def apply(self, service, environ):
+        from codex_session_relay.cli import _apply_launch_policy
+
+        return _apply_launch_policy(service, environ)
+
+    def test_a_run_started_here_takes_the_policy_its_service_declares(self):
+        service = self.enabled_service()
+        service.declare_launch_policy(self.policy_path, actor="test")
+        environ = {}
+
+        self.assertIsNone(self.apply(service, environ))
+
+        self.assertEqual(environ[rolepolicy.ENVIRONMENT_VARIABLE], self.policy_path)
+
+    def test_a_run_naming_another_file_is_refused_rather_than_served(self):
+        service = self.enabled_service()
+        service.declare_launch_policy(self.policy_path, actor="test")
+        environ = {rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy}
+
+        refusal = self.apply(service, environ)
+
+        self.assertEqual(refusal["reason"], "launch_policy_conflict")
+        # Refused, not corrected: the process does not quietly adopt one of the two answers.
+        self.assertEqual(environ[rolepolicy.ENVIRONMENT_VARIABLE], self.other_policy)
+
+    def test_a_run_with_nothing_declared_keeps_the_environment_it_was_given(self):
+        service = self.enabled_service()
+        environ = {rolepolicy.ENVIRONMENT_VARIABLE: self.policy_path}
+
+        self.assertIsNone(self.apply(service, environ))
+
+        self.assertEqual(environ, {rolepolicy.ENVIRONMENT_VARIABLE: self.policy_path})

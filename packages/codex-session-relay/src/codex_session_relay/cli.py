@@ -2559,6 +2559,29 @@ def cmd_service(services, args) -> dict:
     raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
 
 
+def _apply_launch_policy(service, environ) -> dict | None:
+    """Give a supervisor started HERE the policy its service declares, or refuse to start it.
+
+    `service start` builds that environment for the daemon it spawns. `service run` IS that
+    daemon, started in the foreground or by a unit, and it was reading whatever shell it came
+    from - the same defect one level down, and the one a unit file is most likely to meet.
+
+    Applied to this process's environment before its role-policy snapshot is taken, so the
+    process enforces one reading rather than holding a snapshot that disagrees with the
+    declaration it is running under. Nothing is written: a declaration is made deliberately,
+    never as a side effect of starting.
+    """
+    from .service import launch_policy_refusal
+
+    resolution = service.resolve_launch_policy(environ)
+    refusal = launch_policy_refusal(resolution)
+    if refusal is not None:
+        return refusal
+    if resolution["source"] == "record":
+        environ[resolution["variable"]] = resolution["path"]
+    return None
+
+
 def _supervise(services, service, args) -> dict:
     """The supervisor: it holds the locks and replaces bounded workers."""
     from .service import ServiceRefused
@@ -4212,22 +4235,33 @@ def _refuse_ambiguous_state(services, args) -> None:
 
 
 def main(argv=None) -> int:
+    import os
+
     from . import rolepolicy
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Taken here, before any work, for the same reason the bridge builds its policy in its own
-    # main(): the snapshot is supposed to be this PROCESS's, and a lazy first read made it the
-    # snapshot of whenever a role question first came up. A daemon could then start under one
-    # version of the file, serve unbound work for hours, and adopt an edit the bridge had never
-    # seen -- two processes enforcing different policies with neither one restarted, which is
-    # exactly the second policy source this is built to keep visible. It cannot fail startup: an
-    # unreadable or absent policy resolves to Unresolved, which withholds rather than raises.
-    rolepolicy.declared()
     services = None
     try:
         services = Services(args)
         _refuse_ambiguous_state(services, args)
+        # A supervisor started here is the same daemon `service start` spawns, so it runs on
+        # the same declaration. Resolved before the snapshot below, because that snapshot is
+        # what this whole process then enforces.
+        if getattr(args, "service_command", None) == "run":
+            refused = _apply_launch_policy(_service_for(services), os.environ)
+            if refused is not None:
+                raise PayloadExit(refused, EXIT_REFUSED)
+        # Taken here, before any role question and before the handler, for the same reason the
+        # bridge builds its policy in its own main(): the snapshot is supposed to be this
+        # PROCESS's, and a lazy first read made it the snapshot of whenever a role question
+        # first came up. A daemon could then start under one version of the file, serve unbound
+        # work for hours, and adopt an edit the bridge had never seen -- two processes
+        # enforcing different policies with neither one restarted, which is exactly the second
+        # policy source this is built to keep visible. Nothing above asks a role question, and
+        # it cannot fail startup: an unreadable or absent policy resolves to Unresolved, which
+        # withholds rather than raises.
+        rolepolicy.declared()
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK
