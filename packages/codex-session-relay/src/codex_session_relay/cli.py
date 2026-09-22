@@ -1496,14 +1496,14 @@ def cmd_fault_target(services, args) -> dict:
 
 
 def cmd_fault_observe(services, args) -> dict:
-    return services.faults.record(json.loads(_read_text(args.observation)))
+    return services.faults.record(_fault_json(args.observation, "observation"))
 
 
 def cmd_fault_sweep(services, args) -> dict:
     """Derive what the store currently shows is broken, and record it."""
     from . import faultsweep
 
-    readings = json.loads(_read_text(args.readings)) if args.readings else []
+    readings = _fault_json(args.readings, "readings") if args.readings else []
     batch = faultsweep.sweep(
         services.store, product=args.product,
         scope={"projectKey": args.project} if args.project else {}, readings=readings,
@@ -1512,6 +1512,22 @@ def cmd_fault_sweep(services, args) -> dict:
     return {"read": recorded["read"], "recorded": recorded["recorded"],
             "queued": recorded["queued"], "gaps": recorded["gaps"],
             "limits": batch["limits"]}
+
+
+def _fault_json(value, what):
+    """Parse caller-supplied JSON into a refusal rather than a traceback.
+
+    An unhandled decode error left the command reporting an outage for what is simply a
+    malformed argument, which is the wrong diagnosis to hand somebody at 3am.
+    """
+    from .errors import RefusalReason
+    from .faults import FaultRefused
+
+    try:
+        return json.loads(_read_text(value))
+    except ValueError as error:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"the {what} is not readable JSON: {error}") from error
 
 
 def cmd_fault_show(services, args) -> dict:

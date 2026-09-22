@@ -502,6 +502,47 @@ class FifthReviewFindings(RelayTestCase):
             store=self.store)
         self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
 
+    def test_a_re_observed_occurrence_still_carries_a_scope_move(self):
+        """Familiar occurrence, new project. The write must follow the fault, not the key."""
+        self.ledger.set_target("crw:NEW", "team-new")
+        first = self.ledger.record(omission("same-key"))
+        self.assertTrue(first["publication"]["awaitingTarget"])
+        again = self.ledger.record(dict(omission("same-key"),
+                                        scope={"projectKey": "NEW", "issueKey": "NEW-1"}))
+        self.assertFalse(again["recorded"])
+        self.assertEqual("crw:NEW", self.ledger.get(first["faultId"])["scope_key"])
+        self.assertEqual("team-new", self.store.one(
+            "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
+            (first["publication"]["publicationId"],))["tracker_ref"])
+
+    def test_retargeting_reaches_a_failed_write_because_retry_reopens_it(self):
+        self.ledger.set_target("crw:CRW", "team-old")
+        answer = self.ledger.record(omission("a"))
+        publication = answer["publication"]["publicationId"]
+        with self.store.transaction() as db:
+            db.execute("UPDATE fault_publications SET state = ? WHERE publication_id = ?",
+                       (faults.FAILED, publication))
+        self.ledger.set_target("crw:CRW", "team-new")
+        self.ledger.retry(publication)
+        self.assertEqual("team-new", self.store.one(
+            "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
+            (publication,))["tracker_ref"])
+
+    def test_malformed_json_at_the_command_line_is_a_refusal_not_a_traceback(self):
+        import contextlib
+        import io
+
+        from codex_session_relay import cli
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = cli.main(["--state", str(self.store.path.parent), "fault-observe",
+                             "--observation", "{not json"])
+        self.assertEqual(2, code)
+        self.assertEqual("fault_observation_malformed",
+                         json.loads(buffer.getvalue())["reason"])
+
+
 
 
 class Lifecycle(LedgerCase):

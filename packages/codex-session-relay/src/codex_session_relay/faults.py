@@ -589,12 +589,16 @@ class FaultLedger:
             # Every pending write for this scope, not only the ones pointing nowhere. A
             # retarget left writes queued against the tracker the scope no longer uses, so
             # they would have been filed where nobody is looking any more.
+            # Pending AND failed. retry() offers a failed row again unchanged, so leaving its
+            # tracker behind meant a retried write could still reach the retired project.
+            # An uncertain row is left alone: it is reconciled against wherever it may
+            # already have landed.
             waiting = db.execute(
                 "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-                " WHERE state = ? AND (tracker_ref IS NULL OR tracker_ref != ?)"
+                " WHERE state IN (?,?) AND (tracker_ref IS NULL OR tracker_ref != ?)"
                 "   AND fault_id IN"
                 "   (SELECT fault_id FROM fault_ledger WHERE scope_key = ?)",
-                (tracker_ref, now, PENDING, tracker_ref, scope_key),
+                (tracker_ref, now, PENDING, FAILED, tracker_ref, scope_key),
             ).rowcount
         return {"scopeKey": scope_key, "trackerRef": tracker_ref, "backfilled": waiting}
 
@@ -699,7 +703,12 @@ class FaultLedger:
             ).rowcount == 1
             if not recorded:
                 # The same underlying fact, read again. Nothing about the fault changed, so
-                # nothing is queued: this is the case a repeated sweep produces on every tick.
+                # nothing is queued: this is the case a repeated sweep produces on every
+                # tick. A SCOPE move still lands, because the occurrence being familiar says
+                # nothing about where the fault now belongs, and returning before that left
+                # a queued write pointing at the project the fault had left.
+                if fact["scopeKey"] != row["scope_key"]:
+                    self._move(db, identifier, fact, now_iso)
                 return {"faultId": identifier, "recorded": False, "state": row["state"],
                         "occurrenceCount": row["occurrence_count"],
                         "reason": "this occurrence was already recorded",
@@ -745,16 +754,7 @@ class FaultLedger:
                  fact["scopeKey"], identifier),
             )
             if fact["scopeKey"] != row["scope_key"]:
-                # The fault moved. A write queued against the old scope's tracker would be
-                # filed in a project this fault no longer belongs to, and one queued while no
-                # tracker was configured would never become eligible.
-                moved = db.execute(
-                    "SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
-                    (fact["scopeKey"],)).fetchone()
-                db.execute(
-                    "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-                    " WHERE fault_id = ? AND state = ?",
-                    (moved["tracker_ref"] if moved else None, now_iso, identifier, PENDING))
+                self._move(db, identifier, fact, now_iso)
             publication = None
             if trigger_key is not None:
                 publication = self._enqueue(db, identifier, trigger_key, now_iso,
@@ -765,6 +765,25 @@ class FaultLedger:
                 "cycle": fresh["cycle"], "severity": fresh["severity"],
                 "occurrenceCount": count, "suppression": suppression,
                 "publication": publication}
+
+    def _move(self, db, identifier, fact, now) -> None:
+        """Re-point this fault's unsent writes at the scope it now belongs to.
+
+        An uncertain write is deliberately left where it is: it may already have landed at the
+        old target, and re-pointing the row that is supposed to be reconciled against that
+        target would lose the only place somebody could go and look.
+        """
+        moved = db.execute("SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
+                           (fact["scopeKey"],)).fetchone()
+        db.execute(
+            "UPDATE fault_ledger SET scope = ?, scope_key = ?, updated_at = ?"
+            " WHERE fault_id = ?",
+            (json.dumps(fact["scope"], ensure_ascii=False, sort_keys=True), fact["scopeKey"],
+             now, identifier))
+        db.execute(
+            "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
+            " WHERE fault_id = ? AND state IN (?,?)",
+            (moved["tracker_ref"] if moved else None, now, identifier, PENDING, FAILED))
 
     def _suppression(self, db, identifier, policy, now) -> dict:
         """Whether this fault has earned a Linear record, counted inside the window.
