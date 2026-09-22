@@ -405,3 +405,34 @@ class TheFormOfTheBound(unittest.TestCase):
                          monotonic=lambda: 5_000.0)
 
         self.assertIsNone(captured["stop"])
+
+    def test_the_two_forms_of_a_spent_bound_answer_a_zero_tick_run_alike(self):
+        """An identical request must not depend on which form the bound arrived in.
+
+        A tick budget of zero or less ends the run before the deadline is ever looked at, so
+        neither form may call that ending a spent bound. The instant form used to refuse before
+        it reached the tick count at all, and the duration form returned success - two answers
+        to one question.
+        """
+        outcomes = {}
+        for form in ("duration", "instant"):
+            kwargs = {"deadline": 0.0} if form == "duration" else {"deadline_monotonic": 4_000.0}
+            services, args = build_services(self, max_ticks=0, **kwargs)
+            try:
+                self.deadline_given_to(services, args, monotonic=lambda: 5_000.0)
+                outcomes[form] = "ok"
+            except PayloadExit as exit_:
+                outcomes[form] = f"exit {exit_.code}"
+
+        self.assertEqual(outcomes["instant"], outcomes["duration"], outcomes)
+        self.assertEqual(outcomes["instant"], "ok")
+
+    def test_a_spent_instant_still_refuses_a_run_that_did_ask_for_ticks(self):
+        """The exclusion above is about the tick budget, not an escape from the bound."""
+        services, args = build_services(self, max_ticks=5)
+        args.deadline_monotonic = 4_000.0
+
+        with self.assertRaises(PayloadExit) as caught:
+            self.deadline_given_to(services, args, monotonic=lambda: 5_000.0)
+
+        self.assertEqual(caught.exception.code, EXIT_BOUND_SPENT)

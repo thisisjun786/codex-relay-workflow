@@ -2304,6 +2304,17 @@ def _bound_already_spent(service, detail):
     )
 
 
+def _asked_for_no_ticks(args):
+    """A run given a tick budget of zero or less took no tick because it was asked for none.
+
+    `RelayDaemon.run` breaks on the tick count BEFORE it looks at the deadline, so whatever the
+    bound did meanwhile is not what emptied the result. Both places that classify a bound as
+    spent ask this same question, because the two forms of a bound must not disagree about an
+    identical request.
+    """
+    return getattr(args, "max_ticks", None) is not None and args.max_ticks <= 0
+
+
 def _run_bounded(services, service, args, *, require_intent: bool, monotonic=None) -> dict:
     """Hold ownership for exactly as long as this process serves, then let it go.
 
@@ -2327,7 +2338,7 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
         # out of the bound here instead of being spent before a duration started counting. The
         # comparison itself stays on the injected wall clock, exactly as a duration's does.
         remaining = instant - monotonic()
-        if remaining <= 0:
+        if remaining <= 0 and not _asked_for_no_ticks(args):
             raise _bound_already_spent(
                 service,
                 "the instant this run was given had passed by the time it reached its own"
@@ -2367,18 +2378,14 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 # wall clock behaves; a tick already under way still finishes.
                 stop=None if bound is None else (lambda: monotonic() >= bound),
             )
-            if (not reports and bound is not None and monotonic() >= bound
-                    and (args.max_ticks is None or args.max_ticks > 0)):
+            if not reports and bound is not None and monotonic() >= bound \
+                    and not _asked_for_no_ticks(args):
                 # The same ending as the check before the locks, reached one step later. The
                 # bound was still there when this process read its own clock and was gone by
                 # the time the run began - spent adopting the descriptors, taking the claim and
                 # building the adapter - so the loop broke before its first tick. Returning
                 # success here is what let a supervisor count a worker that served nothing as a
                 # clean segment.
-                #
-                # A tick budget of zero or less is excluded because `run` breaks on the tick
-                # count BEFORE it looks at the deadline: that run took no tick because it was
-                # asked for none, and a bound that happened to pass meanwhile did not cause it.
                 raise _bound_already_spent(
                     service,
                     "the bound was spent while this run was taking its locks and building its"
