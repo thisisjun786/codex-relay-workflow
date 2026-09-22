@@ -942,63 +942,14 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence, incompleteness, a non-string cwd, model or
-        reasoningEffort, and an approvalPolicy this transport cannot carry all refuse -- the last
-        one on the record rather than on what a host later reports back, because a row asking for
-        an interactive policy settles the send whatever the host would have answered."""
-        from .registry import load_settings
+        """This send's gate, which is the module's rather than this class's.
 
-        settings = load_settings(self.store, task_id)
-        if settings is None:
-            raise DeliveryRefused(
-                RefusalReason.SETTINGS_UNAVAILABLE,
-                f"no authorized settings recorded for {task_id!r}; register them from the"
-                " creation result before a send can preserve them",
-            )
-        settings.require_usable()
-        # ------------------------------------------------------------------ role policy
-        # The record is still the thing a send verifies against; this only asks whether it has
-        # fallen behind the policy for the role this task actually holds. A task bound to no
-        # scope is outside the policy and nothing about it changes.
-        role = rolepolicy.bound_role(self.store, task_id)
-        if role is None:
-            return settings
-        if isinstance(role, rolepolicy.Contested):
-            raise rolepolicy.refuse_contested(role, task_id)
-        policy = rolepolicy.declared()
-        if not policy:
-            raise rolepolicy.refuse_unresolved(policy, role, task_id)
-        finding = rolepolicy.check_record(settings, role, policy)
-        if finding is not None:
-            # Dispatched on the code the finding carries rather than on the assumption that a
-            # finding which is not the undeclared one must be a stale record. That assumption
-            # read `recorded` and `expected` off a citation finding which has neither and raised
-            # a KeyError out of the gate, leaving the delivery queued instead of withheld --
-            # a revalidation path failing open on exactly the legacy records it exists to catch.
-            raise DeliveryRefused(
-                RefusalReason(finding["code"]),
-                f"{task_id!r} is bound as {role!r}: "
-                + rolepolicy.describe(finding)
-                + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
-                + finding.get("recovery", rolepolicy.RECOVERY),
-            )
-        # The bridge applies this rule on its own tool path, and a relay delivery does not take
-        # that path: it resumes through its own transport. Applied here too, or a send reaches a
-        # thread the tool surface would have refused.
-        unloaded = rolepolicy.check_unloaded_transmission(
-            settings, role, policy, runtime_status
-        )
-        if unloaded is not None:
-            raise unloaded
-        # The status above is the one observed before this delivery listed turns and claimed
-        # itself, so it can be stale by the time the transport resumes. The transport takes its
-        # own read immediately before that resume; this is what tells it to apply the same rule
-        # there, on the state that actually holds.
-        settings.refuse_when_unloaded = (
-            rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded")
-            is not None
-        )
-        return settings
+        Delegated so a second sender cannot grow a second gate. The supervisor channel resumes
+        a task too, and the bridge refuses a send with no settings precisely so nothing
+        inherits a host default; two implementations of that rule would eventually disagree
+        about which task may be woken under what.
+        """
+        return authorized_settings(self.store, task_id, runtime_status)
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
                            row=None) -> None:
@@ -1693,6 +1644,71 @@ class DeliveryService:
             )
         ]
         return {"deliveries": items, "pendingIntents": intents}
+
+
+def authorized_settings(store, task_id: str, runtime_status=None):
+    """The recorded settings, validated, for any sender that resumes a task.
+
+    Absence, incompleteness, a non-string cwd, model or reasoningEffort, and an approvalPolicy
+    this transport cannot carry all refuse -- the last one on the record rather than on what a
+    host later reports back, because a row asking for an interactive policy settles the send
+    whatever the host would have answered.
+
+    A module function rather than a method, because this class is no longer the only thing that
+    sends. The bridge refuses a send carrying no settings precisely so that nothing inherits a
+    host default, and one rule about which task may be woken under what is worth more than two
+    copies that agree today.
+    """
+    from .registry import load_settings
+
+    settings = load_settings(store, task_id)
+    if settings is None:
+        raise DeliveryRefused(
+            RefusalReason.SETTINGS_UNAVAILABLE,
+            f"no authorized settings recorded for {task_id!r}; register them from the"
+            " creation result before a send can preserve them",
+        )
+    settings.require_usable()
+    # ---------------------------------------------------------------------- role policy
+    # The record is still the thing a send verifies against; this only asks whether it has
+    # fallen behind the policy for the role this task actually holds. A task bound to no scope
+    # is outside the policy and nothing about it changes.
+    role = rolepolicy.bound_role(store, task_id)
+    if role is None:
+        return settings
+    if isinstance(role, rolepolicy.Contested):
+        raise rolepolicy.refuse_contested(role, task_id)
+    policy = rolepolicy.declared()
+    if not policy:
+        raise rolepolicy.refuse_unresolved(policy, role, task_id)
+    finding = rolepolicy.check_record(settings, role, policy)
+    if finding is not None:
+        # Dispatched on the code the finding carries rather than on the assumption that a
+        # finding which is not the undeclared one must be a stale record. That assumption read
+        # `recorded` and `expected` off a citation finding which has neither and raised a
+        # KeyError out of the gate, leaving the delivery queued instead of withheld -- a
+        # revalidation path failing open on exactly the legacy records it exists to catch.
+        raise DeliveryRefused(
+            RefusalReason(finding["code"]),
+            f"{task_id!r} is bound as {role!r}: "
+            + rolepolicy.describe(finding)
+            + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
+            + finding.get("recovery", rolepolicy.RECOVERY),
+        )
+    # The bridge applies this rule on its own tool path, and a relay send does not take that
+    # path: it resumes through its own transport. Applied here too, or a send reaches a thread
+    # the tool surface would have refused.
+    unloaded = rolepolicy.check_unloaded_transmission(settings, role, policy, runtime_status)
+    if unloaded is not None:
+        raise unloaded
+    # The status above is the one observed before this send listed turns and claimed itself, so
+    # it can be stale by the time the transport resumes. The transport takes its own read
+    # immediately before that resume; this is what tells it to apply the same rule there, on
+    # the state that actually holds.
+    settings.refuse_when_unloaded = (
+        rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded") is not None
+    )
+    return settings
 
 
 def _message_status(row, record) -> str:

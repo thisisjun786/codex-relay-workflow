@@ -13,12 +13,13 @@ Nothing here is a new table, a new queue or a second send engine. An obligation 
 from rows that already exist, which is what lets the same reading survive a restart, a
 compaction and a service replacement with nothing remembered in between.
 
-What this module will not claim: that a supervisor received anything. The store holds no
-supervisor message, no supervisor acknowledgement and no supervisor receipt, because the relay
-carries no channel for one - OPS-7.4 says so and envelope.REACH_SOURCES encodes it. The one
-discharge this can actually read is the Linear record the supervisor goes and reads for itself,
-and only when the synchronisation row says confirmed. A report whose Linear write failed leaves
-the obligation standing, which is the exact failure CRW-148 asks to be regression-tested.
+What this module will not claim: that a supervisor agreed to anything. It decides what is owed
+and nothing else - it opens no queue, reads no host and sends nothing. supervisorchannel.py is
+what carries a report upward and records the recipient's own readback, and even that stops at
+the message being read. The one discharge this can actually read is the Linear record the
+supervisor goes and reads for itself, and only when the synchronisation row says confirmed. A
+report whose Linear write failed leaves the obligation standing, which is the exact failure
+CRW-148 asks to be regression-tested, and a report that was read leaves it standing too.
 """
 
 import json
@@ -339,9 +340,11 @@ def _carry(gaps, gap) -> None:
 def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dict:
     """Whether the record the supervisor actually reads has this yet.
 
-    There is no supervisor receipt in this store and this does not pretend otherwise. What
-    exists is the Linear synchronisation row, which the supervisor reads for itself, and it
-    counts only at confirmed - the state reached after a readback verified what was written.
+    There is no supervisor acknowledgement in this store and this does not pretend otherwise.
+    A readback on the supervisor channel says a message was read, which is a different fact and
+    discharges nothing. What discharges one is the Linear synchronisation row, which the
+    supervisor reads for itself, and it counts only at confirmed - the state reached after a
+    readback verified what was written.
 
     pending, claimed, written and failed all leave the obligation standing, and failed is the
     one worth naming: SyncOutbox.fail flips to it after MAX_ATTEMPTS and drops the row out of

@@ -628,6 +628,19 @@ SUMMARY_SITES = (
      " attributable to the conditional and not to the stage being absent or unanswered. That"
      " distinction is the case: a conditional acceptance is the one value a reader is most"
      " likely to round up to yes"),
+    ("test_supervisor_channel.py",
+     "test_a_delivered_message_is_read_back_and_only_then_says_received", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(ladder, envelope.TRANSPORT_ACCEPTED))",
+     "true pins both conjuncts - the stage is present AND its state is yes - so the folding"
+     " cannot hide a missing stage here. The ladder is the one the channel derived from a"
+     " dispatched attempt, and the line below asserts received is still unmeasured, which is"
+     " what makes this the accepted-but-unread state rather than a reached one"),
+    ("test_supervisor_channel.py",
+     "test_a_delivered_message_is_read_back_and_only_then_says_received", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(ladder, envelope.RECEIVED))",
+     "the same folding after a verified readback, and true again pins both conjuncts. The"
+     " source is asserted on the next line, so this cannot be satisfied by a stage answered"
+     " from a record this direction does not read"),
     ("test_supervisor_envelope.py",
      "test_silence_is_never_agreement_and_a_state_needs_a_source", "stage_holds", False,
      "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",

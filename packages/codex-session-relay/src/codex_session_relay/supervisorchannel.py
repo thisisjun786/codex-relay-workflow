@@ -1,0 +1,878 @@
+"""What a parent owes the level above, staged before it is sent, and read back.
+
+supervision.py decides WHAT is owed upward and delivery.py carries the parent-child relation.
+Between them there was nothing. A parent that had decided it owed a report had nowhere to put
+it, and no row in this store could ever say a supervisor received one; envelope.REACH_SOURCES
+said so in data and supervision.py said so in prose. This is that missing half, and it is
+deliberately the smaller half.
+
+One direction. A report travels parent to supervisor. An instruction travelling the other way
+is a scope_directives row that linkage already owns, and nothing here sends one.
+
+What is staged is a relay-packet/1 frozen before any transport call, so a crash between
+deciding and sending loses the send and not the decision. The message id is the envelope's,
+derived from the direction, the relation, the purpose and the subject, so one fact staged twice
+converges on one row rather than waking a supervisor twice.
+
+What a verified readback establishes, written here because the word "received" invites more
+than it holds: the delivered bytes are in the recipient's own transcript, a real turn on its
+thread answered with a value those bytes do not contain, and that turn started no earlier than
+the send. What it does not establish is who wrote the answer. This transport carries opaque
+text and no authenticated caller, and the turn a send opens is a turn the sender already knows
+the id of - so a readback from that turn is the ordinary case AND the weakest one, and which
+turn answered is recorded rather than averaged into one word.
+
+Nothing here wakes anybody on a timer. There is no daemon pass behind these methods: a report
+goes out inside the parent's own turn, and what discharges the obligation is still the Linear
+record the supervisor reads for itself, confirmed, exactly as supervision.discharge_of decides.
+"""
+
+import json
+
+from . import envelope, packets, supervision
+from .ack import certainly_before
+from .delivery import authorized_settings
+from .errors import DeliveryRefused, RefusalReason
+from .identity import supervisor_read_proof, supervisor_request_id
+from .lifecycle import observe, record as record_lifecycle
+from .policy import RetryPolicy
+from .transport import (
+    DEFERRED_BUSY,
+    DISPATCHED,
+    HELD_UNCERTAIN,
+    INBOX_ONLY,
+    QUEUED,
+    SENDING,
+    WITHHELD_PRE_SEND,
+    classify_operation_receipt,
+)
+
+VERSION = "relay-supervisor-channel/1"
+
+# The one state the transport vocabulary has no word for, because the transport cannot answer
+# it: the recipient said it read this, and the host agreed the turn was real.
+READ = "read"
+CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
+# What the transport calls a message that reached somewhere. inbox_only is included for the
+# reason ack includes it: it is stored rather than woken, and a recipient can still read it.
+DELIVERED = (DISPATCHED, INBOX_ONLY)
+
+# What a readback established about the turn it names.
+HOST_READ = "host_read"
+NO_HOST = "unverified_turn"
+TURN_NOT_FOUND = "turn_not_found"
+TURN_PREDATES_SEND = "turn_predates_send"
+
+# And which turn answered, which is what says how much the readback is worth. The relay knows
+# the id of the turn its own send opened, so a readback from that turn rests on nothing the
+# sender could not have produced alone. It is still the ordinary case, because the message IS
+# what wakes the supervisor. Recording which one answered is the honest middle between refusing
+# the ordinary case and calling it more than it is.
+RELAY_OPENED = "relay_opened"
+RECIPIENT_OPENED = "recipient_opened"
+ORIGIN_UNKNOWN = "unknown"
+
+PROJECT = "project"
+INITIATIVE = "initiative"
+# How far back the recipient transcript is scanned for the bytes this send froze. The bound
+# reconciliation uses, and the answer carries whether the scan was exhausted, because a
+# truncated scan is inconclusive and never proof of absence.
+TRANSCRIPT_SCAN = 200
+NEWLINE = chr(10)
+
+
+class _NotClaimable(Exception):
+    """Nothing to claim, for any reason. The caller does nothing and reports nothing."""
+
+
+class SupervisorChannel:
+    """Staging, sending and reading back what a parent owes the level above."""
+
+    def __init__(self, store, registry, linkage, clock, *, policy=None, settings=None,
+                 require_lifecycle_evidence: bool = True):
+        self.store = store
+        self.registry = registry
+        # Required rather than optional. delivery keeps a frozen relationship row it can fall
+        # back on; this channel has none, because who supervises a project lives nowhere else.
+        self.linkage = linkage
+        self.clock = clock
+        self.policy = policy or RetryPolicy()
+        self.require_lifecycle_evidence = require_lifecycle_evidence
+        self._settings = settings
+
+    # ------------------------------------------------------- who may send, and to whom
+
+    def resolve(self, relationship_id) -> dict:
+        """The live parent of the project, and the live supervisor above it.
+
+        Read from the hierarchy rather than from a frozen row - the rule
+        delivery.resolve_recipient already applies to a completion, for the same reason: an
+        assignment registered before a handover names the owner that stepped down.
+
+        The three answers stay three answers. An unreadable store has said nothing about the
+        owner, a contested one has said two things, and neither becomes a recipient.
+        """
+        reading = self.linkage.up(relationship_id=relationship_id)
+        if not reading.get("readable", False):
+            raise DeliveryRefused(
+                RefusalReason.RELATION_UNREADABLE,
+                "the linkage could not be read for relationship " + repr(relationship_id)
+                + ", so who the level above is is unknown; nothing is staged and the"
+                " obligation stays exactly where it was",
+            )
+        if reading.get("state") == "ambiguous":
+            raise DeliveryRefused(
+                RefusalReason.DUPLICATE_SCOPE_OWNER,
+                "the linkage reports more than one candidate above relationship "
+                + repr(relationship_id) + "; this sender will not choose between them: "
+                + repr(reading.get("contention")),
+            )
+        contention = [one for one in (reading.get("contention") or []) if one.get("contention")]
+        if contention:
+            # Only the walk's own live findings. linkage folds retained linkage_conflicts rows
+            # into the same list and nothing ever deletes those, so refusing on them would let
+            # one historical refusal silence a project for good. A walk finding carries a
+            # "contention" key; an audit row carries "reason" and no "contention".
+            drifting = any(one.get("contention") == "owner_drift" for one in contention)
+            raise DeliveryRefused(
+                RefusalReason.RELATION_OWNER_DRIFT if drifting else RefusalReason.LINK_CONFLICT,
+                "the hierarchy above relationship " + repr(relationship_id)
+                + " is not settled: " + repr(contention) + ". A report waits for it to settle"
+                " rather than being filed with whichever candidate happens to match",
+            )
+        levels = {one.get("scopeKind"): one for one in reading.get("levels") or []}
+        project = self._owner(levels.get(PROJECT))
+        supervisor = self._owner(levels.get(INITIATIVE))
+        if project is None:
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "relationship " + repr(relationship_id) + " has no live project owner, so"
+                " there is nobody whose report this would be; gaps "
+                + repr(reading.get("gaps")),
+            )
+        if supervisor is None:
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "no initiative supervises the project above relationship "
+                + repr(relationship_id) + ", so there is nobody to report to; gaps "
+                + repr(reading.get("gaps")) + ". The obligation stays standing, which is the"
+                " difference between having nowhere to send a report and not owing one",
+            )
+        return {
+            "sender": project["taskId"],
+            "recipient": supervisor["taskId"],
+            "projectKey": levels[PROJECT].get("scopeKey"),
+            "initiativeKey": levels[INITIATIVE].get("scopeKey"),
+            "source": "linkage",
+        }
+
+    @staticmethod
+    def _owner(level):
+        if not level or level.get("owner") is None:
+            return None
+        owner = level["owner"]
+        return owner if isinstance(owner, dict) else {"taskId": owner}
+
+    def _issue_of(self, relationship_id):
+        row = self.store.one(
+            "SELECT issue_key FROM relationships WHERE relationship_id = ?", (relationship_id,))
+        return row["issue_key"] if row is not None else None
+
+    # ------------------------------------------------------------------ what is staged
+
+    def find(self, message_id):
+        return self.store.one(
+            "SELECT * FROM supervisor_messages WHERE message_id = ?", (message_id,))
+
+    def get(self, message_id):
+        row = self.find(message_id)
+        if row is None:
+            raise DeliveryRefused(
+                RefusalReason.NOT_CLAIMABLE,
+                "no supervisor message is staged as " + repr(message_id))
+        return row
+
+    def stage(self, obligation, *, expect_recipient=None) -> dict:
+        """Freeze what this obligation owes upward, before anything is sent.
+
+        Idempotent on the message id, which is derived from the fact rather than from the
+        moment: staging the same obligation after a restart, a compaction or a service
+        replacement finds the first row instead of producing a second report.
+
+        A caller may name the recipient it believes in. A disagreement with the linkage IS the
+        finding and is refused: substituting the live owner for the named one would file a
+        report with whoever asked, and substituting the named one for the live owner would file
+        it with a task that no longer supervises anything.
+        """
+        resolution = self.resolve(obligation["relationId"])
+        if expect_recipient is not None and expect_recipient != resolution["recipient"]:
+            raise DeliveryRefused(
+                RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+                "the caller named " + repr(expect_recipient) + " and the linkage says project "
+                + repr(resolution["projectKey"]) + " is supervised by "
+                + repr(resolution["recipient"]) + "; a disagreement about who the level above"
+                " is is the finding, not something to resolve by picking one",
+            )
+        packet = self.compose(obligation, resolution=resolution, observed_at=self.clock.iso())
+        message_id = packet["envelope"]["messageId"]
+        existing = self.find(message_id)
+        if existing is not None:
+            return {"schema": VERSION, "staged": False, "messageId": message_id,
+                    "reason": "this fact is already staged; one obligation is one message",
+                    "message": dict(existing)}
+        decided = supervision.select(self.store, obligation, recipient=None)
+        if not decided["report"]:
+            raise DeliveryRefused(
+                RefusalReason.NOT_CLAIMABLE,
+                "nothing is owed upward for obligation " + repr(obligation["obligationId"])
+                + ": " + str(decided["reason"]) + ". The obligation is preserved either way;"
+                " what is refused is producing a second report about a fact somebody has"
+                " already reported or the supervisor can already read for itself",
+            )
+        at = self.clock.iso()
+        staged = False
+        with self.store.composing() as db:
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO supervisor_messages (message_id, obligation_id,"
+                " obligation_kind, relationship_id, project_key, purpose, kind, sender_task_id,"
+                " recipient_task_id, subject, packet, state, attempt_count, next_eligible_at,"
+                " staged_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?)",
+                (message_id, obligation["obligationId"], obligation["kind"],
+                 obligation["relationId"], resolution["projectKey"],
+                 packet["envelope"]["purpose"], packet["envelope"]["kind"],
+                 resolution["sender"], resolution["recipient"], obligation["subject"],
+                 json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at),
+            )
+            staged = cursor.rowcount == 1
+            if staged:
+                # In the SAME transaction as the row. A report that exists and is not recorded
+                # would be produced again by the next reading of the same fact, which is the
+                # duplicate wake the journal entry exists to prevent; and a record with no row
+                # would suppress a report nobody can send.
+                supervision.record_report(
+                    self.store, obligation, at=at, messageId=message_id,
+                    note="staged on the supervisor channel")
+        return {"schema": VERSION, "staged": staged, "messageId": message_id,
+                "reason": "staged" if staged else "another caller staged this fact first",
+                "message": dict(self.get(message_id)),
+                "recipient": resolution["recipient"], "sender": resolution["sender"]}
+
+    def stage_standing(self, project_key, *, observations=()) -> dict:
+        """Everything a project still owes upward, staged in one call.
+
+        One command rather than one decision per event, which is what makes the reporting
+        obligation something a parent discharges rather than something it has to remember. What
+        is refused is reported beside what was staged: a project where one relationship has no
+        supervisor is not a project where nothing can be reported.
+        """
+        standing = supervision.standing_for(
+            self.store, self.linkage, project_key, observations=observations)
+        staged, refused = [], []
+        for obligation in standing["standing"]:
+            try:
+                staged.append(self.stage(obligation))
+            except DeliveryRefused as refusal:
+                refused.append({
+                    "obligationId": obligation["obligationId"],
+                    "kind": obligation["kind"],
+                    "reason": refusal.reason.value if refusal.reason else None,
+                    "detail": refusal.detail,
+                })
+        return {"schema": VERSION, "projectKey": project_key, "staged": staged,
+                "refused": refused, "gaps": standing["gaps"],
+                "limits": "staging is not sending and sending is not reading. Each message"
+                          " here has to be sent and read back before anything above says a"
+                          " supervisor saw it"}
+
+    # ------------------------------------------------------------------ what it carries
+
+    def compose(self, obligation, *, resolution, observed_at=None) -> dict:
+        """The relay-packet/1 this obligation travels as.
+
+        Composed through packets.compose rather than assembled here, so the occasion is checked
+        against what its own purpose cannot do without and this module cannot drift from the
+        table that decides it.
+        """
+        from .report import read as read_work_report
+
+        purpose = supervision.PURPOSE[obligation["kind"]]
+        issue = obligation.get("issueKey") or self._issue_of(obligation["relationId"])
+        event_id = (obligation.get("basis") or {}).get("eventId")
+        report = read_work_report(self.store, event_id) if event_id else None
+        decision = None
+        if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
+            decision = self._decision(obligation)
+        return packets.compose(
+            direction=envelope.PARENT_TO_SUPERVISOR,
+            purpose=purpose,
+            relation_id=obligation["relationId"],
+            sender=resolution["sender"],
+            recipient=resolution["recipient"],
+            subject=obligation["subject"],
+            issue=issue,
+            generation=obligation.get("executionGeneration"),
+            artifact=_artifact(report),
+            evidence=self._evidence(obligation, resolution),
+            decision=decision,
+            scope=self._scope(resolution, issue),
+            basis=self._basis(obligation),
+            observed_at=observed_at,
+        )
+
+    @staticmethod
+    def _decision(obligation) -> str:
+        """What the user is being asked, in the words the child used for it.
+
+        A decision envelope cannot omit this, and it must not be filled with a restatement of
+        its own kind: "a decision is needed" tells a reader nothing the word decision_request
+        did not already tell them.
+        """
+        detail = (obligation.get("detail") or "").strip()
+        return detail or ("the child stopped for a judgment the parent is not allowed to make"
+                          " for the user, and recorded nothing further about it")
+
+    @staticmethod
+    def _evidence(obligation, resolution) -> list:
+        """Where the fact is readable. Never the report itself, which is this message."""
+        basis = obligation.get("basis") or {}
+        event_id = basis.get("eventId")
+        if event_id:
+            return ["codex-session-relay show --event " + str(event_id)]
+        turn = basis.get("turn")
+        if turn:
+            # An omission has no event, so there is no row to point at. What produced the
+            # reading is the pointer, and the selectors it needs are the caller's own.
+            return ["codex-session-relay reporting-show --turn " + str(turn)]
+        return ["codex-session-relay supervisor-standing --project "
+                + str(resolution.get("projectKey"))]
+
+    @staticmethod
+    def _scope(resolution, issue):
+        project = resolution.get("projectKey")
+        if project and issue:
+            return "project " + str(project) + ", issue " + str(issue)
+        if project:
+            return "project " + str(project)
+        return envelope.absent(envelope.UNKNOWN, "no Linear scope was readable")
+
+    @staticmethod
+    def _basis(obligation):
+        revision = obligation.get("revisionHash")
+        if not revision:
+            return None
+        return ("generation " + str(obligation.get("executionGeneration")) + ", revision "
+                + str(revision)[:12])
+
+    def render(self, packet, request_id) -> str:
+        """The bytes one attempt freezes. A function of the packet and the request id alone.
+
+        The recipient's own turn id is absent, and that absence is what makes the readback
+        worth having: a reply that quotes every delivered field back still cannot produce the
+        proof. It is also unavoidable - the turn does not exist until these bytes arrive.
+        """
+        region = packet["envelope"]
+        lines = ["[codex-session-relay] supervisor report", "requestId: " + request_id]
+        lines += packets.packet_lines(packet)
+        lines += [
+            "",
+            "To confirm you read this, from inside your own turn:",
+            "  supervisor-read --message " + region["messageId"]
+            + " --turn <your turn id> --proof <proof>",
+            "",
+            "The proof is sha256(messageId|<your own turn id>). This message does not and",
+            "cannot contain that turn id, which is what separates reading it from quoting it",
+            "back. Confirming is not an answer and agrees to nothing: it is the only thing in",
+            "this store that can say the message was read.",
+            "",
+            "Full record: codex-session-relay supervisor-show --message " + region["messageId"],
+        ]
+        return NEWLINE.join(lines)
+
+    # ----------------------------------------------------------------------- sending it
+
+    def eligible(self, *, now, limit: int = 4) -> list:
+        """The oldest staged messages that may be sent now, in the order they were staged.
+
+        Ordered by staging rather than by anything about the recipient, so two facts reach the
+        level above in the order they arose. This queue is read only by this class: the
+        parent-child engine selects over deliveries by event id and cannot see these rows, and
+        nothing here can claim one of those.
+        """
+        return self.store.all(
+            "SELECT * FROM supervisor_messages"
+            " WHERE state IN (?,?,?) AND hold_reason IS NULL"
+            "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
+            " ORDER BY staged_at, rowid LIMIT ?",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, limit),
+        )
+
+    def attempt(self, message_id, adapter, *, now=None, owner: str = "relay"):
+        """One attempt at one staged message, through the same host rules a delivery obeys.
+
+        None means nothing was sent and nothing is wrong: a busy recipient, a backoff still
+        running, a message already dispatched. A returned record is what the transport actually
+        answered, classified by the same reader the parent-child path uses.
+        """
+        now = self.clock.now() if now is None else now
+        row = self.get(message_id)
+        if row["hold_reason"]:
+            return None
+        if row["state"] not in CLAIMABLE:
+            return None
+        if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
+            return None
+        recipient = row["recipient_task_id"]
+        # Re-read immediately before the send, the way delivery re-checks authorization inside
+        # attempt(): a handover committed since staging must not be delivered through.
+        resolution = self.resolve(row["relationship_id"])
+        if (resolution["recipient"] != recipient
+                or resolution["sender"] != row["sender_task_id"]):
+            raise DeliveryRefused(
+                RefusalReason.RELATION_OWNER_DRIFT,
+                "this message was staged from " + repr(row["sender_task_id"]) + " to "
+                + repr(recipient) + " and the linkage now says " + repr(resolution["sender"])
+                + " reports to " + repr(resolution["recipient"]) + "; the hierarchy moved"
+                " under a staged report, so it is held rather than sent to either",
+            )
+        if self._rate_limited(recipient, now):
+            self._reschedule(row, now + self.policy.min_send_interval_seconds)
+            return None
+        observation = observe(
+            adapter, recipient, require_evidence=self.require_lifecycle_evidence)
+        record_lifecycle(self.store, self.clock, observation)
+        if observation.is_busy:
+            self._defer_busy(row, now)
+            return None
+        if not observation.may_send:
+            self._withhold(row, observation, now)
+            return None
+        # Established before anything is claimed or sent. The bridge refuses a send carrying no
+        # settings, and a supervisor is a task like any other: what is preserved is what its
+        # creation result recorded, never a host default.
+        try:
+            settings = self._settings_for(recipient, observation.runtime_status)
+        except DeliveryRefused as refusal:
+            self._withhold_settings(row, now, refusal)
+            return None
+        try:
+            attempt_no, request_id, message = self._claim(
+                message_id, now=now, owner=owner, recipient=recipient)
+        except _NotClaimable:
+            return None
+        try:
+            receipt = adapter.send_message(request_id, recipient, message, settings)
+        except Exception as error:  # noqa: BLE001 - a transport fault is an unknown outcome
+            receipt = {"requestId": request_id, "status": "outcome_unknown",
+                       "error": type(error).__name__ + ": " + str(error)}
+        facts = classify_operation_receipt(receipt)
+        record = {
+            "schema": VERSION,
+            "requestId": request_id,
+            "messageId": message_id,
+            "attemptNo": attempt_no,
+            "recipientTaskId": recipient,
+            "deliveryState": facts.delivery_state,
+            "sendAttempted": facts.send_attempted,
+            "retrySafe": facts.retry_safe,
+            "transportReceiptStatus": facts.transport_receipt_status,
+            "failedOperation": facts.failed_operation,
+            "turnId": facts.turn_id,
+            "observedAt": self.clock.iso(),
+        }
+        self._settle(row, request_id, facts, record, now)
+        return record
+
+    def _settings_for(self, task_id, runtime_status=None):
+        if self._settings is not None:
+            return self._settings(task_id, runtime_status)
+        return authorized_settings(self.store, task_id, runtime_status)
+
+    def _claim(self, message_id, *, now, owner, recipient):
+        """Eligibility, the attempt number and the bytes, in one transaction.
+
+        The bytes are rendered HERE, against the number this transaction just allocated, for
+        the reason delivery renders inside its own claim: the request id is inside the bytes,
+        so a render made before the allocation describes an attempt somebody else may have
+        taken. Allocation, token and bytes commit together or not at all.
+        """
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE supervisor_messages"
+                "   SET state = ?, lease_owner = ?, lease_until = ?,"
+                "       attempt_count = attempt_count + 1, updated_at = ?"
+                " WHERE message_id = ?"
+                "   AND state IN (?,?,?)"
+                "   AND hold_reason IS NULL"
+                "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)",
+                (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
+                 message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
+            )
+            if cursor.rowcount != 1:
+                raise _NotClaimable()
+            row = db.execute(
+                "SELECT * FROM supervisor_messages WHERE message_id = ?", (message_id,)
+            ).fetchone()
+            attempt_no = row["attempt_count"]
+            request_id = supervisor_request_id(message_id, attempt_no)
+            message = self.render(json.loads(row["packet"]), request_id)
+            at = self.clock.iso()
+            db.execute(
+                "INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message,"
+                " state, send_attempted, retry_safe, turn_id, record, sent_at, observed_at)"
+                " VALUES (?,?,?,?,?,?,0,NULL,?,?,?)",
+                (request_id, message_id, attempt_no, message, HELD_UNCERTAIN, "unknown",
+                 json.dumps({"requestId": request_id, "messageId": message_id,
+                             "attemptNo": attempt_no, "deliveryState": HELD_UNCERTAIN}),
+                 at, at),
+            )
+            # Counted in the SAME transaction as the claim, and against the recipient rather
+            # than against this channel. The bound exists to limit how often one task is woken,
+            # so two queues feeding one task must not each get their own budget - which does
+            # mean a report can wait behind parent-child traffic to a task that is both a
+            # parent and a supervisor. That is the intended trade, said out loud.
+            self._count_send(db, recipient, now)
+        return attempt_no, request_id, message
+
+    def _settle(self, row, request_id, facts, record, now) -> None:
+        """Record what the transport answered, and where that leaves the message.
+
+        An uncertain outcome is never retried here. There is no reconciler for this queue, and
+        a second send that lands is a second wake for one fact - worse than a report that waits
+        for somebody to look. It stays held_uncertain, which is not claimable, and says so.
+        """
+        message_id = row["message_id"]
+        attempts = row["attempt_count"] + 1
+        state = facts.delivery_state
+        when, hold = None, None
+        if state == DEFERRED_BUSY:
+            when = now + self.policy.delay_for(attempts, "busy")
+            if attempts >= self.policy.busy_max_attempts:
+                hold = self.policy.cap_reason("busy")
+        elif state == WITHHELD_PRE_SEND:
+            when = now + self.policy.delay_for(attempts, "send")
+            if attempts >= self.policy.max_attempts:
+                hold = self.policy.cap_reason("send")
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE supervisor_attempts SET state = ?, send_attempted = ?, retry_safe = ?,"
+                " turn_id = ?, record = ?, observed_at = ? WHERE request_id = ?",
+                (state, facts.send_attempted, int(bool(facts.retry_safe)), facts.turn_id,
+                 json.dumps(record, ensure_ascii=False, sort_keys=True), at, request_id),
+            )
+            db.execute(
+                "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
+                " hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                " WHERE message_id = ?",
+                (state, when, hold, at, message_id),
+            )
+            self.store.journal(
+                "supervisor_message_attempted", message_id,
+                {"requestId": request_id, "deliveryState": state,
+                 "sendAttempted": facts.send_attempted, "turnId": facts.turn_id,
+                 "holdReason": hold}, at=at)
+
+    def _rate_limited(self, recipient, now):
+        window = int(now // 3600) * 3600
+        row = self.store.one(
+            "SELECT sends, last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
+            " AND window_start = ?", (recipient, window))
+        if row is None:
+            return False
+        if row["sends"] >= self.policy.max_sends_per_recipient_per_hour:
+            return True
+        last = row["last_send_at"]
+        return last is not None and (now - last) < self.policy.min_send_interval_seconds
+
+    def _count_send(self, db, recipient, now) -> None:
+        window = int(now // 3600) * 3600
+        db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,1,?)"
+            " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
+            " sends = sends + 1, last_send_at = excluded.last_send_at",
+            (recipient, window, now))
+
+    def _reschedule(self, row, when, *, state=None, hold=None) -> None:
+        # Guarded on the state and attempt count that were observed, so a stale reading cannot
+        # drag a message another caller has already dispatched backwards.
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
+                " hold_reason = ?, updated_at = ? WHERE message_id = ? AND state IN (?,?,?)"
+                "   AND attempt_count = ?",
+                (state or row["state"], when, hold, self.clock.iso(), row["message_id"],
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, row["attempt_count"]))
+
+    def _defer_busy(self, row, now) -> None:
+        """A recipient mid-turn is left strictly alone: no resume, no attempt, no record.
+
+        There is nothing to classify, because no transport call was made.
+        """
+        attempts = row["attempt_count"]
+        hold = self.policy.cap_reason("busy") if attempts >= self.policy.busy_max_attempts \
+            else None
+        self._reschedule(row, now + self.policy.delay_for(attempts + 1, "busy"),
+                         state=DEFERRED_BUSY, hold=hold)
+
+    def _withhold(self, row, observation, now) -> None:
+        """A recipient the host says cannot receive holds the report where it is."""
+        self._reschedule(row, now + self.policy.lifecycle_recheck_seconds,
+                         state=WITHHELD_PRE_SEND,
+                         hold=None if observation.deliverable != "no" else observation.withhold_reason)
+        self.store.journal(
+            "supervisor_message_withheld", row["message_id"],
+            {"deliverable": observation.deliverable, "reason": observation.withhold_reason},
+            at=self.clock.iso())
+
+    def _withhold_settings(self, row, now, refusal) -> None:
+        """Withheld before any transport call, naming what the record got wrong.
+
+        Not a permanent hold: settings that were never recorded can be recorded, and the next
+        pass decides again. Nothing was claimed, so there is no attempt to explain.
+        """
+        self._reschedule(row, now + self.policy.lifecycle_recheck_seconds,
+                         state=WITHHELD_PRE_SEND)
+        self.store.journal(
+            "supervisor_message_withheld", row["message_id"],
+            {"reason": refusal.reason.value if refusal.reason else None,
+             "detail": refusal.detail}, at=self.clock.iso())
+
+    # ------------------------------------------------------------------ reading it back
+
+    def read_back(self, message_id, *, read_turn_id, proof, adapter=None) -> dict:
+        """The recipient saying it read this, and what the host could establish about that.
+
+        The proof is recomputed rather than trusted, and the turn is checked against the host's
+        own list and against the moment the send started. A readback that does not verify is
+        still recorded: hiding it would lose the fact that somebody answered, and the message
+        stays where it was rather than moving to read.
+        """
+        row = self.get(message_id)
+        if row["state"] not in DELIVERED + (READ,):
+            raise DeliveryRefused(
+                RefusalReason.NOT_CLAIMABLE,
+                "message " + repr(message_id) + " is " + repr(row["state"]) + "; only a"
+                " delivered message is read back, because there is nothing yet to have read",
+            )
+        if not isinstance(read_turn_id, str) or not read_turn_id.strip():
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a readback names the turn it was written in; without one there is nothing to"
+                " check against the host",
+            )
+        existing = self.store.one(
+            "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
+        if existing is not None and existing["verified"] == HOST_READ:
+            # Settled. A second reading of one message is the same fact, and answering it with
+            # what stands is what makes an uncertain submission safe to settle by asking.
+            return {"schema": VERSION, "messageId": message_id, "recorded": False,
+                    "verified": existing["verified"], "readTurnId": existing["read_turn_id"],
+                    "detail": existing["detail"], "readAt": existing["read_at"]}
+        expected = supervisor_read_proof(message_id, read_turn_id)
+        if proof != expected:
+            raise DeliveryRefused(
+                RefusalReason.ACK_PROOF_MISMATCH,
+                "the proof does not match this message and turn. It is sha256(messageId|your"
+                " own turn id), and quoting the delivered fields back cannot produce it",
+            )
+        attempt = self.store.one(
+            "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state IN (?,?)"
+            " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
+        verified, detail, origin = self._verify_read_turn(row, attempt, read_turn_id, adapter)
+        delivered = self._delivered_evidence(row, attempt, adapter)
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO supervisor_readbacks (message_id, read_turn_id, proof, verified,"
+                " request_id, detail, read_at) VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(message_id) DO UPDATE SET read_turn_id = excluded.read_turn_id,"
+                " proof = excluded.proof, verified = excluded.verified,"
+                " request_id = excluded.request_id, detail = excluded.detail,"
+                " read_at = excluded.read_at",
+                (message_id, read_turn_id, proof, verified,
+                 attempt["request_id"] if attempt is not None else None,
+                 json.dumps({"turnOrigin": origin, "detail": detail, "delivered": delivered},
+                            ensure_ascii=False, sort_keys=True),
+                 at),
+            )
+            if verified == HOST_READ:
+                db.execute(
+                    "UPDATE supervisor_messages SET state = ?, updated_at = ?"
+                    " WHERE message_id = ?", (READ, at, message_id))
+            self.store.journal(
+                "supervisor_message_read", message_id,
+                {"verified": verified, "turnOrigin": origin, "readTurnId": read_turn_id,
+                 "deliveredEvidence": delivered.get("found")}, at=at)
+        return {"schema": VERSION, "messageId": message_id, "recorded": True,
+                "verified": verified, "readTurnId": read_turn_id, "turnOrigin": origin,
+                "detail": detail, "delivered": delivered, "readAt": at,
+                "limits": "a verified readback says this message is in the recipient's"
+                          " transcript and that a real turn on its thread answered with a value"
+                          " these bytes do not contain. It does not say who wrote the answer:"
+                          " this transport carries opaque text and no authenticated caller"}
+
+    def _verify_read_turn(self, row, attempt, read_turn_id, adapter):
+        """A readback has to come from a real turn that did not start before the send.
+
+        The turn the send itself opened is allowed, and is the ordinary case: the message is
+        what wakes the supervisor, so that turn IS where it gets read. Which turn answered is
+        returned beside the verdict rather than folded into it, because the sender already
+        knows the id of the turn it opened and a reader deserves to know that.
+        """
+        recipient = row["recipient_task_id"]
+        origin = ORIGIN_UNKNOWN
+        if attempt is not None and attempt["turn_id"]:
+            origin = RELAY_OPENED if attempt["turn_id"] == read_turn_id else RECIPIENT_OPENED
+        if adapter is None:
+            return NO_HOST, ("no host adapter in this process, so whether this turn is real was"
+                             " not established"), origin
+        try:
+            turns = set(adapter.list_turn_ids(recipient, limit=25))
+        except Exception as error:  # noqa: BLE001 - an unreadable host is not a verification
+            return NO_HOST, "the host turn list could not be read: " + str(error), origin
+        if read_turn_id not in turns:
+            return TURN_NOT_FOUND, ("the host does not list this turn on the recipient's"
+                                    " thread, so nothing says it exists"), origin
+        try:
+            turn = adapter.read_turn(recipient, read_turn_id)
+        except Exception as error:  # noqa: BLE001
+            return NO_HOST, "the turn could not be read: " + str(error), origin
+        if turn is None:
+            return TURN_NOT_FOUND, "the host has no such turn on this thread", origin
+        if turn.started_at is None:
+            return NO_HOST, ("the host did not say when this turn began, and an unknown"
+                             " chronology is not a verification"), origin
+        if attempt is not None and origin != RELAY_OPENED and certainly_before(
+                turn.started_at, attempt["sent_at"] or attempt["observed_at"]):
+            return TURN_PREDATES_SEND, ("this turn began before the send, so it cannot be the"
+                                        " turn that read it"), origin
+        return HOST_READ, ("the host lists this turn on the recipient's thread and it did not"
+                           " begin before the send"), origin
+
+    def _delivered_evidence(self, row, attempt, adapter) -> dict:
+        """Whether the bytes this send froze are in the recipient's own transcript.
+
+        Independent of our own receipt on purpose. A receipt says the transport accepted the
+        call; a token found in the recipient's items says the message is where the recipient
+        reads. The request id is the token because it is unique to one attempt and is inside
+        the bytes that attempt sent.
+
+        A truncated scan is inconclusive and is reported as such, never as absence.
+        """
+        if adapter is None:
+            return {"scanned": False,
+                    "reason": "no host adapter in this process, so the transcript was not read"}
+        if attempt is None:
+            return {"scanned": False,
+                    "reason": "no dispatched attempt, so there is no token to look for"}
+        try:
+            scan = adapter.find_token(
+                row["recipient_task_id"], attempt["request_id"], limit=TRANSCRIPT_SCAN)
+        except Exception as error:  # noqa: BLE001
+            return {"scanned": False,
+                    "reason": "the transcript could not be read: " + str(error)}
+        return {"scanned": True, "found": bool(scan.found), "turnId": scan.turn_id,
+                "exhausted": bool(scan.exhausted), "itemsRead": scan.scanned,
+                "token": attempt["request_id"]}
+
+    # ------------------------------------------------------------------- how far it got
+
+    def reach(self, message_id) -> dict:
+        """The five stages, answered from these two tables and from nothing else.
+
+        agreed, applied and verified stay not_applicable whatever happens here. A supervisor
+        agreeing, acting or confirming is not a fact this store holds, and the envelope's own
+        table refuses a caller that tries to write one in.
+        """
+        ladder = envelope.unreached(envelope.PARENT_TO_SUPERVISOR)
+        row = self.find(message_id)
+        if row is None:
+            return ladder
+        attempt = self.store.one(
+            "SELECT * FROM supervisor_attempts WHERE message_id = ? ORDER BY attempt_no DESC"
+            " LIMIT 1", (message_id,))
+        if attempt is not None:
+            if attempt["state"] in DELIVERED:
+                ladder[envelope.TRANSPORT_ACCEPTED] = envelope.stage(
+                    envelope.YES, source="supervisor_attempts",
+                    detail="the transport accepted " + attempt["request_id"])
+            elif attempt["state"] in (WITHHELD_PRE_SEND, DEFERRED_BUSY):
+                ladder[envelope.TRANSPORT_ACCEPTED] = envelope.stage(
+                    envelope.NO, source="supervisor_attempts",
+                    detail="nothing was sent: " + attempt["state"])
+            # held_uncertain stays unmeasured, which is the whole point of that state: the
+            # transport did not answer, and an unanswered send is not a refused one.
+        readback = self.store.one(
+            "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
+        if readback is not None:
+            if readback["verified"] == HOST_READ:
+                ladder[envelope.RECEIVED] = envelope.stage(
+                    envelope.YES, source="supervisor_readbacks",
+                    detail="read back from turn " + readback["read_turn_id"])
+            else:
+                ladder[envelope.RECEIVED] = envelope.stage(
+                    envelope.UNMEASURED,
+                    detail="a readback was recorded and did not verify: "
+                           + readback["verified"])
+        envelope.check_reach(envelope.PARENT_TO_SUPERVISOR, ladder)
+        return ladder
+
+    def show(self, message_id) -> dict:
+        """One staged message whole: what it says, every attempt, and what came back."""
+        row = self.get(message_id)
+        attempts = [
+            {"requestId": one["request_id"], "attemptNo": one["attempt_no"],
+             "state": one["state"], "sendAttempted": one["send_attempted"],
+             "retrySafe": bool(one["retry_safe"]), "turnId": one["turn_id"],
+             "sentAt": one["sent_at"], "observedAt": one["observed_at"],
+             "message": one["message"]}
+            for one in self.store.all(
+                "SELECT * FROM supervisor_attempts WHERE message_id = ? ORDER BY attempt_no",
+                (message_id,))
+        ]
+        readback = self.store.one(
+            "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
+        return {
+            "schema": VERSION,
+            "messageId": message_id,
+            "obligationId": row["obligation_id"],
+            "kind": row["obligation_kind"],
+            "relationshipId": row["relationship_id"],
+            "projectKey": row["project_key"],
+            "purpose": row["purpose"],
+            "sender": row["sender_task_id"],
+            "recipient": row["recipient_task_id"],
+            "state": row["state"],
+            "holdReason": row["hold_reason"],
+            "stagedAt": row["staged_at"],
+            "packet": json.loads(row["packet"]),
+            "attempts": attempts,
+            "readback": None if readback is None else {
+                "readTurnId": readback["read_turn_id"], "verified": readback["verified"],
+                "requestId": readback["request_id"], "readAt": readback["read_at"],
+                "detail": json.loads(readback["detail"]) if readback["detail"] else None},
+            "reach": self.reach(message_id),
+            "limits": "this is what the relay staged, sent and was told. Whether the supervisor"
+                      " acted on it is not here, and what discharges the obligation is still"
+                      " the Linear record it reads for itself, confirmed",
+        }
+
+
+def _artifact(report):
+    """The pull request a work report names, when it names one whole.
+
+    A number without its repository belongs to whoever reads it first, and a pull request
+    without its head is inherited by the next push to it, so a partial one is left out rather
+    than reported in pieces. Nothing requires this field on a report upward, which is exactly
+    why leaving it out is available: a completion with no repository change has none.
+    """
+    if not report:
+        return None
+    repository = report.get("repository")
+    number = report.get("prNumber")
+    head = report.get("headSha")
+    if not (repository and number and head):
+        return None
+    return packets.pull_request(repository=repository, number=number, head_sha=head)
+
