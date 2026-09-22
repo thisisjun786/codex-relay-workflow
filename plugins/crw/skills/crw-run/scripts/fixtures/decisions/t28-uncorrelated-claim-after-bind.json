@@ -1,0 +1,62 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "claim_uncorrelated",
+    "record": {
+      "claimEvidence": "claim_dispatch_mismatch",
+      "held": false,
+      "pendingObservation": "undeclared_turn_end"
+    },
+    "state": "claim_uncorrelated"
+  },
+  "note": "T28: bound and registered, and the claim at claims/session-1111/claim.json names a dispatch request id that hashes to a different assignment. The post-bind path asked only whether the claimant was this session, so this shape reached undeclared_turn_end and was HELD, indistinguishable in the record from a correlated claim. Both windows now apply the correlation rule. Released and recorded apart from marker_unclaimed, because a create-once claim carrying the wrong dispatch cannot be replaced, so unlike the bind-before-claim race this never clears itself.",
+  "observation": {
+    "assignment": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+    "disposition": null,
+    "marker": {
+      "attempts": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "outcome": "accepted",
+          "taskId": "task-1111"
+        }
+      ],
+      "bound": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "sessionId": "session-1111",
+        "taskId": "task-1111"
+      },
+      "claims": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "dispatchRequestId": "some-other-dispatch",
+          "factId": "claims/session-1111/claim.json",
+          "firstTurnId": "turn-0001",
+          "sessionId": "session-1111"
+        }
+      ],
+      "intent": {
+        "declaredAt": "2026-01-01T00:00:00+00:00",
+        "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+        "issue": "JUN-000",
+        "workspace": "/workspace/example"
+      },
+      "relationship": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "relationshipId": "rel-example"
+      }
+    },
+    "now": "2026-01-01T00:06:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    }
+  }
+}
