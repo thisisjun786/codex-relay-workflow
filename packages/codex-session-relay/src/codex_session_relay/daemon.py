@@ -16,7 +16,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .delivery import COMPLETION
+from .delivery import COMPLETION, REVISION
 from .admission import BOUND_ADMISSION_SQL
 from .errors import (
     DeliveryRefused, RefusalReason, RegistrationError, RelayError, ScopeError,
@@ -858,7 +858,10 @@ class RelayDaemon:
                 report.skipped += 1
             else:
                 report.delivered += 1
-            if row["kind"] != COMPLETION and record["deliveryState"] == DISPATCHED:
+            # Only a revision anchors a generation. Expressed as "not a completion" this was
+            # the same set while there were two kinds; with a third it would try to bind an
+            # anchor for a merge-turn grant, which opens no generation and has none to bind.
+            if row["kind"] == REVISION and record["deliveryState"] == DISPATCHED:
                 try:
                     self.ack.bind_dispatched_revision(row["event_id"])
                 except Exception as error:
