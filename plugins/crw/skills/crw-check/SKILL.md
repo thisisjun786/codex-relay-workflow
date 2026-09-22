@@ -5,7 +5,7 @@ description: "Compare canonical Linear documents and issue criteria with deliver
 
 # CRW Check
 
-Check delivered work against what was agreed, using Linear as the canonical document source. In an existing execution workflow, carry actionable findings into the authorized correction and recheck path instead of stopping at a proposal.
+Check delivered work against what was agreed, using Linear as the canonical source of what was agreed. In an existing execution workflow, carry actionable findings into the authorized correction and recheck path instead of stopping at a proposal.
 
 ## Connect the workflow
 
