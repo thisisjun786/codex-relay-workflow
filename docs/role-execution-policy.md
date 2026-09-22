@@ -210,6 +210,35 @@ Nothing before step 4 is evidence. A file written is not a process reading it, a
 it is not the other process reading the same one, and either of those is a different fact from a
 provider actually serving the model a host recorded.
 
+### The relay's daemon is told once, not once per shell
+
+Step 2 used to mean "export it in whatever shell you restart from", and that made the policy a
+service runs on a property of whoever last typed the command: the same `service restart`, typed
+in two terminals, produced a service enforcing roles and a service withholding every role-bound
+delivery. So the relay's supervised daemon has a declaration of its own:
+
+    codex-session-relay --state <dir> service declare --execution-policy /path/to/execution-policy.json
+
+It is read back before it is recorded — a declaration that does not resolve is refused here
+rather than discovered at the next restart by a worker that then withholds everything — and every
+later `service start` and `service restart` launches its daemon with it, whatever the calling
+shell carries. Workers inherit it from the supervisor that spawned them.
+
+It names the FILE. Editing the policy at that path still takes effect at the next restart, for
+the same reason it always did, and this record is not a second place a policy can be written.
+
+Where a shell and the declaration disagree, the launch is refused and names both files, before
+anything is stopped. Choosing between them by preference is the failure this ends, and a restart
+that stopped a service and then refused to start it would turn a question into an outage. Unset
+the variable, or declare the other file.
+
+The reach is exactly the relay's own supervised daemon and its workers. The relay CLI, the Stop
+hook and the bridge MCP server each still read their own environment, which is why `doctor`
+reports three separate readings: `rolePolicy` is what that CLI process resolved, `workerPolicy`
+is what the serving worker resolved and is the effective one, and `launchPolicy` is the input the
+next daemon would be given. A declaration made while a service is running is a pending change
+until that service restarts, and `service status` says so rather than implying it is in force.
+
 Deliveries held while the policy was unresolved are not lost. The hold is retry-safe on the
 ordinary recheck cadence, so they resume on the next pass once the process can read the policy,
 with no turn started in the meantime and nothing to replay by hand.
