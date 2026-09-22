@@ -72,6 +72,64 @@ task id establishes nothing.
 refused for this role is a settings answer, not a provider failure, and it is not worked
 around by creating a second child.
 
+## What check refuses, and why a constructor was not enough
+
+Two entry points reach this contract and they are not the same. `compose` builds a packet
+here, where every constructor has already run. `packet-check` reads one back from JSON, where
+none of them has. Every rule that lived only in a constructor was a rule that second path did
+not have, so `check` is a complete validator rather than a finishing touch, and `reception`
+calls it before it compares anything.
+
+**Shape before meaning.** A packet is not always a mapping. A JSON array reaching `one.get()`
+raised `AttributeError`, which is a host failure rather than a producer being told what it
+sent, and a validator that crashes on malformed input is not validating it. The packet, the
+region, the policy and the activation reading are each checked for shape first.
+
+**Derivation before comparison.** Three of the region's fields are computed from the others,
+so `_rederive` recomputes them rather than reading them: the `kind` from the direction and
+purpose, both endpoint roles from the direction, and the `messageId` from the direction,
+relation, purpose and subject. Comparing copies would catch nothing, because the packet
+carries no duplicate of anything - the same reason `envelope.contradiction` checks a directive
+pointer by re-derivation. The `messageId` is the one that matters: it keys the replay and
+collision reading, so a caller able to write its own could hand a second correction the
+disposition given to the first, or spend an id in advance that a later real request collides
+with.
+
+**Both versions are matched.** The packet's own version says how to read the typed data and
+the region's says how to read the identification. Checking one and not the other let a
+`relay-packet/1` carry an envelope nobody here has mapped and be compared field by field
+anyway.
+
+**Typed fields have shapes, not just values.** `FIELD_TYPES` makes the issue, criteria digest,
+callback and body text and the generation a number, and `ARTIFACT_REQUIRED` makes a pull
+request name its repository, number and head and a locator its path and digest. Non-empty was
+the whole test before, and an object-valued generation compared equal to an equally malformed
+record value - two wrong answers agreeing, and the reading coming back accepted. The policy's
+own fields are text for the same reason: the refused-pair reading compares by string form,
+where two values that are not settings can agree with each other and neither is a setting.
+
+**Identity before currency.** `_artifact_agreement` compares the repository and number of a
+pull request, and the path of a locator, before it compares the head or the digest. Comparing
+only currency accepted a packet naming another repository or another pull request that
+happened to sit on the same commit, which is the second writer this whole reading exists to
+keep out. Both go through `_compare`, so a record that does not name them is a gap rather
+than a pass.
+
+**A mode may not excuse itself.** `activation_class` refuses a `loop` reading that answers
+`not_applicable` for its own activation. That answer belongs to a mode which arms nothing,
+and accepting it from a loop read an unarmed one as working - the L3 misreading in the
+direction that hides a defect rather than inventing one.
+
+One restraint runs the other way, and it is deliberate. `report.child_purpose` derives the
+child direction's purpose from the receipt's outcome and from nothing else, because the
+purpose is an input to the message id and `relay-envelope/1` promises that id stays put across
+retries, restarts and second readings. An earlier version also read whether a merge-readiness
+handoff had been recorded, which is not a property of the event: a resubmission can add one,
+so the same event derived a second id and the recipient owed two obligations for one fact.
+The candidate-versus-result distinction lives here instead, where `review_ready` is its own
+purpose, and in the delivered bytes, where a candidate renders the merge-readiness block and a
+plain result renders none of it.
+
 ## A message arriving twice
 
 `repeat` answers **first**, **replay** or **collision**, keyed on the message id together
