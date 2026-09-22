@@ -377,3 +377,7 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-231 | Cursors advance after the rows are recorded, so a recording failure does not skip that page | `faultsweep.record_all` | implemented |
 | I-232 | Re-registering a fault class with different terms is refused; identical terms stay idempotent | `faults.register_class` | implemented |
 | I-233 | The fault tables reach a database that predates them, proven by dropping them from a live store and reopening it | `store.DDL` applied on every open; asserted in `tests/test_faults.py` | implemented |
+| I-234 | An occurrence is identified within its EPISODE, so repeated sweeps converge while the same fact observed after a clear or a resolution is a new occurrence that reopens the record | `fault_ledger.episode`, `faults.occurrence_id`, incremented by a clear and by `resolve` | implemented |
+| I-235 | A retrying delivery is derived from its attempt rows, so the degraded tier is reachable before a cap is ever hit, and one occurrence means one actual failed attempt | `faultsweep.retry_faults` keyed on `attempts.request_id` | implemented |
+| I-236 | Reconciliation reports the state the row is actually in; an attested absence does not release a claim its holder still has | `FaultLedger.reconcile` | implemented |
+| I-237 | Malformed caller JSON is a refusal with a reason, not a traceback that reads like an outage | `cli._fault_json` | implemented |

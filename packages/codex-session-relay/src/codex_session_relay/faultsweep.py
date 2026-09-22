@@ -42,6 +42,9 @@ ESTABLISHED = (REPORTED, UNREPORTED, "in_progress", "unmanaged")
 
 # A delivery that is nowhere any more, so an unmoving row in one of these is not a fault.
 SETTLED_DELIVERY = ("dispatched", "inbox_only", "superseded")
+# How many attempts make a delivery one that is RETRYING rather than one in flight. A first
+# attempt is ordinary; a second means the first did not land.
+RETRYING_ATTEMPTS = 2
 
 
 def _named(value):
@@ -126,6 +129,9 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         "       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
         "         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state"
         "  FROM deliveries d"
+        # A hold reason OR repeated attempts. Before a delivery is capped its hold reason is
+        # cleared between retries, so requiring one made the degraded tier unreachable: only
+        # capped deliveries were ever seen, and the three-in-a-window rule could never fire.
         " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
         "   AND d.event_id > ?"
         " ORDER BY d.event_id LIMIT ?",
@@ -135,7 +141,8 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
     cache = {}
     for row in rows:
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
-        signature = {"recipient": row["recipient_task_id"], "cause": row["hold_reason"],
+        signature = {"recipient": row["recipient_task_id"],
+                     "cause": row["hold_reason"] or "retrying",
                      "attemptState": row["last_state"]}
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
@@ -143,14 +150,60 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
             signature=signature,
             occurrence_key=f"delivery:{row['last_request'] or row['event_id']}",
             scope=scope_of(store, row["relationship_id"], scope, cache),
-            detail=f"a delivery to {row['recipient_task_id']} is held: {row['hold_reason']}",
+            detail=(f"a delivery to {row['recipient_task_id']} is held:"
+                    f" {row['hold_reason']}" if row["hold_reason"] else
+                    f"a delivery to {row['recipient_task_id']} is on attempt"
+                    f" {row['attempt_count']}"),
             evidence=[_evidence("row", f"deliveries:{row['event_id']}", {
                 "state": row["state"], "holdReason": row["hold_reason"],
                 "attemptCount": row["attempt_count"], "lastAttemptState": row["last_state"],
                 "relationship": row["relationship_id"],
             })],
         ))
+    observations += retry_faults(store, product=product, scope=scope, limit=limit)
     return _page(observations, rows, "event_id", cursor, limit)
+
+
+def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
+    """Failures that have not reached a hold yet, one occurrence per actual failed attempt.
+
+    The hold reason is only set at a cap, so a query that required one saw nothing until a
+    delivery had already given up - and the degraded tier, which needs three observations
+    inside a window, could never be reached at all. The attempt rows are where a retryable
+    failure is written down, and their request ids advance once per attempt rather than once
+    per sweep, which is exactly the occurrence identity this needs.
+
+    Newest first and bounded. An attempt older than this page was recorded by an earlier
+    sweep, and occurrence identity makes re-reading it free; what this cannot see is more than
+    SWEEP_LIMIT new attempts between two sweeps.
+    """
+    rows = store.all(
+        "SELECT a.request_id, a.state AS attempt_state, a.event_id,"
+        "       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,"
+        "       d.hold_reason, d.attempt_count"
+        "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
+        " WHERE d.state NOT IN (?,?,?)"
+        "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
+        " ORDER BY a.rowid DESC LIMIT ?",
+        (*SETTLED_DELIVERY, "dispatched", "inbox_only", limit),
+    )
+    cache = {}
+    return [faults.observation(
+        product=product, fault_class="delivery_stalled",
+        severity=faults.BROKEN if row["hold_reason"] else faults.DEGRADED,
+        signature={"recipient": row["recipient_task_id"],
+                   "cause": row["hold_reason"] or "retrying",
+                   "attemptState": row["attempt_state"]},
+        occurrence_key=f"delivery:{row['request_id']}",
+        scope=scope_of(store, row["relationship_id"], scope, cache),
+        detail=(f"an attempt to deliver to {row['recipient_task_id']} ended"
+                f" {row['attempt_state']}"),
+        evidence=[_evidence("row", f"attempts:{row['request_id']}", {
+            "attemptState": row["attempt_state"], "deliveryState": row["delivery_state"],
+            "holdReason": row["hold_reason"], "attemptCount": row["attempt_count"],
+            "event": row["event_id"],
+        })],
+    ) for row in rows]
 
 
 def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
@@ -420,7 +473,8 @@ def still_present(store, fault_class, signature) -> dict:
     """
     if fault_class == "delivery_stalled":
         return store.one(
-            "SELECT 1 FROM deliveries d WHERE d.recipient_task_id = ? AND d.hold_reason = ?"
+            "SELECT 1 FROM deliveries d WHERE d.recipient_task_id = ?"
+            "  AND COALESCE(d.hold_reason, 'retrying') = ?"
             "  AND d.state NOT IN (?,?,?)"
             "  AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
             "                 ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"

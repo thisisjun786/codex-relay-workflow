@@ -447,6 +447,53 @@ class FifthReviewFindings(RelayTestCase):
                 (self.relationship, generation, turn, "inProgress", polled,
                  self.clock.iso(), error))
 
+
+    def attempt(self, request_id, event_id, attempt_no=1,
+                state="withheld_pre_send"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO attempts (request_id, event_id, attempt_no, kind,"
+                "  internal_state, state, sent_at, observed_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (request_id, event_id, attempt_no, "completion_event", "settled", state,
+                 self.clock.now(), self.clock.iso()))
+
+    def unheld(self, event_id="event-r", recipient="01parent-task"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event_id, self.relationship, "completion_event", recipient, recipient,
+                 "queued", 2, None, self.clock.iso(), self.clock.iso()))
+
+    def test_a_retrying_delivery_is_degraded_before_it_is_ever_capped(self):
+        """The hold reason is only set at a cap, so requiring one made degraded unreachable."""
+        self.unheld()
+        for index in range(3):
+            self.attempt(f"del-r-a{index}", "event-r", attempt_no=index + 1)
+        derived = faultsweep.delivery_faults(
+            self.store, product=PRODUCT, scope={})["observations"]
+        self.assertEqual(3, len(derived))
+        self.assertEqual({faults.DEGRADED}, {entry["severity"] for entry in derived})
+        self.assertEqual(1, len({faults.canonical_signature(entry["signature"])
+                                 for entry in derived}))
+        for entry in derived:
+            self.ledger.record(entry)
+        row = self.store.all("SELECT state, occurrence_count FROM fault_ledger")[0]
+        self.assertEqual(3, row["occurrence_count"])
+        self.assertEqual(faults.OPEN, row["state"])
+
+    def test_one_occurrence_per_attempt_not_per_sweep(self):
+        self.unheld()
+        self.attempt("del-r-a0", "event-r")
+        for _round in range(3):
+            for entry in faultsweep.delivery_faults(
+                    self.store, product=PRODUCT, scope={})["observations"]:
+                self.ledger.record(entry)
+        self.assertEqual(1, self.store.all(
+            "SELECT occurrence_count FROM fault_ledger")[0]["occurrence_count"])
+
     def test_an_anchor_bound_a_moment_ago_is_not_a_stalled_one(self):
         """It has not been due yet. Raising on that filed a fault for every new assignment."""
         self.bind()
@@ -721,6 +768,47 @@ class Publication(LedgerCase):
             self.ledger.complete(job, claim_token=claim["claimToken"], readback=damaged,
                                  external_ref="REL-1")
         self.assertEqual("fault_readback_mismatch", refusal.exception.reason.value)
+
+
+    def test_a_repeat_under_a_familiar_key_still_reopens_what_was_closed(self):
+        """A fault that is happening again is happening again, whatever key it arrives under."""
+        first = self.ledger.record(omission("same"))
+        identifier = first["faultId"]
+        self.publish(identifier, self.ledger.next()[0]["publication_id"])
+        self.ledger.record_fix(identifier, ref="PR #1")
+        self.ledger.record_reverification(identifier, method="suite", ref="pytest",
+                                          outcome=faults.PASSED)
+        self.ledger.resolve(identifier)
+        self.assertEqual(faults.RESOLVED, self.ledger.get(identifier)["state"])
+        again = self.ledger.record(omission("same"))
+        self.assertTrue(again["recorded"], "a new episode, so a new occurrence")
+        row = self.ledger.get(identifier)
+        self.assertEqual(faults.OPEN, row["state"])
+        self.assertEqual(2, row["cycle"])
+        self.assertEqual(2, row["occurrence_count"])
+        self.assertEqual(faults.APPEND_COMMENT, again["publication"]["kind"])
+
+    def test_a_withdrawn_fault_reopens_when_its_cause_is_observed_again(self):
+        answer = self.ledger.record(stall("delivery:1"))
+        self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.NOTICE,
+            signature={"recipient": "01parent-task", "cause": "channel_closed",
+                       "attemptState": "withheld_pre_send"},
+            occurrence_key="cleared:1", scope=SCOPE, cleared=True))
+        self.assertEqual(faults.WITHDRAWN, self.ledger.get(answer["faultId"])["state"])
+        back = self.ledger.record(stall("delivery:1"))
+        self.assertTrue(back["recorded"], "a new episode, so a new occurrence")
+        self.assertEqual(faults.OBSERVED, self.ledger.get(answer["faultId"])["state"])
+
+    def test_an_attested_absence_does_not_release_a_claim_somebody_still_holds(self):
+        self.ledger.record(omission("a"))
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        answer = self.ledger.reconcile(job, "nothing here", searched=True)
+        self.assertEqual("absent", answer["outcome"])
+        self.assertEqual(faults.CLAIMED, answer["state"])
+        operation = self.ledger.operation(job, claim_token=claim["claimToken"])
+        self.assertTrue(operation["block"])
 
     def test_a_fault_with_no_configured_target_waits_instead_of_being_filed(self):
         ledger = faults.FaultLedger(self.store, self.clock)

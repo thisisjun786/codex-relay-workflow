@@ -237,8 +237,14 @@ def fault_id(product, fault_class, signature) -> str:
     return sha256_hex(f"{product}|{fault_class}|{canonical_signature(signature)}")[:ID_WIDTH]
 
 
-def occurrence_id(identifier, occurrence_key) -> str:
-    return sha256_hex(f"{identifier}|{occurrence_key}")[:ID_WIDTH]
+def occurrence_id(identifier, occurrence_key, episode=1) -> str:
+    """One occurrence, per episode.
+
+    The episode is what separates "the sweep read this stuck row again" from "the thing that
+    was fixed is back". Both arrive under the same key, because the key names the underlying
+    fact; only the episode tells them apart.
+    """
+    return sha256_hex(f"{identifier}|{episode}|{occurrence_key}")[:ID_WIDTH]
 
 
 def publication_id(identifier, kind, trigger_key) -> str:
@@ -326,6 +332,7 @@ def read_observation(observation_record) -> dict:
         "scope": scope,
         "scopeKey": scope_key_for(product, scope),
         "occurrenceKey": occurrence_key,
+        # Filled in by the ledger, which is what knows the episode.
         "occurrenceId": occurrence_id(identifier, occurrence_key),
         "observedAt": observation_record.get("observedAt"),
         "detail": observation_record.get("detail") or "",
@@ -690,7 +697,17 @@ class FaultLedger:
                 )
                 row = db.execute(
                     "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
+            # Asked before the insert rather than read off rowcount. An ignored INSERT OR
+            # IGNORE does not report the same rowcount on every path through this
+            # transaction, and "is this occurrence new" is the hinge the whole convergence
+            # turns on - it decides the count, the timeline row and whether anything is
+            # queued. A SELECT says it without depending on driver behaviour.
+            episode = row["episode"]
+            fact["occurrenceId"] = occurrence_id(identifier, fact["occurrenceKey"], episode)
             recorded = db.execute(
+                "SELECT 1 FROM fault_occurrences WHERE occurrence_id = ?",
+                (fact["occurrenceId"],)).fetchone() is None
+            db.execute(
                 "INSERT OR IGNORE INTO fault_occurrences (occurrence_id, fault_id,"
                 "  occurrence_key, severity, cleared, detail, evidence, evidence_digest,"
                 "  truncated, observed_at, recorded_at, recorded_ts)"
@@ -700,29 +717,34 @@ class FaultLedger:
                  json.dumps(fact["evidence"], ensure_ascii=False, sort_keys=True),
                  fact["evidenceDigest"], 1 if fact["truncated"] else 0, fact["observedAt"],
                  now_iso, now),
-            ).rowcount == 1
+            )
             if not recorded:
-                # The same underlying fact, read again. Nothing about the fault changed, so
-                # nothing is queued: this is the case a repeated sweep produces on every
-                # tick. A SCOPE move still lands, because the occurrence being familiar says
-                # nothing about where the fault now belongs, and returning before that left
-                # a queued write pointing at the project the fault had left.
+                # The same underlying fact, read again: the case a repeated sweep produces on
+                # every tick, and the reason this returns cheaply instead of re-deciding.
+                #
+                # Two things still have to land. A SCOPE move, because the occurrence being
+                # familiar says nothing about where the fault now belongs. And a STATE that
+                # this repeat contradicts: a fault that was withdrawn or resolved and is
+                # being observed again is happening again, whatever key it arrives under, and
+                # returning before the transition left it closed while its cause was back.
                 if fact["scopeKey"] != row["scope_key"]:
                     self._move(db, identifier, fact, now_iso)
                 return {"faultId": identifier, "recorded": False, "state": row["state"],
                         "occurrenceCount": row["occurrence_count"],
-                        "reason": "this occurrence was already recorded",
+                        "reason": "this occurrence was already recorded in this episode",
                         "publication": None}
-            db.execute(
-                "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
-                "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
-                (identifier, row["cycle"], CLEARED if fact["cleared"] else OCCURRENCE,
-                 fact["occurrenceId"], fact["detail"], now_iso, now),
-            )
+            if recorded:
+                db.execute(
+                    "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
+                    "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
+                    (identifier, row["cycle"], CLEARED if fact["cleared"] else OCCURRENCE,
+                     fact["occurrenceId"], fact["detail"], now_iso, now),
+                )
             # Counted forward rather than recounted from the evidence rows. fault-prune
             # removes evidence an operator no longer needs to read, and a recount would let
-            # that lower the number of occurrences this fault is known to have had.
-            count = row["occurrence_count"] + 1
+            # that lower the number of occurrences this fault is known to have had. A repeat
+            # under a familiar key adds no occurrence and must not inflate it either.
+            count = row["occurrence_count"] + (1 if recorded else 0)
             severity = (fact["severity"]
                         if SEVERITY_RANK[fact["severity"]] > SEVERITY_RANK[row["severity"]]
                         else row["severity"])
@@ -738,12 +760,13 @@ class FaultLedger:
                 published=bool(row["external_ref"]) or opened is not None,
             )
             db.execute(
-                "UPDATE fault_ledger SET state = ?, cycle = ?, severity = ?,"
+                "UPDATE fault_ledger SET state = ?, cycle = ?, severity = ?, episode = ?,"
                 "  occurrence_count = ?, reopen_count = reopen_count + ?, detail = ?,"
                 "  suppression = ?, last_seen_at = ?, cleared_at = ?, resolved_at = ?,"
                 "  updated_at = ?, scope = ?, scope_key = ?"
                 " WHERE fault_id = ?",
-                (state, cycle, severity, count, 1 if reopened else 0,
+                (state, cycle, severity, episode + (1 if fact["cleared"] else 0), count,
+                 1 if reopened else 0,
                  fact["detail"] or row["detail"],
                  json.dumps(suppression, ensure_ascii=False, sort_keys=True), now_iso,
                  # Reset by a real occurrence, so a fault that recovers, happens again and
@@ -982,9 +1005,14 @@ class FaultLedger:
                     "the fault was observed again after that reverification, so it is not"
                     " fixed whatever the check reported",
                 )
+            # Resolving closes the episode as surely as a clear does. The next observation of
+            # the same underlying fact arrives under the key it always had, and without a new
+            # episode it would be recognised as one already recorded - leaving the fault
+            # resolved while its cause was back.
             db.execute(
-                "UPDATE fault_ledger SET state = ?, resolved_at = ?, updated_at = ?"
-                " WHERE fault_id = ?", (RESOLVED, now, now, identifier))
+                "UPDATE fault_ledger SET state = ?, resolved_at = ?, updated_at = ?,"
+                "  episode = episode + 1 WHERE fault_id = ?",
+                (RESOLVED, now, now, identifier))
             publication = self._enqueue(db, identifier, f"{TRIGGER_RESOLVE}:{cycle}", now)
         return {"faultId": identifier, "state": RESOLVED, "resolved": True, "cycle": cycle,
                 "publication": publication}
@@ -1204,14 +1232,21 @@ class FaultLedger:
                         "detail": "no block was observed, and nobody attested that the search"
                                   " covered where it would be. A negative read is not proof of"
                                   " absence unless somebody says what they read"}
-            if row["state"] in (ISSUED, UNCERTAIN):
+            state = row["state"]
+            if state in (ISSUED, UNCERTAIN):
                 db.execute(
                     "UPDATE fault_publications SET state = ?, claim_token = NULL,"
                     "  lease_owner = NULL, lease_until = NULL, updated_at = ?"
                     " WHERE publication_id = ?", (PENDING, now, publication))
-            return {"publicationId": publication, "outcome": "absent", "state": PENDING,
+                state = PENDING
+            # Reported as the state the row is actually in. A claimed row is not released by
+            # an attested absence - its holder still holds it and can simply write - and
+            # answering pending described a row nobody could pick up.
+            return {"publicationId": publication, "outcome": "absent", "state": state,
                     "detail": "the attested search found nothing, so one further write is"
-                              " permitted"}
+                              " permitted" if state == PENDING else
+                              "the attested search found nothing; this claim still holds, so"
+                              " write it"}
 
     def complete(self, publication, *, readback, claim_token=None, external_ref=None,
                  now=None) -> dict:

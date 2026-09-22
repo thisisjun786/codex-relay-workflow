@@ -78,11 +78,17 @@ The domain is the recipient. The individual deliveries are its occurrences.
 
 | Class | Signature (identity) | Occurrence key | Cleared by | Severity |
 |---|---|---|---|---|
-| `delivery_stalled` | recipient, hold reason, last attempt state | the attempt's `request_id` | the sweep no longer deriving it | degraded, `broken` at the attempt cap |
+| `delivery_stalled` | recipient, cause, last attempt state | the attempt's `request_id` | the sweep no longer deriving it | degraded, `broken` at the attempt cap |
 | `record_sync_failed` | target and target ref | `(sync_id, attempts)` | the sweep no longer deriving it | broken |
 | `observation_stalled` | relationship and generation | `(relationship, generation, turn, last_attempt_at)` | the sweep no longer deriving it | `broken` when never polled, degraded otherwise |
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
 | `observation_unmeasured` | relationship | `unmeasured:<relationship>:<turn>` | a later reading that establishes something | notice |
+
+A retrying delivery is read from its ATTEMPT rows, not from the delivery. The hold reason
+is only set at a cap, so a query that required one saw nothing until a delivery had
+already given up, and the degraded tier - three observations inside a window - could
+never be reached. An attempt's request id advances once per actual failure rather than
+once per sweep, which is the occurrence identity this needs.
 
 The hold reason alone was not enough for a delivery. `attempt_cap` covers every pre-send failure
 there is, so a settings rejection and a transport error would have merged into one record that
@@ -113,6 +119,12 @@ thousands of occurrences within the hour and escalate itself past every threshol
 names the occurrence after the underlying fact — the attempt's request id, the publication's
 attempt number, the poll's attempt time — so re-reading an unchanged state records nothing and
 a genuinely new failure records exactly one.
+
+An occurrence is identified WITHIN its episode. An episode ends when the fault is
+cleared or resolved, and the next one begins there. That is what separates the sweep
+reading the same stuck row again, which must converge, from the thing that was fixed
+coming back, which must reopen: both arrive under the key that names the underlying
+fact, and only the episode tells them apart.
 
 Evidence is a SNAPSHOT, not a pointer. The rows a fault is read from are mutable: a poll row's
 error is overwritten on its next attempt, and a failed synchronisation row's state and error

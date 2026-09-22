@@ -993,6 +993,11 @@ CREATE TABLE IF NOT EXISTS fault_ledger (
     scope_key        TEXT NOT NULL,
     state            TEXT NOT NULL,
     cycle            INTEGER NOT NULL DEFAULT 1,
+    -- Which uncleared EPISODE this fault is in. Occurrence identity carries it, so repeated
+    -- sweeps inside one episode converge as they must, while the same underlying fact
+    -- observed after a clear is a new occurrence rather than a familiar one - which is what
+    -- lets a resolved fault reopen when its cause comes back under the key it always had.
+    episode          INTEGER NOT NULL DEFAULT 1,
     occurrence_count INTEGER NOT NULL DEFAULT 0,
     reopen_count     INTEGER NOT NULL DEFAULT 0,
     detail           TEXT,
