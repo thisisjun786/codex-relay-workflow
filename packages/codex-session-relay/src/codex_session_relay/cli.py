@@ -21,7 +21,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import envelope, guard, intent, marker, restoration, rolepolicy
+from . import envelope, guard, intent, marker, packets, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -85,6 +85,9 @@ OFFLINE_COMMANDS = (
     # none of the three reaches the host, so leaving them out under-reported what an operator
     # can run with no App Server.
     "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # Compares a packet against a reading the caller supplies. It opens no store, reaches no
+    # host and decides nothing about delivery, so it runs wherever the two files are.
+    "packet-check",
     # Reaches a forge and never the App Server, and constructs no Store at all.
     "merge-evidence",
 ) + MARKER_COMMANDS_BY_NAME
@@ -762,6 +765,41 @@ def cmd_linkage_directive(services, args) -> dict:
 def cmd_supervisor_select(services, args) -> dict:
     """Whether one event is news for the level above. A read; it sends and records nothing."""
     return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
+
+
+def cmd_packet_check(services, args) -> dict:
+    """Whether a packet agrees with the record its receiver read. It decides nothing else.
+
+    The reading is SUPPLIED rather than fetched, and the answer says so. That is the honest
+    shape for an offline check: this command has no store, so it cannot be the thing that
+    established the relationship, the generation or the head, and a caller that handed it an
+    agreeing record has proved only that the two files agree. What it does close is the case
+    where nobody compared them at all.
+    """
+    one = _json_document(args.packet, "relay-packet/1 message")
+    record = _json_document(args.record, "receiver's own reading")
+    answer = packets.reception(one, record)
+    answer["recordSource"] = "supplied"
+    answer["promotions"] = packets.unsupported_promotions(
+        one.get("progression") or packets.unobserved())
+    return answer
+
+
+def _json_document(path, what) -> dict:
+    """One JSON file from disk, named by what it was supposed to be.
+
+    Separate from _observation_file rather than sharing it: that one names a
+    reporting-observation, and a caller who mistyped a packet path is not helped by being
+    told their packet is not an observation.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit2(
+            f"the {what} at {path!r} could not be read: {type(error).__name__}: {error}",
+            EXIT_USAGE,
+        ) from error
 
 
 def _observation_file(path) -> dict:
@@ -3006,6 +3044,19 @@ def build_parser() -> argparse.ArgumentParser:
     recorded.add_argument("--message", help="the envelope messageId the report was sent under")
     recorded.add_argument("--note")
     recorded.set_defaults(handler=cmd_supervisor_report_recorded)
+
+    packet = subparsers.add_parser(
+        "packet-check",
+        help="whether a relay-packet/1 message carries what its purpose requires and agrees"
+             " with the record its receiver read. A read: it opens no store and sends nothing")
+    packet.add_argument("--packet", required=True,
+                        help="the packet, as relay-packet/1 JSON")
+    packet.add_argument("--record", required=True,
+                        help="what the receiver read for ITSELF: the relationship, the current"
+                             " generation, the registered criteria digest and the head its own"
+                             " forge reading reports. A field this record omits comes back"
+                             " unavailable rather than accepted")
+    packet.set_defaults(handler=cmd_packet_check)
 
     settle = subparsers.add_parser("linkage-settle")
     settle.add_argument("--directive", required=True)

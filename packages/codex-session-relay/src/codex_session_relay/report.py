@@ -113,8 +113,33 @@ def show_command(event_id: str) -> str:
 
 # Which shared envelope each rendered direction is. Spelled here rather than passed in, so a
 # caller cannot label a completion as an instruction by supplying the wrong word.
-COMPLETION_ENVELOPE = (envelope.CHILD_TO_PARENT, "completion")
 REVISION_ENVELOPE = (envelope.PARENT_TO_CHILD, "revision_request")
+
+# The purpose PROTOCOL_FLOOR below was measured against. Any other word costs the difference
+# on the announce line, which the composer cannot shorten, so it is charged rather than
+# absorbed into a constant that was bisected against one spelling.
+MEASURED_PURPOSE = "completion"
+
+
+def child_purpose(outcome, report) -> str:
+    """Which child purpose this event actually is, derived from what the store already holds.
+
+    Every child message used to render as a completion. A blocked turn and a candidate handed
+    over for review arrived under the same word, so a recipient scanning the envelope could
+    not tell an execution that stopped from one asking to be judged, and the difference was
+    recoverable only by reading the outcome further down.
+
+    Derived, never supplied. A caller that could pass the purpose in could label a blocked
+    report a review-ready one, which is the same trade this package refuses everywhere else.
+    The two facts it reads are the outcome the receipt asserted and whether the child recorded
+    the merge-readiness handoff that asks for a judgement; a ready outcome without one is a
+    result being delivered rather than a candidate being offered.
+    """
+    if outcome == "blocked_needs_input":
+        return "blocked"
+    if outcome == READY_OUTCOME and (report or {}).get("handoff"):
+        return "review_ready"
+    return MEASURED_PURPOSE
 
 
 def _column(row, name):
@@ -286,7 +311,8 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     pinned = _acceptance_lines(_accepted_dispositions(handoff))
     if pinned:
         total = sum(_size(line) + 1 for line in pinned)
-        room = _confirmations_room(summary, reason, next_action)
+        room = _confirmations_room(summary, reason, next_action,
+                                   child_purpose(outcome, {"handoff": handoff}))
         if total > room:
             raise ReceiptRefused(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
@@ -925,6 +951,23 @@ def _check_restore(restore):
             continue
         checked[key] = _bounded(_single_line(value, f"restore {key}"),
                                 f"restore {key}", LABEL_MAX)
+    if checked and not checked.get("mode"):
+        # The one field no transport carries. Model, effort, sandbox and approval travel as
+        # settings and a receipt reads them back; the workflow has no field anywhere, so a
+        # restore block that omits it has not left it to be looked up - it has dropped it,
+        # and the compacted child it reaches resumes under whatever it still happens to
+        # remember. Every other field here is optional because the recipient can recover it
+        # from a record; this one it cannot.
+        #
+        # Checked against what SURVIVED normalisation rather than against what was passed, so
+        # a section whose every value was blank is still no section at all rather than a
+        # refusal. That is the same answer it gave before this rule existed.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a restore section states the effective workflow in mode: it is the one field no "
+            "transport carries, so leaving it out drops it rather than deferring it. Present "
+            f"fields were {sorted(checked)}",
+        )
     return checked
 
 
@@ -1346,7 +1389,8 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET, context=
     assert_current(report, execution_generation=receipt.get("executionGeneration")
                    or report["executionGeneration"])
     confirmations = _acceptance_lines(_accepted_dispositions(report.get("handoff")))
-    region = envelope_of(row, receipt, report, *COMPLETION_ENVELOPE, context=context)
+    region = envelope_of(row, receipt, report, envelope.CHILD_TO_PARENT,
+                         child_purpose(receipt.get("outcome"), report), context=context)
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -1860,7 +1904,7 @@ def _verified_at(value):
         return None
     return parsed.isoformat()
 
-def _confirmations_room(summary, reason, next_action) -> int:
+def _confirmations_room(summary, reason, next_action, purpose=MEASURED_PURPOSE) -> int:
     """How many bytes the unelidable confirmations may take on THIS report.
 
     A fixed reserve answered the wrong question. What matters is not whether they are large
@@ -1874,8 +1918,14 @@ def _confirmations_room(summary, reason, next_action) -> int:
     constant standing in for something that varies, and each fix found one more variable part
     underneath. Giving the confirmations their own section is what stopped that, because now
     nothing else changed its floor and nothing else has to be charged here.
+
+    The purpose is charged the same way and for the same reason. The floor was bisected with
+    the word completion on the announce line; now that the word is derived from the outcome,
+    a longer one takes bytes off a line nothing can shorten. Charging the difference keeps
+    the constant meaning what it was measured to mean instead of quietly covering a spread.
     """
-    spoken_for = PROTOCOL_FLOOR + _size(summary) + _size(reason) + _size(next_action)
+    spoken_for = (PROTOCOL_FLOOR + _size(purpose) - _size(MEASURED_PURPOSE)
+                  + _size(summary) + _size(reason) + _size(next_action))
     # Never negative: a report whose other required parts already fill the budget has room
     # for no confirmation at all, and that is a refusal rather than a wrapped-around ceiling.
     return max(0, min(ACCEPTANCE_SHOWN, BUDGET - spoken_for))

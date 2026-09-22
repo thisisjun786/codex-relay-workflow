@@ -348,6 +348,37 @@ def _wait(state: str, reason: str) -> dict:
 DISPATCH_FIELDS = ("TASK", "SCOPE", "MUST DO", "MUST NOT", "PROOF", "RETURN FORMAT")
 DECISION_BOUNDARY = "DECISION BOUNDARY"
 
+# The six plus the boundary, because an instruction that says what to do and never says where
+# the recipient's own judgment ends is the one answered by improvisation.
+DISPATCH_SECTIONS = DISPATCH_FIELDS + (DECISION_BOUNDARY,)
+
+
+def dispatch_problems(body) -> list:
+    """Which of the sections DISPATCH-TASK-01 fixes this instruction does not carry.
+
+    A list of names rather than a verdict. The next action differs per section - a missing
+    PROOF is something the sender has to decide, a missing MUST NOT is a boundary nobody
+    drew - and one word for all of them tells a producer that something is wrong without
+    telling it which thing to fix.
+
+    Matched at the start of a line rather than anywhere in the text, so a sentence mentioning
+    a section does not satisfy it and SUBTASK: does not answer for TASK:. Leading list and
+    heading markers are stepped over, because these travel inside prompts people format.
+    """
+    if not isinstance(body, str):
+        return list(DISPATCH_SECTIONS)
+    seen = set()
+    for line in body.splitlines():
+        stripped = line.strip().lstrip("-*#>").strip()
+        # Bold and code markers are stripped as characters rather than parsed: this is looking
+        # for a section heading, not rendering Markdown, and an unmatched marker is not an
+        # error worth raising out of a readability check.
+        heading = stripped.strip("*`_").upper()
+        for name in DISPATCH_SECTIONS:
+            if heading.startswith(name + ":") or heading == name:
+                seen.add(name)
+    return [name for name in DISPATCH_SECTIONS if name not in seen]
+
 # Which owner to re-read when a message resumes work, rather than reloading everything.
 SKILL_POINTERS = {
     "loop": "codexclaw:cxc-loop with codexclaw:cxc-pabcd",
