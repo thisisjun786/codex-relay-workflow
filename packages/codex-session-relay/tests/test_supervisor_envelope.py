@@ -394,6 +394,30 @@ class TheDirectiveSeam(LinkageTestCase):
         self.assertEqual(self.directive("d-one", pointer)["directiveId"],
                          first["directiveId"])
 
+    def test_one_refusal_leaves_one_conflict_and_one_journal_row(self):
+        """The refusal branch records the contest once, not once per nesting level.
+
+        Raised in review against this path: the shared refusal branch at the end of the method
+        binds to the outer test, which was already false here, so it does not run a second
+        time. The journal has no uniqueness constraint, so a duplicate would be invisible in
+        linkage_conflicts and visible only here.
+        """
+        execution = self.supervise()
+        self._edge = execution
+        self.directive("d-one", envelope.directive_reference(
+            purpose="project_assignment", link_id=execution["linkId"], digest="d-one"))
+        before = self.store.one(
+            "SELECT COUNT(*) AS n FROM journal WHERE kind = 'linkage_refused'")["n"]
+        self.assertRefused(RefusalReason.LINK_CONFLICT, lambda: self.directive(
+            "d-one", envelope.directive_reference(
+                purpose="scope_correction", link_id=execution["linkId"], digest="d-one")))
+        after = self.store.one(
+            "SELECT COUNT(*) AS n FROM journal WHERE kind = 'linkage_refused'")["n"]
+        self.assertEqual(after - before, 1, "one refusal, one journal row")
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM linkage_conflicts"
+                           " WHERE reason = ?", (RefusalReason.LINK_CONFLICT.value,))["n"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

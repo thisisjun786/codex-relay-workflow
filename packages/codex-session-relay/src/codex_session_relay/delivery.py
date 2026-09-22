@@ -406,7 +406,7 @@ class DeliveryService:
                 "scope": scope or envelope.absent(
                     envelope.UNKNOWN, "neither a project nor an issue scope was readable")}
 
-    def supervisor_selection(self, event_id: str, *, recipient=None) -> dict:
+    def supervisor_selection(self, event_id: str, *, recipient=None, now=None) -> dict:
         """Whether this event is news for the level above, answered from the rows here.
 
         A read. It sends nothing, queues nothing and records nothing, and it exists on this
@@ -426,7 +426,11 @@ class DeliveryService:
             return supervision.suppressed(
                 event_id,
                 "this event is not a completion, a new block or a decision the user owes")
-        return {**supervision.select(self.store, obligation, recipient=recipient),
+        # The clock is this service's own. Without it every selection here answered
+        # contactability unmeasured, whatever the host had actually been observed to be, and
+        # the reportable branch was unreachable for every caller of this method.
+        return {**supervision.select(self.store, obligation, recipient=recipient,
+                                     now=self.clock.now() if now is None else now),
                 "obligation": obligation}
 
     def _render_and_account(self, row, record, request, report=None):

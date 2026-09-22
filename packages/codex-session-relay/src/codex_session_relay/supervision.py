@@ -461,6 +461,10 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
     )
     relations = {row["relationship_id"]: dict(row) for row in rows}
     obligations = []
+    # Held across BOTH loops. A block's subject is its cause rather than its event, so two
+    # events stating one unresolved block derive one obligation - and appending per event
+    # returned that obligation twice, which is the duplicate this keying exists to remove.
+    seen = set()
     for relation, about in relations.items():
         for row in store.all(
             "SELECT event_id FROM events WHERE relationship_id = ?"
@@ -469,13 +473,15 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
             one = from_event(store, row["event_id"], read_work_report(store, row["event_id"]))
             if one is None:
                 continue
+            if one["obligationId"] in seen:
+                continue
             decided = select(store, one, recipient=None)
             if decided["standing"] == STANDING:
+                seen.add(one["obligationId"])
                 obligations.append({**one, "decision": decided,
                                     "relationshipStatus": about["status"],
                                     "supersededBy": about["superseded_by"]})
     gaps = []
-    seen = {entry["obligationId"] for entry in obligations}
     for reading in observations:
         about = reading.get("relationshipId") if isinstance(reading, dict) else None
         if about not in relations:

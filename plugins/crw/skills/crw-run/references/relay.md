@@ -863,3 +863,35 @@ Two facts from it decide what a run may claim, so they are repeated here and now
 relay carries no supervisor channel, so nothing above the record itself is measured on that
 relation; and what discharges a reporting obligation is the Linear record the supervisor reads,
 confirmed, rather than a report having been written.
+
+Three commands make that readable rather than remembered. They are the whole surface; there is
+no daemon behind them and nothing wakes anybody.
+
+```bash
+# Is this event news for the level above? A read: it sends, queues and records nothing.
+codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
+
+# What does this project still owe upward? An explicit question, never suppressed.
+# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+codex-session-relay supervisor-standing --project <key> [--observation <file>]...
+
+# Record that a report was produced for this event's obligation, once.
+codex-session-relay supervisor-report-recorded --event <id> [--message <messageId>]
+```
+
+`supervisor-select` answers `report: false` with a reason far more often than it answers true,
+and the reason is the part to read: `no_meaningful_transition` for an ordinary event,
+`already_reported_under_this_obligation` for a fact already reported,
+`already_in_the_record_the_supervisor_reads` once Linear has it confirmed,
+`recipient_is_not_contactable` for a paused or archived supervisor, and
+`recipient_contactability_unmeasured` when nobody has looked recently. Every one of them
+preserves the obligation; none of them discards it.
+
+`supervisor-report-recorded` says a report was COMPOSED. Whether a turn was created, whether it
+ran, and whether the supervisor acted are three further facts, and no row here carries any of
+them. Recording it is what makes the next reading of the same fact converge instead of waking
+the level above again, so record it when the report actually goes out.
+
+`linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
+the digest rather than leaving it to be written by hand. A pointer belonging to another
+instruction is refused with the contest retained, and one digest cannot carry two purposes.

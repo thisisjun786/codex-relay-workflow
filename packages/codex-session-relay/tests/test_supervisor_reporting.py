@@ -381,6 +381,21 @@ class APausedSupervisorIsNotAFailure(ReportingTestCase):
         self.assertEqual(decided["reason"], supervision.CONTACT_UNMEASURED)
         self.assertIn("past the", decided["recipient"]["reason"])
 
+    def test_the_delivery_seam_can_actually_reach_its_reportable_answer(self):
+        """Its clock is its own, and without passing it the branch was unreachable.
+
+        Every selection through this method answered contactability unmeasured whatever the
+        host had been observed to be, so no caller of the seam could ever be told to report.
+        """
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        decided = self.delivery.supervisor_selection(event_id, recipient=SUPERVISOR)
+        self.assertTrue(decided["report"])
+        self.assertEqual(decided["reason"], supervision.REPORTABLE)
+        self.clock.advance(supervision.CONTACT_FRESH_FOR + 60)
+        stale = self.delivery.supervisor_selection(event_id, recipient=SUPERVISOR)
+        self.assertFalse(stale["report"], "and it still measures the observation's age")
+
 
 class TheReportNobodyWrote(ReportingTestCase):
     """The counterexample: a child that simply did not report.
@@ -545,3 +560,123 @@ class TheUpwardEnvelope(ReportingTestCase):
             "SELECT detail FROM journal WHERE kind = ? AND subject = ?",
             (supervision.JOURNAL_KIND, one["obligationId"]))["detail"])["kind"],
             supervision.COMPLETION)
+class TheProjectAnswerCountsFactsNotEvents(ReportingTestCase):
+    def test_one_block_stated_twice_appears_once(self):
+        """Two events, one obligation, and the answer used to carry it twice."""
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        for attempt in (1, 2):
+            payload = self.execution_payload(relationship, "blocked_needs_input",
+                                             attempt=attempt)
+            self.accept(payload)
+            report.record(self.store, self.clock, event_id=payload["eventId"],
+                          **a_report(cxc_status=cxc.BLOCKED,
+                                     cxc_reason="upstream has not landed", pr_number=None,
+                                     pr_url=None, pr_state=None, handoff=None))
+        answer = supervision.standing_for(self.store, linkage, "CRW")
+        identifiers = [entry["obligationId"] for entry in answer["standing"]]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+        self.assertEqual(len(identifiers), 1)
+
+
+class TheCommandsAParentActuallyRuns(ReportingTestCase):
+    """The seam is reachable from the CLI, or the workflow rule is prose nobody can call."""
+
+    class _Services:
+        def __init__(self, case, linkage):
+            self.store, self.clock, self.delivery = case.store, case.clock, case.delivery
+            self.linkage = linkage
+            from codex_session_relay.assignment import AssignmentView
+            self.assignments = AssignmentView(case.store, case.registry, case.clock,
+                                              linkage=linkage)
+
+    def services(self):
+        from codex_session_relay.linkage import Linkage
+
+        return self._Services(self, Linkage(self.store, self.clock))
+
+    def test_select_answers_about_one_event_without_writing_anything(self):
+        from codex_session_relay import cli
+        from argparse import Namespace
+
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        before = self.store.one("SELECT COUNT(*) AS n FROM journal")["n"]
+        answer = cli.cmd_supervisor_select(
+            self.services(), Namespace(event=event_id, recipient=SUPERVISOR))
+        self.assertTrue(answer["report"])
+        self.assertEqual(self.store.one("SELECT COUNT(*) AS n FROM journal")["n"], before)
+
+    def test_recording_a_report_converges_and_then_suppresses(self):
+        from codex_session_relay import cli
+        from argparse import Namespace
+
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        services = self.services()
+        first = cli.cmd_supervisor_report_recorded(
+            services, Namespace(event=event_id, message="m-1", note=None))
+        second = cli.cmd_supervisor_report_recorded(
+            services, Namespace(event=event_id, message="m-1", note=None))
+        self.assertTrue(first["recorded"])
+        self.assertFalse(second["recorded"])
+        answer = cli.cmd_supervisor_select(
+            services, Namespace(event=event_id, recipient=SUPERVISOR))
+        self.assertEqual(answer["reason"], supervision.ALREADY_REPORTED)
+
+    def test_recording_against_an_event_that_owes_nothing_is_refused(self):
+        from codex_session_relay import cli
+        from argparse import Namespace
+
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        payload = self.execution_payload(relationship, "failed")
+        self.accept(payload)
+        with self.assertRaises(cli.SystemExit2):
+            cli.cmd_supervisor_report_recorded(
+                self.services(), Namespace(event=payload["eventId"], message=None, note=None))
+
+    def test_standing_reads_a_passed_in_observation_from_disk(self):
+        import json as json_module
+        import os
+        from codex_session_relay import cli
+        from argparse import Namespace
+        from codex_session_relay.models import Endpoint
+
+        services = self.services()
+        services.linkage.bind_scope(
+            role="parent", scope_key="CRW",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        path = os.path.join(self.tmp, "observation.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json_module.dump({"schema": "reporting-observation/1",
+                              "reportingState": "unreported", "reason": "terminal_without_report",
+                              "relationshipId": self._rid, "executionGeneration": 1,
+                              "selectors": {"turn": "turn-7"}}, handle)
+        answer = cli.cmd_supervisor_standing(
+            services, Namespace(project="CRW", observation=[path]))
+        self.assertEqual([entry["kind"] for entry in answer["standing"]],
+                         [supervision.UNREPORTED])
+        self.assertIn("explicit status request", answer["answeredBecause"])
+
+    def test_an_observation_file_that_cannot_be_read_says_so(self):
+        import os
+        from codex_session_relay import cli
+        from argparse import Namespace
+
+        broken = os.path.join(self.tmp, "broken.json")
+        with open(broken, "wb") as handle:
+            handle.write(b"\xff\xfe not utf-8 and not json either")
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_supervisor_standing(
+                self.services(), Namespace(project="CRW", observation=[broken]))
+        self.assertIn("could not be read", str(caught.exception))

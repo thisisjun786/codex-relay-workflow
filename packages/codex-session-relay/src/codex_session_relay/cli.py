@@ -21,7 +21,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker, restoration, rolepolicy
+from . import envelope, guard, intent, marker, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -704,11 +704,78 @@ def cmd_linkage_completion(services, args) -> dict:
 
 
 def cmd_linkage_directive(services, args) -> dict:
+    reference = args.reference
+    if args.purpose:
+        if reference:
+            raise SystemExit2(
+                "--purpose derives the envelope pointer, so it cannot be given with"
+                " --reference", EXIT_USAGE)
+        reference = envelope.directive_reference(
+            purpose=args.purpose, link_id=args.link, digest=args.digest,
+            correlation_id=args.correlation)
     return services.linkage.record_directive(
         scope_kind=args.scope_kind, scope_key=args.scope, from_task_id=args.from_task,
         from_scope_key=args.from_scope, link_id_value=args.link, digest=args.digest,
-        reference=args.reference,
+        reference=reference,
     )
+
+
+def cmd_supervisor_select(services, args) -> dict:
+    """Whether one event is news for the level above. A read; it sends and records nothing."""
+    return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
+
+
+def cmd_supervisor_standing(services, args) -> dict:
+    """What a project still owes upward, and the project's own reading beside it.
+
+    This is the answer to an explicit question. Automatic notification being suppressed is not
+    a reason to withhold it, which is why it is a separate command rather than a flag on one.
+
+    An observation is passed in with --observation because a turn that ended without reporting
+    writes no row this store can find; reporting-show is what produces one.
+    """
+    from . import supervision
+
+    readings = []
+    for path in args.observation or []:
+        # OSError and ValueError together, because a file this cannot decode and a file this
+        # cannot parse are the same answer to the caller - the reading is unusable - and a
+        # UnicodeDecodeError escaping as itself would reach a reader as something other than
+        # an unreadable observation.
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                readings.append(json.load(handle))
+        except (OSError, ValueError) as error:
+            raise SystemExit2(
+                f"the observation at {path!r} could not be read as a"
+                f" reporting-observation/1 record: {type(error).__name__}: {error}",
+                EXIT_USAGE,
+            ) from error
+    return supervision.status_answer(
+        services.store, services.linkage, services.assignments, args.project,
+        observations=readings)
+
+
+def cmd_supervisor_report_recorded(services, args) -> dict:
+    """Record that a report was produced for an obligation, once.
+
+    The journal entry is what makes the next reading of the same fact converge instead of
+    waking the level above again. It says a report was composed; it does not say one arrived,
+    and nothing in this store could.
+    """
+    from . import supervision
+    from .report import read as read_work_report
+
+    obligation = supervision.from_event(
+        services.store, args.event, read_work_report(services.store, args.event))
+    if obligation is None:
+        raise SystemExit2(
+            "this event is not a completion, a new block or a decision the user owes, so there"
+            " is no obligation to record a report against", EXIT_USAGE)
+    recorded = supervision.record_report(
+        services.store, obligation, at=services.clock.iso(), messageId=args.message,
+        note=args.note or "")
+    return {**recorded, "obligation": obligation}
 
 
 def cmd_linkage_settle(services, args) -> dict:
@@ -2832,6 +2899,45 @@ def build_parser() -> argparse.ArgumentParser:
     directive.add_argument("--digest", required=True)
     directive.add_argument("--reference")
     directive.set_defaults(handler=cmd_linkage_directive)
+    directive.add_argument("--purpose",
+                           choices=sorted(envelope.PURPOSES[envelope.SUPERVISOR_TO_PARENT]),
+                           help="derive the envelope pointer for this instruction instead of"
+                                " writing --reference by hand. The pointer's message id is"
+                                " computed from this link and digest, so a pointer belonging"
+                                " to another instruction is refused")
+    directive.add_argument("--correlation",
+                           help="the message this instruction answers, when it answers one")
+
+    select = subparsers.add_parser(
+        "supervisor-select",
+        help="whether one event is news for the level above. A read: it sends nothing,"
+             " queues nothing and records nothing")
+    select.add_argument("--event", required=True)
+    select.add_argument("--recipient",
+                        help="the supervisor task. Without it contactability is not consulted"
+                             " and the answer covers the obligation only")
+    select.set_defaults(handler=cmd_supervisor_select)
+
+    standing = subparsers.add_parser(
+        "supervisor-standing",
+        help="what a project still owes upward, with the project's own reading beside it."
+             " This answers an explicit question and is not suppressed by anything")
+    standing.add_argument("--project", required=True)
+    standing.add_argument("--observation", action="append",
+                          help="a reporting-observation/1 file from reporting-show. A turn that"
+                               " ended without reporting writes no row this store can find, so"
+                               " it is present only when its observation is passed in. Repeat"
+                               " once per reading")
+    standing.set_defaults(handler=cmd_supervisor_standing)
+
+    recorded = subparsers.add_parser(
+        "supervisor-report-recorded",
+        help="record that a report was produced for this event's obligation, once. It says a"
+             " report was composed, never that one arrived")
+    recorded.add_argument("--event", required=True)
+    recorded.add_argument("--message", help="the envelope messageId the report was sent under")
+    recorded.add_argument("--note")
+    recorded.set_defaults(handler=cmd_supervisor_report_recorded)
 
     settle = subparsers.add_parser("linkage-settle")
     settle.add_argument("--directive", required=True)
