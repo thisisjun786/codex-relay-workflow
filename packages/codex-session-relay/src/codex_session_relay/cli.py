@@ -534,8 +534,8 @@ def cmd_settings_record(services, args) -> dict:
 
     This is the exact interface JUN-92 populates from Run's creation result. Required fields:
     sandbox (the full SandboxPolicy object), approvalPolicy, cwd, runtimeWorkspaceRoots, model,
-    reasoningEffort and environments. Anything missing, and anything recorded with a type the
-    resume contract does not declare, is refused here rather than at send time.
+    reasoningEffort and environments. Anything missing is refused here rather than at send
+    time, and so is a cwd, model or reasoningEffort recorded as something other than a string.
     """
     if args.clear_exception and args.exception is not None:
         # Asking to cite one and to drop it are two different writes. Letting either win

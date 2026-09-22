@@ -171,6 +171,13 @@ What happens at send time:
 | resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
 | resume matches | the turn begins, carrying no overrides |
 
+Those three fields are the ones `ThreadResumeParams` types as strings, and the resume carries
+each recorded value as it stands, so a record holding something else is refused rather than sent
+for a host to interpret. `settings-record` and `register` run the same check, so such a record
+is refused when it is written too; a store holds one only from an older writer or a hand edit.
+`runtimeWorkspaceRoots` and `environments` are not typed there - they fail later, inside the
+transformations that consume them.
+
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can
 be recorded and the next pass decides again.

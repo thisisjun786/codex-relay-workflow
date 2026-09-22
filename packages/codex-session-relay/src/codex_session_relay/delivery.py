@@ -871,8 +871,8 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence, incompleteness and a mistyped field
-        all refuse."""
+        """The recorded settings, validated. Absence, incompleteness and a non-string cwd,
+        model or reasoningEffort all refuse."""
         from .registry import load_settings
 
         settings = load_settings(self.store, task_id)

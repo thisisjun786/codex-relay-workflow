@@ -126,7 +126,13 @@ def normalise_environments(environments):
 
 
 class TaskSettings:
-    """Complete and typed, or unusable. A record that is neither cannot say what it preserves.
+    """Complete or unusable, and presence alone was never the whole of it.
+
+    A record missing a required field cannot say what it is preserving. Neither can one whose
+    cwd, model or reasoningEffort is present and is not a string, because resume_params would
+    copy it onto the wire and only the host could then say what it had done with it.
+    require_usable() decides both. It does NOT type runtimeWorkspaceRoots or environments;
+    those fail later, inside the transformations that consume them.
 
     JUN-92 populates this from the creation result Run already receives; it is not a separate
     handshake and it asks for nothing the host did not already report at creation.

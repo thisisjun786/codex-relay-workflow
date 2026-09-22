@@ -102,13 +102,22 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
             "cwd is int, not str; model is bool, not str; reasoningEffort is list, not str",
         )
 
-    def test_a_mistyped_field_withholds_the_send_before_any_transport_call(self):
+    def test_a_mistyped_field_withholds_the_send_and_records_why(self):
         """The rule is proved above; this proves the PATH, and what a parent ends up reading.
 
-        The unit refusal never touches the serialization, and the journal is where the reason
-        string a parent acts on is actually written. One field rather than seven: the withhold
-        branch treats every refusal from the settings check alike, so repeating the shapes here
-        would re-prove one branch rather than another fact.
+        What is prevented is measured rather than asserted from the phrase this package uses
+        elsewhere. By the time the settings gate runs, attempt() has already asked the host
+        read_thread, is_archived and read_goal_status through observe(); those are lifecycle
+        reads and they happen for every delivery. What the refusal stops is everything after
+        it: no claim, no attempt record, nothing sent.
+
+        The reason is then checked in BOTH places it is persisted, because they are separate
+        writes and a caller reads different ones. The journal carries the detail a parent acts
+        on; failed_operations carries the error_code status reports and the retry_safe flag
+        that keeps the withhold from becoming a permanent hold.
+
+        One field rather than seven: the withhold branch treats every refusal from the settings
+        check alike, so repeating the shapes here would re-prove one branch rather than a fact.
         """
         mistyped = task_settings("/parent")
         mistyped["cwd"] = 7
@@ -123,6 +132,27 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
         )[0]
         self.assertIn(RefusalReason.SETTINGS_MISTYPED.value, entry["detail"])
         self.assertIn("cwd is int, not str", entry["detail"])
+        failure = self.store.all(
+            "SELECT operation, error_code, retry_safe FROM failed_operations"
+            " ORDER BY rowid DESC LIMIT 1",
+        )[0]
+        self.assertEqual(failure["operation"], "settings_check")
+        self.assertEqual(failure["error_code"], RefusalReason.SETTINGS_MISTYPED.value)
+        self.assertEqual(failure["retry_safe"], 1, "re-recording the row is the recovery")
+
+    def test_an_absent_field_is_decided_before_a_mistyped_one(self):
+        """The ordering mistyped() depends on, guarded where it can actually break.
+
+        mistyped() subscripts self.data, so on an incomplete record it raises KeyError rather
+        than refusing. require_usable() is what keeps that unreachable, by answering absence
+        first. This record is wrong BOTH ways, and the completeness answer has to win.
+        """
+        stale = task_settings("/parent")
+        del stale["cwd"]
+        stale["model"] = 7
+        view = TaskSettings(stale)
+        refusal = self.assertRefused(RefusalReason.SETTINGS_INCOMPLETE, view.require_usable)
+        self.assertEqual(refusal.detail, "missing cwd")
 
     def test_a_sandbox_type_with_no_resume_mode_is_refused_not_approximated(self):
         external = task_settings("/parent", sandbox={"type": "externalSandbox"})
