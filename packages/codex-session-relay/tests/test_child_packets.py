@@ -11,6 +11,7 @@ a case that must NOT pass, because a validator whose negatives were never run is
 nobody has tested.
 """
 
+import json
 import unittest
 
 from codex_session_relay import cxc, envelope, packets, report
@@ -517,3 +518,127 @@ class TheWholeRoundTrip(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
             sender=PARENT, recipient=CHILD, subject="evt-1", issue=ISSUE,
             criteria_digest=DIGEST, artifact=artifact), record)
+
+
+class APacketNobodyConstructed(unittest.TestCase):
+    """Every rule that lived only in a constructor was a rule the disk path did not have.
+
+    compose builds a packet here, where each constructor has run. packet-check reads one back
+    from JSON, where none of them has. These are the cases that separate the two, and every
+    one of them passed before the entry point was made to validate for itself.
+    """
+
+    def loaded(self, one, **changes):
+        """The same packet as it comes back from disk, with a field changed on the way."""
+        text = json.dumps(one)
+        back = json.loads(text)
+        back.update(changes)
+        return back
+
+    def test_a_packet_missing_required_data_is_refused_rather_than_compared(self):
+        """Comparing the fields that are there says nothing about the ones that are not."""
+        thin = self.loaded(a_review_ready(), evidence=[])
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(thin, a_record())
+        self.assertIn(packets.EVIDENCE, caught.exception.detail)
+
+    def test_an_artifact_missing_half_its_identity_is_refused(self):
+        broken = self.loaded(a_review_ready())
+        del broken[packets.ARTIFACT]["headSha"]
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(broken, a_record())
+        self.assertIn("headSha", caught.exception.detail)
+
+    def test_a_version_nobody_mapped_is_diagnosed_rather_than_read_under_these_rules(self):
+        future = self.loaded(a_review_ready(), version="relay-packet/2")
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(future, a_record())
+        self.assertIn("relay-packet/2", caught.exception.detail)
+
+    def test_an_activation_fact_claiming_a_state_with_no_record_is_refused(self):
+        one = self.loaded(an_assignment(activation=packets.unexamined(packets.LOOP)))
+        one["activation"][packets.ACTIVATED] = {"state": packets.OBSERVED, "source": None}
+        with self.assertRaises(packets.PacketRefused):
+            packets.reception(one, a_record())
+
+    def test_an_activation_state_nobody_defined_is_refused(self):
+        one = self.loaded(an_assignment(activation=packets.unexamined(packets.LOOP)))
+        one["activation"][packets.ACTIVATED] = {"state": "probably", "source": "a transcript"}
+        with self.assertRaises(packets.PacketRefused):
+            packets.reception(one, a_record())
+
+
+class CurrencyTheReceiverCouldNotRead(unittest.TestCase):
+    def test_a_pull_request_against_a_record_with_no_head_is_unavailable(self):
+        """An unchecked head and a matching head are not the same news."""
+        blind = a_record()
+        del blind["headSha"]
+        answer = packets.reception(a_review_ready(), blind)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE)
+        self.assertIn("artifact.headSha", [g["field"] for g in answer["gaps"]])
+
+    def test_a_locator_against_a_record_with_no_digest_is_unavailable(self):
+        answer = packets.reception(
+            a_review_ready(artifact=packets.locator(path="/state/x.md", digest="9" * 64)),
+            a_record())
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE)
+        self.assertIn("artifact.digest", [g["field"] for g in answer["gaps"]])
+
+
+class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
+    """A digest built from a hand-picked list is how a changed packet becomes a replay."""
+
+    def correction(self, **overrides):
+        base = dict(
+            direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
+            relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
+            issue=ISSUE, generation=2, criteria_digest=DIGEST,
+            callback="parent task " + PARENT,
+            artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
+                                          number=107, head_sha=HEAD))
+        base.update(overrides)
+        return packets.compose(**base)
+
+    def answered(self, one):
+        return {one["envelope"]["messageId"]: {
+            "contentDigest": packets.content_digest(one), "disposition": packets.ACCEPTED}}
+
+    def test_a_different_callback_under_one_id_is_a_collision(self):
+        first = self.correction()
+        second = self.correction(callback="some other task")
+        self.assertEqual(packets.repeat(second, self.answered(first))["state"],
+                         packets.COLLISION)
+
+    def test_a_different_pull_request_under_one_id_is_a_collision(self):
+        first = self.correction()
+        second = self.correction(artifact=packets.pull_request(
+            repository="thisisjun786/somewhere-else", number=107, head_sha=HEAD))
+        self.assertEqual(packets.repeat(second, self.answered(first))["state"],
+                         packets.COLLISION)
+
+    def test_a_different_criteria_digest_under_one_id_is_a_collision(self):
+        first = self.correction()
+        second = self.correction(criteria_digest="0" * 64)
+        self.assertEqual(packets.repeat(second, self.answered(first))["state"],
+                         packets.COLLISION)
+
+    def test_when_the_sender_observed_it_does_not_make_it_a_different_instruction(self):
+        """A repeat observed a minute later asks for exactly the same thing."""
+        first = self.correction(observed_at="2026-09-22T04:00:00+00:00")
+        second = self.correction(observed_at="2026-09-22T04:01:00+00:00")
+        self.assertEqual(packets.repeat(second, self.answered(first))["state"],
+                         packets.REPLAY)
+
+    def test_every_required_field_of_every_purpose_moves_the_digest(self):
+        """Derived rather than listed, so a field added later is covered without an edit."""
+        base = self.correction()
+        for field, changed in ((packets.ISSUE, "CRW-999"), (packets.GENERATION, 7),
+                               (packets.CRITERIA_DIGEST, "1" * 64),
+                               (packets.CALLBACK, "elsewhere")):
+            with self.subTest(field=field):
+                other = self.correction(**{
+                    {packets.ISSUE: "issue", packets.GENERATION: "generation",
+                     packets.CRITERIA_DIGEST: "criteria_digest",
+                     packets.CALLBACK: "callback"}[field]: changed})
+                self.assertNotEqual(packets.content_digest(base),
+                                    packets.content_digest(other), field)

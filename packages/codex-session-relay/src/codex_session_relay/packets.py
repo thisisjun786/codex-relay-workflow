@@ -23,6 +23,8 @@ Nothing here sends, queues, acknowledges or judges anything. The engine for that
 exists in delivery, ack and criteria; duplicating it would give the workflow a second writer.
 """
 
+import json
+
 from . import cxc, envelope
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
@@ -111,6 +113,14 @@ PULL_REQUEST = "pull_request"
 LOCATOR = "locator"
 ARTIFACT_KINDS = (PULL_REQUEST, LOCATOR)
 
+# What each shape cannot do without. Held here rather than only inside the two constructors,
+# because a packet read back from disk was never constructed: packet-check loads JSON, and
+# every rule that lived only in a constructor was a rule that path did not have.
+ARTIFACT_REQUIRED = {
+    PULL_REQUEST: ("repository", "number", "headSha"),
+    LOCATOR: ("path", "digest"),
+}
+
 
 def pull_request(*, repository, number, head_sha, base_sha=None, url=None) -> dict:
     """A change under review, named the way the parent will re-read it before merging.
@@ -151,8 +161,15 @@ def _check_artifact(one):
     if not isinstance(one, dict) or one.get("kind") not in ARTIFACT_KINDS:
         raise PacketRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            "an artifact is a pull request or a locator, built by this module rather than"
-            " assembled by a caller, so a third shape cannot reach a reader as either")
+            "an artifact is a pull request or a locator; a third shape cannot reach a reader"
+            " as either")
+    missing = [name for name in ARTIFACT_REQUIRED[one["kind"]]
+               if _present(one.get(name)) is None]
+    if missing:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a " + one["kind"] + " artifact states " + ", ".join(missing)
+            + "; a deliverable identified by half its identity is not identified")
     return one
 
 
@@ -356,8 +373,24 @@ def compose(*, direction, purpose, relation_id, sender, recipient, subject, issu
 
 
 def check(one, *, required=None) -> None:
-    """Refuse a packet that omits what its own purpose cannot do without."""
+    """Refuse a packet that omits what its own purpose cannot do without.
+
+    A COMPLETE validator, not a finishing touch on something compose already made safe. The
+    two entry points are not the same: compose builds a packet here, where every constructor
+    has already run, and packet-check reads one back from disk, where none of them has. Every
+    rule that lived only in a constructor was a rule the second path did not have, so each one
+    is re-run from this side - the version, the artifact's own fields and the activation
+    facts - against whatever the mapping actually contains.
+    """
     region = one.get("envelope") or {}
+    if one.get("version") != VERSION:
+        # Refused rather than read hopefully. A newer packet may mean something different by
+        # a field this build already knows the name of, and reading it under these rules is
+        # the silent misinterpretation the refusal exists to prevent.
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "this reader is " + VERSION + " and the packet says " + repr(one.get("version"))
+            + "; a version nobody mapped is diagnosed rather than read under these rules")
     envelope.check(region)
     direction, purpose = region.get("direction"), region.get("purpose")
     if required is None:
@@ -395,11 +428,27 @@ def check(one, *, required=None) -> None:
                 + "; DISPATCH-TASK-01 fixes these sections because an instruction that omits"
                 " one is an instruction the recipient has to guess at")
     if _present(one.get("activation")) is not None:
+        triple = one["activation"]
+        if not isinstance(triple, dict):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "an activation reading is an object of three named facts, not a "
+                + type(triple).__name__)
         for name in ACTIVATION_FACTS:
-            if name not in one["activation"]:
+            if name not in triple:
                 raise PacketRefused(
                     RefusalReason.MALFORMED_RECEIPT,
                     "an activation reading answers all three facts; " + name + " is missing")
+            fact = triple[name]
+            if not isinstance(fact, dict):
+                raise PacketRefused(
+                    RefusalReason.MALFORMED_RECEIPT,
+                    "the " + name + " activation fact is an object with a state, not a "
+                    + type(fact).__name__)
+            # The constructor IS the rule, so it is re-run rather than restated. A second
+            # spelling of "observed needs a source" is how the two start disagreeing.
+            activation_fact(fact.get("state"), source=fact.get("source"),
+                            detail=fact.get("detail") or "")
 
 
 # ---------------------------------------------------------------- agreement with the record
@@ -440,8 +489,14 @@ def reception(one, record) -> dict:
     back unavailable. That is deliberately not acceptance. A receiver that could not check
     the generation has not checked it, and an instruction applied on that basis was applied
     on nobody's authority.
+
+    The packet is checked for completeness FIRST. Comparing selected fields against a record
+    says nothing about the fields nobody compared, so a packet arriving from disk with its
+    required data missing used to reach this function and come back accepted on the strength
+    of the few values that did agree.
     """
     region = one.get("envelope") or {}
+    check(one)
     problems, gaps = [], []
     _compare(problems, gaps, WRONG_RELATION, "relationId",
              region.get("relationId"), record.get("relationId"),
@@ -476,7 +531,7 @@ def reception(one, record) -> dict:
                  one.get(CRITERIA_DIGEST), record.get(CRITERIA_DIGEST),
                  "criteria judged against a digest nobody registered are judged against"
                  " somebody's memory of them")
-    problems.extend(_head_problems(one, record))
+    _artifact_agreement(one, record, problems, gaps)
     problems.extend(_settings_problems(one, record))
     gaps.extend(_settings_gaps(one, record))
     if problems:
@@ -505,31 +560,31 @@ def _compare(problems, gaps, kind, field, found, expected, reason) -> None:
         problems.append(mismatch(kind, field, expected=expected, found=found, reason=reason))
 
 
-def _head_problems(one, record) -> list:
-    """A pull request against the head the receiver's own forge reading reports.
+def _artifact_agreement(one, record, problems, gaps) -> None:
+    """The artifact against what the receiver's own reading says is current.
 
-    A locator is not compared here and that is the point: a non-PR audit has no head, is not
-    asked for one, and is not made to look stale for not having it. What it does carry is a
-    digest, which is compared the same way when the record holds one.
+    Each shape is compared against its OWN currency field and only that one. A pull request is
+    measured against the head the receiver's forge reading reports; a locator against the
+    digest. That is what keeps a non-PR audit from being made to look stale for having no
+    head: it is never compared against one and never asked for one.
+
+    Routed through _compare rather than answering for itself, which is the correction. A
+    record with no head read as agreement, so a candidate whose currency the receiver could
+    not check came back accepted. It is a gap now, and the reading is unavailable. An
+    unchecked head and a matching head are not the same news.
     """
     artifact = one.get(ARTIFACT)
     if not artifact:
-        return []
+        return
     if artifact.get("kind") == PULL_REQUEST:
-        expected = record.get("headSha")
-        if _present(expected) is None or str(artifact.get("headSha")) == str(expected):
-            return []
-        return [mismatch(STALE_HEAD, "artifact.headSha", expected=expected,
-                         found=artifact.get("headSha"),
-                         reason="the candidate moved after this packet was written, so its"
-                                " checks, its review and its readiness are about another"
-                                " commit")]
-    expected = record.get("artifactDigest")
-    if _present(expected) is None or str(artifact.get("digest")) == str(expected):
-        return []
-    return [mismatch(STALE_HEAD, "artifact.digest", expected=expected,
-                     found=artifact.get("digest"),
-                     reason="the deliverable's bytes are not the ones this packet names")]
+        _compare(problems, gaps, STALE_HEAD, "artifact.headSha",
+                 artifact.get("headSha"), record.get("headSha"),
+                 "the candidate moved after this packet was written, so its checks, its"
+                 " review and its readiness are about another commit")
+        return
+    _compare(problems, gaps, STALE_HEAD, "artifact.digest",
+             artifact.get("digest"), record.get("artifactDigest"),
+             "the deliverable's bytes are not the ones this packet names")
 
 
 def _settings_problems(one, record) -> list:
@@ -572,18 +627,44 @@ COLLISION = "collision"
 # is derived from the direction, relation, purpose and subject, so a sender can spend one in
 # advance, and answering a repeat from the id alone would hand a second correction the
 # disposition given to the first.
-CONTENT_FIELDS = (ISSUE, GENERATION, CRITERIA_DIGEST, BODY)
+#
+# So the digest covers everything that can change what the recipient does, and it is built by
+# EXCLUSION rather than by a list of interesting fields. A hand-picked list is how a changed
+# packet collapses into a replay: an earlier version of this hashed the generation, the head
+# and the workflow, so a correction naming a different callback, a different repository or a
+# different decision hashed identically to the one already answered and was handed that
+# answer. What is left out is named below, one reason each.
+IMMATERIAL = (
+    # When the sender looked. A repeat observed a minute later is the same instruction.
+    "observedAt",
+    # A display field the sender may or may not have resolved, deliberately not an input to
+    # the message id either.
+    "scope",
+    # A rendering of the generation and revision, both of which are hashed from the packet's
+    # own typed fields.
+    "basis",
+    # How far a message got, which is the receiver's reading rather than the sender's ask.
+    "reach",
+    # Derived from everything else here, so including it would hash one thing twice.
+    "messageId",
+)
 
 
 def content_digest(one) -> str:
-    """What this packet actually asks for, hashed, so a repeat can be told from a collision."""
-    region = one.get("envelope") or {}
-    artifact = one.get(ARTIFACT) or {}
-    parts = [str(region.get("messageId")), str(region.get("purpose"))]
-    parts.extend(str(one.get(name)) for name in CONTENT_FIELDS)
-    parts.append(str(artifact.get("headSha") or artifact.get("digest")))
-    parts.append(str((one.get(POLICY) or {}).get("workflow")))
-    return sha256_hex(chr(31).join(parts))
+    """What this packet actually asks for, hashed, so a repeat can be told from a collision.
+
+    Serialised with sorted keys so two equal packets hash equal however their mappings were
+    built, and with default=str so a value this module does not model cannot raise out of a
+    comparison whose whole job is to be answerable.
+    """
+    region = dict(one.get("envelope") or {})
+    for name in IMMATERIAL:
+        region.pop(name, None)
+    payload = {name: value for name, value in one.items()
+               if name not in ("envelope",)}
+    payload["envelope"] = region
+    return sha256_hex(json.dumps(payload, sort_keys=True, default=str,
+                                 separators=(",", ":"), ensure_ascii=False))
 
 
 def repeat(one, answered) -> dict:
