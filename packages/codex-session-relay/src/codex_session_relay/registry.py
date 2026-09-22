@@ -758,6 +758,12 @@ class Registry:
             " SELECT d.event_id, 'stale_generation', ?, 0 FROM deliveries d"
             "  JOIN events e ON e.event_id = d.event_id"
             " WHERE d.relationship_id = ? AND e.execution_generation < ?"
+            # Except a relay coordination notice. A merge-turn grant rides an assignment's
+            # generation because the events table needs one, but its currency is the merge
+            # turn - so annotating it here reported a grant that had been delivered, and even
+            # acknowledged, as superseded by a revision it has nothing to do with. Spelled as
+            # a literal because delivery imports this module and cannot be imported back.
+            "   AND e.outcome NOT IN ('merge_turn_grant')"
             # dispatched belongs here too: its acknowledgement will be refused as
             # stale_generation, so leaving it unannotated meant status showed awaiting_ack
             # for an obligation that can no longer be met. Annotating does not rewrite the
