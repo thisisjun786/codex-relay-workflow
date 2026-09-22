@@ -41,6 +41,14 @@ OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 # recovery rather than with an instruction to emit a receipt, and a probe that kept the generic
 # reason would report a contract this implementation does not keep.
 GENERATION_MISMATCH = "registration_generation_mismatch"
+# The live generation exists but a DIFFERENT dispatch opened it: an ordinal is a counter, not an
+# identity, so a rebuilt store can stand on the same number under another dispatch entirely.
+GENERATION_DISPATCH_MISMATCH = "generation_dispatch_mismatch"
+# The relationship reports a current generation the store has no record of opening.
+GENERATION_ABSENT = "generation_absent"
+# The three answers meaning the live generation is not this assignment's. Mirrors
+# guard.GENERATION_EVIDENCE.
+GENERATION_EVIDENCE = (GENERATION_MISMATCH, GENERATION_DISPATCH_MISMATCH, GENERATION_ABSENT)
 TRACED_FUNCTIONS = ("observe_state", "decide", "derive_assignment_state",
                     "identity_contested", "classify_declaration", "_correlated",
                     "_correlation_problem", "_covered", "_ambiguity_resolved",
@@ -881,16 +889,23 @@ def observe_state(observation):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
             "record a disposition explaining why it cannot be.")
-    if declaration == "receipt_missing" and (
-        _mapping(observation.get("receipt")).get("evidence") == GENERATION_MISMATCH
-    ):
+    evidence = _mapping(observation.get("receipt")).get("evidence")
+    if declaration == "receipt_missing" and evidence in GENERATION_EVIDENCE:
+        detail = str(_mapping(observation.get("receipt")).get("detail"))
+        if evidence == GENERATION_ABSENT:
+            return "receipt_missing", (
+                "The relay's store holds no record of the generation it reports as current for "
+                "this relationship: " + detail + ". Nothing can be attributed to this assignment "
+                "while the store cannot say which dispatch opened the generation it is on, and "
+                "no receipt this session emits changes that. The relay's store is what needs "
+                "repair.")
         # The same omission, held the same way; not the same instruction. No receipt this session
         # emits can satisfy an assignment whose registration names a generation the relay moved
         # off, because relationship.json is create-once and cannot be republished onto the live
         # generation. A hold a child cannot act on is a hold it cannot clear.
         return "receipt_missing", (
-            "This assignment's registration names a generation the relay has moved off: "
-            + str(_mapping(observation.get("receipt")).get("detail"))
+            "This assignment's registration does not name the generation the relay is on: "
+            + detail
             + ". No receipt this session emits can satisfy it, because the registration fact is "
             "create-once and cannot be republished onto the live generation, and a receipt "
             "earned there belongs to work this assignment never registered. Recovery is a new "

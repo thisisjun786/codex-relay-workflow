@@ -56,6 +56,18 @@ OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 # assignment is for. Named once because observe_state reads it back to answer with the recovery
 # instead of repeating an instruction the child cannot act on.
 GENERATION_MISMATCH = "registration_generation_mismatch"
+# The live generation exists but a DIFFERENT dispatch opened it. An ordinal is a counter, not an
+# identity: a store rebuilt or restored under a surviving marker can stand on generation 1 again
+# under another dispatch entirely, and the ordinal comparison alone reads that as agreement.
+GENERATION_DISPATCH_MISMATCH = "generation_dispatch_mismatch"
+# The relationship reports a current generation the generations table has no row for. Every
+# legitimate advance writes both in one transaction - registry.register for the first generation
+# and open_generation_in for every later one - so this is a store that cannot say which dispatch
+# it is executing, which is missing evidence rather than an answer.
+GENERATION_ABSENT = "generation_absent"
+# The three answers that mean the live generation is not this assignment's. They hold the same
+# way and are told apart because they are repaired in different places.
+GENERATION_EVIDENCE = (GENERATION_MISMATCH, GENERATION_DISPATCH_MISMATCH, GENERATION_ABSENT)
 
 BLOCK = "block"
 RELEASE = "release"
@@ -183,7 +195,8 @@ def deliverable_state(payload, manifest_ref, roots):
         return DELIVERABLE_CHANGED, None, type(error).__name__ + ": " + str(error)
 
 
-def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_generation=None):
+def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_generation=None,
+                   dispatch_request_id=None):
     """The reviewable receipt this turn produced, and whether it stands at the current head.
 
     The head is computed FIRST and the matching event is then fetched by its id. Selecting a row by
@@ -205,6 +218,15 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_g
     and this turn. Weighed inside the snapshot below, so the generation compared IS the one the
     head was computed over. None means the fact carries no stamp, having been published before the
     field existed, and an absent stamp is compared against nothing.
+
+    dispatch_request_id is the preimage THIS session claimed, and it answers what the ordinal
+    cannot. A generation number is a counter scoped to one relationship, so a store rebuilt or
+    restored under a surviving marker can stand on the same ordinal the fact records while a
+    different dispatch opened it - the stamp then agrees with a generation this assignment never
+    registered. The generations table is the only place that knows which dispatch opened which
+    generation, and it is read on this same connection, so the mapping weighed is the mapping the
+    head is computed under. None means this session claimed no dispatch, which observe_state
+    answers as an unclaimed or uncorrelated marker before any receipt is weighed.
 
     stage deliberately admits staged. A child emits from inside its own turn, so the host reports
     that turn as inProgress and the event is stored staged; it is finalized only after the daemon
@@ -273,10 +295,10 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_g
             # marker can name a generation EARLIER than the fact does, and calling that
             # supersession would tell an operator the relationship moved on when it moved back.
             #
-            # What this compares is the ORDINAL. It does not establish that the live generation
-            # was opened by THIS assignment's dispatch - a rebuilt store reusing an ordinal under
-            # another dispatch passes it - and that predicate belongs to registration, which
-            # refuses a stale or absent dispatch under the relay's write lock.
+            # This compares the ORDINAL only. An ordinal is a counter, so agreement here is not
+            # yet identity; the dispatch mapping below is what establishes that the generation
+            # the ordinal names is this assignment's. Kept as two answers rather than one,
+            # because they are reached through different rows and repaired differently.
             return dict(
                 base,
                 evidence=GENERATION_MISMATCH,
@@ -286,6 +308,38 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id, execution_g
                     + str(relationship["execution_generation"])
                 ),
             ), True
+        if dispatch_request_id is not None:
+            # Asked of the CURRENT generation, which is the one the head below is computed over.
+            # Asking about the generation the fact names would answer whether this dispatch ever
+            # opened something, which is the registration's question and not this one.
+            opened = connection.execute(
+                "SELECT dispatch_request_id FROM generations"
+                " WHERE relationship_id = ? AND execution_generation = ?",
+                (relationship_id, relationship["execution_generation"]),
+            ).fetchone()
+            if opened is None:
+                return dict(
+                    base,
+                    evidence=GENERATION_ABSENT,
+                    detail=(
+                        "the relationship reports generation "
+                        + str(relationship["execution_generation"])
+                        + " and the store holds no record of which dispatch opened it"
+                    ),
+                ), True
+            if not same_identity(opened["dispatch_request_id"], dispatch_request_id):
+                # The ids themselves stay out of the detail. The claim preimage is the child's to
+                # present, and what an operator needs is which generation is foreign, not a value
+                # they can copy out of a hold record.
+                return dict(
+                    base,
+                    evidence=GENERATION_DISPATCH_MISMATCH,
+                    detail=(
+                        "the relationship stands on generation "
+                        + str(relationship["execution_generation"])
+                        + ", which a different dispatch request opened"
+                    ),
+                ), True
         head = head_revision(connection, relationship_id, relationship["execution_generation"])
         if head.get("evidence") in AMBIGUOUS:
             # Not "no receipt". The lineage this generation declares does not identify a single
@@ -684,17 +738,27 @@ def observe_state(observation):
             "This workspace is managed but its relationship is not registered. Register it, or "
             "record a disposition explaining why it cannot be."
         )
-    if declaration == "receipt_missing" and (
-        (observation.get("receipt") or {}).get("evidence") == GENERATION_MISMATCH
-    ):
+    evidence = (observation.get("receipt") or {}).get("evidence")
+    if declaration == "receipt_missing" and evidence in GENERATION_EVIDENCE:
+        detail = str((observation.get("receipt") or {}).get("detail"))
+        if evidence == GENERATION_ABSENT:
+            # A different repair from the other two, so a different sentence. Nothing the
+            # coordinator declares fixes a store that cannot say what it is executing.
+            return "receipt_missing", (
+                "The relay's store holds no record of the generation it reports as current for "
+                "this relationship: " + detail + ". Nothing can be attributed to this assignment "
+                "while the store cannot say which dispatch opened the generation it is on, and "
+                "no receipt this session emits changes that. The relay's store is what needs "
+                "repair."
+            )
         # The same omission, holding the same way; not the same instruction. The ordinary
         # receipt_missing reason tells the child to emit the receipt, and here no receipt it
         # emits can ever satisfy this assignment: relationship.json is create-once, so the
         # assignment cannot be re-registered onto the live generation. A hold a child cannot act
         # on is a hold it cannot clear, which is why this names the recovery instead.
         return "receipt_missing", (
-            "This assignment's registration names a generation the relay has moved off: "
-            + str((observation.get("receipt") or {}).get("detail"))
+            "This assignment's registration does not name the generation the relay is on: "
+            + detail
             + ". No receipt this session emits can satisfy it, because the registration fact is "
             "create-once and cannot be republished onto the live generation, and a receipt "
             "earned there belongs to work this assignment never registered. Recovery is a new "
@@ -986,6 +1050,10 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
                 session_id=session_id,
                 turn_id=turn_id,
                 execution_generation=registered.get("executionGeneration"),
+                dispatch_request_id=intents.claimed_dispatch(
+                    marker_facts or {}, session_id,
+                    directory.name if directory is not None else None,
+                ),
             )
             if not readable:
                 # Named apart from the store. A database we could not open and a deliverable we

@@ -2,16 +2,16 @@
   "expected": {
     "decision": "block",
     "observation": "receipt_missing",
-    "reason": "This assignment's registration does not name the generation the relay is on: the assignment registered generation 1 and the relationship now stands on generation 2. No receipt this session emits can satisfy it, because the registration fact is create-once and cannot be republished onto the live generation, and a receipt earned there belongs to work this assignment never registered. Recovery is a new assignment, declared for a fresh dispatch request id.",
-    "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-    "receiptEvidence": "registration_generation_mismatch",
+    "reason": "This assignment's registration does not name the generation the relay is on: the relationship stands on generation 1, which a different dispatch request opened. No receipt this session emits can satisfy it, because the registration fact is create-once and cannot be republished onto the live generation, and a receipt earned there belongs to work this assignment never registered. Recovery is a new assignment, declared for a fresh dispatch request id.",
+    "receiptDetail": "the relationship stands on generation 1, which a different dispatch request opened",
+    "receiptEvidence": "generation_dispatch_mismatch",
     "record": {
-      "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-      "receiptEvidence": "registration_generation_mismatch"
+      "receiptDetail": "the relationship stands on generation 1, which a different dispatch request opened",
+      "receiptEvidence": "generation_dispatch_mismatch"
     },
     "state": "receipt_missing"
   },
-  "note": "A receipt standing at the head of a LATER generation than the registration names. The three identities all match - a correction generation opened against the same dispatch turn admits that turn as its own anchor - so only the recorded generation tells them apart. Held, and the reason names the recovery rather than telling the child to emit a receipt no registration could accept.",
+  "note": "The ordinal AGREES and the generation is still foreign. A generation number is a counter scoped to one relationship, so a store rebuilt or restored under a surviving marker can stand on the ordinal the fact records while a different dispatch opened it. Comparing the stamp alone reads that as agreement, which is the hole this answer closes.",
   "observation": {
     "disposition": {
       "outcome": "ready_for_review",
@@ -48,8 +48,8 @@
     "now": "2026-01-01T00:05:00+00:00",
     "receipt": {
       "atCurrentHead": false,
-      "detail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-      "evidence": "registration_generation_mismatch",
+      "detail": "the relationship stands on generation 1, which a different dispatch request opened",
+      "evidence": "generation_dispatch_mismatch",
       "relationshipId": "rel-example",
       "sessionId": "session-1111",
       "turnId": "turn-0001"

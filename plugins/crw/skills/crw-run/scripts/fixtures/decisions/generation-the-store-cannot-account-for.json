@@ -2,16 +2,16 @@
   "expected": {
     "decision": "block",
     "observation": "receipt_missing",
-    "reason": "This assignment's registration does not name the generation the relay is on: the assignment registered generation 1 and the relationship now stands on generation 2. No receipt this session emits can satisfy it, because the registration fact is create-once and cannot be republished onto the live generation, and a receipt earned there belongs to work this assignment never registered. Recovery is a new assignment, declared for a fresh dispatch request id.",
-    "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-    "receiptEvidence": "registration_generation_mismatch",
+    "reason": "The relay's store holds no record of the generation it reports as current for this relationship: the relationship reports generation 1 and the store holds no record of which dispatch opened it. Nothing can be attributed to this assignment while the store cannot say which dispatch opened the generation it is on, and no receipt this session emits changes that. The relay's store is what needs repair.",
+    "receiptDetail": "the relationship reports generation 1 and the store holds no record of which dispatch opened it",
+    "receiptEvidence": "generation_absent",
     "record": {
-      "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-      "receiptEvidence": "registration_generation_mismatch"
+      "receiptDetail": "the relationship reports generation 1 and the store holds no record of which dispatch opened it",
+      "receiptEvidence": "generation_absent"
     },
     "state": "receipt_missing"
   },
-  "note": "A receipt standing at the head of a LATER generation than the registration names. The three identities all match - a correction generation opened against the same dispatch turn admits that turn as its own anchor - so only the recorded generation tells them apart. Held, and the reason names the recovery rather than telling the child to emit a receipt no registration could accept.",
+  "note": "The relationship reports a current generation the store has no record of opening. Every legitimate advance writes both rows in one transaction, so this is missing evidence rather than an answer, and it is the relay's store to repair rather than anything the child can emit.",
   "observation": {
     "disposition": {
       "outcome": "ready_for_review",
@@ -48,8 +48,8 @@
     "now": "2026-01-01T00:05:00+00:00",
     "receipt": {
       "atCurrentHead": false,
-      "detail": "the assignment registered generation 1 and the relationship now stands on generation 2",
-      "evidence": "registration_generation_mismatch",
+      "detail": "the relationship reports generation 1 and the store holds no record of which dispatch opened it",
+      "evidence": "generation_absent",
       "relationshipId": "rel-example",
       "sessionId": "session-1111",
       "turnId": "turn-0001"

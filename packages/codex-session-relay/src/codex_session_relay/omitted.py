@@ -197,13 +197,14 @@ def _registry_evidence(row, facts, root, workspace, assignment, session, turn):
     return ("bootstrap" if bootstrap else "admitted" if admitted.admitted else "unadmitted"), requests
 
 
-def _current(facts, disposition, selection, session, turn, now):
+def _current(facts, disposition, selection, assignment, session, turn, now):
     receipt = None
     if disposition and disposition.get("outcome") == guard.READY:
         receipt, readable = guard.lookup_receipt(
             str(selection.db_path), relationship_id=facts["relationship"]["relationshipId"],
             session_id=session, turn_id=turn,
-            execution_generation=facts["relationship"].get("executionGeneration"))
+            execution_generation=facts["relationship"].get("executionGeneration"),
+            dispatch_request_id=intent.claimed_dispatch(facts, session, assignment))
         if not readable:
             raise Unmeasured("receipt_unreadable")
     observation = {"stop_input": {"session_id": session, "turn_id": turn},
@@ -295,7 +296,8 @@ def observe(selection, root, workspace, assignment, session, turn, now):
         disposition, readable = marker.read_disposition(directory, session, turn)
         if not readable or intent.malformed_disposition(disposition):
             raise Unmeasured("disposition_unreadable_or_malformed")
-        label, detail, receipt = _current(facts, disposition, selection, session, turn, now)
+        label, detail, receipt = _current(
+            facts, disposition, selection, assignment, session, turn, now)
         result.update(currentObservation={"label": label, "detail": detail},
                       declaration=disposition, receipt=receipt)
         if not stops:

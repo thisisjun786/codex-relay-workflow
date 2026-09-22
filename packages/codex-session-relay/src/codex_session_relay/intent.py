@@ -439,6 +439,31 @@ def correlated(marker, session_id, assignment=None) -> bool:
     return True
 
 
+def claimed_dispatch(marker, session_id, assignment=None):
+    """The dispatch request id this session claimed, where that claim CORRELATES, or None.
+
+    Selected the way correlation_problem selects it - by the owner the claim's path authorised,
+    first match only - so a reader weighing the relay's generations against a dispatch weighs the
+    same claim the correlation rule judges. Two selections of "this session's claim" is how the
+    two would come to disagree about which dispatch a session presented.
+
+    Correlation is REQUIRED here rather than assumed, and that is the whole of what makes this
+    safe to weigh. An uncorrelated claim is evidence about a different assignment, and
+    correlation_problem already owns that answer. Handing its preimage to a generation check
+    would let a claim the correlation rule rejects decide whether a receipt counts - and decide
+    it in the holding direction, for a turn this contract releases on its own declaration, whose
+    receipt reconciliation is a separate comparison. Answering None leaves that case exactly
+    where it belongs.
+    """
+    if correlation_problem(marker, session_id, assignment) is not None:
+        return None
+    claim = next(
+        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
+    )
+    presented = (claim or {}).get("dispatchRequestId")
+    return presented if named(presented) else None
+
+
 # ---------------------------------------------------------------- selection
 
 
