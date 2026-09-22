@@ -205,6 +205,10 @@ class OneBoundedWriteAndThenAnAnswer(RelayTestCase):
     def test_every_mutator_opens_exactly_one_transaction(self):
         held = self.claim()
         identifier = held["turnId"]
+        self.turns.acknowledge_grant(
+            identifier, actor=self.alpha.task_id,
+            grant=self.turns.turn(identifier)["grant"]["grantId"],
+            evidence="read the grant and re-checked the record")
         opened = {
             "declare_ready": self.transactions_during(
                 lambda: self.turns.declare_ready(
@@ -236,6 +240,10 @@ class OneBoundedWriteAndThenAnAnswer(RelayTestCase):
 
     def test_a_refused_mutator_still_opens_exactly_one(self):
         held = self.claim()
+        self.turns.acknowledge_grant(
+            held["turnId"], actor=self.alpha.task_id,
+            grant=self.turns.turn(held["turnId"])["grant"]["grantId"],
+            evidence="read the grant and re-checked the record")
 
         def refused():
             try:

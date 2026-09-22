@@ -1,0 +1,21 @@
+{
+  "expected": {
+    "decision": "invalid",
+    "reason": "malformed_role"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "무엇이든",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "coordinator",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A role outside the three is a malformed call, not a title outcome.",
+  "subcommand": "decide"
+}

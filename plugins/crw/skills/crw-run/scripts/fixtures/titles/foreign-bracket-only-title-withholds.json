@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "foreign_prefix",
+    "title": "[]"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "[]",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "An empty or foreign bracket with nothing beside it names no title to propose.",
+  "subcommand": "decide"
+}

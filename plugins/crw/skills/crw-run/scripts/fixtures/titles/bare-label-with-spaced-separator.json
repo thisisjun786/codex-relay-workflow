@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "bare_label",
+    "reason": "prefix_replaced",
+    "stripped": "CRW · ",
+    "title": "[CRW] 플러그인 전환"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW · 플러그인 전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "A separable duplicate is absorbed rather than repeated.",
+  "subcommand": "decide"
+}

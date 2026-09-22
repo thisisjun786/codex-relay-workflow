@@ -1,0 +1,28 @@
+{
+  "expected": {
+    "decision": "apply",
+    "matched": "bracket_replaced",
+    "reason": "prefix_replaced",
+    "stripped": "[Core]Beta] ",
+    "title": "[Other] launch"
+  },
+  "input": {
+    "binding_verified": true,
+    "bracket_disposition": {
+      "action": "replace",
+      "bracket": "[Core]Beta]"
+    },
+    "family_candidates": [
+      "Other"
+    ],
+    "observed_title": "[Core]Beta] launch",
+    "project_labels": [
+      "Other"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Naming the whole bracket as it appears removes all of it. Without this the caller could only strip [Core] and leave Beta] stranded in the body.",
+  "subcommand": "decide"
+}

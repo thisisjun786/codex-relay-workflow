@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "foreign_prefix",
+    "title": "[Core]Beta] launch"
+  },
+  "input": {
+    "binding_verified": true,
+    "family_candidates": [
+      "Core"
+    ],
+    "observed_title": "[Core]Beta] launch",
+    "project_labels": [
+      "Core"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "With the family Core, a title opening [Core]Beta] carries a different label that merely begins the same way. Matching on the bracket alone would rewrite it as [Core] Beta] launch; the whitespace requirement sends it to the foreign path instead.",
+  "subcommand": "decide"
+}

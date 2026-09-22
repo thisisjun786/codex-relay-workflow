@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "withhold",
+    "reason": "binding_unverified",
+    "title": "CRW · 플러그인 전환"
+  },
+  "input": {
+    "binding_verified": false,
+    "family_candidates": [
+      "CRW"
+    ],
+    "observed_title": "CRW · 플러그인 전환",
+    "project_labels": [
+      "CRW"
+    ],
+    "role": "parent",
+    "summary": null,
+    "user_title": "none"
+  },
+  "note": "Evaluated before any strip or prefix: an unmatched record cannot produce a title.",
+  "subcommand": "decide"
+}
