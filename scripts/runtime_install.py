@@ -2325,7 +2325,11 @@ def cmd_hook(args):
                     # lets the guard refuse a state directory whose store records another App
                     # Server rather than judging a Stop against it; with none there is nothing to
                     # compare and the document stays byte-identical to one written before this key.
-                    socket=args.socket,
+                    #
+                    # Read with getattr for the same reason isolation above it is: this command is
+                    # also called with a Namespace built by a caller that never had the global
+                    # option, and a missing attribute there is an absent socket, not a crash.
+                    socket=getattr(args, "socket", None),
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )
