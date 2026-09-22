@@ -168,6 +168,7 @@ What happens at send time:
 | no record for the recipient | withheld before any transport call, `settings_unavailable` |
 | record missing a field | withheld before any transport call, naming the missing fields |
 | record whose `cwd`, `model` or `reasoningEffort` is not text | withheld before any transport call, `settings_mistyped`, naming each field and the type it holds |
+| record whose `sandbox` is not a policy object, or whose type has no resume mode | withheld before any transport call, `unsupported_sandbox_type`, naming what the row holds |
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
 | resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |
@@ -182,6 +183,15 @@ is refused when it is written too; a store holds one only from an older writer o
 `runtimeWorkspaceRoots` and `environments` are not typed there, and that is not a promise that
 a wrong shape is caught further on: `runtimeWorkspaceRoots` of `"abc"` passes and reaches the
 resume as `["a", "b", "c"]`. What those two hold is a separate question from this one.
+
+The sandbox is checked by a different question, because the record holds the policy OBJECT the
+creation result reported while the resume carries only its mode plus the config keys around it. A
+row holding anything else — the bare name `"workspaceWrite"`, a list, a number — records no policy
+for a resume to restore, and a policy object whose `type` is not a mode name names nothing to
+restore either. Both are refused before any send as `unsupported_sandbox_type`, the same answer an
+unreadable policy already gets, with the detail naming what the row actually holds. An absent
+sandbox is not in this group: `null` or omitted is `settings_incomplete`, because the repair is to
+record the field rather than to replace it.
 
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can
