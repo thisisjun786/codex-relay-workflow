@@ -1,6 +1,10 @@
 """The coordination-document outbox: durable, separately retried, and honest about idempotency."""
 
+import hashlib
+import json
+
 from codex_session_relay import identity
+from codex_session_relay.criteria import CriteriaService
 from codex_session_relay.errors import AckRefused, RefusalReason
 from codex_session_relay.sync import (
     CONFIRMED,
@@ -10,6 +14,7 @@ from codex_session_relay.sync import (
     WRITTEN,
     canonical_summary,
     end_marker,
+    identity_digest,
     parse_blocks,
     parse_document,
     render_block,
@@ -29,6 +34,19 @@ FENCE = chr(96)
 
 DOC = "https://linear.app/example/document/coordination-000000000000"
 OTHER_DOC = "https://linear.app/example/document/somewhere-else-0000"
+
+SOURCE = "https://linear.app/example/document/criteria-0000"
+SET = [
+    {"id": "c1", "title": "the endpoint returns the agreed shape"},
+    {"id": "c2", "title": "a malformed request is refused"},
+]
+# Same ids, one different wording, exactly as a real edit would arrive. Identical ids are the
+# point: a ruling recorded against the old text must not certify the new one unread.
+EDITED = [
+    {"id": "c1", "title": "the endpoint returns a COMPLETELY different shape"},
+    {"id": "c2", "title": "a malformed request is refused"},
+]
+PASSING = [{"id": "c1", "verdict": "verified"}, {"id": "c2", "verdict": "verified"}]
 
 
 class OutboxTestCase(DeliveryTestCase):
@@ -739,3 +757,170 @@ class StructuralIntegrity(OutboxTestCase):
         found = parse_document(undeclared)["blocks"][identifier]
         self.assertEqual(found["format"], "fenced-legacy")
         self.assertEqual(found["problems"], [])
+
+
+class CriteriaAndRulingAreInSyncIdentity(OutboxTestCase):
+    """JUN-167: a re-review that reaches the same verdict has to reach the document too.
+
+    These drive the real record_verdict -> coverage -> enqueue path. Comparing two calls of
+    sync_id to each other would only show that a hash is a function of its arguments, which was
+    never in doubt; what was in doubt is which arguments the verdict path hands it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.criteria = CriteriaService(self.store, self.clock)
+
+    def claimed(self, criteria=SET, *, target_ref=DOC):
+        """The ordinary managed flow up to the point the parent holds the review."""
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.criteria.register(self._rid, criteria, source_ref=SOURCE)
+        self.sync.set_target(self._rid, "coordination_document", target_ref)
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id), accepted=True,
+            adapter=self.adapter,
+        )
+        self.ack.claim_verification(event_id, turn_id=turn.turn_id)
+        return event_id
+
+    def rule(self, event_id, *, turn):
+        return self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id=turn, findings=PASSING,
+        )
+
+    def re_rule(self, event_id, *, turn):
+        """Re-claiming rebinds to the set in force, and the ruling names the set it read."""
+        self.ack.claim_verification(event_id, turn_id=f"claim-{turn}")
+        return self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id=turn, findings=PASSING,
+            expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
+        )
+
+    def jobs(self):
+        return self.sync.snapshot(relationship_id=self._rid)["jobs"]
+
+    def digest(self):
+        return self.criteria.get(self._rid)["setDigest"]
+
+    # ------------------------------------------------------------- the defect
+
+    def test_a_re_review_against_edited_criteria_enqueues_its_own_job(self):
+        """The observation itself: same event, same generation, same revision, same verdict."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        self.assertEqual(len(self.jobs()), 1)
+
+        self.criteria.register(self._rid, EDITED, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v2")
+
+        after = self.jobs()
+        self.assertEqual(len(after), 2, "a re-review on a changed set owes its own summary")
+        self.assertNotEqual(after[0]["syncId"], after[1]["syncId"])
+        self.assertEqual([one["disposition"] for one in after], ["verified", "verified"])
+
+    def test_criteria_edited_away_and_back_still_enqueues_the_newest_ruling(self):
+        """The set returns to wording already summarised; the RULING is still a new one.
+
+        The digest alone cannot see this: rulings one and three carry the same one. Only the
+        ordinal tells the occasions apart.
+        """
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        self.criteria.register(self._rid, EDITED, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v2")
+        self.criteria.register(self._rid, SET, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v3")
+
+        identifiers = [one["syncId"] for one in self.jobs()]
+        self.assertEqual(len(identifiers), 3)
+        self.assertEqual(len(set(identifiers)), 3, "three rulings are three records")
+
+    def test_a_replay_enqueues_nothing_further(self):
+        """An unchanged set does not reach the enqueue at all, so there is no churn to suppress."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        record = self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id="v2", findings=PASSING,
+        )
+        self.assertTrue(record.get("_replay"))
+        self.assertEqual(len(self.jobs()), 1)
+
+    # ------------------------------------------------------- what must not move
+
+    def test_a_verdict_with_no_canonical_criteria_keeps_the_identity_it_always_had(self):
+        """Through the real path, against the pre-change join computed here rather than by sync."""
+        event_id, identifier = self.verdict_job()
+        event = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        before = "|".join(str(value) for value in (
+            "coordination_document", DOC, "verdict", self._rid, event_id,
+            event["execution_generation"], event["revision_hash"], "verified",
+        ))
+        self.assertEqual(
+            identifier, hashlib.sha256(before.encode("utf-8")).hexdigest()[:32]
+        )
+
+    def test_the_unlabelled_payload_is_the_one_this_code_has_always_produced(self):
+        """A fixed vector, expected value computed from the old join and not from sync_id."""
+        arguments = ("coordination_document", DOC, "verdict", "rel-1", "e1", 1, "r1", "verified")
+        expected = hashlib.sha256("|".join(str(v) for v in arguments).encode("utf-8"))
+        self.assertEqual(sync_id(*arguments), expected.hexdigest()[:32])
+        self.assertEqual(identity_digest(*arguments), expected.hexdigest())
+
+    def test_a_legacy_ruling_keeps_its_id_when_criteria_are_registered_afterwards(self):
+        """Registering a set after a legacy verdict makes the same event a managed re-review."""
+        event_id, identifier = self.verdict_job()
+        self.criteria.register(self._rid, SET, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v2")
+
+        identifiers = [one["syncId"] for one in self.jobs()]
+        self.assertEqual(len(identifiers), 2)
+        self.assertEqual(identifiers[0], identifier, "the first ruling's record does not move")
+
+    # ------------------------------------------------------ what the record says
+
+    def test_one_payload_gives_both_the_id_and_the_block_digest(self):
+        """They are the same hash truncated and whole, so they cannot describe different inputs."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        row = self.sync.get(self.jobs()[0]["syncId"])
+        self.assertTrue(row["identity_digest"].startswith(row["sync_id"]))
+
+    def test_the_summary_names_the_criteria_set_the_ruling_rests_on(self):
+        """A reader of the document sees the summary, not the identity."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        row = self.sync.get(self.jobs()[0]["syncId"])
+        self.assertIn(f"criteria set {self.digest()[:12]}", row["summary"])
+
+    def test_a_labelled_job_reconciles_and_completes_from_its_stored_identity(self):
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        identifier = self.jobs()[0]["syncId"]
+        document = self.document(identifier)
+
+        self.assertEqual(
+            self.sync.reconcile(identifier, document)["outcome"], "already_written"
+        )
+        claim = self.sync.claim(identifier, owner="main")
+        settled = self.sync.complete(
+            identifier, claim_token=claim["claimToken"], target_ref=DOC, readback=document,
+            external_ref="linear-doc-1",
+        )
+        self.assertEqual(settled["state"], CONFIRMED)
+
+    def test_the_enqueue_journal_records_the_set_and_whether_the_row_was_created(self):
+        """The digest has no column, and verdict_context is overwritten by the next re-review."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        identifier = self.jobs()[0]["syncId"]
+        entry = json.loads(self.store.one(
+            "SELECT detail FROM journal WHERE kind = ? AND subject = ?",
+            ("sync_enqueued", identifier),
+        )["detail"])
+        self.assertEqual(entry["criteriaDigest"], self.digest())
+        self.assertIsNone(entry["ruling"], "a first ruling carries no occurrence label")
+        self.assertTrue(entry["inserted"])

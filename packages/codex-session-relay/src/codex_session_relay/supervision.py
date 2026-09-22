@@ -290,12 +290,24 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
     row discharges. And it has to have landed in the document anybody is reading now: a
     confirmation written to a target that has since been repointed is a record in a place the
     supervisor no longer looks.
+
+    One verdict row per event used to be all there was, which made "any confirmed row" and "the
+    row for the ruling that stands" the same sentence. Identity now separates rulings made
+    against different criteria, so an event can own several, and the difference matters: an old
+    confirmed row would otherwise report this discharged while the row carrying the current
+    ruling is still pending or failed - hiding exactly the synchronisation failure that
+    separating them exists to surface. Only the newest ruling answers, and it answers for the
+    document being read now: newer on a target since repointed away is not landed here either.
+
+    Newest is by rowid, which is insertion order. created_at is a wall clock, and this package
+    does not decide from wall clocks: moved backwards between two rulings it would sort an
+    earlier confirmed row after a later pending one and reopen the masking through the ordering.
     """
     rows = store.all(
         "SELECT sync_id, state, target, target_ref, external_ref, confirmed_at, last_error"
         "  FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = ?"
         "   AND target = ?"
-        " ORDER BY created_at",
+        " ORDER BY rowid",
         (obligation["relationId"], _event_of(obligation), sync.VERDICT, target),
     )
     records = [dict(row) for row in rows]
@@ -313,27 +325,26 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
                 "reason": f"no {target} target is configured for this relationship, so there"
                           f" is no record the supervisor reads",
                 "records": records}
-    confirmed = [one for one in records if one["state"] == sync.CONFIRMED
-                 and one["target_ref"] == current]
-    if confirmed:
-        return {"standing": DISCHARGED, "reason": "the Linear record is confirmed",
-                "records": records, "externalRef": confirmed[0]["external_ref"],
-                "confirmedAt": confirmed[0]["confirmed_at"]}
-    if records:
-        states = ", ".join(sorted({one["state"] for one in records}))
-        elsewhere = [one for one in records if one["state"] == sync.CONFIRMED]
-        if elsewhere:
-            return {"standing": STANDING,
-                    "reason": f"the only confirmed record is on {elsewhere[0]['target_ref']},"
-                              f" which is no longer the target for this relationship",
-                    "records": records}
+    if not records:
         return {"standing": STANDING,
-                "reason": f"the Linear record is {states} rather than {sync.CONFIRMED}",
+                "reason": "no Linear record was enqueued for this, so nothing the supervisor"
+                          " reads carries it",
+                "records": []}
+    latest = records[-1]
+    if latest["target_ref"] != current:
+        # Asked of the newest ruling rather than of any confirmed row, or an older confirmation
+        # sitting on the current target would be described as the one nobody reads.
+        return {"standing": STANDING,
+                "reason": f"the current ruling's record is on {latest['target_ref']}, which is"
+                          f" no longer the target for this relationship",
                 "records": records}
+    if latest["state"] == sync.CONFIRMED:
+        return {"standing": DISCHARGED, "reason": "the Linear record is confirmed",
+                "records": records, "externalRef": latest["external_ref"],
+                "confirmedAt": latest["confirmed_at"]}
     return {"standing": STANDING,
-            "reason": "no Linear record was enqueued for this, so nothing the supervisor reads"
-                      " carries it",
-            "records": []}
+            "reason": f"the Linear record is {latest['state']} rather than {sync.CONFIRMED}",
+            "records": records}
 
 
 def prior_report(store, identifier):
