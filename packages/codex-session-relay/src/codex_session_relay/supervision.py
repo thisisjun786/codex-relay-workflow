@@ -121,11 +121,17 @@ def _subject(kind, row, report) -> str:
     said twice converges on the first, where the prior-report record then suppresses it.
     """
     if kind in (BLOCKED, DECISION):
-        cause = " ".join(str(part) for part in (
-            (report or {}).get("cxcStatus") or row["outcome"],
-            (report or {}).get("cxcReason") or "",
-            (report or {}).get("summary") or "",
-        ) if part)
+        # Encoded rather than joined. The fields are prose and contain spaces of their own, so
+        # a space-joined string does not preserve the boundaries between them: "waiting on API"
+        # plus "schema update" hashed the same as "waiting on" plus "API schema update", and
+        # the second blocker then read as one already reported. JSON keeps the order and the
+        # boundaries without needing a separator the text cannot contain.
+        cause = json.dumps(
+            [(report or {}).get("cxcStatus") or row["outcome"],
+             (report or {}).get("cxcReason") or "",
+             (report or {}).get("summary") or ""],
+            ensure_ascii=False, separators=(",", ":"),
+        )
         return f"g{row['execution_generation']}:{sha256_hex(cause)[:16]}"
     return row["event_id"]
 

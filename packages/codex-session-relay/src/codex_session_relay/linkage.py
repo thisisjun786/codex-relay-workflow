@@ -118,18 +118,36 @@ def directive_id(scope_kind, scope_key, from_scope_key, digest, revision):
 def _pointer_disagreement(stored, incoming):
     """Whether two envelope pointers on one directive id are about different instructions.
 
-    Only ours are compared. A free-form note on either side is not a claim about purpose, so it
-    cannot disagree with one; an absent pointer on a row written before this contract is the
-    same. What is caught is two pointers that both parse and name different purposes, which is
-    the case the derived id cannot tell apart on its own.
+    Three cases, because "neither is ours" and "only one is" are not the same answer.
+
+    Both parse: they disagree when they name a different purpose or answer a different
+    message, which is what the derived id cannot tell apart on its own.
+
+    Only the INCOMING one parses: the stored row predates this contract or carries an
+    operator's note, and the caller is asking for a purpose and a correlation that row has no
+    room for. Treating that as agreement returned the old row and reported success while the
+    requested envelope fields simply vanished, so it is refused and the later instruction takes
+    its own digest. Migrating the row instead would rewrite an instruction already recorded,
+    which this module refuses everywhere.
+
+    Only the STORED one parses, or neither: the caller asserted no purpose, so it claims
+    nothing this row could contradict, and the existing record is returned exactly as an
+    ordinary replay returns it.
 
     The correlation counts too. A replay that keeps its purpose and answers a DIFFERENT message
     is a different instruction, and returning the stored row for it handed the caller a
     directive that answers the message it replaced.
     """
     first, second = envelope.parse_reference(stored), envelope.parse_reference(incoming)
-    if first is None or second is None:
+    if second is None:
         return None
+    if first is None:
+        return ("this directive id is already recorded with a reference that is not an"
+                " envelope pointer (" + repr(stored) + "), so the purpose "
+                + repr(second["purpose"]) + " and the correlation "
+                + repr(second["correlationId"]) + " you are asking for have nowhere to go on"
+                " it. The recorded instruction is preserved; a later one is recorded as its"
+                " own directive with its own digest")
     if (first["purpose"], first["correlationId"]) == (second["purpose"],
                                                       second["correlationId"]):
         return None
