@@ -871,7 +871,8 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence and incompleteness both refuse."""
+        """The recorded settings, validated. Absence, incompleteness and a mistyped field
+        all refuse."""
         from .registry import load_settings
 
         settings = load_settings(self.store, task_id)
@@ -928,7 +929,7 @@ class DeliveryService:
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
                            row=None) -> None:
-        """Withheld before any transport call, naming what is missing.
+        """Withheld before any transport call, naming what the record got wrong.
 
         Not a permanent hold: settings that were never recorded can be recorded, and the next
         pass decides again. Nothing was claimed and nothing was sent, so there is no attempt.

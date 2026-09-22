@@ -163,6 +163,7 @@ What happens at send time:
 |---|---|
 | no record for the recipient | withheld before any transport call, `settings_unavailable` |
 | record missing a field | withheld before any transport call, naming the missing fields |
+| record whose `cwd`, `model` or `reasoningEffort` is not text | withheld before any transport call, `settings_mistyped`, naming each field and the type it holds |
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
 | resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |

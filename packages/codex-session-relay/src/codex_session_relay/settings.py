@@ -126,7 +126,7 @@ def normalise_environments(environments):
 
 
 class TaskSettings:
-    """Complete or unusable. A partial record cannot say what it is preserving.
+    """Complete and typed, or unusable. A record that is neither cannot say what it preserves.
 
     JUN-92 populates this from the creation result Run already receives; it is not a separate
     handshake and it asks for nothing the host did not already report at creation.
@@ -151,12 +151,50 @@ class TaskSettings:
             absent.remove("environments")
         return absent
 
+    def mistyped(self) -> list:
+        """Recorded fields the resume contract types as strings, and this record does not.
+
+        Presence was never the whole question. resume_params copies each of these values
+        straight into ThreadResumeParams, so a recorded `cwd: 7` used to be built and sent, and
+        the only answer about it came back from a host whose schema is not in this repository.
+        The receipt could not say whether the host had accepted it, which is why the rule has to
+        run before the send rather than be read off the response.
+
+        Only meaningful once missing() is empty, and it subscripts self.data to say so:
+        require_usable() orders the two, exactly as resume_params and mismatches already assume
+        a complete record. isinstance excludes bool as well, so True is not read as a model name.
+
+        approvalPolicy is not here. Contract v1 admits the single literal `never`, so the value
+        comparison that decides it already refuses every non-string it could hold, and a type
+        rule would answer that same row with the less specific of two codes.
+        """
+        wrong = []
+        if not isinstance(self.data["cwd"], str):
+            wrong.append("cwd")
+        if not isinstance(self.data["model"], str):
+            wrong.append("model")
+        if not isinstance(self.data["reasoningEffort"], str):
+            wrong.append("reasoningEffort")
+        return wrong
+
     def require_usable(self) -> None:
         absent = self.missing()
         if absent:
             raise DeliveryRefused(
                 RefusalReason.SETTINGS_INCOMPLETE,
                 f"missing {', '.join(absent)}",
+            )
+        wrong = self.mistyped()
+        if wrong:
+            # Shape before meaning: what the record IS, then what a particular value means. The
+            # managed admission path already decides in that order, typing model and
+            # reasoningEffort before it looks at the sandbox type. Every offender is named at
+            # once, like missing(), so a hand-edited row costs one round rather than three.
+            raise DeliveryRefused(
+                RefusalReason.SETTINGS_MISTYPED,
+                "; ".join(
+                    f"{field} is {type(self.data[field]).__name__}, not str" for field in wrong
+                ),
             )
         if self.sandbox_mode() is None:
             raise DeliveryRefused(
