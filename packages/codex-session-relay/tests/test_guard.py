@@ -805,6 +805,36 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["observation"], "undeclared_turn_end")
         self.assertEqual(verdict["decision"], guard.BLOCK)
 
+    def test_a_malformed_intent_does_not_contradict_anything(self):
+        """Shape before meaning, and the record has to pass as a whole.
+
+        A hash read out of an intent whose other identity slots are wrongly typed is not evidence
+        about anything - the record cannot be read as a fact, so it cannot contradict its directory
+        either. Interpreting it anyway excluded the current assignment and held an older one,
+        instead of selecting the current marker and reporting it as malformed.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "intent.json", {
+            "declaredAt": self.LATER_DECLARED, "issue": "REL-2",
+            "dispatchRequestIdHash": marker.assignment_id("a-foreign-dispatch"),
+            "dbPath": [str(self.store.path)],
+            "workspace": str(self.workspace),
+        })
+        intent.publish_claim(
+            self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
+            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN,
+            at=self.LATER_CLAIMED,
+        )
+        intent.bind(self.markers, workspace=self.workspace, assignment=later,
+                    session_id=CHILD, task_id=CHILD, at=self.LATER_BOUND)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a malformed intent's hash excluded its own assignment")
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
     def test_a_claim_with_no_preimage_beside_unrelated_corruption_selects_nothing(self):
         """The precision the malformed-successor repair depends on.
 

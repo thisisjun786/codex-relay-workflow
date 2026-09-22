@@ -484,7 +484,16 @@ def _selecting_claim(marker, session_id, assignment):
         # asking it anyway ends the selection walk in the traceback the shape rules exist to
         # prevent. Not a record is also not a contradiction, so the candidate stays.
         intent_fact = marker.get("intent")
-        declared = intent_fact.get("dispatchRequestIdHash") if isinstance(intent_fact, dict) else None
+        # Shape before meaning, and the record has to pass as a whole. A hash read out of an
+        # intent whose other identity slots are wrongly typed is not evidence about anything: the
+        # record cannot be read as a fact, so it cannot contradict the directory either, and
+        # letting it exclude the candidate held an older assignment instead of reporting the
+        # current marker as malformed.
+        readable = isinstance(intent_fact, dict) and all(
+            isinstance(intent_fact[field], str)
+            for field in FACT_IDENTITIES.get("intent", ()) if field in intent_fact
+        )
+        declared = intent_fact.get("dispatchRequestIdHash") if readable else None
         if _named(declared) and not _same_identity(declared, assignment):
             # The coordinator's own record says this directory belongs to another assignment, so a
             # claim agreeing with the directory does not make it this session's. Only a READABLE
