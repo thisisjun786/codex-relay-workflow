@@ -10,6 +10,7 @@ skills, and that running it twice changes nothing the second time.
 """
 
 import errno
+import importlib.util
 import json
 import os
 import shutil
@@ -23,6 +24,12 @@ CLI = ROOT / "scripts" / "plugin_transition.py"
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 INSTALL = ROOT / "scripts" / "install.py"
 PLUGIN_VERSION = "0.2.0"
+# The payload contract these fixtures have to satisfy is the one the transition itself runs, so
+# the rule for deriving a cached package's version is read from that checker rather than copied.
+_plugin_spec = importlib.util.spec_from_file_location(
+    "crw_plugin_check_for_transition", ROOT / "scripts" / "ci" / "plugin.py")
+plugin_check = importlib.util.module_from_spec(_plugin_spec)
+_plugin_spec.loader.exec_module(plugin_check)
 try:
     import tomllib as _tomllib
 except ImportError:
@@ -131,7 +138,7 @@ class Host:
             raise AssertionError("the command printed no JSON: " + done.stdout[-2000:]
                                  + done.stderr[-2000:])
 
-    def transition(self, *arguments, trust=True):
+    def transition(self, *arguments, trust=True, seal=True):
         """Run the transition, acknowledging the trust gap unless a case is about it.
 
         This fixture writes a trust key with a made-up hash, which is exactly the state the tool
@@ -140,7 +147,38 @@ class Host:
         """
         if trust and "--accept-hook-trust-gap" not in arguments:
             arguments = arguments + ("--accept-hook-trust-gap",)
+        if seal:
+            self.seal_cache()
         return self.call("transition", *arguments)
+
+    def seal_cache(self):
+        """Let the cached payload declare its own bytes, the way an installed one does.
+
+        Cases here build an alternative package by editing a copy of this repository's, and a
+        manifest version that no longer names its payload is refused by the payload contract
+        before the declaration under test is ever read. A real installed cache carries a version
+        derived from the bytes in it, so the fixture records one too and each case goes on
+        refusing for the reason it is named after. A case about the version itself skips this.
+
+        A cache this fixture cannot read is left exactly as it is: a case that made one
+        unreadable on purpose is asking what the tool does with it, not what this can record.
+        """
+        cache = self.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+        manifest = cache / ".codex-plugin" / "plugin.json"
+        if not manifest.is_file():
+            return self
+        try:
+            document = manifest.read_text(encoding="utf-8")
+            payload, _ = plugin_check.directory_payload(cache)
+            version = str(json.loads(document).get("version", ""))
+        except (OSError, ValueError):
+            return self
+        recorded = json.dumps(version)
+        if document.count(recorded) == 1:
+            manifest.write_text(document.replace(
+                recorded, json.dumps(plugin_check.payload_version(payload, version))),
+                encoding="utf-8")
+        return self
 
     def outcomes(self, document):
         return {item["step"]: item["outcome"] for item in document["results"]}
@@ -2629,6 +2667,20 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
         self.assertIn("this checkout declares", answer["results"][0]["detail"])
         self.assertIn("the same surface, once each", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_cache_whose_bytes_no_longer_name_its_version_is_refused(self):
+        """An edited cache still answers to the version it was filed under, and nothing else."""
+        host = self.ready()
+        host.seal_cache()
+        edited = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                  / "skills" / "crw-run" / "SKILL.md")
+        edited.write_text(edited.read_text(encoding="utf-8") + "\nAdded after installation.\n",
+                          encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply", seal=False)
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not name this payload", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_cached_package_without_the_bridge_server_is_refused(self):
