@@ -598,6 +598,24 @@ a keep count of one and thirteen checkouts present, an applied policy had every
 opportunity to trim and trimmed nothing.
 
 For the command-line surface, then, the recent-count condition is no longer merely
+
+The recovery half was exercised too, on a fixture created for the purpose, because step 12
+treats an unexercised recovery as leaving the lifecycle verdict unverified. Two commands,
+in the order an operator would reach for them.
+
+`codex delete --force` removed the thread row and left everything else: the checkout, its
+git registration, and a `codex-thread.json` still naming the thread that had just been
+deleted. That is the orphan state, reproduced deliberately rather than inferred.
+
+`git worktree remove`, which is the recovery every removal message in the binary points at,
+then cleaned it properly: the checkout went, the registration dropped with it, and the
+orphaned owner record went too because it lives in the admin directory that removal takes.
+A `prune --dry-run` afterwards found nothing left to do, so no prune is needed on this path
+and none should be run — on a shared repository it reaches every worktree, not just yours.
+
+One residue: the Codex-side container directory above the checkout stays behind, empty. A
+count of the worktrees root therefore keeps counting a checkout that no longer exists, which
+matters if anyone builds a retention check on that count.
 unobserved. Those `desktop.` keys are accepted and validated but never applied on this
 path, and `archive` is a thread-record operation whatever the feature flag says. Record
 that as unreachable from this surface rather than unverified. The desktop surface owns
