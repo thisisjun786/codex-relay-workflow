@@ -1,0 +1,88 @@
+{
+  "expected": {
+    "decision": "block",
+    "observation": "undeclared_turn_end",
+    "state": "undeclared_turn_end"
+  },
+  "note": "T29: two assignments under one workspace. The older one is correlated, bound and registered and its turn declared nothing, so it owes a hold. The newer one carries a claim by the same session naming a foreign dispatch. Selection consults this session's claim before recency, and consulting the CLAIMANT alone let that one file select the newer assignment: the decision path then refused it as uncorrelated, released, and the older assignment's omission was never looked for. One uncorrelated file switched holding off for a session correlated and bound somewhere else. Selection now reads the same correlation rule the decision does, so the refusal stays scoped to the assignment that produced it.",
+  "observation": {
+    "disposition": null,
+    "now": "2026-02-01T00:10:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0007"
+    },
+    "workspace": {
+      "assignments": [
+        {
+          "assignmentId": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+          "attempts": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-0001",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "relationshipId": "rel-first"
+          }
+        },
+        {
+          "assignmentId": "cba2b057c5561059cdb748fe46dc6cd714d179292f82683c0f17d524d3c0ebc2",
+          "attempts": [],
+          "bound": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "dispatchRequestId": "some-other-dispatch",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0007",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-02-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "cba2b057c5561059cdb748fe46dc6cd714d179292f82683c0f17d524d3c0ebc2",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": null
+        }
+      ],
+      "path": "/workspace/example",
+      "pathHash": "863c29bb9a6e7822955a80f7e09466e156f7019807c3c0c030592cff4af0f348"
+    }
+  }
+}
