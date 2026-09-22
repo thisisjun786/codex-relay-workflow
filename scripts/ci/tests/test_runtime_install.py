@@ -1331,7 +1331,15 @@ def _write_target(node):
     called = node.func
     if isinstance(called, ast.Attribute) and called.attr in ("write_text", "write_bytes"):
         return ast.dump(called.value)
-    return ast.dump(node.args[0]) if node.args else None
+    if node.args:
+        return ast.dump(node.args[0])
+    # save(path=..., ...) and atomic_write(path=..., ...) are ordinary calls of the same two
+    # functions. Read positionally only, this sweep cannot name the path a keyword write is
+    # aimed at, and a target it cannot name is never the one a lock is held on.
+    for keyword in node.keywords:
+        if keyword.arg == "path":
+            return ast.dump(keyword.value)
+    return None
 
 
 def _unguarded_writes(tree):
@@ -1437,17 +1445,32 @@ class LockCoverageTests(unittest.TestCase):
 # safe direction. Under-reporting hides a point, so every way this sweep could go quiet is a
 # precondition it checks on itself: R1 rebinding, R2 keyword targets, R3 the floor's position,
 # R4 aliases, R5 writer-named readers, R6 compound targets, R7 callable aliases, R8 unpacking,
-# R9 collected parameters, R10 readers in class bodies, R11 renamed imports. Each one was a
-# counterexample an independent review produced before it was a rule.
+# R9 collected parameters, R10 readers in class bodies, R11 renamed imports, R12 readers
+# defined anywhere but at module level. Each one was a counterexample an independent review
+# produced before it was a rule.
+#
+# Two shapes are DERIVED rather than refused, because this repository already writes both: a
+# wrapper that hands its path on unchanged (Path(where)), and a closure that captures its path
+# instead of taking one. The second is attributed to the call site, so it carries that site's
+# lock. SCOPE_LIMITS below records what the contract still does not see, with a test that
+# fails if that ever changes.
 
 HERE = Path(__file__).resolve().parent
 RECEIVER = "receiver"
 # The same four spellings the half above owns, with the argument each one aims at. Compared
-# against WRITE_CALLS by a test rather than kept equal by hand.
-WRITE_POSITIONS = {"save": {0}, "atomic_write": {0},
+# against WRITE_CALLS by a test rather than kept equal by hand. Both of the two that take a
+# path by argument accept it by keyword as well, so both spellings are declared: a write this
+# sweep cannot see is a point it cannot pair.
+WRITE_POSITIONS = {"save": {0, ("kw", "path")}, "atomic_write": {0, ("kw", "path")},
                    "write_text": {RECEIVER}, "write_bytes": {RECEIVER}}
 # Path's own two, which reach a file without going through the reading module at all.
 PATH_READS = {"read_text", "read_bytes"}
+# Spellings that hand a path on unchanged. A wrapper reading Path(where) reads the file at
+# where, so it IS a reader at that parameter; refusing it would have meant refusing six
+# wrappers this repository already has, and missing it meant a readback through one of them
+# was invisible.
+PRESERVING_CALLS = {"Path", "str"}
+PRESERVING_METHODS = {"resolve", "expanduser", "absolute"}
 READING_MODULE = ROOT / "scripts" / "crw_runtime" / "reading.py"
 
 
@@ -1464,18 +1487,6 @@ def _shipped_modules():
 def _at(node):
     """Source order rather than line order: two calls can share a line."""
     return (node.lineno, node.col_offset)
-
-
-def _imported_names(tree):
-    names = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                names.add(alias.asname or alias.name)
-    return names
 
 
 def _as_name(text):
@@ -1513,11 +1524,49 @@ def _targets(call, modules, positions):
 
 
 def _parameters(function):
-    """Every named parameter and the position a caller reaches it by."""
+    """Every named parameter and every position a caller can reach it by.
+
+    An ordinary parameter has two: its index, and its own name as a keyword. A call that
+    passes the path by keyword to a positional parameter -- fetch("the file", where=path) --
+    is ordinary Python, and recording only the index made that call name no path at all.
+    """
     spec = function.args
-    named = [(at, parameter.arg)
-             for at, parameter in enumerate(list(spec.posonlyargs) + list(spec.args))]
+    named = []
+    for at, parameter in enumerate(list(spec.posonlyargs) + list(spec.args)):
+        named.append((at, parameter.arg))
+        if at >= len(spec.posonlyargs):
+            # Positional-only parameters are the one kind a keyword cannot reach.
+            named.append((("kw", parameter.arg), parameter.arg))
     return named + [(("kw", parameter.arg), parameter.arg) for parameter in spec.kwonlyargs]
+
+
+def _target_nodes(call, modules, positions):
+    """The same targets as _targets, as nodes, for the rules that look inside one."""
+    if _module_form(call, modules):
+        found = []
+        for where in positions:
+            if isinstance(where, int) and where < len(call.args):
+                found.append(call.args[where])
+            elif isinstance(where, tuple):
+                found += [keyword.value for keyword in call.keywords
+                          if keyword.arg == where[1]]
+        return found
+    if isinstance(call.func, ast.Attribute) and RECEIVER in positions:
+        return [call.func.value]
+    return []
+
+
+def _names_this_path(node, parameter):
+    """Whether this expression is that parameter, or that parameter handed on unchanged."""
+    if isinstance(node, ast.Name):
+        return node.id == parameter
+    if isinstance(node, ast.Call):
+        if _called(node) in PRESERVING_CALLS and len(node.args) == 1:
+            return _names_this_path(node.args[0], parameter)
+        if _called(node) in PRESERVING_METHODS and not node.args \
+                and isinstance(node.func, ast.Attribute):
+            return _names_this_path(node.func.value, parameter)
+    return False
 
 
 def _floor_readers():
@@ -1550,12 +1599,12 @@ def _reader_positions(trees):
                 for where, parameter in _parameters(node):
                     if where in readers.get(node.name, set()):
                         continue
-                    handed = _as_name(parameter)
                     for inner in ast.walk(node):
                         if not isinstance(inner, ast.Call):
                             continue
                         known = readers.get(_called(inner))
-                        if known and handed in _targets(inner, modules, known):
+                        if known and any(_names_this_path(target, parameter) for target
+                                         in _target_nodes(inner, modules, known)):
                             readers.setdefault(node.name, set()).add(where)
                             growing = True
                             break
@@ -1635,18 +1684,58 @@ def _callable_aliases(sources, readers):
     """R7: a reader or writer bound to a local name is a call this sweep cannot recognise."""
     spellings = set(readers) | set(WRITE_POSITIONS)
     offenders = []
+
+    def named(value):
+        return (value.attr if isinstance(value, ast.Attribute)
+                else value.id if isinstance(value, ast.Name) else None)
+
     for label, tree in sources.items():
+        # Module level too. A name bound out here is in scope for every function below it, so
+        # reading only function bodies left the widest spelling of this alias invisible.
+        for target, value, node in _assignments(tree):
+            if isinstance(target, ast.Name) and named(value) in spellings:
+                offenders.append(label + ":" + str(node.lineno) + " " + target.id
+                                 + " = " + named(value))
         for function in ast.walk(tree):
             if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for target, value, node in _assignments(function):
                 if not isinstance(target, ast.Name):
                     continue
-                name = (value.attr if isinstance(value, ast.Attribute)
-                        else value.id if isinstance(value, ast.Name) else None)
-                if name in spellings:
+                if named(value) in spellings:
                     offenders.append(label + ":" + str(node.lineno) + " " + target.id
-                                     + " = " + name)
+                                     + " = " + named(value))
+    return sorted(set(offenders))
+
+
+def _readers_out_of_module_scope(sources, readers):
+    """R12: a reader defined anywhere but at module level is one the closure never derives.
+
+    A nested def and a lambda are both ordinary Python and both hid a whole point. Refused
+    rather than derived, because deriving them means resolving scope, and a rule that fails
+    loudly is worth more here than an analysis that is nearly right.
+    """
+    offenders = []
+    for label, tree in sources.items():
+        modules = _imported_names(tree)
+        declared = {member for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                    for member in node.body} | set(tree.body)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if node in declared:
+                continue
+            handed = {_as_name(name) for _, name in _parameters(node)}
+            if not handed:
+                continue
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Call):
+                    continue
+                known = readers.get(_called(inner))
+                if known and handed & set(_targets(inner, modules, known)):
+                    offenders.append(label + ":" + str(node.lineno) + " "
+                                     + getattr(node, "name", "lambda"))
+                    break
     return offenders
 
 
@@ -1744,7 +1833,13 @@ def _keyword_targets(sources, readers):
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _called(node) not in readers:
                 continue
-            if not _targets(node, modules, readers[_called(node)]) and node.keywords:
+            if node.args or not node.keywords:
+                # A call that passes something positionally is not hiding its path in a
+                # keyword. Two modules can spell a helper the same way, and this set is keyed
+                # by bare name, so a position one of them declares is not a position the
+                # other's call has to fill.
+                continue
+            if not _targets(node, modules, readers[_called(node)]):
                 offenders.append(label + ":" + str(node.lineno) + " " + _called(node))
     return offenders
 
@@ -1761,8 +1856,39 @@ def _floor_first_parameters():
     return wrong
 
 
+def _captured_reads(function, readers, modules):
+    """What a nested function reads through a name it did not define, by the name it is called.
+
+    R12 refuses a nested reader that ACCEPTS its path. One that CAPTURES it instead has no
+    parameter to refuse, and the read then belongs to neither the closure nor the function
+    around it -- an unlocked readback through one was invisible. Derived rather than refused,
+    because completion.place_launcher already reads its path through exactly such a closure
+    and does so correctly: attributed to the CALL SITE, it carries that site's lock state.
+    """
+    captured = {}
+    for node in ast.walk(function):
+        if node is function or not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        its_own = {name for _, name in _parameters(node)} | {name for name, _
+                                                             in _bound_names(node)}
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            known = readers.get(_called(inner))
+            if not known:
+                continue
+            for target in _target_nodes(inner, modules, known):
+                free = [found for found in ast.walk(target)
+                        if isinstance(found, ast.Name) and found.id not in its_own
+                        and found.id not in modules]
+                if len(free) == 1 and _names_this_path(target, free[0].id):
+                    captured.setdefault(node.name, set()).add(ast.dump(free[0]))
+    return captured
+
+
 def _writes_reads_locks(function, readers, modules):
     writes, reads, locks = [], [], []
+    captured = _captured_reads(function, readers, modules)
 
     def walk(node, held):
         for child in ast.iter_child_nodes(node):
@@ -1784,6 +1910,9 @@ def _writes_reads_locks(function, readers, modules):
                 if name in readers:
                     reads.extend((target, _at(child), tuple(held), name) for target
                                  in _targets(child, modules, readers[name]))
+                if name in captured:
+                    reads.extend((target, _at(child), tuple(held), name)
+                                 for target in sorted(captured[name]))
             walk(child, held)
 
     walk(function, [])
@@ -2059,6 +2188,92 @@ def save_it(path, text):
     return back
 ''', {"points": [], "R11": ["fixture.py:4 read_text as fetch"]}),
 
+    ("keyword-writer", "a write whose path is passed by keyword still pairs", '''
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path=path, text=text)
+    return reading.read_text(path, "the file")
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("keyword-writer-unguarded",
+     "the half above reads a keyword write's path rather than failing to name it", '''
+def save_it(path, text):
+    hostrecord.atomic_write(path=path, text=text)
+
+def guard_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path=path, text=text)
+''', {"firstHalf": ["atomic_write at line 5"]}),
+
+    ("preserving-wrapper", "a wrapper reading Path(where) is a reader at where", '''
+def fetch(where):
+    return Path(where).read_text(encoding="utf-8")
+
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch(path)
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("keyword-to-positional-parameter",
+     "a path passed by keyword to a positional parameter still names it", '''
+def fetch(label, where):
+    return reading.read_json(where, label)
+
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch("the file", where=path)
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("captured-closure-reader",
+     "a closure that captures its path instead of taking one is read at its call site", '''
+def save_it(path, text):
+    def fetch():
+        return reading.read_text(path, "the file")
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch()
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("captured-closure-inside-its-lock",
+     "the same closure called under the lock carries that lock", '''
+def save_it(path, text):
+    def fetch():
+        return Path(path).read_bytes()
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+        back = fetch()
+    return back
+''', {"points": [("fixture.py:save_it", True, [])]}),
+
+    ("module-level-callable-alias", "a reader bound at module level is named by R7", '''
+fetch = reading.read_text
+
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+        back = fetch(path, "the file")
+    return back
+''', {"points": [], "R7": ["fixture.py:4 fetch = read_text"]}),
+
+    ("nested-reader", "a reader defined inside a function is named by R12", '''
+def save_it(path, text):
+    def fetch(where):
+        return reading.read_text(where, "the file")
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch(path)
+''', {"points": [], "R12": ["fixture.py:5 fetch"]}),
+
+    ("lambda-reader", "a reader written as a lambda is named by R12", '''
+def save_it(path, text):
+    fetch = lambda where: reading.read_text(where, "the file")
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch(path)
+''', {"points": [], "R12": ["fixture.py:5 lambda"]}),
+
     ("one-line-write-then-read", "a write and a read on one line keep their order", '''
 def save_it(path, text):
     with hostrecord.Locked(path):
@@ -2099,7 +2314,41 @@ async def save_it(path, text):
 
 # The rules the table has to keep failing on purpose, and the cases it has to keep. Written out
 # so that deleting a control fails a test instead of quietly retiring the rule it exercised.
-PRECONDITIONS = ("R1", "R2", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11")
+#
+# And what this sweep does NOT see, recorded here rather than left for the next reviewer to
+# find. Each shape below is asserted to produce nothing, so a change that starts catching one
+# fails this file and the limit gets rewritten instead of silently outgrown. A reader chosen
+# out of a container has no name for the derivation to know; a path carried through one is not
+# the expression the write named; and a write made in another function is the stated reach,
+# because only the function that writes holds the lock a confirming read must sit inside.
+SCOPE_LIMITS = (
+    ("reader-chosen-from-a-container", '''
+def save_it(path, text, helpers):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return helpers["read"](path)
+'''),
+
+    ("path-carried-through-a-container", '''
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    carried = [path]
+    return reading.read_text(carried[0], "the file")
+'''),
+
+    ("write-made-in-another-function", '''
+def put_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+
+def save_it(path, text):
+    put_it(path, text)
+    return reading.read_text(path, "the file")
+'''),
+)
+
+PRECONDITIONS = ("R1", "R2", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12")
 CONTROL_CASES = frozenset(case for case, _, _, _ in CONTROLS)
 
 
@@ -2109,6 +2358,9 @@ def _answers(source):
     return {
         "points": [(point["where"], point["underItsLock"], point["rebound"])
                    for point in points],
+        # The half above, asked about the same fixture: a spelling one of them cannot see is
+        # a spelling neither of them checks.
+        "firstHalf": _unguarded_writes(sources["fixture.py"]),
         "R1": [point["where"] for point in points if point["rebound"]],
         "R2": _keyword_targets(sources, readers),
         "R3": _floor_first_parameters(),
@@ -2120,6 +2372,7 @@ def _answers(source):
         "R9": _collected_parameters(sources, readers),
         "R10": _readers_in_class_bodies(sources, readers),
         "R11": _renamed_imports(sources, readers),
+        "R12": _readers_out_of_module_scope(sources, readers),
     }
 
 
@@ -2189,6 +2442,9 @@ class ReadbackCoverageTests(unittest.TestCase):
     def test_no_import_renames_a_reader_or_a_writer(self):
         self.assertEqual(_renamed_imports(self.sources, self.readers), [], "R11")
 
+    def test_no_reader_is_defined_outside_module_scope(self):
+        self.assertEqual(_readers_out_of_module_scope(self.sources, self.readers), [], "R12")
+
 
 class ReadbackSweepControlTests(unittest.TestCase):
     """What the sweep says about source it was not built from, and that the table stays whole."""
@@ -2210,6 +2466,10 @@ class ReadbackSweepControlTests(unittest.TestCase):
             "walrus-alias", "writer-named-reader", "attribute-target", "subscript-target",
             "callable-alias", "unpacked", "collected-parameter",
             "subscripted-collected-parameter", "reader-in-a-class-body", "renamed-import",
+            "keyword-writer", "module-level-callable-alias", "nested-reader", "lambda-reader",
+            "keyword-writer-unguarded", "preserving-wrapper",
+            "keyword-to-positional-parameter", "captured-closure-reader",
+            "captured-closure-inside-its-lock",
             "one-line-write-then-read", "one-line-read-then-write", "somebody-elses-save",
             "unreachable-branch", "async")))
         self.assertEqual(len(CONTROLS), len(CONTROL_CASES), "one row per case")
@@ -2217,7 +2477,8 @@ class ReadbackSweepControlTests(unittest.TestCase):
     def test_every_precondition_has_a_control_that_fails_it(self):
         # Rules nobody ever violates are rules nobody has tested.
         failed = {question for _, _, _, expected in CONTROLS
-                  for question, wanted in expected.items() if wanted and question != "points"}
+                  for question, wanted in expected.items()
+                  if wanted and question not in ("points", "firstHalf")}
         self.assertEqual(failed, set(PRECONDITIONS),
                          "R3 is a property of reading.py itself and has no fixture; every"
                          " other precondition is failed by a control on purpose")
@@ -2227,6 +2488,22 @@ class ReadbackSweepControlTests(unittest.TestCase):
         self.assertGreaterEqual(len([points for points in found if points]), 8,
                                 "controls that only ever expect nothing would pass against a"
                                 " sweep that reported nothing at all")
+
+    def test_the_shapes_outside_this_contract_are_the_declared_ones(self):
+        """The limit is recorded, not discovered.
+
+        Each of these puts a confirming read outside its lock and this sweep says nothing
+        about it. That is the honest state of the contract, and asserting it here means a
+        later change that closes one of them fails this test and has to rewrite the limit
+        rather than leave a stale claim behind.
+        """
+        for case, source in SCOPE_LIMITS:
+            with self.subTest(case):
+                answers = _answers(source)
+                self.assertEqual(answers["points"], [], case + ": no point is formed")
+                for rule in PRECONDITIONS:
+                    self.assertEqual(answers[rule], [],
+                                     case + ": and no precondition names it either")
 
 
 class ReadbackUnderLockTests(unittest.TestCase):
