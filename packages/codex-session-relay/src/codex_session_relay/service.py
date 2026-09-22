@@ -406,10 +406,16 @@ class ServiceIntent:
 class RelayService:
     """Start, stop and describe the daemon that belongs to THIS installation."""
 
-    def __init__(self, selection, *, socket_path=None, scope=None, store_id=None):
+    def __init__(self, selection, *, socket_path=None, scope=None, store_id=None,
+                 store_unidentified=False):
         self.selection = selection
         self.socket_path = socket_path
         self.store_id = store_id
+        # A store file is HERE and its identity could not be read. Different in kind from
+        # store_id being None because there is no store yet, which is an ordinary pre-launch
+        # state. Only a caller that measured the difference sets it; every other construction
+        # keeps the behaviour it had.
+        self.store_unidentified = store_unidentified
         self.launch_id = None
         # Set only by an explicit --takeover, and only ever read by ScopeRegistry.claim.
         self.takeover = False
@@ -596,6 +602,9 @@ class RelayService:
                 foreign = self._foreign_markers(record)
                 if foreign:
                     return FOREIGN, None, "; ".join(foreign)
+                unreadable = self._store_unreadable(record)
+                if unreadable is not None:
+                    return UNVERIFIABLE, None, unreadable
                 if record.get("bootId") is None and boot_id() is not None:
                     # The same rule the live-supervisor path gets. _stop_worker checks only
                     # start ticks, and a reboot resets those along with the pid space, so an
@@ -613,6 +622,9 @@ class RelayService:
         if handle.already_gone:
             if foreign:
                 return FOREIGN, handle, "; ".join(foreign)
+            unreadable = self._store_unreadable(record)
+            if unreadable is not None:
+                return UNVERIFIABLE, handle, unreadable
             if (record.get("workerPid") and record.get("bootId") is None
                     and boot_id() is not None):
                 # The same rule the cleared-pid path above already applies, and this path is
@@ -636,6 +648,11 @@ class RelayService:
             # the record is foreign on their own, and answering unverifiable would discard a
             # definite answer in favour of an uncertain one.
             return FOREIGN, handle, "; ".join(mismatches)
+        # After the definite answers and before ours, which is the precedence this function
+        # already keeps: what is proven first, then what could not be established.
+        unreadable = self._store_unreadable(record)
+        if unreadable is not None:
+            return UNVERIFIABLE, handle, unreadable
         if record.get("bootId") is None and boot_id() is not None:
             # A reboot resets both the pid space and the start-tick counter, so a record with
             # no boot written on a host that HAS one cannot be ruled out as pre-reboot: an
@@ -668,6 +685,35 @@ class RelayService:
         if self.store_id is not None and record.get("storeId") not in (None, self.store_id):
             markers.append("it is using a different store")
         return markers
+
+    def _store_unreadable(self, record):
+        """Why this record's store cannot be compared against ours, or None while it can.
+
+        Deliberately NOT a foreign marker. Every marker above PROVES the record foreign on its
+        own, and an identity we could not read proves nothing about who owns it - only that the
+        one question separating two stores of one installation has no answer here.
+
+        It exists because refusing to read is not the same as having nothing to compare. A
+        diagnostic read that cannot bind itself to this store returns no identity at all, and
+        reading that silence as "no expectation" would skip the comparison in exactly the case
+        it matters: the store being moved under the command. Absence is never agreement, so
+        this answers unverifiable and the lifecycle commands refuse instead of signalling.
+
+        A record naming no store is untouched, because there is genuinely nothing to compare -
+        which is what keeps a first launch working, since it adopts the child's store id after
+        the child reports.
+        """
+        # Holding an identity settles it: the ordinary store comparison in _foreign_markers
+        # applies and there is nothing unreadable left to report. Asked here rather than
+        # cleared at each place an identity arrives, so the flag cannot go stale - _await_launch
+        # adopts the child's store id after a first launch, and a flag left set there would
+        # have reported our own new service as unverifiable.
+        if self.store_id is not None or not (self.store_unidentified and record.get("storeId")):
+            return None
+        return (
+            "a store is present here and its identity could not be read, so the store this"
+            f" record names ({record.get('storeId')}) cannot be compared against it"
+        )
 
     def _worker_identified(self, record) -> bool:
         """Whether the recorded worker pid provably names OUR worker, still running.
