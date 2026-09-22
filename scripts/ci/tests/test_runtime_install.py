@@ -1334,8 +1334,8 @@ def _write_target(node):
     if node.args:
         return ast.dump(node.args[0])
     # save(path=..., ...) and atomic_write(path=..., ...) are ordinary calls of the same two
-    # functions. Read positionally only, a keyword-passed write is a write this sweep does not
-    # see at all, which is the quiet direction.
+    # functions. Read positionally only, this sweep cannot name the path a keyword write is
+    # aimed at, and a target it cannot name is never the one a lock is held on.
     for keyword in node.keywords:
         if keyword.arg == "path":
             return ast.dump(keyword.value)
@@ -1459,6 +1459,12 @@ WRITE_POSITIONS = {"save": {0, ("kw", "path")}, "atomic_write": {0, ("kw", "path
                    "write_text": {RECEIVER}, "write_bytes": {RECEIVER}}
 # Path's own two, which reach a file without going through the reading module at all.
 PATH_READS = {"read_text", "read_bytes"}
+# Spellings that hand a path on unchanged. A wrapper reading Path(where) reads the file at
+# where, so it IS a reader at that parameter; refusing it would have meant refusing six
+# wrappers this repository already has, and missing it meant a readback through one of them
+# was invisible.
+PRESERVING_CALLS = {"Path", "str"}
+PRESERVING_METHODS = {"resolve", "expanduser", "absolute"}
 READING_MODULE = ROOT / "scripts" / "crw_runtime" / "reading.py"
 
 
@@ -1519,6 +1525,35 @@ def _parameters(function):
     return named + [(("kw", parameter.arg), parameter.arg) for parameter in spec.kwonlyargs]
 
 
+def _target_nodes(call, modules, positions):
+    """The same targets as _targets, as nodes, for the rules that look inside one."""
+    if _module_form(call, modules):
+        found = []
+        for where in positions:
+            if isinstance(where, int) and where < len(call.args):
+                found.append(call.args[where])
+            elif isinstance(where, tuple):
+                found += [keyword.value for keyword in call.keywords
+                          if keyword.arg == where[1]]
+        return found
+    if isinstance(call.func, ast.Attribute) and RECEIVER in positions:
+        return [call.func.value]
+    return []
+
+
+def _names_this_path(node, parameter):
+    """Whether this expression is that parameter, or that parameter handed on unchanged."""
+    if isinstance(node, ast.Name):
+        return node.id == parameter
+    if isinstance(node, ast.Call):
+        if _called(node) in PRESERVING_CALLS and len(node.args) == 1:
+            return _names_this_path(node.args[0], parameter)
+        if _called(node) in PRESERVING_METHODS and not node.args \
+                and isinstance(node.func, ast.Attribute):
+            return _names_this_path(node.func.value, parameter)
+    return False
+
+
 def _floor_readers():
     readers = {}
     for node in ast.parse(READING_MODULE.read_text(encoding="utf-8")).body:
@@ -1549,12 +1584,12 @@ def _reader_positions(trees):
                 for where, parameter in _parameters(node):
                     if where in readers.get(node.name, set()):
                         continue
-                    handed = _as_name(parameter)
                     for inner in ast.walk(node):
                         if not isinstance(inner, ast.Call):
                             continue
                         known = readers.get(_called(inner))
-                        if known and handed in _targets(inner, modules, known):
+                        if known and any(_names_this_path(target, parameter) for target
+                                         in _target_nodes(inner, modules, known)):
                             readers.setdefault(node.name, set()).add(where)
                             growing = True
                             break
@@ -1783,7 +1818,13 @@ def _keyword_targets(sources, readers):
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _called(node) not in readers:
                 continue
-            if not _targets(node, modules, readers[_called(node)]) and node.keywords:
+            if node.args or not node.keywords:
+                # A call that passes something positionally is not hiding its path in a
+                # keyword. Two modules can spell a helper the same way, and this set is keyed
+                # by bare name, so a position one of them declares is not a position the
+                # other's call has to fill.
+                continue
+            if not _targets(node, modules, readers[_called(node)]):
                 offenders.append(label + ":" + str(node.lineno) + " " + _called(node))
     return offenders
 
@@ -2105,6 +2146,26 @@ def save_it(path, text):
     return reading.read_text(path, "the file")
 ''', {"points": [("fixture.py:save_it", False, [])]}),
 
+    ("keyword-writer-unguarded",
+     "the half above reads a keyword write's path rather than failing to name it", '''
+def save_it(path, text):
+    hostrecord.atomic_write(path=path, text=text)
+
+def guard_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path=path, text=text)
+''', {"firstHalf": ["atomic_write at line 5"]}),
+
+    ("preserving-wrapper", "a wrapper reading Path(where) is a reader at where", '''
+def fetch(where):
+    return Path(where).read_text(encoding="utf-8")
+
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch(path)
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
     ("module-level-callable-alias", "a reader bound at module level is named by R7", '''
 fetch = reading.read_text
 
@@ -2182,6 +2243,9 @@ def _answers(source):
     return {
         "points": [(point["where"], point["underItsLock"], point["rebound"])
                    for point in points],
+        # The half above, asked about the same fixture: a spelling one of them cannot see is
+        # a spelling neither of them checks.
+        "firstHalf": _unguarded_writes(sources["fixture.py"]),
         "R1": [point["where"] for point in points if point["rebound"]],
         "R2": _keyword_targets(sources, readers),
         "R3": _floor_first_parameters(),
@@ -2288,6 +2352,7 @@ class ReadbackSweepControlTests(unittest.TestCase):
             "callable-alias", "unpacked", "collected-parameter",
             "subscripted-collected-parameter", "reader-in-a-class-body", "renamed-import",
             "keyword-writer", "module-level-callable-alias", "nested-reader", "lambda-reader",
+            "keyword-writer-unguarded", "preserving-wrapper",
             "one-line-write-then-read", "one-line-read-then-write", "somebody-elses-save",
             "unreachable-branch", "async")))
         self.assertEqual(len(CONTROLS), len(CONTROL_CASES), "one row per case")
@@ -2295,7 +2360,8 @@ class ReadbackSweepControlTests(unittest.TestCase):
     def test_every_precondition_has_a_control_that_fails_it(self):
         # Rules nobody ever violates are rules nobody has tested.
         failed = {question for _, _, _, expected in CONTROLS
-                  for question, wanted in expected.items() if wanted and question != "points"}
+                  for question, wanted in expected.items()
+                  if wanted and question not in ("points", "firstHalf")}
         self.assertEqual(failed, set(PRECONDITIONS),
                          "R3 is a property of reading.py itself and has no fixture; every"
                          " other precondition is failed by a control on purpose")
