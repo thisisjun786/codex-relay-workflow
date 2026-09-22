@@ -190,4 +190,3 @@ class PhaseBudgetAgreement(unittest.TestCase):
         self.assertEqual(
             set(_Transport.TRANSFER_PHASES), {field.name for field in fields(PhaseBounds)}
         )
-

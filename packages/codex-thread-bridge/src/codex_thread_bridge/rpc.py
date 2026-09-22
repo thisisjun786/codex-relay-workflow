@@ -352,6 +352,19 @@ class AppServer:
                     f"the request frame did not drain within {bounds.transmit}s and the"
                     " connection was retired; response unavailable; do not resend",
                 ) from error
+            except asyncio.CancelledError:
+                # Somebody else's deadline rather than ours. The relay's submission backstop and
+                # its shutdown both cancel an in-flight send, and a caller may cancel one too - a
+                # write cut short that way leaves exactly the partial frame the bound above
+                # retires for, so it cannot be treated as the gentler case just because the
+                # exception type differs. Detaching is synchronous ON PURPOSE: it is the step
+                # that stops a later request picking this socket up, and a cancelled coroutine
+                # cannot rely on reaching another await. The close is cleanup, so it is shielded
+                # and allowed to finish out of band rather than skipped.
+                self._detach(ws, reader)
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(self._retire(ws, reader))
+                raise
             message = await asyncio.wait_for(future, bounds.ack)
         except TimeoutError as error:
             raise PhaseTimeout(
@@ -388,6 +401,22 @@ class AppServer:
                 f"connection establishment exceeded {bounds.establish}s;"
                 f" no {method} frame was sent",
             ) from error
+        except PhaseTimeout as error:
+            # A phase that expired INSIDE the handshake. connect() makes exactly one request,
+            # initialize, and it runs under the ordinary transmit and ack bounds - so a bound
+            # shorter than establish reports its own inner phase and a method this caller never
+            # asked for. From here the whole handshake IS establishment, and the fact that
+            # matters downstream is unchanged: this call's own frame was never written. Reported
+            # as such, with the inner phase kept in the text rather than dropped. initialize is
+            # an observation and begins no effect, which is what makes the claim safe; anything
+            # else coming out of connect() would be new and is left to speak for itself.
+            if error.method != "initialize":
+                raise
+            raise PhaseTimeout(
+                method, "establish", bounds.establish,
+                f"connection establishment failed in its {error.phase} phase ({error});"
+                f" no {method} frame was sent",
+            ) from error
         # Reconnect before a new request, never retry an already-sent request.
         return await self._request(method, params)
 
@@ -402,13 +431,22 @@ class AppServer:
         request writing to a socket nobody reads. They are therefore cleared BEFORE the awaits,
         and only while they still name the connection being retired.
         """
-        if self._ws is ws:
-            self._ws = None
-        if self._reader is reader:
-            self._reader = None
+        self._detach(ws, reader)
         if ws is not None:
             await ws.close()
         if reader is not None:
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
+
+    def _detach(self, ws, reader):
+        """Stop pointing at this connection. Synchronous, so cancellation cannot interrupt it.
+
+        This is the half that carries the safety property: once the attributes no longer name a
+        connection, connect() rebuilds and no later request can write into a stream whose last
+        frame may have been cut in half. Closing the socket afterwards is housekeeping.
+        """
+        if self._ws is ws:
+            self._ws = None
+        if self._reader is reader:
+            self._reader = None

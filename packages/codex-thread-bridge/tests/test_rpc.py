@@ -390,3 +390,72 @@ async def test_a_retired_reader_fails_only_the_requests_it_was_carrying(fake_ser
     finally:
         client._pending.clear()
         await client.close()
+
+
+async def test_a_cancelled_write_detaches_its_connection_too(fake_server):
+    """Our own bound is not the only thing that cuts a write short.
+
+    The relay's submission backstop and its shutdown both cancel an in-flight send, and that
+    arrives as CancelledError rather than TimeoutError. The frame is just as half-written, so
+    the connection has to stop being the current one either way - otherwise the next recipient
+    writes a request into a stream whose last frame may be a fragment.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5)
+    try:
+        await client.connect()
+        live, reader = client._ws, client._reader
+        writing = asyncio.Event()
+
+        class Blocked:
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def send(self, _payload):
+                writing.set()
+                await asyncio.Event().wait()
+
+            async def close(self):
+                await self._inner.close()
+
+            def __aiter__(self):
+                return self._inner.__aiter__()
+
+        client._ws = Blocked(live)
+
+        request = asyncio.create_task(client.call("thread/read", {"threadId": "thread-1"}))
+        await asyncio.wait_for(writing.wait(), 5)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+
+        assert client._ws is None, "a cancelled write left its connection in use"
+        assert client._reader is not reader or client._reader is None
+    finally:
+        await client.close()
+
+
+async def test_a_handshake_phase_expiry_is_reported_as_the_caller_s_establishment(fake_server):
+    """connect() runs initialize under the ordinary bounds, and the caller must not inherit them.
+
+    With an ack bound shorter than establish, a slow initialize expires in "ack" against a method
+    the caller never asked for. Reported that way it would tell the delivery layer that a
+    thread/read which never started might have been delivered.
+    """
+    fake, path = fake_server
+    fake.pause_after = "initialize"
+    client = AppServer(path, timeout=5, phase_bounds=PhaseBounds(establish=5, transmit=5, ack=0.2))
+    try:
+        with recording() as effects:
+            with pytest.raises(PhaseTimeout) as caught:
+                await client.call("thread/read", {"threadId": "thread-1"})
+
+        assert caught.value.phase == "establish", "the caller inherited the handshake's own phase"
+        assert caught.value.method == "thread/read"
+        assert "no thread/read frame was sent" in str(caught.value)
+        # The inner phase is kept rather than dropped: an operator still sees where it stopped.
+        assert "ack phase" in str(caught.value)
+        assert effects.attempted == []
+    finally:
+        fake.release.set()
+        await client.close()
