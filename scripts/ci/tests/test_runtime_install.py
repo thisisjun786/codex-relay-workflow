@@ -1448,6 +1448,12 @@ class LockCoverageTests(unittest.TestCase):
 # R9 collected parameters, R10 readers in class bodies, R11 renamed imports, R12 readers
 # defined anywhere but at module level. Each one was a counterexample an independent review
 # produced before it was a rule.
+#
+# Two shapes are DERIVED rather than refused, because this repository already writes both: a
+# wrapper that hands its path on unchanged (Path(where)), and a closure that captures its path
+# instead of taking one. The second is attributed to the call site, so it carries that site's
+# lock. SCOPE_LIMITS below records what the contract still does not see, with a test that
+# fails if that ever changes.
 
 HERE = Path(__file__).resolve().parent
 RECEIVER = "receiver"
@@ -1518,10 +1524,19 @@ def _targets(call, modules, positions):
 
 
 def _parameters(function):
-    """Every named parameter and the position a caller reaches it by."""
+    """Every named parameter and every position a caller can reach it by.
+
+    An ordinary parameter has two: its index, and its own name as a keyword. A call that
+    passes the path by keyword to a positional parameter -- fetch("the file", where=path) --
+    is ordinary Python, and recording only the index made that call name no path at all.
+    """
     spec = function.args
-    named = [(at, parameter.arg)
-             for at, parameter in enumerate(list(spec.posonlyargs) + list(spec.args))]
+    named = []
+    for at, parameter in enumerate(list(spec.posonlyargs) + list(spec.args)):
+        named.append((at, parameter.arg))
+        if at >= len(spec.posonlyargs):
+            # Positional-only parameters are the one kind a keyword cannot reach.
+            named.append((("kw", parameter.arg), parameter.arg))
     return named + [(("kw", parameter.arg), parameter.arg) for parameter in spec.kwonlyargs]
 
 
@@ -1841,8 +1856,39 @@ def _floor_first_parameters():
     return wrong
 
 
+def _captured_reads(function, readers, modules):
+    """What a nested function reads through a name it did not define, by the name it is called.
+
+    R12 refuses a nested reader that ACCEPTS its path. One that CAPTURES it instead has no
+    parameter to refuse, and the read then belongs to neither the closure nor the function
+    around it -- an unlocked readback through one was invisible. Derived rather than refused,
+    because completion.place_launcher already reads its path through exactly such a closure
+    and does so correctly: attributed to the CALL SITE, it carries that site's lock state.
+    """
+    captured = {}
+    for node in ast.walk(function):
+        if node is function or not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        its_own = {name for _, name in _parameters(node)} | {name for name, _
+                                                             in _bound_names(node)}
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            known = readers.get(_called(inner))
+            if not known:
+                continue
+            for target in _target_nodes(inner, modules, known):
+                free = [found for found in ast.walk(target)
+                        if isinstance(found, ast.Name) and found.id not in its_own
+                        and found.id not in modules]
+                if len(free) == 1 and _names_this_path(target, free[0].id):
+                    captured.setdefault(node.name, set()).add(ast.dump(free[0]))
+    return captured
+
+
 def _writes_reads_locks(function, readers, modules):
     writes, reads, locks = [], [], []
+    captured = _captured_reads(function, readers, modules)
 
     def walk(node, held):
         for child in ast.iter_child_nodes(node):
@@ -1864,6 +1910,9 @@ def _writes_reads_locks(function, readers, modules):
                 if name in readers:
                     reads.extend((target, _at(child), tuple(held), name) for target
                                  in _targets(child, modules, readers[name]))
+                if name in captured:
+                    reads.extend((target, _at(child), tuple(held), name)
+                                 for target in sorted(captured[name]))
             walk(child, held)
 
     walk(function, [])
@@ -2166,6 +2215,38 @@ def save_it(path, text):
     return fetch(path)
 ''', {"points": [("fixture.py:save_it", False, [])]}),
 
+    ("keyword-to-positional-parameter",
+     "a path passed by keyword to a positional parameter still names it", '''
+def fetch(label, where):
+    return reading.read_json(where, label)
+
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch("the file", where=path)
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("captured-closure-reader",
+     "a closure that captures its path instead of taking one is read at its call site", '''
+def save_it(path, text):
+    def fetch():
+        return reading.read_text(path, "the file")
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return fetch()
+''', {"points": [("fixture.py:save_it", False, [])]}),
+
+    ("captured-closure-inside-its-lock",
+     "the same closure called under the lock carries that lock", '''
+def save_it(path, text):
+    def fetch():
+        return Path(path).read_bytes()
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+        back = fetch()
+    return back
+''', {"points": [("fixture.py:save_it", True, [])]}),
+
     ("module-level-callable-alias", "a reader bound at module level is named by R7", '''
 fetch = reading.read_text
 
@@ -2233,6 +2314,40 @@ async def save_it(path, text):
 
 # The rules the table has to keep failing on purpose, and the cases it has to keep. Written out
 # so that deleting a control fails a test instead of quietly retiring the rule it exercised.
+#
+# And what this sweep does NOT see, recorded here rather than left for the next reviewer to
+# find. Each shape below is asserted to produce nothing, so a change that starts catching one
+# fails this file and the limit gets rewritten instead of silently outgrown. A reader chosen
+# out of a container has no name for the derivation to know; a path carried through one is not
+# the expression the write named; and a write made in another function is the stated reach,
+# because only the function that writes holds the lock a confirming read must sit inside.
+SCOPE_LIMITS = (
+    ("reader-chosen-from-a-container", '''
+def save_it(path, text, helpers):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    return helpers["read"](path)
+'''),
+
+    ("path-carried-through-a-container", '''
+def save_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+    carried = [path]
+    return reading.read_text(carried[0], "the file")
+'''),
+
+    ("write-made-in-another-function", '''
+def put_it(path, text):
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+
+def save_it(path, text):
+    put_it(path, text)
+    return reading.read_text(path, "the file")
+'''),
+)
+
 PRECONDITIONS = ("R1", "R2", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12")
 CONTROL_CASES = frozenset(case for case, _, _, _ in CONTROLS)
 
@@ -2353,6 +2468,8 @@ class ReadbackSweepControlTests(unittest.TestCase):
             "subscripted-collected-parameter", "reader-in-a-class-body", "renamed-import",
             "keyword-writer", "module-level-callable-alias", "nested-reader", "lambda-reader",
             "keyword-writer-unguarded", "preserving-wrapper",
+            "keyword-to-positional-parameter", "captured-closure-reader",
+            "captured-closure-inside-its-lock",
             "one-line-write-then-read", "one-line-read-then-write", "somebody-elses-save",
             "unreachable-branch", "async")))
         self.assertEqual(len(CONTROLS), len(CONTROL_CASES), "one row per case")
@@ -2371,6 +2488,22 @@ class ReadbackSweepControlTests(unittest.TestCase):
         self.assertGreaterEqual(len([points for points in found if points]), 8,
                                 "controls that only ever expect nothing would pass against a"
                                 " sweep that reported nothing at all")
+
+    def test_the_shapes_outside_this_contract_are_the_declared_ones(self):
+        """The limit is recorded, not discovered.
+
+        Each of these puts a confirming read outside its lock and this sweep says nothing
+        about it. That is the honest state of the contract, and asserting it here means a
+        later change that closes one of them fails this test and has to rewrite the limit
+        rather than leave a stale claim behind.
+        """
+        for case, source in SCOPE_LIMITS:
+            with self.subTest(case):
+                answers = _answers(source)
+                self.assertEqual(answers["points"], [], case + ": no point is formed")
+                for rule in PRECONDITIONS:
+                    self.assertEqual(answers[rule], [],
+                                     case + ": and no precondition names it either")
 
 
 class ReadbackUnderLockTests(unittest.TestCase):
