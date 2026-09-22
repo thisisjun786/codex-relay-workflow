@@ -427,6 +427,18 @@ def select_assignment(root, workspace, session_id):
     assignment it claimed, so declaring a later assignment for the same path can neither release a
     still-running earlier child nor make it read as somebody else's.
 
+    The claim consulted is a CORRELATED claim, and it has to be. "A claim naming a different
+    dispatch belongs to a different assignment" is the same sentence the decision path enforces, so
+    a claim that fails correlation must not be able to select the assignment it sits in either.
+    Read on the claimant alone, a claim written into a newer assignment shadowed an older one this
+    session was legitimately bound to: selection preferred the newer directory, the decision path
+    refused its uncorrelated claim and released, and the older assignment's undeclared turn - which
+    owed a hold - was never looked at. One uncorrelated file could therefore switch holding off for
+    a session that was correlated, bound and registered somewhere else. The refusal has to be
+    scoped to the assignment that produced it, which means not selecting that assignment at all.
+
+    When no candidate carries a correlated claim the fall-through is unchanged, so a session whose
+    own claim has not landed yet still reads the newest published intent rather than nothing.
 
     An assignment with no published intent at all is not selectable. It is a directory someone is
     still building, and skipping it leaves the reader on a valid earlier state rather than on
@@ -458,11 +470,15 @@ def select_assignment(root, workspace, session_id):
     claimed = [
         candidate
         for candidate in candidates
-        if any(
-            same_identity(claimant(claim), session_id)
-            for claim in (candidate[1].get("claims") or [])
-            if isinstance(claim, dict)
-        )
+        # Shape before meaning, and in that order for the usual reason: correlation reads the
+        # intent, so asking it of a candidate whose intent is not a record ends this walk in a
+        # traceback, and a traceback records nothing at all. A malformed candidate therefore stays
+        # out of the preference and stays IN the fall-through pool below, which is what lets it be
+        # selected and reported as malformed instead of disappearing.
+        #
+        # The candidate's own directory name is the assignment its claim has to correlate to, which
+        # is why this is asked per candidate rather than once for the workspace.
+        if not malformed(candidate[1]) and correlated(candidate[1], session_id, candidate[0].name)
     ]
     directory, facts, problems = max(claimed or candidates, key=_recency)
     return directory, facts, problems

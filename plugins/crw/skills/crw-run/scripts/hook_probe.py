@@ -581,6 +581,12 @@ def resolve_assignment(workspace, session_id):
 
     A session stays with the assignment it claimed. Taking the newest intent unconditionally would
     release a still-running earlier child the moment a later assignment is declared for the path.
+
+    The claim has to CORRELATE, not merely name this session. Read on the claimant alone, an
+    uncorrelated claim written into a newer assignment shadows an older one the session is
+    legitimately bound to: selection prefers the newer directory, the decision path refuses the
+    uncorrelated claim and releases, and the older assignment's undeclared turn never gets looked
+    at. One file would switch holding off for a session correlated and bound somewhere else.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -589,9 +595,7 @@ def resolve_assignment(workspace, session_id):
         # the reader on a valid earlier state, which is what the create-once layout already gives.
         if declared is not None:
             published.append((declared, str(assignment.get("assignmentId") or ""), assignment))
-    claimed = [row for row in published
-               if any(_same_identity(_claimant(claim), session_id)
-                      for claim in (row[2].get("claims") or []))]
+    claimed = [row for row in published if _correlated(row[2], session_id, row[1])]
     pool = claimed or published
     if not pool:
         return None

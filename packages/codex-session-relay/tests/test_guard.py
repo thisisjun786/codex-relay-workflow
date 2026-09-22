@@ -469,6 +469,97 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
+    """The refusal has to be scoped to the assignment that produced it.
+
+    Selection consults this session's claim before recency, and it used to consult the claimant
+    alone. So a claim written into a NEWER assignment selected that assignment, the decision path
+    refused it as uncorrelated, and the turn released - while an older assignment this session was
+    correlated, bound and registered under still owed a hold that nobody then looked for.
+
+    That is the one way this change could have removed a hold rather than only ever converting one
+    into a release, and it is why selection now reads the same correlation rule the decision does.
+    """
+
+    LATER_DISPATCH = "dispatch-2"
+    LATER_DECLARED = "2026-01-01T00:02:00+00:00"
+
+    def shadow(self, dispatch):
+        """A newer assignment in the same workspace, carrying a claim by this session.
+
+        Published directly: publish_claim refuses a claim that does not hash to the assignment it
+        is written under, so this shape only exists as a file.
+        """
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": dispatch, "at": NOW})
+        intent.bind(self.markers, workspace=self.workspace, assignment=later,
+                    session_id=CHILD, task_id=CHILD, at=NOW)
+        return later
+
+    def test_a_newer_assignment_with_an_uncorrelated_claim_does_not_take_the_turn(self):
+        self.managed()
+        later = self.shadow("some-other-dispatch")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment,
+                         "the uncorrelated claim selected its own assignment and hid the hold")
+        self.assertNotEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_newer_assignment_this_session_really_claimed_still_takes_the_turn(self):
+        """The control. Correlation decides which assignment, and recency still decides between
+        the ones that correlate, so a child that genuinely moved on is not pinned to the old one.
+        """
+        self.managed()
+        later = self.shadow(self.LATER_DISPATCH)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+
+    def test_a_session_whose_own_claim_has_not_landed_still_reads_the_newest_intent(self):
+        """The fall-through is unchanged: no correlated candidate means recency decides, so an
+        unclaimed marker is still read rather than answered as an unmanaged workspace.
+        """
+        relationship = self.register()
+        self.declare()
+        self.bind()
+        self.register_marker(relationship)
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later)
+        # The newest intent, which this session has neither claimed nor been bound to, so it reads
+        # in the pre-bind window. The point is which assignment was selected: recency still
+        # decides when nothing correlates, and the workspace is not answered as unmanaged.
+        self.assertEqual(verdict["observation"], "dispatch_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_malformed_candidate_is_still_selected_and_reported(self):
+        """Shape is read before correlation, so a corrupt marker cannot hide behind it.
+
+        Correlation reads the intent. Asking it of a candidate whose intent is not a record ended
+        the selection walk in a traceback and the turn in guard_faulted - a defect in the guard
+        reported as one, but with the operator's actual problem lost. A malformed candidate stays
+        in the fall-through pool so it is selected and named.
+        """
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "claims" / CHILD / "claim.json").unlink()
+        (directory / "claims" / CHILD / "claim.json").write_text('"bare"', encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
 class Declarations(GuardTestCase):
     def test_a_receipted_readiness_releases(self):
         relationship = self.managed()
