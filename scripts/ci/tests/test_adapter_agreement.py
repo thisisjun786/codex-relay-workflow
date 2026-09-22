@@ -513,5 +513,71 @@ class MutationNoticedTests(unittest.TestCase):
                                "a reader that stopped refusing a directory went unnoticed")
 
 
+class TheGuardCommandAgrees(unittest.TestCase):
+    """The command each copy builds is behaviour too, because it is what the host actually runs.
+
+    Driven directly rather than through run(): the stub runtime above answers the same way whatever
+    it is handed, so a difference in the argv would pass every case in AgreementTests. The socket
+    option is the reason this class exists - it is what lets the guard refuse a state directory
+    whose store belongs to another App Server, and a copy that dropped it would silently give that
+    back on one of the two registration paths.
+    """
+
+    BARE = {"relayExecutable": "/opt/relay", "markerRoot": "/markers"}
+    SERVED = dict(BARE, socketPath="/run/app-server.sock")
+    EVERYTHING = dict(SERVED, dbPath="/state/relay.sqlite3", mode=completion.HOLD)
+
+    def both(self):
+        return (completion, PACKAGED)
+
+    def test_both_copies_build_the_same_command(self):
+        for config in (self.BARE, self.SERVED, self.EVERYTHING):
+            self.assertEqual(
+                completion.guard_argv(config), PACKAGED.guard_argv(config), repr(config),
+            )
+
+    def test_a_configured_socket_is_passed_as_a_global_option_in_both(self):
+        for adapter in self.both():
+            argv = adapter.guard_argv(self.SERVED)
+            self.assertIn("--socket", argv)
+            self.assertEqual(argv[argv.index("--socket") + 1], "/run/app-server.sock")
+            # Global options come before the subcommand, and the relay's parser only takes it
+            # there: after guard-evaluate it is an unrecognised option and the call is rejected.
+            self.assertLess(argv.index("--socket"), argv.index(completion.GUARD_COMMAND))
+
+    def test_no_configured_socket_passes_none_in_both(self):
+        for adapter in self.both():
+            self.assertNotIn("--socket", adapter.guard_argv(self.BARE))
+
+    def test_a_socket_that_is_not_an_absolute_path_is_malformed_in_both(self):
+        document = {"configVersion": completion.CONFIG_VERSION, "event": completion.EVENT,
+                    "relayExecutable": "/opt/relay", "markerRoot": "/markers",
+                    "mode": completion.OBSERVE, "socketPath": "run/app-server.sock"}
+        for adapter in self.both():
+            self.assertIn("socketPath must be an absolute path", adapter.complaints(document))
+
+    def test_a_socket_that_is_not_a_string_is_malformed_in_both(self):
+        document = {"configVersion": completion.CONFIG_VERSION, "event": completion.EVENT,
+                    "relayExecutable": "/opt/relay", "markerRoot": "/markers",
+                    "mode": completion.OBSERVE, "socketPath": 7}
+        for adapter in self.both():
+            self.assertIn(
+                "socketPath must be a non-empty string when it is present at all",
+                adapter.complaints(document),
+            )
+
+    def test_a_document_written_without_a_socket_carries_no_such_key(self):
+        """Byte-identity for a host that installed before the key existed, which keeps a
+        reinstall UNCHANGED rather than refusing settings that say something else."""
+        document = completion.configuration(relay="/opt/relay", marker_root="/markers",
+                                            codex_home="/home/someone/.codex", environ={})
+        self.assertNotIn("socketPath", document)
+        served = completion.configuration(relay="/opt/relay", marker_root="/markers",
+                                          codex_home="/home/someone/.codex", environ={},
+                                          socket="/run/app-server.sock")
+        self.assertEqual(served["socketPath"], "/run/app-server.sock")
+        self.assertEqual(completion.complaints(served), [])
+
+
 if __name__ == "__main__":
     unittest.main()

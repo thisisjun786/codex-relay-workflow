@@ -2321,6 +2321,15 @@ def cmd_hook(args):
                     codex_home=codex_home, issue=args.issue,
                     isolation=getattr(args, "isolation_asserted_by", None),
                     owner=owner,
+                    # The socket this installation expects, when the caller named one. It is what
+                    # lets the guard refuse a state directory whose store records another App
+                    # Server rather than judging a Stop against it; with none there is nothing to
+                    # compare and the document stays byte-identical to one written before this key.
+                    #
+                    # Read with getattr for the same reason isolation above it is: this command is
+                    # also called with a Namespace built by a caller that never had the global
+                    # option, and a missing attribute there is an absent socket, not a crash.
+                    socket=getattr(args, "socket", None),
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )

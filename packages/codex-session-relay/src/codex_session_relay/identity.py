@@ -162,3 +162,23 @@ def revision_request_event_id(relationship: str, source_event_id: str, verdict_t
         f"{relationship}|{source_event_id}|needs_changes_revision|{verdict_turn_id}|null"
     )
     return sha256_hex(payload)[:32]
+
+
+def merge_turn_grant_event_id(relationship: str, grant_id: str) -> str:
+    """Identity for the notice that a merge target is now this parent's to land on.
+
+    The same execution-level shape as the revision direction, for the same reason: request
+    ids, deduplication, retry and restart recovery are then the one implementation rather
+    than a parallel one that drifts.
+
+    Keyed on the GRANT and nothing else. A grant id already folds the turn, its tenure and
+    which grant of that tenure this is, so it is unique without help - and keying on anything
+    that can move afterwards, such as the candidate head or the moment of the write, is how
+    one notice comes to have two identities. A promotion replayed against the same store
+    therefore converges on one event and one delivery rather than sending twice.
+    """
+    if not isinstance(relationship, str) or not relationship.strip():
+        raise ValueError("relationship must be a non-empty string")
+    if not isinstance(grant_id, str) or not grant_id.strip():
+        raise ValueError("grant_id must be a non-empty string")
+    return sha256_hex(f"{relationship}|{grant_id}|merge_turn_grant|null|null")[:32]

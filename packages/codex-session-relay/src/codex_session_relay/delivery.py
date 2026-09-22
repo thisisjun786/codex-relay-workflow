@@ -14,7 +14,9 @@ from .errors import DeliveryRefused, RefusalReason, RelayError
 from .currency import (
     STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision,
 )
-from .identity import request_id as derive_request_id
+from .identity import (
+    merge_turn_grant_event_id as derive_grant_event_id, request_id as derive_request_id,
+)
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
 from .registry import ACTIVE as RELATIONSHIP_ACTIVE
@@ -33,13 +35,27 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from . import envelope, restoration, rolepolicy
+from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
 )
 
 COMPLETION = "completion_event"
 REVISION = "revision_request"
+# The relay telling a PARENT that a shared merge target is now its turn. Relay-owned like a
+# revision request, and like one it defines no contract-v1 acknowledgement: it is answered on
+# the merge turn itself, which is where the authority to merge lives.
+MERGE_TURN_GRANT = "merge_turn_grant"
+# Outcomes the relay writes about its OWN coordination rather than about the assignment's
+# work. They travel this queue and they are not a fact about the generation they ride in:
+# they neither answer a correction nor compete for a revision head, and their currency is
+# the subject they are about. Named as a class, because the next one will have the same
+# problem and "not reviewable" has already proved to be the wrong way to say this.
+RELAY_NOTICE_OUTCOMES = (MERGE_TURN_GRANT,)
+# The same set as a SQL fragment, built once so the gates that must exempt these outcomes
+# cannot drift apart from the tuple above. Interpolated rather than bound because these are
+# module constants this package chooses, never anything a caller supplies.
+NOTICE_OUTCOMES_SQL = "(" + ", ".join("'" + name + "'" for name in RELAY_NOTICE_OUTCOMES) + ")"
 # What a CHILD reports when a generation ended without something to review. These are facts
 # about how the execution finished, not candidates for the generation's revision head, so the
 # same-generation head rule does not apply to them. Deliberately a list of outcomes rather
@@ -164,6 +180,10 @@ class DeliveryService:
             wanted = ISSUE_SCOPE
         elif kind == COMPLETION:
             wanted = PROJECT_SCOPE
+        elif kind == MERGE_TURN_GRANT:
+            # A merge target is the project's, and so is the parent that lands on it. Same
+            # level as a completion, and named here for the same reason the other two are.
+            wanted = PROJECT_SCOPE
         else:
             raise DeliveryRefused(
                 RefusalReason.NOT_CLAIMABLE,
@@ -280,6 +300,99 @@ class DeliveryService:
         # path. So this is where a newly deliverable event announces what it replaces.
         self.annotate_predecessors_in(db, event_id)
 
+    def grant_channel_in(self, db, *, relationship_id, recipient_task_id, grant,
+                         project_key=None):
+        """Whether this grant has an authorized way to reach its recipient, and by which event.
+
+        Decided BEFORE anything is written, and decided by reading rather than by trying: the
+        caller is a promotion inside land, release or resolve_unknown, and a notice that cannot
+        be addressed must never take a confirmed landing down with it.
+
+        The channel is the turn's OWN assignment and nothing else. It is tempting to reach for
+        any assignment the same parent holds in the same project, and that is a cross delivery:
+        assert_assignment_delivery exists to refuse exactly that, because an event belongs to
+        one assignment and travels to that assignment's own endpoint. A merge turn that names
+        no assignment therefore has no address in this queue, which is recorded rather than
+        worked around.
+
+        All four conditions are checked here, including the recipient list, which is the one
+        that fails late: registration only requires the list to be non-empty, so a parent
+        missing from its own assignment's recipients would be refused at every send attempt
+        forever instead of once, here, with a reason.
+
+        The project is checked for a different reason: not authorization, but actionability.
+        mergeturn._relationship_refusal already refuses to MERGE a turn whose assignment is
+        attached to another project, so a wake pushed through that assignment would file a
+        notice about this target in another project's ledger and invite the recipient to do
+        something begin_merge will then refuse. A relationship with no recorded attachment is
+        left alone, which is the same tolerance the merge-side rule has.
+        """
+        if not relationship_id:
+            return {"refused": "the turn names no assignment"}
+        row = db.execute(
+            "SELECT parent_task_id, status, superseded_by, allowed_recipients FROM"
+            " relationships WHERE relationship_id = ?", (relationship_id,)).fetchone()
+        if row is None:
+            return {"refused": f"assignment {relationship_id!r} is not in this store"}
+        if row["status"] != RELATIONSHIP_ACTIVE or row["superseded_by"] is not None:
+            return {"refused": f"assignment {relationship_id!r} is not active"}
+        if row["parent_task_id"] != recipient_task_id:
+            return {"refused": f"assignment {relationship_id!r} is addressed to parent "
+                               f"{row['parent_task_id']!r}, not to {recipient_task_id!r}"}
+        scope = db.execute(
+            "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+            (relationship_id,)).fetchone()
+        if project_key and scope is not None and scope["project_key"] != project_key:
+            return {"refused": f"assignment {relationship_id!r} is attached to project "
+                               f"{scope['project_key']!r}, not to this turn's "
+                               f"{project_key!r}"}
+        try:
+            allowed = json.loads(row["allowed_recipients"])
+        except (TypeError, ValueError):
+            allowed = []
+        if recipient_task_id not in set(allowed or ()):
+            return {"refused": f"{recipient_task_id!r} is not in the recipients assignment "
+                               f"{relationship_id!r} authorizes"}
+        return {"eventId": derive_grant_event_id(relationship_id, grant),
+                "relationshipId": relationship_id}
+
+    def queue_grant_in(self, db, *, event_id, relationship_id, recipient_task_id, receipt,
+                       grant, at) -> None:
+        """The one durable event a granted turn is delivered through, queued with its cause.
+
+        The same shape ack.py's relay-owned revision takes, for the same reason: _claim will
+        not claim anything without an events row at stage final, and one atomic claim is the
+        only path to a transport call. So riding the existing queue means creating the event,
+        not adding a second way to send.
+
+        The generation it carries is the assignment's CURRENT one, which is what _claim's
+        predicate compares against - and a grant is exempt from that comparison, because a
+        merge target's turn has nothing to do with how many times a child has revised. The
+        column is still filled honestly rather than with a placeholder nobody could interpret.
+
+        Both writes converge: a promotion replayed against the same store finds the same event
+        id derived from the same grant and inserts nothing twice.
+        """
+        generation = db.execute(
+            "SELECT execution_generation FROM relationships WHERE relationship_id = ?",
+            (relationship_id,)).fetchone()["execution_generation"]
+        db.execute(
+            "INSERT OR IGNORE INTO events (event_id, relationship_id, execution_generation,"
+            " revision_hash, outcome, producer, attempt, turn_thread_id, turn_id, turn_status,"
+            " receipt, stage, first_seen_at, last_seen_at, observation_count)"
+            " VALUES (?,?,?,?,?,?,NULL,?,?,?,?, 'final', ?,?,1)",
+            # No host turn produced this event: a promotion is this package's own write, made
+            # while the parent it names may not be running at all. The grant is what produced
+            # it, so the grant is what the turn columns say, rather than a borrowed turn id
+            # belonging to somebody else's work.
+            (event_id, relationship_id, generation, NO_DELIVERABLE, MERGE_TURN_GRANT, "relay",
+             recipient_task_id, grant, "completed", receipt, at, at),
+        )
+        self.enqueue_in(
+            db, event_id, relationship_id=relationship_id, kind=MERGE_TURN_GRANT,
+            recipient_task_id=recipient_task_id,
+        )
+
     def record_intent_in(self, db, event_id, *, relationship_id, kind, recipient_task_id,
                          error, now) -> None:
         """Remember that delivery was wanted here and refused for a reason that may not last.
@@ -366,6 +479,8 @@ class DeliveryService:
         """
         if row["kind"] == REVISION:
             return self._render_revision(row, record, request, report)
+        if row["kind"] == MERGE_TURN_GRANT:
+            return self._render_grant(row, record, request)
         return self._render_completion(row, record, request, report)
 
     def envelope_context(self, row) -> dict:
@@ -449,7 +564,11 @@ class DeliveryService:
         correction that declared no block has no claim to check.
         """
         if row["kind"] != REVISION:
-            return self._render_completion(row, record, request, report), None
+            # Through _render_for rather than straight to the completion renderer. There are
+            # three directions now, and "not a revision" stopped meaning "a completion" the
+            # moment a third one existed - a grant rendered as a verification request would
+            # have told a parent to acknowledge an event with no receipt behind it.
+            return self._render_for(row, record, request, report), None
         findings = record.get("criteria") or []
         declared = restoration.declared(findings) is not None
         if report is not None:
@@ -581,6 +700,53 @@ class DeliveryService:
             "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
             "",
             f"Full record: codex-session-relay show --event {row['event_id']}",
+        ]
+        return NEWLINE.join(lines)
+
+    def _render_grant(self, row, record, request, report=None) -> str:
+        """The merge target is this parent's turn, and what it can actually do about it.
+
+        Instructed differently from both other directions, because what the recipient owes is
+        different. A completion asks the parent for a verdict over its own turn. A revision
+        asks the child for new work. This asks the parent to re-check the candidate against
+        THIS store and then merge it, and the acknowledgement it names is the merge turn's
+        own - begin_merge refuses a candidate whose grant was never answered, so a parent that
+        skipped it would be stopped at the write that lands work with no idea why.
+
+        No contract-v1 acknowledgement is offered, for the same reason the revision direction
+        offers none: AckService refuses this kind, so telling a recipient to compute a proof
+        would be telling it to do something that cannot succeed.
+        """
+        lines = [
+            "[codex-session-relay] merge turn granted",
+            f"requestId: {request}",
+            f"eventId: {row['event_id']}",
+            f"grantId: {record.get('grantId')}",
+            f"turnId: {record.get('turnId')}",
+            f"target: {record.get('repository')} {record.get('baseRef')}",
+            f"candidateHead: {record.get('candidateHead')}",
+            f"grantedFrom: {record.get('grantedFrom')}",
+            "",
+            "The target was released and this claim was the oldest ready one that still owns",
+            "its project, so the turn is yours. Nothing here expires: the target stays yours",
+            "until you land it or give it back.",
+            "",
+            "To act on it, from inside your own turn:",
+            f"  merge-turn-acknowledge --turn {record.get('turnId')}"
+            f" --grant {record.get('grantId')} --actor <your task id> --evidence <what you read>",
+            f"  merge-turn-check --turn {record.get('turnId')} --actor <your task id>"
+            " --head-sha <head> --base-sha <base> --checks <json> --review <json>",
+            f"  merge-turn-land --turn {record.get('turnId')} --actor <your task id>"
+            " --landed-sha <sha> --observed-base-sha <sha> --evidence <what you observed>",
+            "",
+            "Or hand it on without merging:",
+            f"  merge-turn-release --turn {record.get('turnId')} --actor <your task id>"
+            " --disposition returned --reason <why>",
+            "",
+            "There is nothing to acknowledge on this message itself. Contract v1 defines no",
+            "acknowledgement for this direction and the relay refuses one by kind; the",
+            "acknowledgement above is the merge turn's, and merging without it is refused.",
+            f"Full record: codex-session-relay merge-turn-show --turn {record.get('turnId')}",
         ]
         return NEWLINE.join(lines)
 
@@ -727,6 +893,12 @@ class DeliveryService:
                 "                    JOIN relationships rr"
                 "                      ON rr.relationship_id = ev.relationship_id"
                 "                   WHERE ev.event_id = deliveries.event_id"
+                # A relay coordination notice is exempt. A merge turn's currency is the turn,
+                # and a child revising its work neither gives nor takes the right to land on a
+                # shared branch. Without this a wake written for a parent that then opened a
+                # revision was suppressed for good, because a promotion does not happen twice
+                # for a parent that already holds the target.
+                "                     AND ev.outcome NOT IN " + NOTICE_OUTCOMES_SQL +
                 "                     AND ev.execution_generation < rr.execution_generation)",
                 (
                     SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
@@ -847,7 +1019,11 @@ class DeliveryService:
 
         observation = observe(
             adapter, row["recipient_thread_id"],
-            cwd=relationship["parent"].get("cwd") if row["kind"] == COMPLETION else None,
+            # Both parent-directed kinds. The cwd is the RECIPIENT's, and a grant's recipient
+            # is this assignment's parent exactly as a completion's is; reading it as "only a
+            # completion" would skip the workspace check for one of the two.
+            cwd=(relationship["parent"].get("cwd")
+                 if row["kind"] in (COMPLETION, MERGE_TURN_GRANT) else None),
             require_evidence=self.require_lifecycle_evidence,
         )
         record_lifecycle(self.store, self.clock, observation)
@@ -1255,6 +1431,23 @@ class DeliveryService:
         )
         return dict(row) if row else None
 
+    def _grant_state(self, event_row):
+        """What a grant delivery's own turn now says about it, or None for any other kind.
+
+        A pure read on the open connection. It exists because the reported phase cannot be
+        derived from the delivery row alone for this direction: a grant is answered on the
+        merge turn, not through an acks row, so a delivered one would report a wait for an
+        acknowledgement forever with nothing anywhere to settle it.
+        """
+        if event_row["kind"] != MERGE_TURN_GRANT:
+            return None
+        event = self.store.one(
+            "SELECT relationship_id, execution_generation, outcome, event_id, receipt"
+            "  FROM events WHERE event_id = ?", (event_row["event_id"],))
+        if event is None:
+            return None
+        return self._grant_supersession(self.store.db, event)
+
     def observation_health(self, *, now=None, stale_after=900.0, relationship_id=None) -> dict:
         """Whether the loop is actually looking, which a live process does not answer.
 
@@ -1412,8 +1605,35 @@ class DeliveryService:
         )
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _grant_supersession(db, event):
+        """Whether a queued merge-turn grant still has anything to tell its recipient.
+
+        The rule itself belongs to the merge turn and lives there; this reads the notice's own
+        receipt to find which turn and which grant it is about, and asks. Imported inside the
+        call because this module is reached from registry and mergeturn reaches neither, so a
+        module-level edge here would be a ring for no gain.
+
+        A receipt this module cannot read as a grant is fail-closed rather than sent. This
+        package wrote it, so an unreadable one means a damaged or hand-edited row, and a
+        message asking a parent to acknowledge a grant nobody can name is worse than silence
+        an operator can see in the reported phase.
+        """
+        from .mergeturn import MERGE_TURN_GRANT_UNREADABLE, grant_supersession_in
+
+        try:
+            envelope = json.loads(event["receipt"])
+        except (TypeError, ValueError):
+            return MERGE_TURN_GRANT_UNREADABLE
+        if not isinstance(envelope, dict):
+            return MERGE_TURN_GRANT_UNREADABLE
+        turn, grant = envelope.get("turnId"), envelope.get("grantId")
+        if not isinstance(turn, str) or not turn or not isinstance(grant, str) or not grant:
+            return MERGE_TURN_GRANT_UNREADABLE
+        return grant_supersession_in(db, turn, grant)
+
     def _supersession_reason(self, db, event_id: str):
-        """Is this still the thing the assignment stands on? Read inside the caller's write.
+        """Is this still the thing it was queued to say? Read inside the caller's write.
 
         Two rules, and the first is the one the 2026-09-16 reproduction needs: a generation
         that has moved on invalidates every outcome of the previous one - ready, blocked,
@@ -1423,11 +1643,18 @@ class DeliveryService:
         fix, and a new generation having nothing in it yet is not a reason to send the old.
         """
         event = db.execute(
-            "SELECT relationship_id, execution_generation, outcome, event_id FROM events"
+            "SELECT relationship_id, execution_generation, outcome, event_id, receipt FROM events"
             "  WHERE event_id = ?", (event_id,),
         ).fetchone()
         if event is None:
             return None
+        if event["outcome"] in RELAY_NOTICE_OUTCOMES:
+            # Answered before the generation is even read. A relay coordination notice is not
+            # a fact about the assignment's work, so the generation it happens to ride in
+            # cannot make it stale - and measuring it there is what lost a wake permanently,
+            # since a promotion does not come round twice for a parent that already holds the
+            # target. Its own subject decides.
+            return self._grant_supersession(db, event)
         relationship = db.execute(
             "SELECT execution_generation FROM relationships WHERE relationship_id = ?",
             (event["relationship_id"],),
@@ -1450,7 +1677,13 @@ class DeliveryService:
             answered = db.execute(
                 "SELECT 1 FROM events"
                 " WHERE relationship_id = ? AND execution_generation = ?"
-                "   AND stage = 'final' AND suppressed_reason IS NULL AND event_id != ?",
+                "   AND stage = 'final' AND suppressed_reason IS NULL AND event_id != ?"
+                # Except a relay coordination notice, which answers nothing the child was
+                # asked for. Queuing a merge-turn grant into this generation would otherwise
+                # read as the correction having been answered, and the child's request would
+                # be suppressed before any transport call - a correction the parent decided
+                # and the child never saw.
+                "   AND outcome NOT IN " + NOTICE_OUTCOMES_SQL,
                 (event["relationship_id"], event["execution_generation"], event_id),
             ).fetchone()
             return SUPERSEDED_REVISION if answered is not None else None
@@ -1619,7 +1852,8 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
-                "phase": _phase(row, attempts, ack, failure, superseded),
+                "phase": _phase(row, attempts, ack, failure, superseded,
+                                grant=self._grant_state(row)),
                 "lastFailedOperation": failure,
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": superseded,
@@ -1809,7 +2043,7 @@ def _manifest_paths(event_row):
 
 
 
-def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
+def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str:
     """Which stage a delivery is actually at, without inventing certainty.
 
     withheld_pre_send used to mean five different things at once, and the cause is the only
@@ -1842,6 +2076,16 @@ def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
         # dispatched revision looking permanently stuck on an obligation nothing can meet.
         if row["kind"] == REVISION:
             return "awaiting_child_receipt"
+        if row["kind"] == MERGE_TURN_GRANT:
+            # Answered on the merge turn rather than here, so the answer is read from there
+            # and passed in. Without it a grant that WAS acknowledged - the ordinary, correct
+            # outcome - went on reporting a wait, which is the same false obligation the
+            # revision branch above exists to remove.
+            from .mergeturn import MERGE_TURN_GRANT_ANSWERED
+
+            if grant == MERGE_TURN_GRANT_ANSWERED:
+                return "grant_acknowledged"
+            return "awaiting_grant_acknowledgement"
         return "awaiting_ack"
     if row["state"] == DEFERRED_BUSY:
         return "parent_busy"

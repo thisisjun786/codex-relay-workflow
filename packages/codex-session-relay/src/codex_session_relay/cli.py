@@ -73,6 +73,10 @@ OFFLINE_COMMANDS = (
     "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
+    # Records which execution policy file this service's daemon is launched with. It writes
+    # one small file next to the intent and reaches no host, so an operator can configure a
+    # service before anything is running.
+    "service declare",
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
     # Read-only, offline, and constructs no Store at all.
@@ -179,7 +183,12 @@ class Services:
         if self._merge_turn is None:
             from .mergeturn import MergeTurn
 
-            self._merge_turn = MergeTurn(self.store, self.clock, self.linkage)
+            # With the delivery service, so a promotion can hand the freed target's grant to
+            # the relay's queue in the same transaction. This is the only construction of
+            # MergeTurn outside the tests, so leaving it out would have made the wake path
+            # unreachable everywhere it actually matters while every test still passed.
+            self._merge_turn = MergeTurn(
+                self.store, self.clock, self.linkage, delivery=self.delivery)
         return self._merge_turn
 
     @property
@@ -2331,7 +2340,13 @@ def cmd_doctor(services, args) -> dict:
     # side and can be laid against each other. The bridge's own digest is not fetched; the
     # report names where to read it.
     report["rolePolicy"] = _role_policy_report(services)
-    report["workerPolicy"] = _service_for(services).read_worker_policy()
+    relay_service = _service_for(services)
+    report["workerPolicy"] = relay_service.read_worker_policy()
+    # A third reading, and deliberately a different KIND of one. rolePolicy is what this
+    # process resolved and workerPolicy is what the serving worker resolved; this is neither.
+    # It is the input the NEXT daemon launched from this state directory would be given, so a
+    # host that is about to be restarted can be read before the restart rather than after it.
+    report["launchPolicy"] = relay_service.resolve_launch_policy()
     caller = rolepolicy.snapshot_record()
     worker = report["workerPolicy"].get("policy") or {}
     report["callerWorkerAgreement"] = (
@@ -2652,6 +2667,13 @@ def cmd_service(services, args) -> dict:
         return _refuse_unless_ok(service.enable(actor=args.actor or "cli"))
     if action == "disable":
         return _refuse_unless_ok(service.disable(actor=args.actor or "cli"))
+    if action == "declare":
+        # Writing the declaration never starts, stops or reconfigures anything that is
+        # running: the daemon holding the lock keeps the policy it was launched with.
+        if args.forget_execution_policy:
+            return _refuse_unless_ok(service.forget_launch_policy(actor=args.actor or "cli"))
+        return _refuse_unless_ok(service.declare_launch_policy(
+            args.execution_policy, actor=args.actor or "cli"))
     if action == "stop":
         return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
     if action in ("start", "restart"):
@@ -2669,6 +2691,49 @@ def cmd_service(services, args) -> dict:
         _require_adapter(services)
         return _supervise(services, service, args)
     raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
+
+
+def _launch_already_settled(args, environ) -> str | None:
+    """The launch id this environment says was already decided, when it is this launch's.
+
+    A service launching its own daemon has resolved the policy, frozen it and put it in that
+    daemon's environment before stopping anything. The id ties the statement to one launch, so
+    an environment left over from another one says nothing about this one.
+
+    It is not a trust boundary and does not pretend to be. The user who can arrange this
+    environment is the user who can rewrite the declaration, the policy file it names, or the
+    record beside it; `read_worker_policy` states the same limit for the same reason. What it
+    buys is that the question is settled once per launch rather than asked again by the process
+    that is replacing a service already stopped.
+    """
+    from .service import LAUNCH_SETTLED_ENV
+
+    settled = (environ.get(LAUNCH_SETTLED_ENV) or "").strip()
+    launch = getattr(args, "launch_id", None)
+    return settled if settled and launch and settled == launch else None
+
+
+def _apply_launch_policy(service, environ) -> dict | None:
+    """Give a supervisor started HERE the policy its service declares, or refuse to start it.
+
+    `service start` builds that environment for the daemon it spawns. `service run` IS that
+    daemon, started in the foreground or by a unit, and it was reading whatever shell it came
+    from - the same defect one level down, and the one a unit file is most likely to meet.
+
+    Applied to this process's environment before its role-policy snapshot is taken, so the
+    process enforces one reading rather than holding a snapshot that disagrees with the
+    declaration it is running under. Nothing is written: a declaration is made deliberately,
+    never as a side effect of starting.
+    """
+    from .service import launch_policy_refusal
+
+    resolution = service.resolve_launch_policy(environ)
+    refusal = launch_policy_refusal(resolution)
+    if refusal is not None:
+        return refusal
+    if resolution["source"] == "record":
+        environ[resolution["variable"]] = resolution["path"]
+    return None
 
 
 def _supervise(services, service, args) -> dict:
@@ -2940,6 +3005,44 @@ def cmd_intent_show(services, args) -> dict:
     return payload
 
 
+def _guard_fallback(services, args):
+    """The store this run resolved for itself, or the refusal that stands in its place.
+
+    Returned as a resolver rather than a path because the guard asks for it only when the two
+    sources that outrank it said nothing: the caller's --db-path, then the dbPath the coordinator
+    recorded in the intent. Those two are selections somebody made - one explicit, one durable -
+    and neither depends on discovery, so an ambiguity in discovery is genuinely unrelated to them
+    and the hook goes on classifying and recording. What is left is not a selection at all.
+
+    Two answers this refuses, and they are not worth the same. A store that records a different
+    App Server socket EXISTS and opens: the guard reads an unrelated installation's rows, finds no
+    relationship, and receipt_missing holds a child that has finished. An ambiguous or
+    unidentified selection is returned only when no canonical database is there yet, so today that
+    fallback names a file nothing can open and the guard already answers state_unreadable and
+    releases; refusing instead trades that recorded release for the candidates and the commands
+    that tell them apart. Both are refused, because a selection nobody made is not one this
+    decision may rest on, and an operator who has to settle it should be told which stores.
+
+    The Stop is then neither classified nor recorded, which is the cost and is said in the payload.
+    Nothing is held: the adapter reads an exit of 2 carrying an error record as the relay refusing
+    a request it understood, prints nothing, and lets the turn end.
+    """
+    del args  # the selection is the subject here; the arguments only chose it
+
+    def resolve():
+        refusal = _selection_refusal(services)
+        if refusal is None:
+            return str(services.selection.db_path)
+        refusal["stopNotJudged"] = (
+            "this Stop was neither classified nor recorded: no --db-path named a receipt store"
+            " and the coordinator recorded none in the intent, so the only candidate left was"
+            " this selection"
+        )
+        raise guard.StoreNotSelected(refusal)
+
+    return resolve
+
+
 def cmd_guard_evaluate(services, args) -> dict:
     """Decide one Stop and record the observation.
 
@@ -2974,18 +3077,24 @@ def cmd_guard_evaluate(services, args) -> dict:
             "cannot be released, counted against the bounds, or audited",
             EXIT_USAGE,
         )
-    return guard.evaluate(
-        _marker_root(args),
-        stop_input,
-        now=args.now or services.clock.iso(),
-        mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
-        # NOT "or the default": passing the resolved default here would make it always present and
-        # the intent's recorded dbPath unreachable, so a hook invoked without the coordinator's
-        # --state would silently read its own store. evaluate() owns the precedence.
-        db_path=args.db_path,
-        default_db_path=str(services.selection.db_path),
-        record=not args.no_record,
-    )
+    try:
+        return guard.evaluate(
+            _marker_root(args),
+            stop_input,
+            now=args.now or services.clock.iso(),
+            mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
+            # NOT "or the default": passing the resolved default here would make it always present
+            # and the intent's recorded dbPath unreachable, so a hook invoked without the
+            # coordinator's --state would silently read its own store. evaluate() owns the
+            # precedence, and the third source is a resolver it calls only if it gets that far.
+            db_path=args.db_path,
+            default_db_path=_guard_fallback(services, args),
+            record=not args.no_record,
+        )
+    except guard.StoreNotSelected as error:
+        # The store-selection refusal every other command answers before its handler runs, answered
+        # here instead because this is where the question could finally be settled.
+        raise PayloadExit(error.detail, EXIT_REFUSED) from error
 
 
 
@@ -3646,6 +3755,21 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("status", "enable", "disable", "stop"):
         offline = actions.add_parser(name)
         offline.add_argument("--actor")
+    declare = actions.add_parser("declare")
+    declare.add_argument("--actor")
+    # One or the other. A declaration and its removal in one command would need an order to
+    # be read in, and the answer to "which policy does this service launch with" would then
+    # depend on that order rather than on what was typed.
+    policy = declare.add_mutually_exclusive_group(required=True)
+    policy.add_argument(
+        "--execution-policy",
+        help="the execution policy file this service's daemon is launched with; it is read"
+             " back and refused unless it resolves",
+    )
+    policy.add_argument(
+        "--forget-execution-policy", action="store_true",
+        help="drop the declaration; later launches fall back to their own environment",
+    )
     for name in ("start", "restart", "run"):
         hosted = actions.add_parser(name)
         hosted.add_argument("--actor")
@@ -4256,6 +4380,15 @@ def _reads_no_selected_store(args) -> bool:
     intent-declare is the one exception, because it RECORDS services.selection.db_path into the
     intent for the hook to use later. Recording a path chosen by a guess is exactly what the
     refusal prevents, so it stays guarded unless --no-db-path says not to record one.
+
+    guard-evaluate answers True here and is asked again later, which is not the same as never being
+    asked. It reads receipts from the first of three sources that answers, and only the third is
+    discovery's: with no --db-path and no dbPath in the intent it falls back to the selection, so
+    the blanket exemption used to suppress a refusal about a store the guard then opened. The
+    question cannot be settled on this line, because whether the coordinator recorded a path is a
+    fact in a marker this command has not read yet: the workspace it belongs to arrives inside the
+    Stop payload, on stdin. So cmd_guard_evaluate carries the question to the moment that third
+    source would be used, and refuses there. See _guard_fallback.
     """
     handler = getattr(args, "handler", None)
     if handler is cmd_intent_declare:
@@ -4272,8 +4405,14 @@ def _reads_no_selected_store(args) -> bool:
     return handler in MARKER_COMMANDS
 
 
-def _refuse_ambiguous_state(services, args) -> None:
-    """Two stores already record this socket, so opening one of them would be a guess.
+def _selection_refusal(services):
+    """What is wrong with the store this run resolved for itself, as a payload, or None.
+
+    Separated from the refusal so one question can be asked at two moments. Every other command
+    asks it before its handler runs, where the answer is a refusal. guard-evaluate cannot: whether
+    the coordinator recorded a receipt store is a fact in a marker whose workspace arrives inside
+    the Stop payload, so it asks the same question again at the point that would consume this
+    selection, and only if it gets there. Deciding nothing here is what makes that possible.
 
     Falling through to the canonical directory is not the neutral outcome it looks like. The
     first command that writes there creates a THIRD empty database, and once that exists it
@@ -4285,17 +4424,9 @@ def _refuse_ambiguous_state(services, args) -> None:
     creating a canonical database beside it hides it just as permanently. That case fires only
     when a store would be created; an existing canonical store has already settled it.
 
-    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
-    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
-    a derivation over its own two arguments that opens no store at all.
-
     An explicit --state or environment override never arrives here: both return from
     resolve_state_dir before any discovery runs, because a caller who named a directory has
     already decided which participants share it.
-
-    This guard is on the command line rather than on Services.store. A library caller that
-    builds Services itself bypasses it; every in-process caller in this package passes an
-    explicit directory, and raising from a property would turn a diagnostic into a crash.
     """
     selection = services.selection
     # A store records the socket it serves, and the first recording wins so nothing rewrites
@@ -4308,11 +4439,8 @@ def _refuse_ambiguous_state(services, args) -> None:
     if services.socket_path and selection.db_path.exists():
         recorded = store_socket(selection.db_path)
         wanted = canonical_socket(services.socket_path)
-        if recorded is not None and recorded != wanted and (
-            getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
-            and not _reads_no_selected_store(args)
-        ):
-            raise PayloadExit({
+        if recorded is not None and recorded != wanted:
+            return {
                 "error": "refused",
                 "reason": "state_directory_serves_another_socket",
                 "detail": (
@@ -4328,15 +4456,11 @@ def _refuse_ambiguous_state(services, args) -> None:
                 "recover": _wrong_socket_recovery(selection, recorded, wanted),
                 "note": "using a store does not rewrite the socket it recorded, so neither"
                         " command here adopts anything; choose the matching pair",
-            }, EXIT_REFUSED)
+            }
     if not (selection.ambiguous or selection.unidentified):
-        return
-    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
-        args
-    ):
-        return
+        return None
     contested = bool(selection.ambiguous)
-    raise PayloadExit({
+    return {
         "error": "refused",
         "reason": ("ambiguous_state_directory" if contested
                    else "unidentified_state_directory"),
@@ -4355,26 +4479,68 @@ def _refuse_ambiguous_state(services, args) -> None:
         # safe to repeat: provenance is written by opening a store, which is what the
         # refusal prevented.
         "recover": _recovery_commands(services, selection, contested),
-    }, EXIT_REFUSED)
+    }
+
+
+def _refuse_ambiguous_state(services, args) -> None:
+    """Refuse before the handler runs, unless this command can answer without that store.
+
+    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
+    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
+    a derivation over its own two arguments that opens no store at all. The marker commands are
+    exempt because a legacy store nobody is using must not be able to switch a Stop hook off;
+    _reads_no_selected_store owns which of them that is unconditional for.
+
+    The exemption is settled before the selection is examined, not after. An exempt command used
+    to pay for a read of the resolved store's recorded socket only to have the answer discarded,
+    and one of them runs inside a five-second hook budget.
+
+    This guard is on the command line rather than on Services.store. A library caller that
+    builds Services itself bypasses it; every in-process caller in this package passes an
+    explicit directory, and raising from a property would turn a diagnostic into a crash.
+    """
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
+        args
+    ):
+        return
+    refusal = _selection_refusal(services)
+    if refusal is not None:
+        raise PayloadExit(refusal, EXIT_REFUSED)
 
 
 def main(argv=None) -> int:
+    import os
+
     from . import rolepolicy
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Taken here, before any work, for the same reason the bridge builds its policy in its own
-    # main(): the snapshot is supposed to be this PROCESS's, and a lazy first read made it the
-    # snapshot of whenever a role question first came up. A daemon could then start under one
-    # version of the file, serve unbound work for hours, and adopt an edit the bridge had never
-    # seen -- two processes enforcing different policies with neither one restarted, which is
-    # exactly the second policy source this is built to keep visible. It cannot fail startup: an
-    # unreadable or absent policy resolves to Unresolved, which withholds rather than raises.
-    rolepolicy.declared()
     services = None
     try:
         services = Services(args)
         _refuse_ambiguous_state(services, args)
+        # A supervisor started HERE - in the foreground, or by a unit - is the same daemon
+        # `service start` spawns, so it runs on the same declaration. Resolved before the
+        # snapshot below, because that snapshot is what this whole process then enforces.
+        #
+        # A supervisor launched BY that service already carries its decision in this
+        # environment, and says so. Re-reading the declaration here would let one written in
+        # the meantime refuse a launch whose predecessor has already been stopped.
+        if (getattr(args, "service_command", None) == "run"
+                and _launch_already_settled(args, os.environ) is None):
+            refused = _apply_launch_policy(_service_for(services), os.environ)
+            if refused is not None:
+                raise PayloadExit(refused, EXIT_REFUSED)
+        # Taken here, before any role question and before the handler, for the same reason the
+        # bridge builds its policy in its own main(): the snapshot is supposed to be this
+        # PROCESS's, and a lazy first read made it the snapshot of whenever a role question
+        # first came up. A daemon could then start under one version of the file, serve unbound
+        # work for hours, and adopt an edit the bridge had never seen -- two processes
+        # enforcing different policies with neither one restarted, which is exactly the second
+        # policy source this is built to keep visible. Nothing above asks a role question, and
+        # it cannot fail startup: an unreadable or absent policy resolves to Unresolved, which
+        # withholds rather than raises.
+        rolepolicy.declared()
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK
