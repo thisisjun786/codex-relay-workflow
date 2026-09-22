@@ -442,21 +442,27 @@ def obstructed_claim(marker, session_id):
     the declaration is readable here, so recency can still establish that this candidate
     supersedes an older one.
 
-    Narrow on purpose. It requires the marker to be malformed AND the offending claim to be this
-    session's own AND its preimage to be the unreadable part. A well-formed claim naming a foreign
-    dispatch still selects nothing, which is what keeps an uncorrelated claim from shadowing an
-    assignment that owes a hold, and a claim record that is not a record at all attributes to
-    nobody and is left to the fall-through.
+    Narrow, and the narrowness is the whole safety argument. The test is that THIS claim carries a
+    dispatchRequestId of the wrong type - present, and not a string - which is precisely the fact
+    malformed() reports for a claim and precisely the reason its preimage cannot be read.
+
+    Asking whether the MARKER is malformed is not the same question and must not stand in for it.
+    Some other fact being wrongly typed says nothing about this claim, and an ABSENT preimage is
+    well shaped: malformed() does not flag a missing field, and a claim that names no dispatch is
+    an uncorrelated claim, not an unreadable one. Combining the two hands back exactly the
+    cross-assignment shadowing this filter exists to close, because a claim with no preimage beside
+    any unrelated corruption would select its own directory.
+
+    So a well-formed claim naming a foreign dispatch selects nothing, a claim naming nothing selects
+    nothing, an unencodable preimage is a well-shaped value and selects nothing, and a claim record
+    that is not a record attributes to nobody and is left to the fall-through.
     """
-    if not malformed(marker):
-        return None
     for claim in marker.get("claims") or []:
         if not isinstance(claim, dict):
             continue
         if not same_identity(claimant(claim), session_id):
             continue
-        presented = claim.get("dispatchRequestId")
-        if not isinstance(presented, str) or _hashed(presented) is None:
+        if "dispatchRequestId" in claim and not isinstance(claim["dispatchRequestId"], str):
             return claim
     return None
 

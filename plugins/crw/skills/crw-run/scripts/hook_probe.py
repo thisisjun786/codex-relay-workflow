@@ -372,21 +372,18 @@ def _obstructed_claim(marker, session_id):
     that carries the corruption; unlike an unreadable intent this costs no soundness, because the
     declaration is readable and can still order it.
 
-    Narrow: the marker must be malformed, the offending claim must be this session's own, and its
-    preimage must be the unreadable part. A well-formed claim naming a foreign dispatch still
-    selects nothing - and neither does an unencodable preimage in a marker that is otherwise well
-    shaped, because a lone surrogate is a string and passes the shape check. The relay requires the
-    same precondition, so leaving it out here answered a different decision for the same bytes.
+    Narrow: THIS claim must carry a dispatchRequestId of the wrong type - present, and not a
+    string - which is precisely what the shape check reports for a claim and precisely why its
+    preimage cannot be read. Whether some other fact in the marker is malformed is a different
+    question and does not stand in for it, and an absent preimage is well shaped: a claim naming no
+    dispatch is uncorrelated, not unreadable, and must not select its own directory.
     """
-    if not _malformed({"marker": marker}):
-        return None
     for claim in marker.get("claims") or []:
         if not isinstance(claim, dict):
             continue
         if not _same_identity(_claimant(claim), session_id):
             continue
-        presented = claim.get("dispatchRequestId")
-        if not isinstance(presented, str) or _hashed(presented) is None:
+        if "dispatchRequestId" in claim and not isinstance(claim["dispatchRequestId"], str):
             return claim
     return None
 

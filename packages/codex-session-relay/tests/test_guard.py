@@ -772,6 +772,34 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
+    def test_a_claim_with_no_preimage_beside_unrelated_corruption_selects_nothing(self):
+        """The precision the malformed-successor repair depends on.
+
+        A claim carrying no dispatchRequestId is WELL SHAPED - the shape check does not flag a
+        missing field - and it names no dispatch, so it is an uncorrelated claim rather than an
+        unreadable one. Gating on "is the marker malformed" instead of "is THIS preimage the wrong
+        type" combined two unrelated facts: any other corruption in the newer assignment would let
+        such a claim select its own directory, which is the cross-assignment shadowing this filter
+        exists to close, handed straight back.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "at": self.LATER_CLAIMED})
+        # Corrupt for a reason that has nothing to do with the claim.
+        marker.publish(directory / "bound.json",
+                       {"sessionId": CHILD, "taskId": [CHILD], "at": NOW})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment,
+                         "a claim naming nothing selected its directory beside unrelated corruption")
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
     def test_a_well_formed_foreign_claim_in_a_malformed_marker_still_selects_nothing(self):
         """The narrowness that keeps the shadowing fix intact.
 
