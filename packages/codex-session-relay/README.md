@@ -163,12 +163,21 @@ What happens at send time:
 |---|---|
 | no record for the recipient | withheld before any transport call, `settings_unavailable` |
 | record missing a field | withheld before any transport call, naming the missing fields |
+| record whose `cwd`, `model` or `reasoningEffort` is not text | withheld before any transport call, `settings_mistyped`, naming each field and the type it holds |
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
 | resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |
 | resume returns an approval policy other than `never` | `inbox_only`: stored, not woken |
 | resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
 | resume matches | the turn begins, carrying no overrides |
+
+Those three fields are the ones `ThreadResumeParams` types as strings, and the resume carries
+each recorded value as it stands, so a record holding something else is refused rather than sent
+for a host to interpret. `settings-record` and `register` run the same check, so such a record
+is refused when it is written too; a store holds one only from an older writer or a hand edit.
+`runtimeWorkspaceRoots` and `environments` are not typed there, and that is not a promise that
+a wrong shape is caught further on: `runtimeWorkspaceRoots` of `"abc"` passes and reaches the
+resume as `["a", "b", "c"]`. What those two hold is a separate question from this one.
 
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can

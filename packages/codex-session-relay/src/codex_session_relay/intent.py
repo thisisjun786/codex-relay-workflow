@@ -19,6 +19,7 @@ from datetime import timedelta
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from .errors import RefusalReason, RegistrationError
@@ -473,7 +474,7 @@ def _identity(value, what: str) -> str:
     return str(value)
 
 
-# The lock wait a read-only open of the relay store may spend, and the only place it is decided.
+# The lock wait an open of the relay store may spend, and the only place it is decided.
 #
 # The hook contract gives one guard evaluation a five-second self-imposed wall clock. SQLite's
 # timeout bounds lock waiting only, and everything after it - the marker walk, the head
@@ -481,13 +482,16 @@ def _identity(value, what: str) -> str:
 # budget so a database a writer is holding cannot spend the whole of it before the rest of the
 # work has started.
 #
-# It sits beside the connect call rather than in guard.py, where the reasoning used to sit with
+# It sits beside the connect calls rather than in guard.py, where the reasoning used to sit with
 # nothing reading it, because a bound declared away from the call that enforces it is a bound
-# nobody is actually setting. read_only_connection takes no timeout parameter for the same
-# reason: both callers - guard.lookup_receipt and dispatch_generation_state below - receive this
-# value, and neither can quietly choose another one while still using this function. The hook's
-# five seconds is the only stated budget among them and it is the tightest, so a bound that fits
-# inside it is not too generous for a caller that has no stated budget at all.
+# nobody is actually setting. Neither opener below takes a timeout parameter for the same
+# reason: the readers - guard.lookup_receipt and dispatch_generation_state - and the one caller
+# that takes a lock, registration_hold, all receive this value, and none can quietly choose
+# another one while still using these functions. The hook's five seconds is the only stated
+# budget among them and it is the tightest, so a bound that fits inside it is not too generous
+# for a caller that has no stated budget at all. The hook reaches read_only_connection and
+# nothing else: the hold is opened by registration, which runs in the coordinator rather than
+# in a Stop evaluation.
 SQLITE_TIMEOUT = 2.0
 
 
@@ -521,10 +525,103 @@ def read_only_connection(db_path):
     return connection
 
 
+@contextmanager
+def registration_hold(db_path):
+    """The relay's write lock, held across a check and the publication that depends on it.
+
+    Registration asks which generation a dispatch opened and then writes a marker fact saying so.
+    Read first and publish afterwards, those are two operations with nothing held between them,
+    and an advance committing in the interval returns success over a generation the store has
+    already moved past. Every advance is a relay WRITE - registry.open_generation runs under
+    store.transaction(), which is BEGIN IMMEDIATE - so the store's write lock is the one lock the
+    advance and the registration already share. Taking it here is what removes the interval:
+    an advance either commits before the lock is granted, and the read inside then reports stale,
+    or it waits until the fact has landed under the generation it names.
+
+    Yields (connection, None) inside BEGIN IMMEDIATE, or (None, why) when the store cannot be
+    opened or the lock cannot be taken within SQLITE_TIMEOUT. A pair rather than a bare None,
+    because "the hold was not taken" is three different operator problems - no such store, a
+    store this process may not write, and a store somebody else is writing - and a refusal that
+    does not say which sends its reader to the wrong repair. Not an exception, for the reason
+    read_only_connection answers the way it does: only the caller knows what an unavailable
+    store means, and for registration it means refusing rather than publishing unheld.
+
+    mode=rw and never rwc. An absent store must stay absent and be refused; Store() cannot be
+    used here because opening one CREATES the database and runs the schema, which would turn
+    "the relay has no such store" into a new empty one that answers absent to everything. The
+    same shape is already how store.probe decides whether a process can write.
+    """
+    import sqlite3
+
+    try:
+        resolved = Path(db_path).expanduser().absolute()
+        uri = resolved.as_uri() + "?mode=rw"
+    except (OSError, ValueError, TypeError, AttributeError):
+        yield None, "the relay store path " + repr(db_path) + " could not be read as a path"
+        return
+    try:
+        # isolation_level=None so the BEGIN IMMEDIATE below IS the transaction. Left at the
+        # default, sqlite3 opens an implicit deferred one on the first statement, and the hold
+        # would be a read that excludes nobody.
+        connection = sqlite3.connect(
+            uri, uri=True, timeout=SQLITE_TIMEOUT, isolation_level=None
+        )
+    except (OSError, sqlite3.Error, ValueError, TypeError) as fault:
+        yield None, "the relay store could not be opened for writing: " + str(fault)
+        return
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+    except (OSError, sqlite3.Error) as fault:
+        # A store somebody else is writing, or one this process may read but not write. Both are
+        # answered the same way: the caller could not take the lock, so it cannot prove anything
+        # it publishes is current.
+        connection.close()
+        yield None, "the relay store's write lock could not be taken: " + str(fault)
+        return
+    try:
+        yield connection, None
+    finally:
+        # ROLLBACK and never COMMIT. This transaction exists to exclude other writers and writes
+        # nothing of its own, so the way it ends must not be able to record anything.
+        try:
+            connection.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        connection.close()
+
+
 # What the relay says about the generation a dispatch request id opened.
 DISPATCH_CURRENT = "current"
 DISPATCH_STALE = "stale"
 DISPATCH_ABSENT = "absent"
+
+
+def _generation_state(connection, relationship_id: str, dispatch_request_id: str):
+    """(state, generation) for one dispatch, read on a connection the caller already owns.
+
+    Split out so the read-only reader and the writer holding the lock ask the same question of
+    the same columns. A second copy of this comparison is exactly how the two paths would start
+    to disagree about what stale means. (None, None) says the read itself failed, which is not
+    the same answer as a dispatch the store does not have.
+    """
+    import sqlite3
+
+    try:
+        row = connection.execute(
+            "SELECT g.execution_generation AS opened, r.execution_generation AS current"
+            "  FROM generations g"
+            "  JOIN relationships r ON r.relationship_id = g.relationship_id"
+            " WHERE g.relationship_id = ? AND g.dispatch_request_id = ?",
+            (relationship_id, dispatch_request_id),
+        ).fetchone()
+    except sqlite3.Error:
+        return None, None
+    if row is None:
+        return DISPATCH_ABSENT, None
+    if row["opened"] != row["current"]:
+        return DISPATCH_STALE, row["current"]
+    return DISPATCH_CURRENT, row["current"]
 
 
 def dispatch_generation_state(db_path, relationship_id: str, dispatch_request_id: str):
@@ -543,28 +640,21 @@ def dispatch_generation_state(db_path, relationship_id: str, dispatch_request_id
     a separate answer from absent, which is what the contract asks for: an old generation is one of
     the states that has to be distinguished rather than folded into "not registered".
     """
-    import sqlite3
-
     connection = read_only_connection(db_path)
     if connection is None:
         return DISPATCH_ABSENT, False
     try:
-        row = connection.execute(
-            "SELECT g.execution_generation AS opened, r.execution_generation AS current"
-            "  FROM generations g"
-            "  JOIN relationships r ON r.relationship_id = g.relationship_id"
-            " WHERE g.relationship_id = ? AND g.dispatch_request_id = ?",
-            (relationship_id, dispatch_request_id),
-        ).fetchone()
-    except sqlite3.Error:
-        return DISPATCH_ABSENT, False
+        # The generation is not part of this answer; only a caller holding the lock has a use
+        # for it, and binding a name nothing here reads would drop a readability answer on the
+        # floor in the one shape that looks like it was considered.
+        state = _generation_state(connection, relationship_id, dispatch_request_id)[0]
     finally:
         connection.close()
-    if row is None:
-        return DISPATCH_ABSENT, True
-    if row["opened"] != row["current"]:
-        return DISPATCH_STALE, True
-    return DISPATCH_CURRENT, True
+    # A failed read is reported exactly as an unopenable store is, because both mean the same
+    # thing to every caller: the relay did not answer.
+    if state is None:
+        return DISPATCH_ABSENT, False
+    return state, True
 
 
 def dispatch_is_registered(db_path, relationship_id: str, dispatch_request_id: str):
@@ -584,19 +674,31 @@ def _read_published(target):
         return None, False
 
 
-def _publish_or_compare(target, payload, fields, *, root=None) -> str:
+def _publish_or_compare(target, payload, fields, *, root=None, since=()) -> str:
     """Publish a single create-once fact, and say whether losing was a replay or a contradiction.
 
     Returning 'exists' for both would report a coordinator that published a DIFFERENT value exactly
     as it reports one that repeated itself, which is the difference between a retry that is safe to
     ignore and a contest somebody has to settle.
+
+    since names fields that a record published before they existed cannot carry, and it is the
+    only reason a compared field may be missing. Absent, the existing record predates the field
+    and repeating the publication is the ordinary replay it looks like. PRESENT and different, it
+    is a contradiction like any other: the create-once fact is immutable, so a caller told
+    'unchanged' over a value the stored fact disagrees with has been told its own answer. Left out
+    of the comparison entirely - which is what this did when the field was added - that
+    disagreement is reported as agreement.
     """
     if publish(target, payload, root=root) == PUBLISHED:
         return PUBLISHED
     existing, readable = _read_published(target)
     if not readable or not isinstance(existing, dict):
         return CONFLICT
-    return UNCHANGED if all(existing.get(f) == payload.get(f) for f in fields) else CONFLICT
+    if not all(existing.get(f) == payload.get(f) for f in fields):
+        return CONFLICT
+    return UNCHANGED if all(
+        existing[f] == payload.get(f) for f in since if f in existing
+    ) else CONFLICT
 
 
 def malformed_disposition(record) -> str | None:
@@ -798,6 +900,18 @@ def register_relationship(
     same dispatch id to the same generation, so a relationship whose dispatch id does not hash to
     this directory belongs to a different assignment. Refusing here is what makes a receipt earned
     under another assignment's relationship unattributable rather than merely unlikely.
+
+    The generation check and the publication happen under ONE hold on the relay's write lock.
+    Checked first and published afterwards, they were two operations with nothing held between
+    them, and an advance committing in that interval returned success over a generation the store
+    had already moved past, leaving the marker naming it. Nothing corrects that later: guard reads
+    only the relationship id out of this fact, so the stale-versus-current distinction the
+    contract requires is drawn here or nowhere. Under the hold an advance either commits before
+    the read, which then reports stale and publishes nothing, or waits until the fact has landed.
+
+    The fact records the generation it was registered under. A registration is a statement about
+    one generation rather than about "now", and a reader that has both the fact and the store can
+    say which.
     """
     if not named(relationship_id):
         raise RegistrationError(
@@ -809,42 +923,68 @@ def register_relationship(
             "relationship " + relationship_id + " was dispatched under a different request id, so "
             "it does not belong to assignment " + str(assignment),
         )
-    # The hash check above only proves the CALLER restated the right dispatch id. Pairing an
-    # unrelated relationship with that id passes it, and its receipts would then satisfy this
-    # assignment's guard. Only the relay knows which relationship a dispatch actually opened.
-    state, readable = dispatch_generation_state(db_path, relationship_id, dispatch_request_id)
-    if not readable:
-        raise RegistrationError(
-            RefusalReason.UNREGISTERED_RELATIONSHIP,
-            "the relay store could not be read, so it cannot be confirmed that relationship "
-            + relationship_id + " belongs to this assignment; registration is refused rather than "
-            "taken on the caller's word",
-        )
-    if state == DISPATCH_STALE:
-        # Separated from absent on purpose. The relay HAS this dispatch, under a generation the
-        # relationship has since moved past, and registering it anyway would let this assignment's
-        # guard answer with receipts earned by the live generation. An old generation is one of the
-        # states the contract requires to be told apart, not a variant of not being registered.
-        raise RegistrationError(
-            RefusalReason.STALE_GENERATION,
-            "this assignment's dispatch request id opened an earlier generation of relationship "
-            + relationship_id + ", which has since advanced, so registering it would attribute the "
-            "current generation's receipts to a superseded assignment",
-        )
-    if state == DISPATCH_ABSENT:
-        raise RegistrationError(
-            RefusalReason.RELATIONSHIP_CONFLICT,
-            "the relay has no generation of relationship " + relationship_id + " opened under this "
-            "assignment's dispatch request id, so it is not this assignment's relationship",
-        )
+    # Resolved before the lock is taken. A malformed assignment is a refusal that needs no hold,
+    # and holding the relay's only write slot while validating an argument would make every
+    # caller's mistake somebody else's wait.
     directory = assignment_dir(root, workspace, _assignment(assignment))
-    outcome = _publish_or_compare(
-        directory / "relationship.json",
-        {"relationshipId": relationship_id, "at": at},
-        ("relationshipId",),
-        root=root,
-    )
-    return {"assignmentId": assignment, "relationshipId": relationship_id, "outcome": outcome}
+    with registration_hold(db_path) as (held, unavailable):
+        if held is None:
+            raise RegistrationError(
+                RefusalReason.UNREGISTERED_RELATIONSHIP,
+                "the relay store could not be held for this registration, so it cannot be "
+                "confirmed that relationship " + relationship_id + " is still this assignment's "
+                "at the moment the registration lands (" + str(unavailable) + "); it is refused "
+                "rather than published on the caller's word",
+            )
+        # The hash check above only proves the CALLER restated the right dispatch id. Pairing an
+        # unrelated relationship with that id passes it, and its receipts would then satisfy this
+        # assignment's guard. Only the relay knows which relationship a dispatch actually opened.
+        state, generation = _generation_state(held, relationship_id, dispatch_request_id)
+        if state is None:
+            raise RegistrationError(
+                RefusalReason.UNREGISTERED_RELATIONSHIP,
+                "the relay store could not be read, so it cannot be confirmed that relationship "
+                + relationship_id + " belongs to this assignment; registration is refused rather "
+                "than taken on the caller's word",
+            )
+        if state == DISPATCH_STALE:
+            # Separated from absent on purpose. The relay HAS this dispatch, under a generation
+            # the relationship has since moved past, and registering it anyway would let this
+            # assignment's guard answer with receipts earned by the live generation. An old
+            # generation is one of the states the contract requires to be told apart, not a
+            # variant of not being registered.
+            raise RegistrationError(
+                RefusalReason.STALE_GENERATION,
+                "this assignment's dispatch request id opened an earlier generation of "
+                "relationship " + relationship_id + ", which has since advanced, so registering "
+                "it would attribute the current generation's receipts to a superseded assignment",
+            )
+        if state == DISPATCH_ABSENT:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                "the relay has no generation of relationship " + relationship_id + " opened under "
+                "this assignment's dispatch request id, so it is not this assignment's "
+                "relationship",
+            )
+        # Inside the hold, deliberately. This publication is the whole reason the lock is held:
+        # moving it out again would restore the interval this function exists to close.
+        outcome = _publish_or_compare(
+            directory / "relationship.json",
+            {"relationshipId": relationship_id, "executionGeneration": generation, "at": at},
+            ("relationshipId",),
+            # The generation is compared only where the stored fact has one. A record published
+            # before it was recorded carries none, and requiring it would report an ordinary
+            # replay as a contest; a record carrying a DIFFERENT one contradicts what this call
+            # just read under the lock, and reporting that as unchanged would hand the caller
+            # back its own generation while the immutable fact names another. A store restored or
+            # rebuilt underneath a surviving marker is how the two come to disagree.
+            since=("executionGeneration",),
+            root=root,
+        )
+    return {
+        "assignmentId": assignment, "relationshipId": relationship_id,
+        "executionGeneration": generation, "outcome": outcome,
+    }
 
 
 def publish_resolution(

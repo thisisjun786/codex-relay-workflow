@@ -1,6 +1,7 @@
 """The command surface, driven end to end with no host and no socket."""
 
 import argparse
+import ast
 import json
 import os
 import shutil
@@ -38,6 +39,373 @@ def option_values(command):
         head, sep, tail = word.partition("=")
         values.append(tail if sep and head.startswith("--") else word)
     return values
+
+
+# ------------------------------------------------------------- field extraction
+#
+# test_every_transformation_a_send_applies_to_the_record_is_covered derives what it mutates
+# from settings.py source instead of listing it, because a list drops the next member. The
+# derivation lives here rather than inside the test so that every shape it follows can be
+# proved against source written for the purpose -- see FieldExtractionShapes at the end of
+# this module. What it does not follow is written down in those docstrings.
+
+_RECORD = ("record", None)
+_EXTERNAL = ("external", None)
+_OTHER = ("other", None)
+
+
+def _definitions(tree):
+    """Module functions, each method's OWN class, and the classes by name.
+
+    Kept apart deliberately. One flat map keyed by name lets a bare call and a self.<method> call
+    resolve to the same definition, and lets an unrelated class's method answer for this one's.
+    """
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    owners, classes = {}, {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        owned = {}
+        for child in node.body:
+            if isinstance(child, ast.FunctionDef):
+                owned.setdefault(child.name, child)
+        for child in owned.values():
+            owners[id(child)] = owned
+        classes.setdefault(node.name, owned)
+    return functions, owners, classes
+
+
+def _module_constants(tree):
+    """Top-level NAME = "text" assignments, read from the tree rather than the imported module.
+
+    Reading them here is what lets source written for a test declare its own constant.
+    """
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            found.setdefault(node.targets[0].id, node.value.value)
+    return found
+
+
+def _evaluated_parts(node):
+    """The parts of a nested definition that run in the ENCLOSING scope.
+
+    Decorators, defaults and annotations are evaluated where the definition is written, even
+    though its body is a separate scope, so skipping the whole node would lose a field only they
+    reach.
+    """
+    yield from getattr(node, "decorator_list", [])
+    arguments = getattr(node, "args", None)
+    if isinstance(arguments, ast.arguments):
+        yield from arguments.defaults
+        yield from [default for default in arguments.kw_defaults if default is not None]
+        for group in (arguments.posonlyargs, arguments.args, arguments.kwonlyargs):
+            yield from [a.annotation for a in group if a.annotation is not None]
+        for extra in (arguments.vararg, arguments.kwarg):
+            if extra is not None and extra.annotation is not None:
+                yield extra.annotation
+    returns = getattr(node, "returns", None)
+    if returns is not None:
+        yield returns
+    if isinstance(node, ast.ClassDef):
+        yield from node.bases
+        yield from [keyword.value for keyword in node.keywords]
+
+
+def _scoped(function):
+    """Every node in this function's OWN scope, breadth first in source order.
+
+    A nested definition is another scope: its body is skipped, its evaluated parts are not.
+    """
+    queue = list(ast.iter_child_nodes(function))
+    index = 0
+    while index < len(queue):
+        node = queue[index]
+        index += 1
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            queue.extend(_evaluated_parts(node))
+            continue
+        yield node
+        queue.extend(ast.iter_child_nodes(node))
+
+
+def _bound_names(node):
+    """Every name this node binds, however it binds it.
+
+    A name bound anywhere other than one plain assignment is not an alias of anything this walk
+    can follow, so the reader below types it as OTHER rather than guessing.
+    """
+    def names(target):
+        if isinstance(target, ast.Name):
+            yield target.id
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                yield from names(element)
+        elif isinstance(target, ast.Starred):
+            yield from names(target.value)
+
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            yield from names(target)
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+        yield from names(node.target)
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        yield from names(node.target)
+    elif isinstance(node, ast.withitem):
+        if node.optional_vars is not None:
+            yield from names(node.optional_vars)
+    elif isinstance(node, ast.ExceptHandler):
+        if node.name:
+            yield node.name
+
+
+class _Reader:
+    """One function body, with every name it binds typed once.
+
+    Five types. RECORD is self.data; FIELD(k) a recorded field; EXTERNAL a non-self parameter of
+    an entry method, which is the host's response; EXTFIELD(k) a field of that; OTHER everything
+    else. Anything layered on top of FIELD or EXTFIELD is OTHER, and that single rule is what
+    keeps sub-keys such as type, cwd and environmentId out of the derived set.
+    """
+
+    def __init__(self, function, parameters):
+        self.types = dict(parameters)
+        self.bindings = {}
+        self.resolving = set()
+        counts = {}
+        for node in _scoped(function):
+            for name in _bound_names(node):
+                counts[name] = counts.get(name, 0) + 1
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                self.bindings.setdefault(node.targets[0].id, node.value)
+        for name, count in counts.items():
+            if count > 1 or name not in self.bindings:
+                self.types[name] = _OTHER
+
+    def type_of(self, node):
+        if (isinstance(node, ast.Attribute) and node.attr == "data"
+                and isinstance(node.value, ast.Name) and node.value.id == "self"):
+            return _RECORD
+        if isinstance(node, ast.Name):
+            if node.id in self.types:
+                return self.types[node.id]
+            if node.id in self.bindings and node.id not in self.resolving:
+                self.resolving.add(node.id)
+                self.types[node.id] = self.type_of(self.bindings[node.id])
+                self.resolving.discard(node.id)
+                return self.types[node.id]
+            return _OTHER
+        if isinstance(node, ast.Subscript):
+            base = self.type_of(node.value)
+            if (base in (_RECORD, _EXTERNAL) and isinstance(node.slice, ast.Constant)
+                    and isinstance(node.slice.value, str)):
+                return ("field" if base == _RECORD else "extfield", node.slice.value)
+            return _OTHER
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            base = self.type_of(node.func.value)
+            if base in (_RECORD, _EXTERNAL):
+                return ("field" if base == _RECORD else "extfield", node.args[0].value)
+            return _OTHER
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or) and node.values:
+            carried = self.type_of(node.values[0])
+            return carried if carried[0] in ("field", "extfield") else _OTHER
+        return _OTHER
+
+
+def _handed_over(call):
+    """(selector, expression) for everything a call hands over.
+
+    The selector is the parameter position or name, or None when the call cannot say: a starred
+    argument, and every positional argument after one, because how many parameters the star
+    consumed is a runtime fact.
+    """
+    carried = []
+    starred = False
+    for position, argument in enumerate(call.args):
+        if isinstance(argument, ast.Starred):
+            starred = True
+            carried.append((None, argument.value))
+        else:
+            carried.append((None if starred else position, argument))
+    for keyword in call.keywords:
+        carried.append((keyword.arg, keyword.value))
+    return carried
+
+
+def _hop(call, defined, current):
+    functions, owners, _classes = defined
+    if isinstance(call.func, ast.Name):
+        return functions.get(call.func.id), False
+    if (isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "self"):
+        return owners.get(id(current), {}).get(call.func.attr), True
+    return None, False
+
+
+def _bind(function, carried, reader, method):
+    """What the callee's parameters hold, or None when Python would refuse the call.
+
+    Typed deliberately: a parameter receiving a FIELD is a field alias, not the record. Without
+    that, normalise_policy(self.data["sandbox"]) would make policy a record and policy.get("type")
+    would invent a field named type.
+    """
+    plain = [argument.arg for argument in function.args.args]
+    positional = [argument.arg for argument in function.args.posonlyargs] + plain
+    nameable = list(plain)
+    if method:
+        positional = positional[1:]
+        # self is the first parameter overall, and may itself be positional-only.
+        if not function.args.posonlyargs:
+            nameable = nameable[1:]
+    by_name = nameable + [argument.arg for argument in function.args.kwonlyargs]
+    every = list(dict.fromkeys(positional + by_name))
+    bound = {}
+    for selector, expression in carried:
+        if isinstance(selector, int):
+            if selector < len(positional):
+                bound[positional[selector]] = reader.type_of(expression)
+        elif selector in by_name:
+            if selector in bound:
+                # "multiple values for argument": that body never runs, so this is not a hop.
+                return None
+            bound[selector] = reader.type_of(expression)
+    return {name: bound.get(name, _OTHER) for name in every}
+
+
+def _entry_parameters(function, method):
+    arguments = function.args
+    names = [argument.arg for argument
+             in arguments.posonlyargs + arguments.args + arguments.kwonlyargs]
+    if method and names:
+        names = names[1:]
+    return {name: _EXTERNAL for name in names}
+
+
+def _entry(name, defined, owner):
+    """The entry definition, resolved inside its OWNING class rather than by bare name."""
+    functions, _owners, classes = defined
+    owned = classes.get(owner, {})
+    if name in owned:
+        return owned[name], True
+    return functions.get(name), False
+
+
+def _visit(defined, function, parameters, seen, collect):
+    """Walk one body and everything it calls, carrying each callee's parameter types.
+
+    Memoised on the definition AND its binding signature: the same helper called first with the
+    response and then with the record has to be walked twice.
+    """
+    key = (id(function), tuple(sorted(parameters.items())))
+    if key in seen:
+        return set()
+    seen.add(key)
+    reader = _Reader(function, parameters)
+    found = collect(function, reader)
+    for node in _scoped(function):
+        if not isinstance(node, ast.Call):
+            continue
+        target, method = _hop(node, defined, function)
+        if target is None:
+            continue
+        inner = _bind(target, _handed_over(node), reader, method)
+        if inner is not None:
+            found |= _visit(defined, target, inner, seen, collect)
+    return found
+
+
+def transformed_fields(tree, entries, owner="TaskSettings"):
+    """Recorded fields these methods hand to a call, directly or through what they call.
+
+    A field is handed over as an argument -- positional, keyword, starred or double-splatted --
+    or as the receiver of a method call, since FIELD.method() raises on a value no transformation
+    can consume. Container literals are never descended into: a field buried in a dict passed to
+    a call is not itself handed to one.
+    """
+    defined = _definitions(tree)
+
+    def collect(function, reader):
+        found = set()
+        for node in _scoped(function):
+            if not isinstance(node, ast.Call):
+                continue
+            for _selector, expression in _handed_over(node):
+                carried = reader.type_of(expression)
+                if carried[0] == "field":
+                    found.add(carried[1])
+            if isinstance(node.func, ast.Attribute):
+                carried = reader.type_of(node.func.value)
+                if carried[0] == "field":
+                    found.add(carried[1])
+        return found
+
+    seen, fields = set(), set()
+    for name in entries:
+        function, method = _entry(name, defined, owner)
+        if function is not None:
+            fields |= _visit(defined, function, _entry_parameters(function, method), seen, collect)
+    return fields
+
+
+def value_constraints(tree, entries, owner="TaskSettings"):
+    """Response fields these methods compare against a fixed value.
+
+    A recorded row cannot fail one of these by raising, so there is no call to find it in; what
+    marks it is a comparison of a field of the RESPONSE against a literal or a module constant,
+    in either order. One operator only: a chained comparison is not this shape.
+    """
+    defined = _definitions(tree)
+    constants = _module_constants(tree)
+
+    def literal(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        return None
+
+    def collect(function, reader):
+        found = set()
+        for node in _scoped(function):
+            if not (isinstance(node, ast.Compare) and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))):
+                continue
+            for one, other in ((node.left, node.comparators[0]),
+                               (node.comparators[0], node.left)):
+                carried = reader.type_of(one)
+                if carried[0] != "extfield":
+                    continue
+                value = literal(other)
+                if isinstance(value, str):
+                    found.add((carried[1], value))
+        return found
+
+    seen, found = set(), set()
+    for name in entries:
+        function, method = _entry(name, defined, owner)
+        if function is not None:
+            found |= _visit(defined, function, _entry_parameters(function, method), seen, collect)
+    return found
+
+
+def mutation_probes(fields, constraints):
+    """One probe per derived member, keyed by KIND as well as by field.
+
+    Keyed by field alone, a constraint on a field that is also transformed would overwrite that
+    transformation's mutant, inherit its branch, be refused for the transformation's own reason,
+    and pass -- with the probe count unmoved. Each kind carries the mutant its kind needs: a
+    transformation cannot consume 7, and a value constraint needs a well-typed value that is
+    simply not the authorized one.
+    """
+    probes = [("transformation", field, 7) for field in fields]
+    probes += [("constraint", field, f"not-{literal}") for field, literal in constraints]
+    return sorted(probes)
 
 
 class CliBase(RelayTestCase):
@@ -447,6 +815,51 @@ class SettingsCommands(CliBase):
         )
         self.assertEqual(refused["reason"], "settings_incomplete")
         self.assertIn("environments", refused["detail"])
+
+    def test_a_mistyped_record_is_refused_at_registration(self):
+        """The same predicate a send runs, run where the record is written."""
+        refused = self.run_cli(
+            "settings-record", "--task", PARENT,
+            "--settings", json.dumps(dict(self._settings(), model=7)), expect=2,
+        )
+        self.assertEqual(refused["reason"], "settings_mistyped")
+        self.assertIn("model is int, not str", refused["detail"])
+
+    def test_a_complete_but_mistyped_record_is_not_reported_deliverable(self):
+        """This command has to answer what delivery and doctor answer, not half of it.
+
+        "usable" is about the record HAVING its fields, and this one has all of them. Until the
+        recorded string fields were typed, `not missing()` and `require_usable()` agreed on
+        every row this could be asked about, so "deliverable" could be computed from the first
+        one. They no longer agree, and a row called deliverable here is one delivery withholds
+        and doctor reports refused - which is why the field now runs the predicate itself and
+        says which rule refused.
+
+        Written past the recorder deliberately: registration refuses this input now, so the
+        only way a store holds such a row is an older writer or a hand edit.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.run_cli(
+            "settings-record", "--task", PARENT, "--settings", json.dumps(self._settings()),
+        )
+        store = Store(Path(self.tmp) / "relay.sqlite3")
+        with store.transaction() as db:
+            db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                (json.dumps(dict(self._settings(), cwd=7)), PARENT),
+            )
+        store.db.commit()
+        store.close()
+
+        shown = self.run_cli("settings-show", "--task", PARENT)
+        self.assertTrue(shown["usable"], "the record did not become incomplete")
+        self.assertEqual(shown["missing"], [])
+        self.assertFalse(shown["deliverable"])
+        self.assertEqual(shown["recordFinding"]["code"], "settings_mistyped")
+        self.assertIn("cwd is int, not str", shown["recordFinding"]["detail"])
 
 
 class Diagnosis(unittest.TestCase):
@@ -1557,21 +1970,22 @@ class ParticipantAccessReceipts(CliBase):
         """Readable is not deliverable, and this field is documented as the second one.
 
         The preparation a send performs stops in more than one place and each place stops on
-        its own: a record missing any REQUIRED field is rejected before the sandbox type is
-        looked at, and the resume-params construction in `_guarded_send` fails after both of
-        those. All three records below are readable and none of them can carry its settings
-        to a host - the first two are refused before any transport call, the third fails
-        while the params are built, after `thread/read` and before `thread/resume`
-        (bridge_adapter.py). Reporting any of them as the sandbox the adapter would carry
-        tells an operator access is fine for a participant whose sends are never made.
+        its own: a record missing any REQUIRED field is rejected before the string fields are
+        typed, those are typed before the sandbox type is looked at, and the resume-params
+        construction in `_guarded_send` fails after all of them. All four records below are
+        readable and none of them can carry its settings to a host - the first three are
+        refused before anything is claimed or sent, the fourth fails while the params are
+        built, after `thread/read` and before `thread/resume` (bridge_adapter.py). Reporting
+        any of them as the sandbox the adapter would carry tells an operator access is fine
+        for a participant whose sends are never made.
 
-        Three cases because three versions of this field each stopped one step short of the
-        path: the sandbox type alone, then `require_usable()` alone. A suite missing the last
-        case passes while the field still lies.
+        Three of the four are here because three versions of this field each stopped one step
+        short of the path: the sandbox type alone, then `require_usable()` alone. A suite
+        missing the params-construction case passes while the field still lies.
 
-        The first two are written past the validating recorder deliberately: registration
+        The first three are written past the validating recorder deliberately: registration
         refuses them, so the only way a store holds one is an older writer or a hand edit,
-        which is the case this helper says it supports. The third needs no hand edit at all -
+        which is the case this helper says it supports. The fourth needs no hand edit at all -
         `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
         so this row can arrive through the ordinary recorder and still fail every send.
         """
@@ -1585,16 +1999,22 @@ class ParticipantAccessReceipts(CliBase):
         # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
         incomplete = dict(self.settings(self.root))
         del incomplete["cwd"]
-        # Complete, supported, and still not sendable: require_usable() checks that every
-        # REQUIRED field is present and says nothing about its type, while resume_params
-        # calls list() on this one.
+        # Complete, supported, and still not sendable: require_usable() types the three fields
+        # the resume contract declares as strings and says nothing about this one, while
+        # resume_params calls list() on it.
         unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
+        # Complete and supported too, and refused one gate earlier than that: present is not
+        # the same as usable, and no host answer could tell us what it did with cwd: 7.
+        mistyped = dict(self.settings(self.root), cwd=7)
 
         cases = {
             "an unsupported sandbox type": (
                 unsupported, "unsupported_sandbox_type", "externalSandbox",
             ),
             "a record missing a required field": (incomplete, "settings_incomplete", "cwd"),
+            "a field recorded with a type the contract does not declare": (
+                mistyped, "settings_mistyped", "cwd is int, not str",
+            ),
             "a field the params construction cannot use": (
                 unusable_roots, "unexpected", "TypeError",
             ),
@@ -1658,7 +2078,8 @@ class ParticipantAccessReceipts(CliBase):
         taken from `delivery.py` and `bridge_adapter.py`.
 
         A TRANSFORMATION can fail on the row by raising: every recorded field handed to a
-        call inside those methods. Today `normalise_policy(sandbox)`,
+        call inside those methods. Today `normalise_policy(sandbox)`, the `isinstance` checks
+        `require_usable` applies to `cwd`, `model` and `reasoningEffort`,
         `list(runtimeWorkspaceRoots)`, `normalise_environments(environments)`.
 
         A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
@@ -1667,7 +2088,7 @@ class ParticipantAccessReceipts(CliBase):
         recording anything else cannot be carried AS RECORDED. Nothing raises on such a row,
         which is why the first extraction cannot see it: there is no call to put the field
         into. That member was found by review rather than by this test, and the second
-        extraction below is the answer to that rather than another hand-added case.
+        extraction is the answer to that rather than another hand-added case.
 
         Each derived field is then mutated with the mutant its kind needs - a value no
         transformation can consume, or a well-typed value that is not the authorized literal -
@@ -1678,17 +2099,23 @@ class ParticipantAccessReceipts(CliBase):
         either kind joins the derived set and fails here until the probe reaches it, which is
         the property a written-down list cannot have.
 
-        Both extractions are syntactic and recognize the shapes that are there: a positional
-        `self.data["<field>"]` argument, and a name bound from `get("<field>")` on something
-        other than `self.data` and then compared against a literal or a module constant. A
-        field reached through an alias, a keyword argument, or a helper these do not follow
-        would escape both, so passing this is not a proof of total coverage.
+        The derivation itself is `transformed_fields` and `value_constraints` at module scope,
+        where each shape it follows is proved against source written for the purpose
+        (`FieldExtractionShapes`). What it does NOT follow is recorded in their docstrings,
+        and the short version is: names bound anywhere other than one plain assignment;
+        container literals passed as arguments; non-constant keys; sites other than call
+        arguments and receivers; callables outside the two supported call forms; and anything
+        inside a nested definition's body. Passing this is not proof of total coverage.
+
+        `mutation_probes` keys the probes by KIND as well as by field. Keyed by field alone,
+        a constraint on a field that is also transformed would overwrite that transformation's
+        mutant, inherit its branch, be refused for the transformation's own reason, and pass -
+        with the probe count unmoved.
 
         The floor assertions are not the definition either. They guard the extractors: an AST
         walk that silently matched nothing would run zero mutations and pass, which is how
         this kind of test goes green while holding nothing.
         """
-        import ast
         import inspect
         from pathlib import Path
 
@@ -1697,101 +2124,26 @@ class ParticipantAccessReceipts(CliBase):
         from codex_session_relay.settings import TaskSettings
         from codex_session_relay.store import Store
 
-        def parsed(module):
-            return ast.parse(inspect.getsource(module))
-
         api = {name for name in vars(TaskSettings) if not name.startswith("_")}
         called = set()
         for module in (delivery, bridge_adapter):
-            for node in ast.walk(parsed(module)):
+            for node in ast.walk(ast.parse(inspect.getsource(module))):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                         and node.func.attr in api):
                     called.add(node.func.attr)
 
-        defined = {
-            node.name: node for node in ast.walk(parsed(settings_module))
-            if isinstance(node, ast.FunctionDef)
-        }
-
-        def transformed_fields(name, seen=None):
-            """Recorded fields this method hands to a call, through self.<method>() hops."""
-            seen = set() if seen is None else seen
-            if name in seen or name not in defined:
-                return set()
-            seen.add(name)
-            fields = set()
-            for node in ast.walk(defined[name]):
-                if not isinstance(node, ast.Call):
-                    continue
-                for argument in node.args:
-                    if (isinstance(argument, ast.Subscript)
-                            and isinstance(argument.value, ast.Attribute)
-                            and argument.value.attr == "data"
-                            and isinstance(argument.slice, ast.Constant)
-                            and isinstance(argument.slice.value, str)):
-                        fields.add(argument.slice.value)
-                if (isinstance(node.func, ast.Attribute)
-                        and isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "self"):
-                    fields |= transformed_fields(node.func.attr, seen)
-            return fields
-
-        def constant(node):
-            """A string literal, or a module constant that holds one."""
-            if isinstance(node, ast.Constant):
-                return node.value
-            if isinstance(node, ast.Name):
-                return getattr(settings_module, node.id, None)
-            return None
-
-        def literal_constraints(name, seen=None):
-            """Response fields this method compares against a fixed value.
-
-            The recorded row cannot fail one of these by raising, so it is the recorded
-            VALUE that has to be compared. Read in two passes rather than one, so a
-            comparison is never reached before the name it compares was bound.
-            """
-            seen = set() if seen is None else seen
-            if name in seen or name not in defined:
-                return set()
-            seen.add(name)
-            body = list(ast.walk(defined[name]))
-            bound = {}
-            for node in body:
-                if not (isinstance(node, ast.Assign) and len(node.targets) == 1
-                        and isinstance(node.targets[0], ast.Name)):
-                    continue
-                read = node.value
-                if (isinstance(read, ast.Call) and isinstance(read.func, ast.Attribute)
-                        and read.func.attr == "get" and len(read.args) == 1
-                        and isinstance(read.args[0], ast.Constant)
-                        and isinstance(read.args[0].value, str)
-                        and not (isinstance(read.func.value, ast.Attribute)
-                                 and read.func.value.attr == "data")):
-                    bound[node.targets[0].id] = read.args[0].value
-            found = set()
-            for node in body:
-                if (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-                        and node.left.id in bound):
-                    for comparator in node.comparators:
-                        literal = constant(comparator)
-                        if isinstance(literal, str):
-                            found.add((bound[node.left.id], literal))
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "self"):
-                    found |= literal_constraints(node.func.attr, seen)
-            return found
-
-        fields = set().union(*(transformed_fields(name) for name in called))
-        constraints = set().union(*(literal_constraints(name) for name in called))
+        recorded = ast.parse(inspect.getsource(settings_module))
+        fields = transformed_fields(recorded, called)
+        constraints = value_constraints(recorded, called)
 
         self.assertGreaterEqual(
             called, {"require_usable", "resume_params", "mismatches"},
             "the send path's settings calls were not found, so nothing below is derived",
         )
         self.assertGreaterEqual(
-            fields, {"sandbox", "runtimeWorkspaceRoots", "environments"},
+            fields,
+            {"sandbox", "cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots",
+             "environments"},
             "the extraction found fewer transformations than are known to be there",
         )
         self.assertGreaterEqual(
@@ -1799,16 +2151,19 @@ class ParticipantAccessReceipts(CliBase):
             "the value-constraint extraction found less than is known to be there",
         )
 
-        # One mutant per kind, each derived from what the kind is. A transformation cannot
-        # consume 7 - not a mapping, not a sequence, and present, so the completeness gate
-        # hands it straight on. A value constraint needs a well-typed value that is simply
-        # not the authorized one, taken from the literal itself rather than invented.
-        mutants = {field: 7 for field in fields}
-        mutants.update({field: f"not-{literal}" for field, literal in constraints})
+        probes = mutation_probes(fields, constraints)
+        self.assertEqual(
+            {(kind, field) for kind, field, _mutant in probes},
+            {("transformation", field) for field in fields}
+            | {("constraint", field) for field, _literal in constraints},
+            "every derived member has to be probed as its own kind; merging the two kinds by"
+            " field name drops one of them and asserts the wrong receipt behaviour for the"
+            " one that survives",
+        )
 
         self.seeded()
-        for field, mutant in sorted(mutants.items()):
-            with self.subTest(constrains=field):
+        for kind, field, mutant in probes:
+            with self.subTest(constrains=field, kind=kind):
                 stale = dict(self.settings(self.root))
                 stale[field] = mutant
                 store = Store(Path(self.tmp) / "relay.sqlite3")
@@ -1824,7 +2179,7 @@ class ParticipantAccessReceipts(CliBase):
                     "doctor", state=self.tmp, pin=self.tmp,
                 )["accessReceipt"]["recordedSandbox"]["participants"][CHILD]
 
-                if field in fields:
+                if kind == "transformation":
                     # A transformation cannot consume it, so no host can either: the row
                     # itself settles the send.
                     self.assertIsNot(
@@ -2172,3 +2527,382 @@ class TheCommandRunsAsACommand(unittest.TestCase):
         self.assertFalse(payload["restatement"]["current"])
         self.assertIn(forge.LATE_FINDING,
                       [one["code"] for one in payload["restatement"]["problems"]])
+
+
+class FieldExtractionShapes(unittest.TestCase):
+    """The derivation, run against source written to escape the one it replaced.
+
+    The coverage test above cannot prove this. Its subject is settings.py, which contains one
+    spelling of each shape, so an extraction that had quietly stopped following aliases would
+    still find every member it is asked for. This module is written for the purpose: one shape
+    per branch the derivation implements, plus one trap per false positive it must not produce.
+
+    The expectations below are exact sets. A widening that stops working drops a member; a rule
+    that loosens adds one. Both fail here. That is deliberate and it is not the hand-written list
+    the coverage test refuses to keep: these are the fixture's own names, not the recorded
+    settings fields, and the point of writing them down is that the fixture is the specimen.
+
+    What is NOT proved here, because the derivation does not claim it: anything inside a nested
+    definition's BODY (a nested function's is deferred; a nested class body executes immediately
+    but would need its own binding scope), a class-qualified call, an async definition or awaited
+    call, a staticmethod or classmethod, any callable reached through an attribute chain other
+    than self.<name>, a field read with a non-constant key, and a field buried in a container
+    literal. Those are excluded shapes, not missed ones.
+    """
+
+    FIXTURE = '''\
+AUTHORIZED = "never"
+
+
+def carry(value):
+    return value
+
+
+def report(payload):
+    return payload
+
+
+def through(record):
+    carry(record["reachedPositionally"])
+
+
+def by_name(record):
+    carry(record["reachedByName"])
+
+
+def collide(record):
+    carry(record["reachedAsModuleFunction"])
+
+
+def positional_only(record, /):
+    carry(record["reachedPositionalOnly"])
+
+
+def keyword_only(*, record):
+    carry(record["reachedKeywordOnly"])
+
+
+def positional_only_by_name(record, /):
+    carry(record["wronglyBoundPosonlyKeyword"])
+
+
+def vararg_capture(*rest):
+    carry(rest["wronglyBoundRest"])
+
+
+def kwarg_capture(**extra):
+    carry(extra["wronglyBoundKwargs"])
+
+
+def duplicate(record):
+    carry(record["wronglyBoundDuplicate"])
+
+
+class Other:
+    def reach(self, record):
+        carry(record["wrongClass"])
+
+    def send(self, response):
+        return None
+
+
+def varargs_signature(record, *rest):
+    carry(record["reachedPastVarargs"])
+
+
+def kwargs_signature(record, **extra):
+    carry(record["reachedPastKwargs"])
+
+
+def splatted(record):
+    carry(record["unreachedBySplat"])
+
+
+def kw_splatted(record):
+    carry(record["unreachedByKwSplat"])
+
+
+def after_star(first, second):
+    carry(second["unreachedAfterStar"])
+
+
+def twice(record):
+    carry(record["memoTransformation"])
+    if record.get("memoConstraint") != AUTHORIZED:
+        return None
+
+
+def loops(record):
+    loops(record)
+    carry(record["reachedThroughRecursion"])
+
+
+def ping(record):
+    pong(record)
+
+
+def pong(record):
+    ping(record)
+    carry(record["reachedThroughMutualRecursion"])
+
+
+def given_a_field(policy):
+    kind = policy.get("type")
+    if kind == "workspaceWrite":
+        return kind
+    return carry(policy)
+
+
+def checked(payload):
+    if payload.get("viaHelper") != AUTHORIZED:
+        return None
+    return payload
+
+
+class TaskSettings:
+    def __init__(self, data):
+        self.data = data
+
+    def collide(self):
+        carry(self.data["reachedAsMethod"])
+
+    def reach_by_method(self):
+        carry(self.data["reachedByMethod"])
+
+    def reach_with(self, record):
+        carry(record["reachedByMethodParameter"])
+
+    def reach(self, record):
+        carry(record["rightClass"])
+
+    def reach_past_posonly_self(self, /, record):
+        carry(record["reachedPastPosonlySelf"])
+
+    def duplicate_method(self, record):
+        carry(self.data["wronglyReachedDuplicateBody"])
+
+    def send(self, response):
+        row = self.data
+        carry(self.data["silentlyMissedEntryField"])
+        carry(row["aliased"])
+        value = self.data["bound"]
+        carry(value)
+        defaulted = self.data["ordefault"] or {}
+        carry(defaulted)
+        carry(self.data.get("viaGet"))
+        self.data["viaReceiver"].strip()
+        carry(keyword=self.data["keyword"])
+        carry(*self.data["starred"])
+        carry(**self.data["splat"])
+        carry(self.data["dual"])
+
+        through(self.data)
+        by_name(record=self.data)
+        positional_only(self.data)
+        keyword_only(record=self.data)
+        positional_only_by_name(record=self.data)
+        vararg_capture(self.data)
+        kwarg_capture(extra=self.data)
+        duplicate(response, record=self.data)
+        self.duplicate_method(response, record=self.data)
+        self.reach(self.data)
+        self.reach_past_posonly_self(record=self.data)
+        varargs_signature(self.data)
+        kwargs_signature(self.data)
+        collide(self.data)
+        self.collide()
+        self.reach_by_method()
+        self.reach_with(self.data)
+        twice(response)
+        twice(self.data)
+        loops(self.data)
+        ping(self.data)
+        given_a_field(self.data["typed"])
+        checked(response)
+
+        splatted(*self.data["packed"])
+        kw_splatted(**self.data["packedKw"])
+        after_star(*response, self.data)
+
+        report({"buried": self.data["buried"]})
+
+        rebound = self.data["shadowedByRebinding"]
+        rebound = response
+        carry(rebound)
+        accumulated = self.data["shadowedByAugmenting"]
+        accumulated += response
+        carry(accumulated)
+        unpacked = self.data["shadowedByUnpacking"]
+        unpacked, ignored = response, response
+        carry(unpacked)
+        looped = self.data["shadowedByFor"]
+        for looped in ("a", "b"):
+            carry(looped)
+        comprehended = self.data["shadowedByComprehension"]
+        [carry(comprehended) for comprehended in response]
+        managed = self.data["shadowedByWith"]
+        with report(response) as managed:
+            carry(managed)
+        caught = self.data["shadowedByExcept"]
+        try:
+            report(response)
+        except ValueError as caught:
+            carry(caught)
+        walrus = self.data["shadowedByWalrus"]
+        carry(walrus := response)
+        carry(walrus)
+        startail = self.data["shadowedByStarredUnpacking"]
+        starhead, *startail = response
+        carry(startail)
+        annotated = self.data["shadowedByAnnotation"]
+        annotated: object = response
+        carry(annotated)
+        other = self.data["shadowedByChainedAssignment"]
+        chained = other = response
+        carry(other)
+        outer = self.data
+
+        def dormant(value=carry(self.data["missedNestedDefault"])):
+            outer = response
+            carry(self.data["wronglyNestedBody"])
+
+        def annotated_dormant(
+            value: carry(self.data["missedParameterAnnotation"]),
+        ) -> carry(self.data["missedReturnAnnotation"]):
+            return value
+
+        carry(outer["reachedDespiteNestedBinding"])
+        for key in ("a", "b"):
+            if key == "notAField":
+                carry(key)
+
+        bound = response.get("chained")
+        same = bound
+        if "never" == same:
+            return None
+        echo = response
+        if echo.get("aliasedResponse") != AUTHORIZED:
+            return None
+        if response["subscripted"] != AUTHORIZED:
+            return None
+        spin = spin or {}
+        carry(spin)
+        if response.get("inline") != "never":
+            return None
+        if response.get("isShape") is AUTHORIZED:
+            return None
+        if response.get("isNotShape") is not AUTHORIZED:
+            return None
+        if response.get("dual") != AUTHORIZED:
+            return None
+        if AUTHORIZED == response.get("chainedCompare") == "other":
+            return None
+        if response.get("orderedCompare") < "never":
+            return None
+        nested = response.get("thread") or {}
+        if nested.get("sub") != AUTHORIZED:
+            return None
+        if response.get("recorded") != self.data.get("expectedProfile"):
+            return None
+        return None
+'''
+
+    def derived(self):
+        tree = ast.parse(self.FIXTURE)
+        return transformed_fields(tree, ["send"]), value_constraints(tree, ["send"])
+
+    def test_every_shape_the_transformation_walk_follows_is_followed(self):
+        """One name per branch, and nothing the walk must refuse.
+
+        Each name says which shape put it here. The reached* names come through a helper hop of
+        some kind; viaGet and viaReceiver are the two access spellings beside the subscript;
+        keyword, starred and splat are the three argument forms. The names the set must NOT hold
+        say the same thing in reverse: shadowed* is a recorded field whose name was then rebound
+        through a construct the walk has to treat as OTHER, wrongly* is a binding Python itself
+        would refuse, unreached* is a parameter the walk must not pretend to know, and buried is
+        a field inside a container literal handed to a call.
+        """
+        fields, _constraints = self.derived()
+        self.assertEqual(
+            fields,
+{
+            "aliased",
+            "bound",
+            "dual",
+            "keyword",
+            "memoTransformation",
+            "missedNestedDefault",
+            "missedParameterAnnotation",
+            "missedReturnAnnotation",
+            "ordefault",
+            "packed",
+            "packedKw",
+            "reachedAsMethod",
+            "reachedAsModuleFunction",
+            "reachedByMethod",
+            "reachedByMethodParameter",
+            "reachedByName",
+            "reachedDespiteNestedBinding",
+            "reachedKeywordOnly",
+            "reachedPastKwargs",
+            "reachedPastPosonlySelf",
+            "reachedPastVarargs",
+            "reachedPositionalOnly",
+            "reachedPositionally",
+            "reachedThroughMutualRecursion",
+            "reachedThroughRecursion",
+            "rightClass",
+            "silentlyMissedEntryField",
+            "splat",
+            "starred",
+            "typed",
+            "viaGet",
+            "viaReceiver",
+        },
+            "a shape the derivation is supposed to follow stopped being followed, or a rule"
+            " loosened and invented a field; the difference names which",
+        )
+
+    def test_the_constraint_walk_follows_its_shapes_and_nothing_else(self):
+        """Comparisons against a fixed value, and the four that only look like one.
+
+        Out: a sub-object of the response, a sub-key read off a field-typed helper parameter, a
+        comparator that is itself a record read, and a chained comparison.
+        """
+        _fields, constraints = self.derived()
+        self.assertEqual(
+            constraints,
+{
+            ("aliasedResponse", "never"),
+            ("chained", "never"),
+            ("dual", "never"),
+            ("inline", "never"),
+            ("isNotShape", "never"),
+            ("isShape", "never"),
+            ("memoConstraint", "never"),
+            ("subscripted", "never"),
+            ("viaHelper", "never"),
+        },
+            "the value-constraint walk changed shape",
+        )
+
+    def test_a_field_derived_as_both_kinds_keeps_one_probe_per_kind(self):
+        """The collision the real module cannot show, because its two sets are disjoint.
+
+        dual is handed to a call AND compared against the authorized literal. Keyed by field
+        alone the two would collapse into one probe, and the survivor would be asserted against
+        the wrong receipt behaviour without the count moving.
+        """
+        fields, constraints = self.derived()
+        self.assertIn("dual", fields)
+        self.assertIn(("dual", "never"), constraints)
+        probes = mutation_probes(fields, constraints)
+        self.assertEqual(
+            [(kind, field) for kind, field, _mutant in probes if field == "dual"],
+            [("constraint", "dual"), ("transformation", "dual")],
+            "a field derived as both kinds lost one of its probes",
+        )
+        self.assertEqual(
+            len(probes), len(fields) + len(constraints),
+            "the probe set is smaller than the derived members, so two of them merged",
+        )

@@ -4967,7 +4967,14 @@ def _register_mcp_owned(args, codex_home):
                        note="nothing was written: the file could not be scanned")
 
     wrote = False
-    if args.apply and outcome == codexconfig.CREATED:
+    if not (args.apply and outcome == codexconfig.CREATED):
+        # Nothing will be written on this path, so this read confirms no write: it reports the
+        # file as it stands and takes no lock. Taking one here would make a run that writes
+        # nothing wait on, and then refuse for, a lock it never needed. It sits ABOVE the write
+        # rather than below it so that no read of this file follows the write outside the lock,
+        # which is what makes the ordering checkable in source rather than only in a race.
+        after = reading.read_text(path, "the Codex configuration")
+    else:
         # Held under one lock for the whole read-modify-write, re-read immediately before
         # replacing, and written by temp file and replace. That coordinates runs of this
         # command with each other and removes truncation. It cannot coordinate with an editor
@@ -4993,6 +5000,13 @@ def _register_mcp_owned(args, codex_home):
                 if outcome == codexconfig.CREATED:
                     hostrecord.atomic_write(path, fresh)
                     new_text, wrote = fresh, True
+                # Read back INSIDE the lock that guarded the write, which is what makes
+                # readBack a claim about the bytes this run wrote. Taken after the lock was
+                # released, a writer taking the same lock could land in between and this run
+                # would report a verified round trip over somebody else's registration. The
+                # sibling that appends a hook has always read back here; this is the same
+                # ordering, not a stricter one.
+                after = reading.read_text(path, "the Codex configuration")
         except hostrecord.Busy as error:
             emit({"command": "register-mcp", "path": str(path), "outcome": BUSY,
                   "detail": str(error), "applied": False, "wrote": False,
@@ -5003,7 +5017,6 @@ def _register_mcp_owned(args, codex_home):
                            wrote=False, otherTablesPreserved=True,
                            note="nothing was written: the reread could not be scanned")
 
-    after = reading.read_text(path, "the Codex configuration")
     if not after.usable:
         if wrote:
             # The table landed and the file cannot be read back. Reporting this as a refusal
