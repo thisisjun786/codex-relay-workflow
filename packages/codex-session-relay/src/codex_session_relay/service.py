@@ -29,6 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SCOPE_ENV = "CODEX_SESSION_RELAY_SCOPE_DIR"
+# Carries the id of the launch whose execution policy is already settled. Set by a service on
+# the daemon it launches and read only by that daemon, which is why it is an environment key
+# rather than an option: the command surface is where a caller composes a command from, and
+# nothing about this is a caller's to state.
+LAUNCH_SETTLED_ENV = "CODEX_SESSION_RELAY_LAUNCH_POLICY_SETTLED"
 PRODUCTION, ISOLATED = "production", "isolated"
 
 DAEMON_LOCK = "daemon.lock"
@@ -36,6 +41,7 @@ DAEMON_RECORD = "daemon.json"
 WORKER_POLICY = "worker-policy.json"
 WORKER_POLICY_LIMIT = 65536
 SERVICE_INTENT = "service.json"
+LAUNCH_POLICY = "launch-policy.json"
 DAEMON_LOG = "daemon.log"
 STOP_REQUEST = "stop.request"
 
@@ -411,6 +417,105 @@ class ServiceIntent:
         return dict(payload, configured=True)
 
 
+@dataclass
+class LaunchPolicy:
+    """Which execution policy file this service launches its daemon with.
+
+    The daemon reads its role policy from its OWN environment, once, at startup. Until this
+    record existed the only thing that put the variable there was the shell that typed the
+    command, so the policy a service ran on was a property of whoever last typed it: a restart
+    from a shell without it left the worker able to read no policy at all and every role-bound
+    delivery withheld, while the file, the installation and the owner's intent were all
+    unchanged. The declaration belongs to the service, so a launch carries it.
+
+    It names the FILE and never copies what is in it. Every launch still reads the policy from
+    that path, so editing the policy takes effect at the next restart exactly as before and
+    this is not a second place a policy can be written.
+
+    Kept out of service.json for the reason worker-policy.json is kept out of daemon.json:
+    enable and disable replace that document wholesale, and a disable followed by an enable
+    must not silently drop the declaration every later launch depends on.
+    """
+
+    path: Path
+
+    def read(self) -> dict:
+        """The declaration, or its absence, or the fact that it cannot be read.
+
+        Those are three answers rather than two. An unreadable record read as an absent one
+        would send the next launch back to whatever the calling shell happened to carry, which
+        is the failure this record exists to end - so corruption is reported and absence is
+        not inferred from it.
+        """
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {"path": None, "declaredAt": None, "declaredBy": None, "unreadable": None}
+        except OSError as error:
+            return {"path": None, "declaredAt": None, "declaredBy": None,
+                    "unreadable": f"the launch declaration could not be read: {error}"}
+        try:
+            data = json.loads(raw)
+        except ValueError as error:
+            return {"path": None, "declaredAt": None, "declaredBy": None,
+                    "unreadable": f"the launch declaration is not readable JSON: {error}"}
+        declared = data.get("path") if isinstance(data, dict) else None
+        if not isinstance(declared, str) or not declared.strip():
+            return {"path": None, "declaredAt": None, "declaredBy": None,
+                    "unreadable": "the launch declaration names no execution policy file"}
+        return {"path": declared, "declaredAt": data.get("declaredAt"),
+                "declaredBy": data.get("declaredBy"), "unreadable": None}
+
+    def write(self, *, path: str, actor: str) -> dict:
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload = {"schemaVersion": 1, "path": path, "declaredAt": _now(), "declaredBy": actor}
+        # Replaced atomically, like every other record here. A launch that read the truncated
+        # middle of this file would refuse to start a service whose declaration was fine.
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}")
+        try:
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temporary, self.path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
+        return dict(payload)
+
+    def forget(self) -> dict:
+        """Drop the declaration and report what it was, so a receipt can name it."""
+        before = self.read()
+        self.path.unlink(missing_ok=True)
+        return before
+
+
+def canonical_policy_path(value):
+    """One spelling of a policy file, for comparing two of them.
+
+    A declaration is stored as the operator wrote it, absolute and expanded but not resolved,
+    because a symlink they chose is a path they chose. Comparison is a different question:
+    './p', '~/p', a trailing slash and an alias of one file are one file, and reporting them
+    as two would refuse a launch over a disagreement that does not exist.
+    """
+    try:
+        return str(Path(value).expanduser().absolute().resolve())
+    except (OSError, RuntimeError, ValueError):  # pragma: no cover - a path the OS refuses
+        return str(value)
+
+
+def launch_policy_refusal(resolution):
+    """The refusal a launch owes when it cannot say which policy file it would read.
+
+    Two states, one answer: two files named at once, and a record that cannot be read. Both
+    are questions only the operator can settle, and both are decided before anything is
+    stopped, so a disagreement is a diagnosis rather than an outage.
+    """
+    if resolution["source"] not in ("conflict", "unreadable_record"):
+        return None
+    return {"ok": False,
+            "reason": ("launch_policy_conflict" if resolution["source"] == "conflict"
+                       else "launch_policy_unreadable"),
+            "detail": resolution["detail"], "launchPolicy": resolution}
+
+
 class RelayService:
     """Start, stop and describe the daemon that belongs to THIS installation."""
 
@@ -432,6 +537,11 @@ class RelayService:
             scope = ScopeRegistry(root, authority)
         self.scope = scope
         self.intent = ServiceIntent(selection.path / SERVICE_INTENT)
+        self.launch = LaunchPolicy(selection.path / LAUNCH_POLICY)
+        # The resolution the current launch was decided under, frozen by start() and applied
+        # by the launcher. Resolving twice would let a declaration written in between produce
+        # a conflict AFTER a restart had already stopped the service.
+        self.launch_environment = None
         self.installation_id = installation_id(selection.path)
 
     @property
@@ -840,6 +950,30 @@ class RelayService:
             }
         return {"ok": True, "reason": None}
 
+    def _holder_refusal(self):
+        """None when nothing foreign holds this state directory, or the refusal that says so.
+
+        Called with the daemon lock already refused to this process, by every writer of a
+        record this state directory SHARES. One spelling of that question on purpose: two
+        copies is how the classification one caller validates against drifts away from the one
+        every other caller performs.
+        """
+        record = self.record()
+        owner, handle, detail = self.ownership(record)
+        if handle is not None:
+            handle.close()
+        # Read from the record as well as from the classification. A supervisor on its way
+        # out clears its pids before releasing the lock, and ownership answers none once both
+        # are absent - exactly the interval in which a foreign shutdown could be reversed.
+        markers = self._foreign_markers(record) if record else []
+        if self._holder_is_ours(record, owner, markers):
+            return None
+        return {"ok": False,
+                "reason": ("not_ours" if (owner == FOREIGN or markers)
+                           else "ownership_unverifiable"),
+                "detail": detail or "; ".join(markers) or (
+                    "the daemon lock is held but nothing here identifies its owner")}
+
     def enable(self, *, actor: str = "cli") -> dict:
         # The same ownership question disable asks, and decided and written under the SAME
         # lock for the same reason. service.json is shared by everything pointed at this
@@ -851,26 +985,11 @@ class RelayService:
         # is itself the answer that one is already there to be classified.
         with self.daemon_lock_if_free() as held:
             if held is None:
-                record = self.record()
-                owner, handle, detail = self.ownership(record)
-                if handle is not None:
-                    handle.close()
-                # Read from the record as well as from the classification. A supervisor on
-                # its way out clears its pids before releasing the lock, and ownership
-                # answers none once both are absent - exactly the interval in which a foreign
-                # shutdown could be reversed.
-                markers = self._foreign_markers(record) if record else []
-                if not self._holder_is_ours(record, owner, markers):
-                    return {"ok": False,
-                            "reason": ("not_ours" if (owner == FOREIGN or markers)
-                                       else "ownership_unverifiable"),
-                            "detail": detail or "; ".join(markers) or (
-                                "the daemon lock is held but nothing here identifies its"
-                                " owner"
-                            ),
-                            "intent": self.intent.read(),
-                            "note": "intent is shared with the owner of this state directory"
-                                    " and was left unchanged"}
+                refusal = self._holder_refusal()
+                if refusal is not None:
+                    return dict(refusal, intent=self.intent.read(),
+                                note="intent is shared with the owner of this state directory"
+                                     " and was left unchanged")
             # Either nothing is running here - a stopped registration belonging to someone
             # else is not a reason to refuse an owner configuring their own installation, and
             # refusing then would make a state directory unusable forever - or what is
@@ -895,25 +1014,16 @@ class RelayService:
             if held is None:
                 # Someone holds it. Re-read: a supervisor that started between our read and
                 # now has published its record, or is about to.
-                record = self.record()
-                owner, handle, detail = self.ownership(record)
-                if handle is not None:
-                    handle.close()
-                markers = self._foreign_markers(record) if record else []
-                if not self._holder_is_ours(record, owner, markers):
-                    refusal = {
-                        "ok": False,
-                        "reason": ("not_ours" if (owner == FOREIGN or markers)
-                                   else "ownership_unverifiable"),
-                        "detail": detail or "; ".join(markers) or (
-                            "the daemon lock is held but nothing here identifies its owner"
-                        ),
-                        "intent": self.intent.read(),
-                        "stop": {"ok": False, "reason": "refused",
-                                 "supervisor": "untouched", "worker": "untouched"},
-                        "note": "intent is shared with the owner of this state directory and"
-                                " was left unchanged",
-                    }
+                held_by_other = self._holder_refusal()
+                if held_by_other is not None:
+                    refusal = dict(
+                        held_by_other,
+                        intent=self.intent.read(),
+                        stop={"ok": False, "reason": "refused",
+                              "supervisor": "untouched", "worker": "untouched"},
+                        note="intent is shared with the owner of this state directory and"
+                             " was left unchanged",
+                    )
             if refusal is None:
                 written = self.intent.write(enabled=False, actor=actor)
         if refusal is not None:
@@ -926,6 +1036,149 @@ class RelayService:
         return {"ok": not failed, "reason": stopped["reason"] if failed else None,
                 "intent": written, "stop": stopped}
 
+    def resolve_launch_policy(self, environ=None) -> dict:
+        """Which execution policy a daemon launched from here reads, and where it came from.
+
+        An INPUT to the next launch and never a reading of a running one. What the serving
+        worker resolved is its own published receipt, and the two disagree from the moment a
+        declaration changes until the service is restarted, which is why status reports them
+        side by side rather than as one answer.
+
+        The declaration wins where there is one. A process that exports a different file is
+        not overruled quietly: that is refused, because choosing between two policy files by
+        preference is how the policy a service runs on became a property of whoever typed the
+        command. With no declaration the environment still launches the service, exactly as it
+        did before this record existed, and says that nothing recorded it.
+        """
+        from . import rolepolicy
+
+        environ = os.environ if environ is None else environ
+        stated = (environ.get(rolepolicy.ENVIRONMENT_VARIABLE) or "").strip()
+        record = self.launch.read()
+        declared = record["path"]
+        answer = {"variable": rolepolicy.ENVIRONMENT_VARIABLE, "path": None, "source": None,
+                  "record": declared, "environment": stated or None,
+                  "declaredAt": record["declaredAt"], "declaredBy": record["declaredBy"],
+                  "state": None, "digest": None, "persisted": None, "detail": None,
+                  "hint": None}
+        if record["unreadable"]:
+            answer["source"] = "unreadable_record"
+            answer["detail"] = record["unreadable"]
+            answer["hint"] = (
+                "declare the file again with service declare --execution-policy, or drop the"
+                " record with service declare --forget-execution-policy. A launch does not"
+                " fall back to this process's environment to cover an unreadable record"
+            )
+            return answer
+        if declared and stated and (
+                canonical_policy_path(stated) != canonical_policy_path(declared)):
+            answer["source"] = "conflict"
+            answer["detail"] = (
+                f"this service declares {declared!r} and {rolepolicy.ENVIRONMENT_VARIABLE} in"
+                f" this process names {stated!r}"
+            )
+            answer["hint"] = (
+                "two files are not a preference: unset the variable to launch on the"
+                " declaration, or declare that other file"
+            )
+            return answer
+        if declared:
+            answer.update(path=declared, source="record", persisted=True)
+        elif stated:
+            # Machine-readable, because the difference between these two sources is the whole
+            # subject: one survives a restart typed anywhere, the other is this shell's.
+            answer.update(path=stated, source="environment", persisted=False)
+            answer["hint"] = (
+                "this launch takes the policy from this process's environment and nothing"
+                " records it, so a restart typed anywhere else loses it. Record it with"
+                " service declare --execution-policy"
+            )
+        else:
+            answer["detail"] = (
+                f"no execution policy is declared for this service and"
+                f" {rolepolicy.ENVIRONMENT_VARIABLE} is not set in this process, so a daemon"
+                " launched from here can read none and withholds every role-bound delivery"
+            )
+            return answer
+        reading = self._policy_reading(answer["path"])
+        answer["state"], answer["digest"] = reading["state"], reading["digest"]
+        if reading["detail"]:
+            answer["detail"] = reading["detail"]
+        return answer
+
+    def _policy_reading(self, path) -> dict:
+        """Whether the file a launch would name still resolves, and under which digest.
+
+        A declaration checked when it was written is not a declaration still valid now: the
+        file can be edited, moved or removed afterwards. Read through rolepolicy's explicit
+        environment entry, which neither reads nor writes this process's own snapshot -
+        reporting on a file is not the same act as adopting it.
+
+        Reported rather than refused. The daemon already has the honest answer for a policy it
+        cannot read: it withholds role-bound deliveries and says so. Refusing to start would
+        turn a service that still does everything else into no service at all, over a file
+        this command is only describing.
+        """
+        from . import rolepolicy
+
+        resolved = rolepolicy.declared({rolepolicy.ENVIRONMENT_VARIABLE: path})
+        if resolved:
+            return {"state": "declared", "digest": resolved.digest, "detail": None}
+        return {"state": "unreadable", "digest": None, "detail": resolved.detail}
+
+    def declare_launch_policy(self, path, *, actor: str = "cli") -> dict:
+        """Record the execution policy file this service launches its daemon with.
+
+        Proven to resolve before it is recorded. A declaration nobody checked would be
+        discovered at the next restart by a worker that then withholds every role-bound
+        delivery, which is the failure this record exists to end rather than to relocate.
+
+        Deliberately not written as a side effect of starting. The sibling rule is the one
+        ServiceIntent states: nothing writes the owner's intent because a start happened, and
+        a launch that quietly recorded whatever environment it was typed from would pin one
+        shell's export as this service's policy for every restart after it.
+        """
+        from . import rolepolicy
+
+        candidate = str(Path(path).expanduser().absolute())
+        resolved = rolepolicy.declared({rolepolicy.ENVIRONMENT_VARIABLE: candidate})
+        if not resolved:
+            return {"ok": False, "reason": "execution_policy_unreadable", "path": candidate,
+                    "detail": resolved.detail,
+                    "launchPolicy": self.resolve_launch_policy()}
+        with self.daemon_lock_if_free() as held:
+            if held is None:
+                refusal = self._holder_refusal()
+                if refusal is not None:
+                    return dict(refusal, launchPolicy=self.resolve_launch_policy(),
+                                note="the launch declaration is shared with the owner of this"
+                                     " state directory and was left unchanged")
+            written = self.launch.write(path=candidate, actor=actor)
+        return {"ok": True, "reason": None, "declared": written,
+                "launchPolicy": self.resolve_launch_policy(),
+                "note": "a running daemon keeps the policy it was launched with until it is"
+                        " restarted"}
+
+    def forget_launch_policy(self, *, actor: str = "cli") -> dict:
+        """Drop the declaration, so the next launch falls back to its own environment.
+
+        This can only ever make a launch resolve LESS. With nothing declared and nothing set,
+        the daemon reads no policy and withholds every role-bound delivery, which is the
+        refusal this product already treats as the honest answer.
+        """
+        with self.daemon_lock_if_free() as held:
+            if held is None:
+                refusal = self._holder_refusal()
+                if refusal is not None:
+                    return dict(refusal, launchPolicy=self.resolve_launch_policy(),
+                                note="the launch declaration is shared with the owner of this"
+                                     " state directory and was left unchanged")
+            before = self.launch.forget()
+        return {"ok": True, "reason": None, "forgot": before["path"], "actor": actor,
+                "launchPolicy": self.resolve_launch_policy(),
+                "note": "a running daemon keeps the policy it was launched with until it is"
+                        " restarted"}
+
     def status(self) -> dict:
         record = self.record()
         owner, handle, detail = self.ownership(record)
@@ -933,9 +1186,25 @@ class RelayService:
             handle.close()
         intent = self.intent.read()
         held = self.lock_is_held()
+        launch = self.resolve_launch_policy()
+        # A declaration is what the NEXT launch reads. What the serving worker resolved is its
+        # own receipt, and the two disagree from the moment a declaration changes until the
+        # service is restarted - so both are here, compared, rather than one of them being
+        # read as the other.
+        observed = self.read_worker_policy()
+        running = ((observed.get("policy") or {}).get("digest")
+                   if observed.get("observed") else None)
+        launch["appliesTo"] = "the next daemon launched from this state directory"
+        launch["runningDigest"] = running
+        launch["matchesRunning"] = (
+            "same" if running and launch["digest"] and running == launch["digest"]
+            else "different" if running and launch["digest"] else "unknown"
+        )
         return {
             "enabled": intent["enabled"], "intentConfigured": intent["configured"],
             "intentChangedAt": intent["changedAt"], "intentChangedBy": intent["changedBy"],
+            # What the next launch would read, never a claim about the running one.
+            "launchPolicy": launch,
             # Liveness is the lock, not the recorded pid: a supervisor that died leaving a
             # worker alive still holds it through the descriptor the worker inherited.
             "running": held,
@@ -1228,6 +1497,16 @@ class RelayService:
         if not intent["enabled"]:
             return {"ok": False, "reason": "service_disabled", "intent": intent,
                     "detail": "restart never enables a service the owner turned off"}
+        # Decided BEFORE anything is stopped, and carried into the start below. Resolving it
+        # again afterwards would let a declaration written in between refuse a launch whose
+        # service this call had already taken down, which turns a question about two files
+        # into an outage.
+        launch_policy = self.resolve_launch_policy()
+        refusal = launch_policy_refusal(launch_policy)
+        if refusal is not None:
+            return dict(refusal, intent=intent,
+                        stop={"ok": False, "reason": "refused", "supervisor": "untouched",
+                              "worker": "untouched"})
         stopped = self.stop(**{k: v for k, v in kw.items() if k in ("actor", "timeout")})
         if not stopped["ok"] and stopped["reason"] not in ("not_running",):
             return {"ok": False, "reason": stopped["reason"], "stop": stopped}
@@ -1237,13 +1516,15 @@ class RelayService:
             return {"ok": False, "reason": "service_disabled", "stop": stopped,
                     "intent": self.intent.read(),
                     "detail": "intent changed to disabled while the service was stopping"}
-        started = self.start(allow_isolated=allow_isolated, launcher=launcher, **kw)
+        started = self.start(allow_isolated=allow_isolated, launcher=launcher,
+                             launch_policy=launch_policy, **kw)
         return {"ok": started["ok"], "reason": started["reason"], "stop": stopped,
                 "start": started}
 
     def start(self, *, allow_isolated: bool = False, launcher=None, actor: str = "cli",
               max_ticks=None, deadline=None, segment_seconds=None, max_segments=None,
-              timeout: float = 20.0, poll: float = 0.05, takeover: bool = False) -> dict:
+              timeout: float = 20.0, poll: float = 0.05, takeover: bool = False,
+              launch_policy=None) -> dict:
         """Preconditions here; ownership in the child.
 
         The daemon lock and the scope claim are taken by the process that will HOLD them, not
@@ -1258,6 +1539,13 @@ class RelayService:
         if not intent["enabled"]:
             return {"ok": False, "reason": "service_disabled", "intent": intent,
                     "detail": "start never enables a service; enable it explicitly first"}
+        # One reading for the whole launch: this call's own when it was not handed one by a
+        # restart that already decided.
+        launch_policy = (self.resolve_launch_policy() if launch_policy is None
+                         else launch_policy)
+        refusal = launch_policy_refusal(launch_policy)
+        if refusal is not None:
+            return refusal
         if self.lock_is_held():
             return {"ok": False, "reason": "already_running", "status": self.status()}
         live = [conflict for conflict in self.conflicts() if conflict["live"]]
@@ -1272,13 +1560,14 @@ class RelayService:
 
         launch = uuid.uuid4().hex
         self.launch_id = launch
+        self.launch_environment = launch_policy
         child = (launcher or self.default_launcher)(
             self, allow_isolated=allow_isolated, max_ticks=max_ticks, deadline=deadline,
             segment_seconds=segment_seconds, max_segments=max_segments,
         )
         deadline_at = time.monotonic() + timeout
         try:
-            return self._await_launch(child, launch, deadline_at, timeout=timeout, poll=poll)
+            result = self._await_launch(child, launch, deadline_at, timeout=timeout, poll=poll)
         except BaseException:
             # Anything that leaves this call without a confirmed result - an exception, a
             # KeyboardInterrupt while recovery is still initialising - leaves a child the
@@ -1287,6 +1576,10 @@ class RelayService:
             # was never told had succeeded.
             self._abandon(child, timeout=timeout)
             raise
+        # What this launch was decided under, reported whether it reported itself ready or
+        # not: a launch that failed for another reason still says which policy it carried.
+        result["launchPolicy"] = launch_policy
+        return result
 
     def _await_launch(self, child, launch, deadline_at, *, timeout, poll):
         """Wait for the child to publish a record this call can recognise as its own launch."""
@@ -1377,8 +1670,33 @@ class RelayService:
         # The transport ledger resolves from the environment, not from --state, so a managed
         # launch forwarding only the flag would inherit the store/ledger split.
         environment["CODEX_SESSION_RELAY_STATE"] = str(self.selection.path)
+        # The execution policy this SERVICE is declared with, applied rather than inherited.
+        # The daemon reads it once from its own environment at startup, so a launch that only
+        # passed on whatever the calling shell carried made the policy a property of whoever
+        # typed the command: the same restart, typed in two terminals, produced a service
+        # enforcing roles and a service withholding every role-bound delivery. start() froze
+        # this reading before anything was stopped and it is applied here unchanged.
+        policy = self.launch_environment or self.resolve_launch_policy()
+        if launch_policy_refusal(policy) is not None:
+            # Unreachable through start(), which refuses first and reports it as a payload. A
+            # caller reaching the launcher directly gets the same answer rather than a guess
+            # between two policy files.
+            raise ValueError(policy["detail"])
+        if policy["path"]:
+            environment[policy["variable"]] = policy["path"]
         if self.launch_id:
             argv += ["--launch-id", self.launch_id]
+            # And this launch's decision is settled: the daemon adopts the environment it was
+            # given instead of reading the declaration again on the way up. Without it a
+            # declaration written between this launch and that read turns an environment this
+            # service already approved into a conflict, refused by the child after the restart
+            # had stopped the old daemon - the outage the frozen resolution exists to prevent,
+            # one process boundary further out.
+            #
+            # Bound to THIS launch's id, so it says nothing about any other one, and it is not
+            # a defence against the user who owns both processes: it cannot be, since that user
+            # can rewrite the declaration itself. It is the launch saying what it decided.
+            environment[LAUNCH_SETTLED_ENV] = self.launch_id
         if self.takeover:
             # The supervisor is the process that CLAIMS the scope, so the flag has to reach
             # it. Set only on this object, it was dropped at the process boundary and the

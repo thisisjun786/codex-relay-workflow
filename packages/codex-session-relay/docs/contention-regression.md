@@ -123,6 +123,10 @@ What each one waits on:
 - `test_worker_policy.py` starts real policy publishers holding service locks and
   waits on their publication pipe. It stops and replaces those processes to test
   whether a retained policy receipt still names the current worker.
+- `test_launch_policy.py` starts real children to answer the question the module is about:
+  what a daemon launched from a given environment actually resolves, and what a worker
+  launched that way publishes. A mapping that looks right to the parent is not evidence that
+  a child reads a policy out of it, and only a process boundary shows the difference.
 - `test_operational_scale.py` spawns one real replacement worker.
 - `test_cli.py`, `test_management_cli.py` and `test_wp1_regressions.py` shell
   out to the command line.
