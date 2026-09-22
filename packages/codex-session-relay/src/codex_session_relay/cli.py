@@ -764,6 +764,25 @@ def cmd_supervisor_select(services, args) -> dict:
     return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
 
 
+def _observation_file(path) -> dict:
+    """One reading from disk, with an unreadable file named rather than raised as itself.
+
+    OSError and ValueError together, because a file this cannot decode and a file this cannot
+    parse are the same answer to the caller - the reading is unusable - and a
+    UnicodeDecodeError escaping as itself would reach a reader as something other than an
+    unreadable observation.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit2(
+            f"the observation at {path!r} could not be read as a"
+            f" reporting-observation/1 record: {type(error).__name__}: {error}",
+            EXIT_USAGE,
+        ) from error
+
+
 def cmd_supervisor_standing(services, args) -> dict:
     """What a project still owes upward, and the project's own reading beside it.
 
@@ -775,21 +794,7 @@ def cmd_supervisor_standing(services, args) -> dict:
     """
     from . import supervision
 
-    readings = []
-    for path in args.observation or []:
-        # OSError and ValueError together, because a file this cannot decode and a file this
-        # cannot parse are the same answer to the caller - the reading is unusable - and a
-        # UnicodeDecodeError escaping as itself would reach a reader as something other than
-        # an unreadable observation.
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                readings.append(json.load(handle))
-        except (OSError, ValueError) as error:
-            raise SystemExit2(
-                f"the observation at {path!r} could not be read as a"
-                f" reporting-observation/1 record: {type(error).__name__}: {error}",
-                EXIT_USAGE,
-            ) from error
+    readings = [_observation_file(path) for path in args.observation or []]
     return supervision.status_answer(
         services.store, services.linkage, services.assignments, args.project,
         observations=readings)
@@ -801,16 +806,27 @@ def cmd_supervisor_report_recorded(services, args) -> dict:
     The journal entry is what makes the next reading of the same fact converge instead of
     waking the level above again. It says a report was composed; it does not say one arrived,
     and nothing in this store could.
+
+    Keyed on the OBLIGATION, which is why an omission can be recorded here at all. A turn that
+    ended without reporting has no event, so an event-only surface could record a report for
+    every kind of news except the one nobody sent - and the next reading of that same omission
+    would have produced another report, indefinitely.
     """
     from . import supervision
     from .report import read as read_work_report
 
-    obligation = supervision.from_event(
-        services.store, args.event, read_work_report(services.store, args.event))
+    if args.event:
+        obligation = supervision.from_event(
+            services.store, args.event, read_work_report(services.store, args.event))
+        about = f"event {args.event!r}"
+    else:
+        obligation = supervision.from_observation(_observation_file(args.observation))
+        about = f"the observation at {args.observation!r}"
     if obligation is None:
         raise SystemExit2(
-            "this event is not a completion, a new block or a decision the user owes, so there"
-            " is no obligation to record a report against", EXIT_USAGE)
+            f"{about} raises no obligation: an event has to be a completion, a new block or a"
+            " decision the user owes, and an observation has to report state unreported. There"
+            " is nothing here to record a report against", EXIT_USAGE)
     recorded = supervision.record_report(
         services.store, obligation, at=services.clock.iso(), messageId=args.message,
         note=args.note or "")
@@ -2980,7 +2996,13 @@ def build_parser() -> argparse.ArgumentParser:
         "supervisor-report-recorded",
         help="record that a report was produced for this event's obligation, once. It says a"
              " report was composed, never that one arrived")
-    recorded.add_argument("--event", required=True)
+    # Exactly one subject. An omission has no event, so an event-only surface could record a
+    # report for every kind of news except the one nobody sent.
+    subject = recorded.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--event")
+    subject.add_argument("--observation",
+                         help="a reporting-observation/1 file from reporting-show, for an"
+                              " obligation left by a turn that ended without reporting")
     recorded.add_argument("--message", help="the envelope messageId the report was sent under")
     recorded.add_argument("--note")
     recorded.set_defaults(handler=cmd_supervisor_report_recorded)

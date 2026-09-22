@@ -47,6 +47,10 @@ NOT_NEWS = "no_meaningful_transition"
 ALREADY_REPORTED = "already_reported_under_this_obligation"
 ALREADY_RECORDED = "already_in_the_record_the_supervisor_reads"
 NO_CONTACT = "recipient_is_not_contactable"
+# The caller named no recipient, so deliverability was not part of the question it asked. This
+# is not a suppression: answering it as one made every recipient-less reading - which is what
+# a project enumeration does - report that nothing was worth telling anybody.
+NOT_ASKED = "deliverability_was_not_asked_about"
 # Nobody has observed whether the level above can be reached. Different from NO_CONTACT, which
 # is a recipient observed as unreachable, and it fails the same way: without evidence that a
 # wake can land, this does not produce one.
@@ -95,6 +99,12 @@ ID_WIDTH = 32
 # re-observes the host before every send for the same reason: a stored yes is a fact about the
 # moment somebody looked.
 CONTACT_FRESH_FOR = 900.0
+
+# How far ahead of this reading an observation may be dated and still be read as current. A
+# host and this process can disagree by a little; a timestamp beyond that is not evidence
+# about now, and treating it as fresh let a clock that went backwards authorize wakes on
+# lifecycle evidence nobody currently holds.
+CONTACT_FUTURE_TOLERANCE = 60.0
 
 
 def _subject(kind, row, report) -> str:
@@ -383,7 +393,9 @@ def contactable(store, task_id, *, now=None, fresh_for=CONTACT_FRESH_FOR) -> dic
     deliverability, and for the same reason.
     """
     if not task_id:
-        return {"contactable": None, "reason": "no recipient was named"}
+        return {"contactable": None, "asked": False,
+                "reason": "no recipient was named, so deliverability was not part of this"
+                          " question"}
     row = store.one(
         "SELECT deliverable, withhold_reason, detail, observed_at FROM recipient_lifecycle"
         " WHERE task_id = ?", (task_id,))
@@ -406,6 +418,10 @@ def contactable(store, task_id, *, now=None, fresh_for=CONTACT_FRESH_FOR) -> dic
     # intent.moment answers an aware datetime and the clock answers epoch seconds, so the
     # comparison is made in one of them rather than between the two.
     age = now - moment.timestamp()
+    if age < -CONTACT_FUTURE_TOLERANCE:
+        return {**answer, "contactable": None, "ageSeconds": age,
+                "reason": f"the observation is dated {int(-age)}s in the future, so it is not"
+                          f" evidence about now"}
     if age > fresh_for:
         return {**answer, "contactable": None, "ageSeconds": age,
                 "reason": f"the observation is {int(age)}s old, past the {int(fresh_for)}s this"
@@ -439,9 +455,15 @@ def select(store, obligation, *, recipient=None, now=None,
     if prior is not None:
         return {**decision, "report": False, "reason": ALREADY_REPORTED}
     if contact["contactable"] is None:
-        # Not a wake. Deliverability needs positive evidence for the same reason delivery's
-        # own lifecycle check does: an unobserved recipient is a question nobody asked the
-        # host, and answering it optimistically is how a paused task gets woken anyway.
+        if contact.get("asked") is False:
+            # Nobody asked about a recipient, so this answers about the obligation alone: it
+            # stands, nothing has reported it, and whether anybody can be reached is a
+            # separate question this call was not given the means to ask.
+            return {**decision, "report": True, "reason": NOT_ASKED}
+        # A recipient WAS named and could not be established. Deliverability needs positive
+        # evidence for the same reason delivery's own lifecycle check does: an unobserved or
+        # stale recipient is a question nobody has answered recently, and answering it
+        # optimistically is how a paused task gets woken anyway.
         return {**decision, "report": False, "reason": CONTACT_UNMEASURED}
     if contact["contactable"] is False:
         return {**decision, "report": False, "reason": NO_CONTACT}

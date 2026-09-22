@@ -122,12 +122,22 @@ def _pointer_disagreement(stored, incoming):
     cannot disagree with one; an absent pointer on a row written before this contract is the
     same. What is caught is two pointers that both parse and name different purposes, which is
     the case the derived id cannot tell apart on its own.
+
+    The correlation counts too. A replay that keeps its purpose and answers a DIFFERENT message
+    is a different instruction, and returning the stored row for it handed the caller a
+    directive that answers the message it replaced.
     """
     first, second = envelope.parse_reference(stored), envelope.parse_reference(incoming)
     if first is None or second is None:
         return None
-    if first["purpose"] == second["purpose"]:
+    if (first["purpose"], first["correlationId"]) == (second["purpose"],
+                                                      second["correlationId"]):
         return None
+    if first["purpose"] == second["purpose"]:
+        return ("this directive id already answers " + repr(first["correlationId"])
+                + " and the incoming pointer answers " + repr(second["correlationId"])
+                + "; one digest cannot answer two messages, so the later one is recorded as"
+                " its own directive with its own digest")
     return ("this directive id already records the purpose " + repr(first["purpose"])
             + " and the incoming pointer names " + repr(second["purpose"])
             + "; one digest cannot be two instructions, so the later one is recorded as its"
