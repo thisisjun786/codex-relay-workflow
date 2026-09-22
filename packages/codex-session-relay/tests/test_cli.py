@@ -356,9 +356,13 @@ def transformed_fields(tree, entries, owner="TaskSettings"):
 def value_constraints(tree, entries, owner="TaskSettings"):
     """Response fields these methods compare against a fixed value.
 
-    A recorded row cannot fail one of these by raising, so there is no call to find it in; what
-    marks it is a comparison of a field of the RESPONSE against a literal or a module constant,
-    in either order. One operator only: a chained comparison is not this shape.
+    A constraint cannot be found the way a transformation is, because nothing raises on it and
+    so there is no call to look inside; what marks it is a comparison against a literal or a
+    module constant, in either order. One operator only: a chained comparison is not this shape.
+
+    This half reads the RESPONSE. `recorded_constraints` below reads the RECORD, and the two
+    are asserted equal rather than floored separately, because they are one rule seen from its
+    two ends.
     """
     defined = _definitions(tree)
     constants = _module_constants(tree)
@@ -380,6 +384,53 @@ def value_constraints(tree, entries, owner="TaskSettings"):
                                (node.comparators[0], node.left)):
                 carried = reader.type_of(one)
                 if carried[0] != "extfield":
+                    continue
+                value = literal(other)
+                if isinstance(value, str):
+                    found.add((carried[1], value))
+        return found
+
+    seen, found = set(), set()
+    for name in entries:
+        function, method = _entry(name, defined, owner)
+        if function is not None:
+            found |= _visit(defined, function, _entry_parameters(function, method), seen, collect)
+    return found
+
+
+def recorded_constraints(tree, entries, owner="TaskSettings"):
+    """Recorded fields these methods compare against a fixed value. The mirror of the above.
+
+    One line differs -- `field` where that one reads `extfield` -- and it is the line that
+    decides which end of the rule is being read. That is the whole reason this exists as its own
+    extractor rather than a parameter: the recorded half was STRUCTURALLY INVISIBLE while it did
+    not exist, and adding it is what makes the derivation able to see it at all. Run against the
+    source as it stood before the approval policy moved, this returns nothing for that field
+    while `value_constraints` returns it, which is exactly the asymmetry the caller now refuses.
+
+    Walked through the same helper hops, so a constraint applied inside a function reached from
+    one of the entries counts here as it does there.
+    """
+    defined = _definitions(tree)
+    constants = _module_constants(tree)
+
+    def literal(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        return None
+
+    def collect(function, reader):
+        found = set()
+        for node in _scoped(function):
+            if not (isinstance(node, ast.Compare) and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))):
+                continue
+            for one, other in ((node.left, node.comparators[0]),
+                               (node.comparators[0], node.left)):
+                carried = reader.type_of(one)
+                if carried[0] != "field":
                     continue
                 value = literal(other)
                 if isinstance(value, str):
@@ -824,6 +875,25 @@ class SettingsCommands(CliBase):
         )
         self.assertEqual(refused["reason"], "settings_mistyped")
         self.assertIn("model is int, not str", refused["detail"])
+
+    def test_an_unsupported_approval_policy_is_refused_at_registration(self):
+        """A row every send refuses is a row that should never have been written.
+
+        Left to delivery, the refusal is rediscovered once per pass by whoever is waiting for
+        the message rather than once by whoever recorded it - and this particular row used to
+        not be refused at all against a host that normalised the value, which made delivery
+        depend on the host for something the record already settled.
+        """
+        refused = self.run_cli(
+            "settings-record", "--task", PARENT,
+            "--settings", json.dumps(dict(self._settings(), approvalPolicy="on-request")),
+            expect=2,
+        )
+        self.assertEqual(refused["reason"], "unsupported_approval_policy")
+        self.assertIn("on-request", refused["detail"])
+        self.assertIn("never", refused["detail"])
+        shown = self.run_cli("settings-show", "--task", PARENT)
+        self.assertFalse(shown["usable"], "the refused row reached the store")
 
     def test_a_complete_but_mistyped_record_is_not_reported_deliverable(self):
         """This command has to answer what delivery and doctor answer, not half of it.
@@ -1971,21 +2041,24 @@ class ParticipantAccessReceipts(CliBase):
 
         The preparation a send performs stops in more than one place and each place stops on
         its own: a record missing any REQUIRED field is rejected before the string fields are
-        typed, those are typed before the sandbox type is looked at, and the resume-params
-        construction in `_guarded_send` fails after all of them. All four records below are
-        readable and none of them can carry its settings to a host - the first three are
-        refused before anything is claimed or sent, the fourth fails while the params are
-        built, after `thread/read` and before `thread/resume` (bridge_adapter.py). Reporting
-        any of them as the sandbox the adapter would carry tells an operator access is fine
-        for a participant whose sends are never made.
+        typed, those are typed before the approval policy is read, the policy is read before the
+        sandbox type is looked at, and the resume-params construction in `_guarded_send` fails
+        after all of them. All five records below are readable and none of them can carry its
+        settings to a host - the first four are refused before anything is claimed or sent, the
+        fifth fails while the params are built, after `thread/read` and before `thread/resume`
+        (bridge_adapter.py). Reporting any of them as the sandbox the adapter would carry tells
+        an operator access is fine for a participant whose sends are never made.
 
-        Three of the four are here because three versions of this field each stopped one step
-        short of the path: the sandbox type alone, then `require_usable()` alone. A suite
-        missing the params-construction case passes while the field still lies.
+        Three of them are here because three versions of this field each stopped one step short
+        of the path: the sandbox type alone, then `require_usable()` alone. A suite missing the
+        params-construction case passes while the field still lies. The approval policy is here
+        for the opposite reason: this field once reported that row as deliverable and named the
+        problem in a SEPARATE field, which was true of a send whose outcome depended on what the
+        host did with the value, and is no longer true of one that is never made.
 
-        The first three are written past the validating recorder deliberately: registration
+        The first four are written past the validating recorder deliberately: registration
         refuses them, so the only way a store holds one is an older writer or a hand edit,
-        which is the case this helper says it supports. The fourth needs no hand edit at all -
+        which is the case this helper says it supports. The fifth needs no hand edit at all -
         `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
         so this row can arrive through the ordinary recorder and still fail every send.
         """
@@ -2006,6 +2079,10 @@ class ParticipantAccessReceipts(CliBase):
         # Complete and supported too, and refused one gate earlier than that: present is not
         # the same as usable, and no host answer could tell us what it did with cwd: 7.
         mistyped = dict(self.settings(self.root), cwd=7)
+        # Complete, well-typed, and refused for what a value MEANS rather than what it is: this
+        # transport cannot service an interactive approval, so the row cannot be carried as
+        # recorded whatever a host would have answered about it.
+        interactive = dict(self.settings(self.root), approvalPolicy="on-request")
 
         cases = {
             "an unsupported sandbox type": (
@@ -2014,6 +2091,9 @@ class ParticipantAccessReceipts(CliBase):
             "a record missing a required field": (incomplete, "settings_incomplete", "cwd"),
             "a field recorded with a type the contract does not declare": (
                 mistyped, "settings_mistyped", "cwd is int, not str",
+            ),
+            "an approval policy this transport cannot carry": (
+                interactive, "unsupported_approval_policy", "'on-request'",
             ),
             "a field the params construction cannot use": (
                 unusable_roots, "unexpected", "TypeError",
@@ -2084,28 +2164,36 @@ class ParticipantAccessReceipts(CliBase):
 
         A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
         `mismatches` refuses any returned `approvalPolicy` that is not the authorized one -
-        and a host that preserves what it was asked for returns what was recorded, so a row
-        recording anything else cannot be carried AS RECORDED. Nothing raises on such a row,
-        which is why the first extraction cannot see it: there is no call to put the field
-        into. That member was found by review rather than by this test, and the second
-        extraction is the answer to that rather than another hand-added case.
+        and nothing raises on it, which is why the transformation extraction cannot see it:
+        there is no call to put the field into. That member was found by review rather than by
+        this test, and the extractions below are the answer to that rather than another
+        hand-added case.
+
+        A constraint has TWO ends and the rule is only real at both. `value_constraints` reads
+        what the verification refuses in the RESPONSE; `recorded_constraints` reads what the
+        validator refuses in the RECORD; and they are asserted EQUAL. That equality is the
+        property, not the floors: a constraint written only against the response leaves the send
+        to whatever the host does with the value, which is the defect this pair exists to catch,
+        and one written only against the record refuses a row the verification would have
+        accepted. Either asymmetry fails here.
 
         Each derived field is then mutated with the mutant its kind needs - a value no
         transformation can consume, or a well-typed value that is not the authorized literal -
-        and the receipt must report it in the field its kind belongs to. A failing
-        transformation settles the send on the row alone, so it makes `deliverable` false. A
-        violated constraint settles only what a host reporting the setting back will do, and a
-        host that replaces it proceeds, so it lands in `refusedIfPreserved`. A new member of
-        either kind joins the derived set and fails here until the probe reaches it, which is
+        and BOTH kinds must make `deliverable` false, because both are now decided on the row
+        before any host is asked. The constraint probe additionally requires the refusal to name
+        the field and the value: 'not deliverable' alone would be satisfied by an unrelated gate
+        rejecting the mutant, and would then pass for a constraint nobody enforces. A new member
+        of either kind joins the derived set and fails here until the probe reaches it, which is
         the property a written-down list cannot have.
 
-        The derivation itself is `transformed_fields` and `value_constraints` at module scope,
-        where each shape it follows is proved against source written for the purpose
-        (`FieldExtractionShapes`). What it does NOT follow is recorded in their docstrings,
-        and the short version is: names bound anywhere other than one plain assignment;
-        container literals passed as arguments; non-constant keys; sites other than call
-        arguments and receivers; callables outside the two supported call forms; and anything
-        inside a nested definition's body. Passing this is not proof of total coverage.
+        The derivation itself is `transformed_fields`, `value_constraints` and
+        `recorded_constraints` at module scope, where each shape each one follows is proved
+        against source written for the purpose (`FieldExtractionShapes`). What they do NOT
+        follow is recorded in their docstrings, and the short version is: names bound anywhere
+        other than one plain assignment; container literals passed as arguments; non-constant
+        keys; sites other than call arguments and receivers; callables outside the two supported
+        call forms; and anything inside a nested definition's body. Passing this is not proof of
+        total coverage.
 
         `mutation_probes` keys the probes by KIND as well as by field. Keyed by field alone,
         a constraint on a field that is also transformed would overwrite that transformation's
@@ -2135,6 +2223,7 @@ class ParticipantAccessReceipts(CliBase):
         recorded = ast.parse(inspect.getsource(settings_module))
         fields = transformed_fields(recorded, called)
         constraints = value_constraints(recorded, called)
+        enforced = recorded_constraints(recorded, called)
 
         self.assertGreaterEqual(
             called, {"require_usable", "resume_params", "mismatches"},
@@ -2149,6 +2238,17 @@ class ParticipantAccessReceipts(CliBase):
         self.assertGreaterEqual(
             constraints, {("approvalPolicy", "never")},
             "the value-constraint extraction found less than is known to be there",
+        )
+        self.assertGreaterEqual(
+            enforced, {("approvalPolicy", "never")},
+            "the recorded-constraint extraction found less than is known to be there",
+        )
+        self.assertEqual(
+            enforced, constraints,
+            "a value the verification refuses in the response and the validator does not refuse"
+            " in the record leaves the send to whatever the host does with it, and a value"
+            " refused only in the record refuses a row the verification would have accepted;"
+            " one rule, both ends",
         )
 
         probes = mutation_probes(fields, constraints)
@@ -2190,22 +2290,25 @@ class ParticipantAccessReceipts(CliBase):
                         self.assertTrue(child["refusedBy"], child)
                         self.assertTrue(child["detail"], child)
                 else:
-                    # A host reporting it back refuses it, one replacing it proceeds. The
-                    # receipt has to say that rather than deny the send outright.
+                    # The record settles this one too, so no host is asked and the receipt has
+                    # to deny the send rather than describe a preparation.
                     self.assertIs(
-                        child.get("deliverable"), True,
-                        f"the receipt denied a send for {field!r} that delivery completes"
-                        " today against a host that replaces the value",
+                        child.get("deliverable"), False,
+                        f"the receipt advertised a send for {field!r} that delivery withholds"
+                        " before any transport call",
                     )
-                    refused = child.get("refusedIfPreserved")
-                    self.assertTrue(
-                        refused,
-                        f"a resume reporting this {field!r} back is refused, and the receipt"
-                        " said nothing about it",
+                    self.assertTrue(child["refusedBy"], child)
+                    # Refused FOR THIS VALUE, not by some other gate that happens to reject the
+                    # mutant. Without this a constraint nobody enforces would pass here on the
+                    # strength of an unrelated refusal, which is the whole failure this test
+                    # exists to make impossible.
+                    self.assertIn(field, child["detail"], child)
+                    self.assertIn(repr(mutant), child["detail"], child)
+                    self.assertNotIn(
+                        "refusedIfPreserved", child,
+                        "the receipt still reports the field that described a send made against"
+                        " a host that replaces the value",
                     )
-                    self.assertEqual(refused["field"], field, refused)
-                    self.assertTrue(refused["refusedBy"], refused)
-                    self.assertTrue(refused["detail"], refused)
 
     def test_a_store_replaced_by_a_copy_under_the_read_is_reported_not_served(self):
         """The receipt's own mid-command replacement check, against the case it missed.
@@ -2802,6 +2905,14 @@ class TaskSettings:
         nested = response.get("thread") or {}
         if nested.get("sub") != AUTHORIZED:
             return None
+        if self.data["recordedSubscripted"] != AUTHORIZED:
+            return None
+        if self.data.get("recordedViaGet") != "never":
+            return None
+        if AUTHORIZED == self.data.get("recordedChained") == "other":
+            return None
+        if self.data.get("recordedOrdered") < "never":
+            return None
         if response.get("recorded") != self.data.get("expectedProfile"):
             return None
         return None
@@ -2809,7 +2920,8 @@ class TaskSettings:
 
     def derived(self):
         tree = ast.parse(self.FIXTURE)
-        return transformed_fields(tree, ["send"]), value_constraints(tree, ["send"])
+        return (transformed_fields(tree, ["send"]), value_constraints(tree, ["send"]),
+                recorded_constraints(tree, ["send"]))
 
     def test_every_shape_the_transformation_walk_follows_is_followed(self):
         """One name per branch, and nothing the walk must refuse.
@@ -2822,7 +2934,7 @@ class TaskSettings:
         would refuse, unreached* is a parameter the walk must not pretend to know, and buried is
         a field inside a container literal handed to a call.
         """
-        fields, _constraints = self.derived()
+        fields, _constraints, _enforced = self.derived()
         self.assertEqual(
             fields,
 {
@@ -2869,7 +2981,7 @@ class TaskSettings:
         Out: a sub-object of the response, a sub-key read off a field-typed helper parameter, a
         comparator that is itself a record read, and a chained comparison.
         """
-        _fields, constraints = self.derived()
+        _fields, constraints, _enforced = self.derived()
         self.assertEqual(
             constraints,
 {
@@ -2883,7 +2995,47 @@ class TaskSettings:
             ("subscripted", "never"),
             ("viaHelper", "never"),
         },
-            "the value-constraint walk changed shape",
+            "the value-constraint walk changed shape, or a recorded-side name leaked into the"
+            " response side",
+        )
+
+    def test_the_recorded_constraint_walk_reads_the_record_not_the_response(self):
+        """The discriminator, verified where nothing else can verify it.
+
+        `recorded_constraints` differs from `value_constraints` by one word, and every other
+        check on it is satisfied by an implementation that got that word wrong. Equality with
+        the response set holds trivially for an extractor that IS the response extractor; the
+        floor holds; and the behavioural probe holds because the row really is refused. So the
+        only place the `field` half of it can be proved is here, against a fixture whose two
+        sides are deliberately named apart.
+
+        `memoConstraint` is in BOTH sets and belongs in both: the fixture hands one helper the
+        response at one call and the record at another, which is the memoisation shape, so the
+        same comparison inside it is a constraint on each. Its presence proves this walk follows
+        the helper hop rather than reading only the entry body. The other two names appear on
+        the record side alone, so an extractor that matched the response would return nine names
+        instead of three and fail.
+
+        Out: a chained comparison, which is not one operator; an ordering comparison, which is
+        not an equality; and a record read compared against a RESPONSE read rather than against
+        a fixed value, which is a comparison of two unknowns and constrains nothing.
+        """
+        _fields, constraints, enforced = self.derived()
+        self.assertEqual(
+            enforced,
+            {("memoConstraint", "never"),
+             ("recordedSubscripted", "never"),
+             ("recordedViaGet", "never")},
+            "the recorded-constraint walk changed shape, or it is reading the response",
+        )
+        self.assertNotEqual(
+            enforced, constraints,
+            "the two walks returned the same set, which is what an extractor that ignored the"
+            " record and read the response would do",
+        )
+        self.assertEqual(
+            enforced & constraints, {("memoConstraint", "never")},
+            "the only name both sides may share is the one the memoised helper puts there",
         )
 
     def test_a_field_derived_as_both_kinds_keeps_one_probe_per_kind(self):
@@ -2893,7 +3045,7 @@ class TaskSettings:
         alone the two would collapse into one probe, and the survivor would be asserted against
         the wrong receipt behaviour without the count moving.
         """
-        fields, constraints = self.derived()
+        fields, constraints, _enforced = self.derived()
         self.assertIn("dual", fields)
         self.assertIn(("dual", "never"), constraints)
         probes = mutation_probes(fields, constraints)
