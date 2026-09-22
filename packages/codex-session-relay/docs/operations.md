@@ -128,6 +128,38 @@ it is unproven rather than proven. `compare_store` grades all of it.
 `doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` alongside
 `--expect-nonce` is what reaches proven. An unproven result is never reported as healthy.
 
+### Which file the evidence came from
+
+All of that grading assumes the answer describes one file. A pathname cannot carry that
+assumption: measuring the identity at the path before and after a read catches a replacement
+that persists and misses one reverted inside the window, because both observations then report
+the original inode while the rows came out of the interloper.
+
+So the diagnostic reads hold the database open. The identity is `fstat`-ed from that
+descriptor, every connection is opened through `/proc/self/fd/N`, and the descriptor is
+required to still name this store - asked again immediately before each connection, because
+`doctor` opens a read connection and a write probe through one descriptor. A read that cannot
+establish this is refused rather than answered: it returns no rows, no identity and a detail,
+and `compare_store` grades that as unproven, never as absence.
+
+This is Linux-specific, the same assumption artifact authorization already makes (I-11). Where
+`/proc/self/fd` is unavailable a read cannot be bound to the file it came from at all, so it
+is refused rather than answered on the weaker measurement.
+
+The answer is bracketed on both sides. SQLite resolves the descriptor to a real name and opens
+that name on its own descriptor - which is what puts `-wal` and `-shm` beside the real file - so
+the connection is also asked which file it opened, through `PRAGMA database_list`, and the
+descriptor is checked again after the read. A store moved before, during or after the read is
+refused rather than answered, and `doctor` withdraws what a moved read had already published.
+
+One limit remains, and no check on this side can observe it: a different file swapped ONTO the
+expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
+locks. What they remove is every move of this store, which is the reachable case.
+
+And a store that is present but will not state its identity is not a store that is absent:
+`doctor` reports it as present and unidentified, and the lifecycle commands treat it as
+unverifiable rather than signalling a service whose store they could not compare.
+
 Status: implemented. Unproven also exits non-zero, because a caller that asked whether this is
 the same store must not read exit 0 as yes. Each participant runs the check in its own sandbox;
 one invocation cannot establish another participant's access.
