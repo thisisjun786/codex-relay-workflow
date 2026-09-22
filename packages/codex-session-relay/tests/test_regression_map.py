@@ -42,6 +42,7 @@ REAL_TIME_MODULES = (
     "test_daemon_cadence.py",
     "test_dispositions.py",
     "test_failure_recovery.py",
+    "test_launch_policy.py",
     "test_management_cli.py",
     "test_managed_start.py",
     "test_operational_scale.py",

@@ -666,6 +666,23 @@ the serving worker with no policy at all. After editing the policy file, restart
 snapshot is republished at startup), run `doctor --require-worker-policy` with the same variable
 set, and treat a matching digest as the recheck before relying on readiness.
 
+Where this package's own `service` supervises instead of a unit, the declaration belongs to the
+service for the same reason it belongs to the unit:
+
+    codex-session-relay --state <dir> service declare --execution-policy <file>
+
+It is read back before it is recorded, and every later `service start` and `service restart`
+launches its daemon with it whatever the calling shell carries; the workers that supervisor
+spawns inherit it. Without it, a restart typed from a shell that had not exported the variable
+relaunched the service with no policy at all and withheld every role-bound delivery, while the
+file, the installation and the owner's intent were unchanged.
+
+A shell that names a different file is refused rather than preferred, before anything is stopped,
+because choosing between two policy files by preference is that same failure spelled the other
+way. `service status` reports the declaration as the input to the NEXT launch, beside the digest
+the running worker actually published, so a declaration made while the service runs reads as the
+pending change it is.
+
 ## How invocation actually becomes automatic
 
 By POLLING, not by notification. The transport bridge answers every server-initiated message with
