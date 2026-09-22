@@ -34,7 +34,7 @@ Where this audit runs as a sub-task or bounded helper, its record changes are re
 
 ## Establish what must hold
 
-Read the target and relevant dependencies. Pin assumptions, units, time windows, population/scope, state/version, and decision authority. Distinguish approved requirements from proposals and implementation choices. Derive invariants from those contracts or independently justified facts, not from the function being tested.
+Read the target and relevant dependencies. Pin assumptions, units, time windows, population/scope, state/version, and decision authority. Distinguish approved requirements from proposals and implementation choices. Where two documents state the same fact differently, [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical) decides which one is the rule and which is a copy that went stale; recency does not. Derive invariants from those contracts or independently justified facts, not from the function being tested.
 
 State a suspected contradiction as: **given these conditions, rule A requires X, while claim or behavior B requires not-X**. If conditions differ, investigate that mismatch before declaring a contradiction. Missing evidence, uncertainty, a tradeoff, a documented exception, and a changed requirement are distinct outcomes.
 
