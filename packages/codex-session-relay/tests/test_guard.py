@@ -1729,6 +1729,258 @@ class AReceiptThatNamesNoRevisionVerifiesNothing(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.BLOCK)
 
 
+
+class ARegistrationAnswersOnlyTheGenerationItNamed(GuardTestCase):
+    """A receipt earned by a later generation must not satisfy the assignment it superseded.
+
+    The three identities cannot tell the two apart. A correction generation opened against the
+    same dispatch turn admits that turn as its own anchor, so the later generation's receipt names
+    this session, this turn and this relationship, stands at the head, and released the turn. The
+    generation the registration recorded is the only fact that separates them.
+    """
+
+    def advance(self, relationship, number):
+        """Open the next generation on the SAME dispatch turn, as a correction does."""
+        return self.registry.open_generation(
+            relationship["relationshipId"], dispatch_request_id="dispatch-" + str(number),
+            reason="needs_changes_revision", dispatch_turn_id=DISPATCH_TURN,
+        )
+
+    def emit_under(self, relationship, generation, name):
+        path = self.artifact(name, "work for generation " + str(generation))
+        return self.accept(self.ready_payload(
+            relationship, [path], generation=generation, turn=self.assigned_turn()
+        ))
+
+    def republish_relationship(self, value):
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "relationship.json").unlink()
+        marker.publish(directory / "relationship.json", value, root=self.markers)
+
+    def test_a_registration_on_the_current_generation_still_releases(self):
+        """The control. The comparison must not cost the ordinary case anything."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_later_generations_receipt_does_not_satisfy_the_registration(self):
+        """The defect: this released before the registered generation was compared."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.advance(relationship, 2)
+        self.emit_under(relationship, 2, "out2.txt")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_MISMATCH)
+        self.assertEqual(verdict["record"]["receiptEvidence"], guard.GENERATION_MISMATCH)
+
+    def test_the_mismatch_is_reported_before_whatever_the_live_generation_holds(self):
+        """Compared before the head is computed, so the cause reported is the registration.
+
+        With no reviewable revision in the new generation the head answers
+        no_reviewable_revision, which would send the child to emit a receipt that could not
+        satisfy this assignment however many it emitted.
+        """
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.advance(relationship, 2)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_MISMATCH)
+
+    def test_the_same_marker_flips_from_release_to_hold_when_the_generation_advances(self):
+        """The boundary, with a later-generation receipt standing at the head afterwards."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        before = self.evaluate()
+        self.assertEqual((before["observation"], before["decision"]),
+                         ("declared_ready_receipted", guard.RELEASE))
+        self.advance(relationship, 2)
+        self.emit_under(relationship, 2, "out2.txt")
+        after = self.evaluate()
+        self.assertEqual((after["observation"], after["decision"]),
+                         ("receipt_missing", guard.BLOCK))
+        self.assertEqual(after["receiptEvidence"], guard.GENERATION_MISMATCH)
+
+    def test_the_instruction_it_gives_is_one_the_child_can_act_on(self):
+        """relationship.json is create-once, so emitting another receipt can never clear this."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.advance(relationship, 2)
+        self.emit_under(relationship, 2, "out2.txt")
+        verdict = self.evaluate()
+        self.assertNotIn("Emit the receipt", verdict["reason"])
+        self.assertIn("Recovery is a new assignment", verdict["reason"])
+        self.assertIn("generation 1", verdict["reason"])
+        self.assertIn("generation 2", verdict["reason"])
+        self.assertEqual(verdict["hook_output"]["reason"], verdict["reason"])
+
+    def test_a_registration_published_before_the_stamp_existed_is_read_as_it_was(self):
+        """An absent stamp is compared against nothing, so the ordinary case is unchanged."""
+        relationship = self.managed()
+        self.republish_relationship(
+            {"relationshipId": relationship["relationshipId"], "at": NOW}
+        )
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_fact_with_no_stamp_is_still_caught_by_the_dispatch_it_claimed(self):
+        """The stamp is absent, and the mapping still answers.
+
+        A fact published before executionGeneration existed carries nothing to compare, so the
+        ordinal check is skipped entirely. The generation the relationship has since advanced to
+        was opened by a different dispatch request, and that is what refuses it - which is why
+        the two checks are worth having separately rather than one standing in for the other.
+        """
+        relationship = self.managed()
+        self.republish_relationship(
+            {"relationshipId": relationship["relationshipId"], "at": NOW}
+        )
+        self.dispose("ready_for_review")
+        self.advance(relationship, 2)
+        self.emit_under(relationship, 2, "out2.txt")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_DISPATCH_MISMATCH)
+
+    def test_an_uncorrelated_claim_does_not_decide_whether_a_receipt_counts(self):
+        """Correlation is required before the claimed dispatch is weighed at all.
+
+        An uncorrelated claim is evidence about a different assignment, and the receipt
+        reconciliation is a separate comparison that this check must not capture. Weighing the
+        rejected preimage anyway would hold a turn this contract releases on its own declaration.
+        """
+        relationship = self.register()
+        self.declare()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(directory / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": "not-this-dispatch",
+                        "firstTurnId": DISPATCH_TURN, "at": NOW})
+        self.bind()
+        self.register_marker(relationship)
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_marker_ahead_of_the_store_is_the_same_mismatch_and_not_supersession(self):
+        """A store restored under a surviving marker names an EARLIER generation than the fact."""
+        relationship = self.managed()
+        self.republish_relationship(
+            {"relationshipId": relationship["relationshipId"], "executionGeneration": 2,
+             "at": NOW}
+        )
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_MISMATCH)
+
+    def test_a_generation_another_dispatch_opened_is_refused_though_the_ordinal_agrees(self):
+        """The ordinal AGREES and the generation is still foreign.
+
+        A generation number is a counter scoped to one relationship, so a store rebuilt or
+        restored under a surviving marker can stand on the ordinal the fact records while a
+        different dispatch opened it. Comparing the stamp alone reads that as agreement and
+        releases the turn on a generation this assignment never registered.
+        """
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.store.db.execute(
+            "UPDATE generations SET dispatch_request_id = ?"
+            " WHERE relationship_id = ? AND execution_generation = ?",
+            ("dispatch-from-another-assignment", relationship["relationshipId"], 1),
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_DISPATCH_MISMATCH)
+        self.assertNotIn("Emit the receipt", verdict["reason"])
+
+    def test_a_current_generation_the_store_cannot_account_for_is_missing_evidence(self):
+        """Every legitimate advance writes both rows in one transaction, so this is corruption.
+
+        Answered apart from the two mismatches because it is repaired somewhere else: no
+        assignment the coordinator declares fixes a store that cannot say what it is executing.
+        """
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.store.db.execute(
+            "DELETE FROM generations WHERE relationship_id = ? AND execution_generation = ?",
+            (relationship["relationshipId"], 1),
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["receiptEvidence"], guard.GENERATION_ABSENT)
+        self.assertIn("store is what needs repair", verdict["reason"])
+
+    def test_the_dispatch_this_session_claimed_is_the_one_weighed(self):
+        """The control for the mapping check: an untouched store still releases."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+class AGenerationStampThatCannotBeWeighedIsReported(GuardTestCase):
+    """The guard COMPARES this stamp, so one it cannot weigh is reported, never compared.
+
+    Released and recorded, which is what a published record that is not a record always gets:
+    holding on a corrupt fact would report the wrong problem to the wrong party.
+    """
+
+    def stamp(self, value):
+        relationship = self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "relationship.json").unlink()
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": relationship["relationshipId"],
+             "executionGeneration": value, "at": NOW},
+            root=self.markers,
+        )
+        self.dispose("ready_for_review")
+        return self.evaluate()
+
+    def test_a_true_stamp_is_malformed_rather_than_read_as_one(self):
+        """bool IS an int in Python, so it would have compared equal to generation 1."""
+        verdict = self.stamp(True)
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_float_a_string_a_null_a_zero_and_a_negative_are_all_malformed(self):
+        for value in (1.0, "1", None, 0, -1):
+            with self.subTest(stamp=repr(value)):
+                case = AGenerationStampThatCannotBeWeighedIsReported("test_a_true_stamp_is_malformed_rather_than_read_as_one")
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                verdict = case.stamp(value)
+                self.assertEqual(verdict["observation"], "marker_malformed")
+                self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_positive_integer_stamp_is_the_control(self):
+        verdict = self.stamp(1)
+        self.assertEqual(verdict["observation"], "receipt_missing")
+
+
 class TheLastStoreSourceIsAskedForOnlyWhenNothingElseAnswered(GuardTestCase):
     """default_db_path may be a resolver, and when it is, WHEN it runs is the whole point.
 

@@ -272,8 +272,10 @@ class Registration(IntentTestCase):
 
         generations keeps one row per generation, so a relationship that has moved on still carries
         the older dispatch. lookup_receipt computes the head over the relationship's current
-        execution_generation, so registering the stale assignment anyway would let its guard release
-        turns on the strength of work belonging to a later generation.
+        execution_generation, so registering the stale assignment anyway would publish a fact
+        naming a generation the store has already moved past. The guard weighs that recorded
+        generation against the live one, which catches an advance landing after a registration;
+        refusing here is what stops one that was ALREADY stale from being published at all.
         """
         self.declare()
         self.bind()
@@ -745,6 +747,37 @@ class Shape(IntentTestCase):
         self.assertEqual(intent.malformed_counters({"holdsThisTurn": None}), "counters.holdsThisTurn")
         self.assertEqual(intent.malformed_counters({"holdsThisTurn": -1}), "counters.holdsThisTurn")
         self.assertEqual(intent.malformed_counters({"holdsThisTurn": "1"}), "counters.holdsThisTurn")
+
+    def test_a_generation_stamp_that_is_not_a_positive_integer_is_malformed(self):
+        """The guard COMPARES this stamp, so one it cannot weigh is reported, never compared.
+
+        The same rule receipts._validate applies to the generation on a receipt. bool IS an int in
+        Python and would pass as 0 or 1; a float or a numeric string would read as a mismatch
+        against a generation it might actually name, which holds a turn for the wrong reason.
+        """
+        self.declare()
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        target = directory / "relationship.json"
+        for value in (True, 1.0, "1", None, 0, -1):
+            with self.subTest(stamp=repr(value)):
+                if target.exists():
+                    target.unlink()
+                marker.publish(target, {"relationshipId": "rel-0123456789abcdef",
+                                        "executionGeneration": value, "at": T0})
+                self.assertEqual(
+                    intent.malformed(self.facts()), "relationship.executionGeneration")
+
+    def test_a_positive_stamp_and_an_absent_one_are_both_well_shaped(self):
+        """Both controls. A fact published before the field existed carries no stamp."""
+        self.declare()
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        target = directory / "relationship.json"
+        marker.publish(target, {"relationshipId": "rel-0123456789abcdef",
+                                "executionGeneration": 1, "at": T0})
+        self.assertIsNone(intent.malformed(self.facts()))
+        target.unlink()
+        marker.publish(target, {"relationshipId": "rel-0123456789abcdef", "at": T0})
+        self.assertIsNone(intent.malformed(self.facts()))
 
     def test_a_traversing_identity_is_refused_at_every_writer(self):
         """A session or turn id becomes a directory name, so naming something is not enough."""
