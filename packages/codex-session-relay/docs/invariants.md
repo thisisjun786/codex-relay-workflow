@@ -382,3 +382,8 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-235 | A retrying delivery is derived from its attempt rows, so the degraded tier is reachable before a cap is ever hit, and one occurrence means one actual failed attempt | `faultsweep.retry_faults` keyed on `attempts.request_id` | implemented |
 | I-236 | Reconciliation reports the state the row is actually in; an attested absence does not release a claim its holder still has | `FaultLedger.reconcile` | implemented |
 | I-237 | Malformed caller JSON is a refusal with a reason, not a traceback that reads like an outage | `cli._fault_json` | implemented |
+| I-238 | The episode is part of the occurrence KEY, so a recurrence after recovery is counted once however many sweeps follow it | `fault_occurrences` unique on (fault_id, episode, occurrence_key) | implemented |
+| I-239 | Whether an occurrence has been seen is asked of the timeline, which is never pruned, so removing evidence cannot make a familiar occurrence look new | `FaultLedger.record` reading `fault_timeline.ref_id` | implemented |
+| I-240 | An episode opens when a fault actually closes, not whenever a clearing reading arrives, so repeated identical clears do not ratchet | `faults._transition` and `record`; a clear against a closed fault is a no-op | implemented |
+| I-241 | Retry failures rotate on their own keyset cursor, so no failure behind the first page is left permanently unobserved | `faultsweep.retry_faults`, `fault_cursors` entry `delivery_retrying` | implemented |
+| I-242 | A reading carrying a state this sweep cannot interpret is named as a gap rather than absorbed | `faultsweep.reading_faults` | implemented |

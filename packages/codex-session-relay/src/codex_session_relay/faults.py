@@ -697,22 +697,31 @@ class FaultLedger:
                 )
                 row = db.execute(
                     "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
-            # Asked before the insert rather than read off rowcount. An ignored INSERT OR
-            # IGNORE does not report the same rowcount on every path through this
-            # transaction, and "is this occurrence new" is the hinge the whole convergence
-            # turns on - it decides the count, the timeline row and whether anything is
-            # queued. A SELECT says it without depending on driver behaviour.
             episode = row["episode"]
+            if fact["cleared"] and row["state"] in (WITHDRAWN, RESOLVED):
+                # Already closed. A repeated clearing reading says nothing new, and opening an
+                # episode for it would hand the next identical reading a fresh identity too,
+                # counting one recovery over and over.
+                return {"faultId": identifier, "recorded": False, "state": row["state"],
+                        "occurrenceCount": row["occurrence_count"],
+                        "reason": "this fault is already closed", "publication": None}
             fact["occurrenceId"] = occurrence_id(identifier, fact["occurrenceKey"], episode)
+            # Asked of the TIMELINE, not of the evidence rows, and before the insert rather
+            # than off rowcount. The timeline is never pruned, so removing evidence an
+            # operator has finished reading cannot make a familiar occurrence look new and
+            # inflate the count on the next sweep. rowcount was unreliable across paths
+            # through this transaction, and "is this occurrence new" is the hinge the whole
+            # convergence turns on.
             recorded = db.execute(
-                "SELECT 1 FROM fault_occurrences WHERE occurrence_id = ?",
-                (fact["occurrenceId"],)).fetchone() is None
+                "SELECT 1 FROM fault_timeline WHERE fault_id = ? AND ref_id = ?",
+                (identifier, fact["occurrenceId"])).fetchone() is None
             db.execute(
-                "INSERT OR IGNORE INTO fault_occurrences (occurrence_id, fault_id,"
+                "INSERT OR IGNORE INTO fault_occurrences (occurrence_id, fault_id, episode,"
                 "  occurrence_key, severity, cleared, detail, evidence, evidence_digest,"
                 "  truncated, observed_at, recorded_at, recorded_ts)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (fact["occurrenceId"], identifier, fact["occurrenceKey"], fact["severity"],
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (fact["occurrenceId"], identifier, episode, fact["occurrenceKey"],
+                 fact["severity"],
                  1 if fact["cleared"] else 0, fact["detail"],
                  json.dumps(fact["evidence"], ensure_ascii=False, sort_keys=True),
                  fact["evidenceDigest"], 1 if fact["truncated"] else 0, fact["observedAt"],
@@ -765,7 +774,12 @@ class FaultLedger:
                 "  suppression = ?, last_seen_at = ?, cleared_at = ?, resolved_at = ?,"
                 "  updated_at = ?, scope = ?, scope_key = ?"
                 " WHERE fault_id = ?",
-                (state, cycle, severity, episode + (1 if fact["cleared"] else 0), count,
+                # An episode opens when a fault actually CLOSES, not whenever a clearing
+                # reading arrives. A published fault is not closed by its cause going quiet,
+                # so bumping on the reading alone handed the next identical reading a fresh
+                # identity and counted one recovery over and over.
+                (state, cycle, severity,
+                 episode + (1 if state == WITHDRAWN else 0), count,
                  1 if reopened else 0,
                  fact["detail"] or row["detail"],
                  json.dumps(suppression, ensure_ascii=False, sort_keys=True), now_iso,
@@ -1023,6 +1037,10 @@ class FaultLedger:
         Not automatic and not silent. A store that discards its own evidence on a schedule is
         worse than a large one, so this records in the journal how many rows it removed and
         keeps the newest, which are the ones an operator is reading.
+
+        Pruning cannot resurrect an occurrence. Whether one has been seen is asked of the
+        timeline, which this never touches, so a pruned occurrence that is still visible in
+        its source is recognised on the next sweep rather than counted again.
         """
         if keep < 1:
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "keep at least one")

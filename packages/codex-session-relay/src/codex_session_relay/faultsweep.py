@@ -160,11 +160,10 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
                 "relationship": row["relationship_id"],
             })],
         ))
-    observations += retry_faults(store, product=product, scope=scope, limit=limit)
     return _page(observations, rows, "event_id", cursor, limit)
 
 
-def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
+def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
     """Failures that have not reached a hold yet, one occurrence per actual failed attempt.
 
     The hold reason is only set at a cap, so a query that required one saw nothing until a
@@ -173,22 +172,23 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
     failure is written down, and their request ids advance once per attempt rather than once
     per sweep, which is exactly the occurrence identity this needs.
 
-    Newest first and bounded. An attempt older than this page was recorded by an earlier
-    sweep, and occurrence identity makes re-reading it free; what this cannot see is more than
-    SWEEP_LIMIT new attempts between two sweeps.
+    Paged with a keyset cursor over the attempt rows and wrapped at the end, the same rotation
+    the other sources use. Reading a fixed newest page instead left every failure behind it
+    permanently unobserved once a store held more than one page of them.
     """
     rows = store.all(
-        "SELECT a.request_id, a.state AS attempt_state, a.event_id,"
+        "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,"
         "       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,"
         "       d.hold_reason, d.attempt_count"
         "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
         " WHERE d.state NOT IN (?,?,?)"
         "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
-        " ORDER BY a.rowid DESC LIMIT ?",
-        (*SETTLED_DELIVERY, "dispatched", "inbox_only", limit),
+        "   AND a.rowid > ?"
+        " ORDER BY a.rowid LIMIT ?",
+        (*SETTLED_DELIVERY, "dispatched", "inbox_only", cursor or 0, limit),
     )
     cache = {}
-    return [faults.observation(
+    observations = [faults.observation(
         product=product, fault_class="delivery_stalled",
         severity=faults.BROKEN if row["hold_reason"] else faults.DEGRADED,
         signature={"recipient": row["recipient_task_id"],
@@ -204,6 +204,9 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
             "event": row["event_id"],
         })],
     ) for row in rows]
+    return {"observations": observations,
+            "cursor": rows[-1]["seq"] if len(rows) >= limit else None,
+            "complete": cursor is None and len(rows) < limit}
 
 
 def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
@@ -371,6 +374,11 @@ def reading_faults(readings, *, product, scope, store=None) -> dict:
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
                     "reportingState": state, "reason": reading.get("reason")})],
             ))
+        else:
+            # Well formed, and carrying a state this cannot interpret. Absorbing it would let
+            # fault-sweep report success while discarding evidence somebody handed it.
+            gaps.append({"gap": "reading_unknown_state", "relationId": relationship,
+                         "reason": f"reportingState {state!r} is not one this sweep knows"})
     return {"observations": observations, "gaps": gaps}
 
 
@@ -394,8 +402,15 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
         "observation_stalled": observation_faults(
             store, product=product, scope=scope, limit=limit,
             cursor=cursors.get("observation_stalled")),
+        "delivery_retrying": retry_faults(
+            store, product=product, scope=scope, limit=limit,
+            cursor=cursors.get("delivery_retrying")),
     }
     complete = tuple(name for name, page in by_class.items() if page["complete"])
+    if "delivery_retrying" not in complete:
+        # Both pages feed delivery_stalled, so an incomplete retry page is an incomplete read
+        # of that class however complete the hold-reason page was.
+        complete = tuple(name for name in complete if name != "delivery_stalled")
     derived = [entry for page in by_class.values() for entry in page["observations"]]
     read = reading_faults(readings, product=product, scope=scope, store=store)
     observations = derived + read["observations"]

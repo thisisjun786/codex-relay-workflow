@@ -120,11 +120,15 @@ names the occurrence after the underlying fact — the attempt's request id, the
 attempt number, the poll's attempt time — so re-reading an unchanged state records nothing and
 a genuinely new failure records exactly one.
 
-An occurrence is identified WITHIN its episode. An episode ends when the fault is
+An occurrence is identified WITHIN its episode, which is part of its stored key and not only of its id. An episode ends when the fault is
 cleared or resolved, and the next one begins there. That is what separates the sweep
 reading the same stuck row again, which must converge, from the thing that was fixed
 coming back, which must reopen: both arrive under the key that names the underlying
-fact, and only the episode tells them apart.
+fact, and only the episode tells them apart. An episode opens when a fault actually CLOSES, so a clearing
+reading repeated on a published fault says nothing new rather than opening one each
+time. Whether an occurrence has been seen is asked of the timeline, which is never
+pruned, so removing evidence an operator has finished reading cannot make a familiar
+occurrence look new.
 
 Evidence is a SNAPSHOT, not a pointer. The rows a fault is read from are mutable: a poll row's
 error is overwritten on its next attempt, and a failed synchronisation row's state and error

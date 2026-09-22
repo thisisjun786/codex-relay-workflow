@@ -1026,6 +1026,11 @@ CREATE INDEX IF NOT EXISTS fault_ledger_scope ON fault_ledger (scope_key, state)
 CREATE TABLE IF NOT EXISTS fault_occurrences (
     occurrence_id   TEXT PRIMARY KEY,
     fault_id        TEXT NOT NULL,
+    -- The episode is part of the key, not only of the id. Without it the surviving
+    -- (fault_id, occurrence_key) uniqueness silently rejected every post-recovery row while
+    -- the caller had already been told the occurrence was new, so counts and timelines grew
+    -- on every sweep and a tick could never go quiet again.
+    episode         INTEGER NOT NULL DEFAULT 1,
     occurrence_key  TEXT NOT NULL,
     severity        TEXT NOT NULL,
     cleared         INTEGER NOT NULL DEFAULT 0,
@@ -1036,7 +1041,7 @@ CREATE TABLE IF NOT EXISTS fault_occurrences (
     observed_at     TEXT,
     recorded_at     TEXT NOT NULL,
     recorded_ts     REAL NOT NULL,
-    UNIQUE (fault_id, occurrence_key)
+    UNIQUE (fault_id, episode, occurrence_key)
 );
 -- On the fault alone. Order is by rowid, which SQLite cannot be asked to index because the
 -- table is already stored in it.

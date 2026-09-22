@@ -472,7 +472,7 @@ class FifthReviewFindings(RelayTestCase):
         self.unheld()
         for index in range(3):
             self.attempt(f"del-r-a{index}", "event-r", attempt_no=index + 1)
-        derived = faultsweep.delivery_faults(
+        derived = faultsweep.retry_faults(
             self.store, product=PRODUCT, scope={})["observations"]
         self.assertEqual(3, len(derived))
         self.assertEqual({faults.DEGRADED}, {entry["severity"] for entry in derived})
@@ -488,7 +488,7 @@ class FifthReviewFindings(RelayTestCase):
         self.unheld()
         self.attempt("del-r-a0", "event-r")
         for _round in range(3):
-            for entry in faultsweep.delivery_faults(
+            for entry in faultsweep.retry_faults(
                     self.store, product=PRODUCT, scope={})["observations"]:
                 self.ledger.record(entry)
         self.assertEqual(1, self.store.all(
@@ -1232,6 +1232,93 @@ class SecondReviewFindings(LedgerCase):
 
 
 
+
+
+class SixthReviewFindings(RelayTestCase):
+    """Round eight: the edges my own episode fix opened."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.ledger.set_target("crw:CRW", TRACKER)
+        self.register()
+        self.relationship = self.store.one(
+            "SELECT relationship_id FROM relationships")["relationship_id"]
+
+    def publish(self, identifier):
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        operation = self.ledger.operation(job, claim_token=claim["claimToken"])
+        self.ledger.complete(job, claim_token=claim["claimToken"],
+                             readback=operation["block"], external_ref="REL-77")
+
+    def test_a_recurrence_is_counted_once_however_many_sweeps_follow_it(self):
+        """The episode is in the unique KEY, or every post-recovery sweep counts again."""
+        first = self.ledger.record(omission("same"))
+        identifier = first["faultId"]
+        self.publish(identifier)
+        self.ledger.record_fix(identifier, ref="PR #1")
+        self.ledger.record_reverification(identifier, method="suite", ref="pytest",
+                                          outcome=faults.PASSED)
+        self.ledger.resolve(identifier)
+        counts = []
+        for _sweep in range(4):
+            self.ledger.record(omission("same"))
+            counts.append(self.ledger.get(identifier)["occurrence_count"])
+        self.assertEqual([2, 2, 2, 2], counts)
+        self.assertEqual(2, self.store.one(
+            "SELECT COUNT(*) AS n FROM fault_occurrences")["n"])
+        self.assertEqual(2, self.store.one(
+            "SELECT COUNT(*) AS n FROM fault_timeline WHERE kind = 'occurrence'")["n"])
+
+    def test_an_identical_clearing_reading_does_not_open_an_episode_each_time(self):
+        first = self.ledger.record(omission("a"))
+        self.publish(first["faultId"])
+        episodes = []
+        for _sweep in range(3):
+            self.ledger.record(omission("a:cleared", cleared=True))
+            episodes.append(self.ledger.get(first["faultId"])["episode"])
+        self.assertEqual([1, 1, 1], episodes)
+        self.assertEqual(2, self.ledger.get(first["faultId"])["occurrence_count"])
+
+    def test_pruning_evidence_cannot_make_a_familiar_occurrence_look_new(self):
+        first = self.ledger.record(omission("a"))
+        self.ledger.record(omission("b"))
+        self.ledger.prune(first["faultId"], keep=1)
+        again = self.ledger.record(omission("a"))
+        self.assertFalse(again["recorded"])
+        self.assertEqual(2, self.ledger.get(first["faultId"])["occurrence_count"])
+
+    def test_every_retry_failure_is_reached_by_rotation_not_only_the_newest_page(self):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("event-r", self.relationship, "completion_event", "01parent-task",
+                 "01parent-task", "queued", 40, None, self.clock.iso(), self.clock.iso()))
+            for index in range(faultsweep.SWEEP_LIMIT + 6):
+                db.execute(
+                    "INSERT INTO attempts (request_id, event_id, attempt_no, kind,"
+                    "  internal_state, state, sent_at, observed_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (f"del-r-a{index:03d}", "event-r", index + 1, "completion_event",
+                     "settled", "withheld_pre_send", self.clock.now(), self.clock.iso()))
+        seen = set()
+        for _round in range(3):
+            batch = faultsweep.sweep(self.store)
+            faultsweep.record_all(self.ledger, batch, store=self.store)
+            seen.update(entry["occurrenceKey"] for entry in batch["observations"]
+                        if entry["faultClass"] == "delivery_stalled")
+        self.assertEqual(faultsweep.SWEEP_LIMIT + 6, len(seen))
+
+    def test_a_reading_state_this_sweep_cannot_interpret_is_named(self):
+        batch = faultsweep.sweep(self.store, readings=[{
+            "schema": faultsweep.OBSERVATION_SCHEMA, "relationshipId": self.relationship,
+            "selectors": {"turn": "turn-7"}, "reportingState": "something_new"}])
+        self.assertEqual([], batch["observations"])
+        self.assertEqual(1, len(batch["gaps"]))
+        self.assertEqual("reading_unknown_state", batch["gaps"][0]["gap"])
 
 
 if __name__ == "__main__":
