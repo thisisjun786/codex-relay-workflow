@@ -1,0 +1,69 @@
+{
+  "expected": {
+    "decision": "block",
+    "observation": "receipt_missing",
+    "reason": "This assignment's registration does not name the generation the relay is on: the assignment registered generation 1 and the relationship now stands on generation 2. No receipt this session emits can satisfy it, because the registration fact is create-once and cannot be republished onto the live generation, and a receipt earned there belongs to work this assignment never registered. Recovery is a new assignment, declared for a fresh dispatch request id.",
+    "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
+    "receiptEvidence": "registration_generation_mismatch",
+    "record": {
+      "receiptDetail": "the assignment registered generation 1 and the relationship now stands on generation 2",
+      "receiptEvidence": "registration_generation_mismatch"
+    },
+    "state": "receipt_missing"
+  },
+  "note": "A receipt standing at the head of a LATER generation than the registration names. The three identities all match - a correction generation opened against the same dispatch turn admits that turn as its own anchor - so only the recorded generation tells them apart. Held, and the reason names the recovery rather than telling the child to emit a receipt no registration could accept.",
+  "observation": {
+    "disposition": {
+      "outcome": "ready_for_review",
+      "sessionId": "session-1111",
+      "turnId": "turn-0001"
+    },
+    "marker": {
+      "bound": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "sessionId": "session-1111",
+        "taskId": "task-1111"
+      },
+      "claims": [
+        {
+          "at": "2026-01-01T00:05:00+00:00",
+          "dispatchRequestId": "dispatch-0001",
+          "factId": "claims/session-1111/claim.json",
+          "firstTurnId": "turn-0001",
+          "sessionId": "session-1111"
+        }
+      ],
+      "intent": {
+        "declaredAt": "2026-01-01T00:00:00+00:00",
+        "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+        "issue": "JUN-000",
+        "workspace": "/workspace/example"
+      },
+      "relationship": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "executionGeneration": 1,
+        "relationshipId": "rel-example"
+      }
+    },
+    "now": "2026-01-01T00:05:00+00:00",
+    "receipt": {
+      "atCurrentHead": false,
+      "detail": "the assignment registered generation 1 and the relationship now stands on generation 2",
+      "evidence": "registration_generation_mismatch",
+      "relationshipId": "rel-example",
+      "sessionId": "session-1111",
+      "turnId": "turn-0001"
+    },
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Ready for review.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    }
+  }
+}

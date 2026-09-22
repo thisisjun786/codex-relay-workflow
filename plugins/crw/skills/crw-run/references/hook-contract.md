@@ -25,7 +25,7 @@ producers, none of which is prose and none of which is a turn boundary:
 | Producer | Record | What it establishes |
 | -- | -- | -- |
 | The child | A turn disposition of `ready_for_review` for the current `turn_id` | The child's own declared intent, not inferred from its text |
-| The child, verified by the consumer | A relay receipt naming this session, this turn and this assignment's relationship, whose manifest digest is recomputed against the bytes on disk | That named artifacts exist with the claimed content, for this declaration rather than some other one |
+| The child, verified by the consumer | A relay receipt naming this session, this turn and this assignment's relationship, under the generation that assignment registered, whose manifest digest is recomputed against the bytes on disk | That named artifacts exist with the claimed content, for this declaration rather than some other one |
 | The host | `turn_status` of `completed` for that turn, observed through the relay's existing turn observation | That the turn ended normally rather than failing or being interrupted |
 
 The identity on these records is load-bearing, not decoration. A receipt from an earlier turn, or from
@@ -122,7 +122,7 @@ intent for its workspace, and for no other reason.
 | `intent.json` | Coordinator | `dispatchRequestIdHash`, issue, workspace realpath, criteria source, baseline revision, authorised settings, `declaredAt` |
 | `attempts/<n>.json` | Coordinator | `outcome` of `accepted`, `unknown` or `failed`, optional `taskId`, `at` |
 | `bound.json` | Coordinator | `sessionId`, `taskId`, `at` |
-| `relationship.json` | Coordinator | `relationshipId`, `at` |
+| `relationship.json` | Coordinator | `relationshipId`, `executionGeneration`, `at` |
 | `resolutions/<n>.json` | Coordinator | `chosenTaskId`, `chosenSessionId`, `reason`, `at`, and `adjudicated`, the list of `{factId, digest}` entries it covers |
 | `conflicts/<n>.json` | Coordinator | `attemptedSessionId`, `attemptedTaskId`, `loserProcess`, `at`, written by a binder that lost the publication race |
 | `claims/<session_id>/claim.json` | Child session | `dispatchRequestId` preimage, `sessionId`, `firstTurnId`, `at` |
@@ -441,7 +441,7 @@ Every turn of a claimed managed session ends with a disposition recorded for tha
 | Disposition | Meaning | Completion obligation |
 | -- | -- | -- |
 | `in_progress` | Work continues in this assignment | None |
-| `ready_for_review` | This generation's work is finished | A receipt at the current head revision naming this session, this turn and this assignment's relationship is required. Where the work is a pull request, the report that accompanies it also carries the merge-readiness handoff, because a finished generation whose review is still open is not finished |
+| `ready_for_review` | This generation's work is finished | A receipt at the current head revision naming this session, this turn and this assignment's relationship, under the generation this assignment registered, is required. Where the work is a pull request, the report that accompanies it also carries the merge-readiness handoff, because a finished generation whose review is still open is not finished |
 | `blocked_needs_input` | Waiting on a person | None, and the turn is never held |
 | `interrupted` | The user stopped it | None, and the turn is never held |
 | `failed` | The attempt failed, with a reason | None. A failure is reported, not retried by a hook |
@@ -462,6 +462,7 @@ A positive disposition splits that single reading in two:
 | -- | -- | -- |
 | Disposition present for this session and `turn_id`, and one of `in_progress`, `blocked_needs_input`, `interrupted` or `failed` | `declared_` plus that outcome | Nothing to report |
 | Disposition `ready_for_review`, no receipt at the current head naming this session, this turn and this assignment's relationship | `receipt_missing` | Yes |
+| Disposition `ready_for_review`, but the live generation is not the one this assignment registered | `receipt_missing`, carrying `receiptEvidence` of `registration_generation_mismatch` when the recorded ordinal differs, `generation_dispatch_mismatch` when the ordinal agrees but another dispatch request opened that generation, or `generation_absent` when the store has no record of opening it | Yes. The hold is the same; the reason is not. `relationship.json` is create-once, so no receipt this session emits can satisfy the assignment: the first two name the recovery, a new assignment for a fresh dispatch request id, and the third names the relay's store as what needs repair. The claimed dispatch is weighed only where the claim correlates |
 | No disposition naming this session and this `turn_id`, including one that names no identity at all | `undeclared_turn_end` | Yes |
 
 The hook never decides whether the child is finished. It decides whether the child said anything at
@@ -675,7 +676,7 @@ only its own holds; it never inspects, relaxes, or counts another hook's.
 Release is unconditional on any of: `stop_hook_active` true; a disposition recorded for this session
 and turn whose outcome is one of `in_progress`, `blocked_needs_input`, `interrupted` or `failed`; a
 `ready_for_review` disposition whose receipt at the current head names this session, this turn and
-this assignment's relationship; no marker; an unclaimed
+this assignment's relationship, under the generation this assignment registered; no marker; an unclaimed
 marker; a marker bound to another session; an unreadable marker, disposition or receipt store; and any
 bound above being reached.
 

@@ -50,6 +50,26 @@ class Reporting(GuardTestCase):
         self.assertEqual(before, self.snapshot())
         self.assertEqual(self.store.all("SELECT event_id FROM events"), [])
 
+    def test_a_registration_naming_another_generation_is_not_read_as_receipted(self):
+        """This reader replays the guard's classification, so it has to compare the same fact.
+
+        _registry_evidence only weighs the store's CURRENT generation against the one this
+        dispatch opened, and a store restored under a surviving marker agrees on both while the
+        recorded stamp does not. Without passing the stamp through, this answered
+        declared_ready_receipted for a turn the guard was holding.
+        """
+        relation = self.managed()
+        self.emit_ready(relation)
+        self.dispose("ready_for_review")
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "relationship.json").unlink()
+        marker.publish(directory / "relationship.json",
+                       {"relationshipId": relation["relationshipId"],
+                        "executionGeneration": 2, "at": NOW}, root=self.markers)
+        result = self.read()
+        self.assertEqual(result["currentObservation"]["label"], "receipt_missing")
+        self.assertEqual(result["receipt"]["evidence"], guard.GENERATION_MISMATCH)
+
     def test_daemon_observes_admitted_business_omission_after_standby(self):
         from .test_daemon import DaemonTestCase
 
