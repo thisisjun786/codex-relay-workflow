@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from codex_session_relay.store import (
-    SCHEMA_VERSION, Store, compare_store, nonce_lookup, probe, resolve_state_dir, state_dir,
+    SCHEMA_VERSION, Store, compare_store, nonce_lookup, probe, read_only_rows,
+    resolve_state_dir, state_dir,
 )
 
 from .support import RelayTestCase, WorkerKilled, killed_before_commit
@@ -877,16 +878,16 @@ class Identity(unittest.TestCase):
     def test_a_name_that_goes_away_during_the_read_is_still_counted(self):
         """Both of the read's own observations, not just the one it finished with.
 
-        `nonce_lookup` stats the path before it opens and after it closes. A second name
-        present at the open and unlinked before the close leaves both the caller's count and
-        the closing count at one, while the opening count saw two - and a peer that already
-        opened the removed alias can hold that connection and keep writing through its own
-        write-ahead log. Carrying only the closing count kept half of what the function
-        measured.
+        `nonce_lookup` identifies the file it holds open before it reads and again after it
+        closes. A second name present at the open and unlinked before the close leaves both the
+        caller's count and the closing count at one, while the opening count saw two - and a
+        peer that already opened the removed alias can hold that connection and keep writing
+        through its own write-ahead log. Carrying only the closing count kept half of what the
+        function measured.
 
-        The unlink is injected at the seam rather than raced: both stats are real stats of the
-        real file, and the wrapper only decides WHEN the alias goes away, because the window
-        is inside one call.
+        The unlink is injected at the seam rather than raced: both counts are real counts of
+        the real file, and the wrapper only decides WHEN the alias goes away, because the
+        window is inside one call.
         """
         written = self.store.write_challenge(actor="parent")
         self.store.close()
@@ -898,21 +899,21 @@ class Identity(unittest.TestCase):
 
         from codex_session_relay import store as store_module
 
-        real = store_module._path_identity
+        real = store_module._held_identity
         seen = []
 
-        def observe(path):
-            answer = real(path)
+        def observe(fd):
+            answer = real(fd)
             seen.append(answer)
             if len(seen) == 1:
                 os.unlink(alias)
             return answer
 
-        store_module._path_identity = observe
+        store_module._held_identity = observe
         try:
             answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
         finally:
-            store_module._path_identity = real
+            store_module._held_identity = real
 
         graded = compare_store(measured, nonce=answer)
         self.assertEqual(
@@ -981,3 +982,386 @@ class Probe(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DescriptorIdentity(unittest.TestCase):
+    """The read legs name the file they held open, or they refuse.
+
+    Every case here lives in one window: between the moment something measures this store and
+    the moment rows come back from it. Measuring at the pathname could not see into that window,
+    because a replacement reverted inside it leaves both observations reporting the original
+    inode while the rows came out of another file entirely.
+
+    What is closed is every relocation that has already happened when the read asks. SQLite
+    resolves the descriptor and opens the name it finds, so a rename timed inside that call is
+    not closed and is recorded as a limit rather than asserted away here.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-descriptor-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.a = os.path.join(self.tmp, "a")
+        os.makedirs(self.a)
+        self.path = Path(self.a) / "relay.sqlite3"
+        store = Store(self.path)
+        self.written = store.write_challenge(actor="parent")
+        self.mine = store.locate()
+        store.close()
+
+        # A whole second store, with its own identity and its own challenge row. It stands in
+        # for the database an actor swaps onto this pathname, and it is a real store rather
+        # than a broken file so that reading it would SUCCEED and be believed.
+        self.b = os.path.join(self.tmp, "b")
+        os.makedirs(self.b)
+        self.interloper_path = os.path.join(self.b, "relay.sqlite3")
+        other = Store(Path(self.interloper_path))
+        self.interloper_nonce = other.write_challenge(actor="interloper")
+        self.theirs = other.locate()
+        other.close()
+        self.assertNotEqual(self.theirs["inode"], self.mine["inode"])
+        # Closing checkpoints and removes the sidecars, so moving the one file below moves the
+        # whole store. Asserted rather than assumed: a left-behind log would strand the
+        # challenge row and the swap would be believed for the wrong reason.
+        for directory in (self.a, self.b):
+            self.assertEqual(
+                [name for name in os.listdir(directory) if name != "relay.sqlite3"], [],
+                "a closed store left a sidecar behind, so moving the main file loses writes",
+            )
+
+    def swap_around_the_connect(self):
+        """Stand the interloper at this pathname for the duration of the real sqlite3.connect.
+
+        The wrapper decides WHEN, never WHAT: the real connect runs, on whatever the code under
+        test asked it to open. On the first connect only:
+
+          1. our database is renamed away, so the pathname is free;
+          2. the interloper is renamed onto the pathname;
+          3. the real connect runs;
+          4. the interloper is moved off and ours is renamed back.
+
+        Anything measuring at the pathname sees our store before and our store after, and both
+        observations agree. What the connect opened was the interloper. That is the whole
+        defect, and it is why two observations of a name cannot stand in for the file itself.
+        """
+        from codex_session_relay import store as store_module
+
+        real = store_module.sqlite3.connect
+        saved = os.path.join(self.tmp, "saved.sqlite3")
+        parked = os.path.join(self.tmp, "parked.sqlite3")
+        done = []
+
+        def wrapper(*args, **kwargs):
+            if done:
+                return real(*args, **kwargs)
+            done.append(True)
+            os.rename(self.path, saved)
+            os.rename(self.interloper_path, self.path)
+            try:
+                return real(*args, **kwargs)
+            finally:
+                os.rename(self.path, parked)
+                os.rename(saved, self.path)
+
+        patcher = mock.patch.object(store_module.sqlite3, "connect", wrapper)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return done
+
+    def move_the_file_while_it_is_held(self, move):
+        """Move our database after the descriptor is open and before anything is read.
+
+        Injected inside os.open, which is the one moment the code under test holds the file and
+        has not yet asked whether it is still this store.
+
+        Restricted to the database's own path. probe opens a temporary file in the directory
+        first, to measure writability by writing, and a seam that fired on that one moved the
+        database before probe had even stat'd it - so the test passed on a missing-file path
+        with the refusal it meant to exercise never reached.
+        """
+        from codex_session_relay import store as store_module
+
+        real = store_module.os.open
+        done = []
+
+        def wrapper(path, flags, *args, **kwargs):
+            fd = real(path, flags, *args, **kwargs)
+            if not done and os.fspath(path) == os.fspath(self.path):
+                done.append(True)
+                move()
+            return fd
+
+        patcher = mock.patch.object(store_module.os, "open", wrapper)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return done
+
+    def test_rows_read_through_a_swap_are_never_attributed_to_this_store(self):
+        """The defect this class exists for, asserted on both halves of the answer.
+
+        Against the pathname mechanism this fails: the connect opened the interloper, so the
+        rows are the interloper's, while both observations of the name reported ours - an
+        answer pairing one store's rows with another store's device and inode. Holding the file
+        makes the rows ours, because the descriptor cannot become another file.
+        """
+        swapped = self.swap_around_the_connect()
+        answer = read_only_rows(
+            resolve_state_dir(self.a), "SELECT written_by FROM store_challenge ORDER BY nonce",
+        )
+        self.assertTrue(swapped, "the seam never fired, so this asserts nothing")
+
+        writers = [row["written_by"] for row in answer["rows"]]
+        self.assertNotIn(
+            "interloper", writers,
+            "rows out of the database that stood at this pathname were reported as this store's",
+        )
+        # Measured outcome, and the second of the two that are correct. SQLite resolves the
+        # descriptor to the name the held inode had AT THE CONNECT - the one the swap moved it
+        # to - and reads through its own descriptor from there. The seam then renames that name
+        # away again, so the log the read still needs is gone and it fails attributably: no
+        # rows, no identity, and a detail every caller already treats as "we could not look".
+        # What it must never do is hand back the interloper's rows under our device and inode,
+        # which is exactly what two observations of the pathname did here.
+        self.assertEqual(answer["rows"], [], answer)
+        self.assertIsNone(answer["device"], "a failed read must not carry an identity")
+        self.assertTrue(answer["detail"], answer)
+
+    def test_a_nonce_read_through_a_swap_cannot_prove_the_measured_store(self):
+        """The same window, aimed at the only evidence compare_store grades as proof.
+
+        The interloper's own nonce is looked up. Against the pathname mechanism it is FOUND -
+        in the interloper - and comes back wearing our device and inode, which compare_store
+        then grades proven: a database nobody measured proving the one that was.
+        """
+        swapped = self.swap_around_the_connect()
+        answer = nonce_lookup(resolve_state_dir(self.a), self.interloper_nonce["nonce"])
+        self.assertTrue(swapped, "the seam never fired, so this asserts nothing")
+
+        self.assertFalse(
+            answer["found"],
+            "a nonce written into the database that stood at this pathname was reported as"
+            " readable in this store",
+        )
+        graded = compare_store(
+            self.mine, expect_inode=f"{self.mine['device']}:{self.mine['inode']}", nonce=answer,
+        )
+        self.assertNotEqual(graded["sameStore"], "proven", graded)
+
+    def test_a_database_that_lost_its_name_while_held_is_refused(self):
+        """Fail closed, and say which of the two things happened.
+
+        Replacing the file at the pathname leaves the held inode with no name at all. SQLite
+        answers that the same way it answers a store that was never there, so the refusal is
+        named here instead of passed through as a message about something missing.
+        """
+        fired = self.move_the_file_while_it_is_held(
+            lambda: os.replace(self.interloper_path, self.path))
+        answer = read_only_rows(resolve_state_dir(self.a), "SELECT 1 AS one")
+        self.assertTrue(fired, "the seam never fired, so this asserts nothing")
+
+        self.assertFalse(answer["readable"], answer)
+        self.assertEqual(answer["rows"], [])
+        self.assertIsNone(answer["device"], "a refused read must not carry an identity")
+        self.assertIn("no longer the file at", answer["detail"], answer)
+
+    def test_a_relocated_database_is_refused_before_it_can_leave_a_log_behind(self):
+        """The case that makes the descriptor insufficient on its own.
+
+        SQLite resolves the descriptor to whatever name the held inode has NOW and opens that
+        name, which is what puts the write-ahead log beside the real file in the ordinary case.
+        Renamed, that name is the wrong one: measured on this host on 2026-09-22, a read
+        through a relocated name raised a disk I/O error against a live log AND created a stray
+        log beside the new name - a write from a command that promises none.
+
+        So the descriptor is required to still name this store, asked before any connection is
+        opened. Asserted on the side effect as well as the answer, because a refusal that still
+        wrote something is not a refusal.
+        """
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        fired = self.move_the_file_while_it_is_held(lambda: os.rename(self.path, moved))
+        answer = read_only_rows(resolve_state_dir(self.a), "SELECT 1 AS one")
+        self.assertTrue(fired, "the seam never fired, so this asserts nothing")
+
+        self.assertFalse(answer["readable"], answer)
+        self.assertIn("no longer the file at", answer["detail"], answer)
+        self.assertEqual(
+            [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")], [],
+            "the refused read still opened the relocated name and left a log beside it",
+        )
+
+    def test_the_probe_re_asks_between_its_read_and_its_write(self):
+        """One check at the open is not enough, because the probe opens twice.
+
+        The read connection and the write probe go through one descriptor, so a rename between
+        them puts the write probe on a relocated name - the same failed read and the same stray
+        log as above. The question is asked again immediately before each connect.
+        """
+        from codex_session_relay import store as store_module
+
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        real = store_module.sqlite3.connect
+        done = []
+
+        def wrapper(*args, **kwargs):
+            connection = real(*args, **kwargs)
+            if not done:
+                done.append(True)
+                os.rename(self.path, moved)
+            return connection
+
+        with mock.patch.object(store_module.sqlite3, "connect", wrapper):
+            report = probe(resolve_state_dir(self.a))
+
+        self.assertTrue(done, "the seam never fired, so this asserts nothing")
+        self.assertTrue(report["access"]["dbReadable"], report)
+        self.assertFalse(report["access"]["dbWritable"], report)
+        self.assertIn("no longer the file at", report["access"]["detail"], report)
+        self.assertEqual(
+            [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")], [],
+            "the refused write probe still opened the relocated name",
+        )
+
+    def test_the_ordinary_probe_describes_the_file_it_held(self):
+        """The normal case, including where SQLite puts the log it needs.
+
+        realPath is the descriptor's own name rather than a second resolution of the path, so a
+        reported path and a reported inode are two facts about one file. The write probe runs
+        through the same descriptor and leaves nothing behind.
+        """
+        report = probe(resolve_state_dir(self.a))
+        store = report["store"]
+        self.assertTrue(report["access"]["dbReadable"], report)
+        self.assertTrue(report["access"]["dbWritable"], report)
+        self.assertIsNone(report["access"]["detail"], report)
+        self.assertEqual(store["realPath"], str(self.path.resolve()))
+        self.assertEqual(
+            (store["device"], store["inode"]), (self.mine["device"], self.mine["inode"]))
+        self.assertEqual(store["storeId"], self.mine["storeId"])
+        self.assertEqual(
+            [name for name in os.listdir(self.a) if name != "relay.sqlite3"], [],
+            "diagnosis left a write-ahead log behind",
+        )
+
+    def test_a_store_reached_through_a_symlinked_directory_still_reads(self):
+        """The descriptor resolves to the real name, which is the name the store lives at."""
+        alias = os.path.join(self.tmp, "alias")
+        os.symlink(self.a, alias)
+        answer = nonce_lookup(resolve_state_dir(alias), self.written["nonce"])
+        self.assertTrue(answer["found"], answer)
+        self.assertEqual(
+            (answer["device"], answer["inode"]), (self.mine["device"], self.mine["inode"]))
+
+    def test_the_descriptor_is_released_on_every_path(self):
+        """Held files are closed whether the read answers, fails its query, or is refused.
+
+        Counted rather than reasoned about: a leak here would exhaust a long-lived daemon
+        slowly, far from the call that caused it.
+        """
+        def held():
+            return len(os.listdir("/proc/self/fd"))
+
+        from codex_session_relay import store as store_module
+
+        before = held()
+        for _ in range(25):
+            read_only_rows(resolve_state_dir(self.a), "SELECT 1 AS one")
+            read_only_rows(resolve_state_dir(self.a), "SELECT * FROM no_such_table")
+            nonce_lookup(resolve_state_dir(self.a), "absent")
+            read_only_rows(
+                resolve_state_dir(os.path.join(self.tmp, "nothing-here")), "SELECT 1 AS one")
+            with mock.patch.object(store_module, "_relocation", lambda fd, expected: "moved"):
+                # The refusal path closes the descriptor _hold_database took, which is the one
+                # branch that returns without ever reaching a connection.
+                read_only_rows(resolve_state_dir(self.a), "SELECT 1 AS one")
+                nonce_lookup(resolve_state_dir(self.a), "absent")
+        self.assertLessEqual(held(), before + 1, "a descriptor was not released")
+
+    def test_a_missing_store_is_answered_rather_than_raised(self):
+        """Every failure is a field, and the refusal names what could not be done."""
+        answer = read_only_rows(
+            resolve_state_dir(os.path.join(self.tmp, "nothing-here")), "SELECT 1 AS one")
+        self.assertFalse(answer["readable"])
+        self.assertEqual(answer["rows"], [])
+        self.assertIsNone(answer["device"])
+        self.assertTrue(answer["detail"])
+
+    def test_a_held_database_that_cannot_be_identified_is_not_described(self):
+        """Fail closed rather than pair one file's inode with another file's identity.
+
+        The stat that decides a file is here measures whatever the PATH reached. If the
+        descriptor then cannot be identified, carrying that earlier inode while reading the
+        store id through the descriptor would report exactly the hybrid this whole change
+        exists to remove - and a stat/open race can produce it.
+        """
+        from codex_session_relay import store as store_module
+
+        with mock.patch.object(store_module, "_held_identity", lambda fd: None):
+            report = probe(resolve_state_dir(self.a))
+
+        store = report["store"]
+        self.assertTrue(store["exists"], "the file is still here and that is still reportable")
+        self.assertIsNone(store["device"])
+        self.assertIsNone(store["inode"])
+        self.assertIsNone(store["links"])
+        self.assertIsNone(store["storeId"], "an identity was read without a file to attach it to")
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertFalse(report["access"]["dbWritable"], report)
+        self.assertIn("could not be identified", report["access"]["detail"], report)
+
+    def test_a_refused_hold_states_no_identity_at_all(self):
+        """A read that could not be bound must not be graded as a definite mismatch.
+
+        The stat that decides a file is here measures whatever the PATH reached. Reporting that
+        as the physical identity while refusing the read hands compare_store a device and inode
+        it grades as conclusive WHEN THEY DIFFER, so "this could not be bound to a file" came
+        back as "this is definitely a different store". Unproven is the honest verdict, and it
+        is the one absence has always been given here.
+        """
+        from codex_session_relay import store as store_module
+
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        with mock.patch.object(
+            store_module, "_hold_database", lambda path: (None, None, "refused for the test")
+        ):
+            report = probe(resolve_state_dir(self.a))
+
+        store = report["store"]
+        self.assertTrue(store["exists"], "the file is here and that stays reportable")
+        self.assertIsNone(store["device"])
+        self.assertIsNone(store["inode"])
+        self.assertIsNone(store["links"])
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertEqual(
+            compare_store(
+                store, expect_inode=f"{self.mine['device']}:{self.mine['inode']}",
+            )["sameStore"],
+            "unproven",
+            "a refused read was graded as a definite mismatch on a pathname observation",
+        )
+        self.assertFalse(os.path.exists(moved))
+
+    def test_a_relocated_store_is_unproven_rather_than_a_different_store(self):
+        """The same rule through the real refusal, not an injected one."""
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        fired = self.move_the_file_while_it_is_held(lambda: os.rename(self.path, moved))
+        report = probe(resolve_state_dir(self.a))
+        self.addCleanup(os.rename, moved, self.path)
+        self.assertTrue(fired, "the seam never fired, so this asserts nothing")
+
+        store = report["store"]
+        self.assertTrue(
+            store["exists"],
+            "the database was moved before probe stat'd it, so this exercised a missing file"
+            " rather than a refused hold",
+        )
+        self.assertIn("could not be held open", report["access"]["detail"], report)
+        self.assertIsNone(store["device"], report)
+        self.assertIsNone(store["inode"], report)
+        self.assertIsNone(store["links"], report)
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertEqual(
+            compare_store(
+                store, expect_inode=f"{self.mine['device']}:{self.mine['inode']}",
+            )["sameStore"],
+            "unproven",
+            report,
+        )
