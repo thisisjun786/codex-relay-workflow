@@ -149,7 +149,7 @@ def reserved(evidence_kind, idempotency_key):
     return ""
 
 
-def grant_envelope(entry):
+def grant_envelope(entry, turn, tenure):
     """One ledger entry read as a grant this module wrote, or None when it is not one.
 
     Every reader of a grant goes through here, because "evidence_kind is grant" does not mean
@@ -160,14 +160,17 @@ def grant_envelope(entry):
     calls AFTER its transaction commits, so the write landed and the caller got a host fault
     for an operation that had already succeeded.
 
-    So a grant is recognised by BOTH halves: its key is in the namespace this module owns, and
-    its evidence is an envelope with the fields a reader indexes. Anything else is somebody
-    else's attestation and is not read as a grant. Nothing here raises: a reader that can
-    raise on stored data is the failure this exists to remove.
+    Shape is not identity, and shape alone was not enough. A legacy row whose evidence happened
+    to be well-formed JSON with a big sequence became the CURRENT grant and the engine's own
+    grant was then refused as stale. So the envelope has to be the one this module would have
+    written for THIS turn: it names this turn and this tenure, its id is the id derived from
+    those and its own sequence, and its key is that id's key. A forger has to reproduce the
+    digest, and reproducing it means naming the same grant.
+
+    Nothing here raises. A reader that can raise on stored data is the failure this exists to
+    remove, not a smaller version of it.
     """
     if entry["evidenceKind"] != GRANT:
-        return None
-    if not str(entry["idempotencyKey"] or "").startswith(GRANT + ":"):
         return None
     try:
         envelope = json.loads(entry["evidence"])
@@ -176,9 +179,21 @@ def grant_envelope(entry):
     if not isinstance(envelope, dict):
         return None
     sequence = envelope.get("sequence")
-    if not isinstance(envelope.get("grantId"), str) or not envelope["grantId"]:
-        return None
     if not isinstance(sequence, int) or isinstance(sequence, bool):
+        return None
+    if envelope.get("turnId") != turn or envelope.get("tenure") != tenure:
+        return None
+    try:
+        derived = grant_id(turn, tenure, sequence)
+    except CoordinationError:
+        return None
+    if envelope.get("grantId") != derived:
+        return None
+    if entry["idempotencyKey"] != GRANT + ":" + derived:
+        return None
+    if not isinstance(envelope.get("recipientTaskId"), str) or not envelope["recipientTaskId"]:
+        return None
+    if not isinstance(envelope.get("candidateHead"), str) or not envelope["candidateHead"]:
         return None
     return envelope
 
@@ -230,13 +245,14 @@ class MergeTurn:
             return None
         record = self._record(row)
         record["ledger"] = self.ledger(turn)
-        record["grant"] = self._grant_record(record["ledger"])
+        record["grant"] = self._grant_record(record["ledger"], turn, row["tenure"])
         # Named rather than silently skipped. A row this module cannot read as its own grant
         # is somebody else's attestation or a damaged one, and either way an operator asking
         # why a turn reports no grant deserves to see it rather than infer it.
         record["unreadableGrants"] = [
             entry["idempotencyKey"] for entry in record["ledger"]
-            if entry["evidenceKind"] == GRANT and grant_envelope(entry) is None
+            if entry["evidenceKind"] == GRANT
+            and grant_envelope(entry, turn, row["tenure"]) is None
         ]
         return record
 
@@ -266,7 +282,7 @@ class MergeTurn:
         return answer
 
     @staticmethod
-    def _grant_record(entries):
+    def _grant_record(entries, turn, tenure):
         """The turn's current grant, and whether its recipient has answered it.
 
         Read out of the ledger rather than stored beside the turn, because the ledger is what
@@ -283,7 +299,7 @@ class MergeTurn:
         same second have no meaningful order at all - and an injected clock writes every one of
         them in the same second.
         """
-        grants = [(entry, grant_envelope(entry)) for entry in entries]
+        grants = [(entry, grant_envelope(entry, turn, tenure)) for entry in entries]
         grants = [(entry, envelope) for entry, envelope in grants if envelope is not None]
         if not grants:
             return None
@@ -344,7 +360,8 @@ class MergeTurn:
             answer["returnRequestedAt"] = marks[0]
             answer["transportAcceptedAt"] = marks[1]
             answer["releasedAt"] = holder["closedAt"]
-            holder["grant"] = self._grant_record(self.ledger(holder["turnId"]))
+            holder["grant"] = self._grant_record(
+                self.ledger(holder["turnId"]), holder["turnId"], holder["tenure"])
         answer["blocked"] = self._blocked_report(holder, waiters)
         return answer
 
@@ -393,13 +410,19 @@ class MergeTurn:
         current = [row for row in rows if row["head_sha"] == holder["candidateHead"]]
         moved = [row for row in rows
                  if row["refusal_reason"] == RefusalReason.MERGE_CANDIDATE_MOVED.value]
-        latest = current[0] if current else (moved[0] if moved else None)
+        latest, tied = self._settled(current if current else moved)
         if holder["state"] == MERGING:
             cause = "merge_in_flight"
         elif holder["state"] == UNKNOWN:
             cause = "outcome_unknown"
+        elif self._owner_status(holder["projectKey"]) != ACTIVE:
+            # The holder itself is not running. Every other answer would send a peer to wait
+            # on a candidate nobody is advancing.
+            cause = "holder_paused"
         elif not holder["declaredReady"]:
             cause = "candidate_not_ready"
+        elif tied:
+            cause = "restatements_disagree"
         elif latest is not None and latest["result"] == "refused":
             cause = REFUSAL_CAUSES.get(latest["refusal_reason"], "restatement_refused")
         else:
@@ -414,6 +437,7 @@ class MergeTurn:
             "lastResult": latest["result"] if latest is not None else None,
             "lastRefusal": latest["refusal_reason"] if latest is not None else None,
             "lastCheckedHead": latest["head_sha"] if latest is not None else None,
+            "ambiguousRestatements": list(tied),
             "readyPeers": [
                 {"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"],
                  "candidateHead": waiter["candidateHead"], "prNumber": waiter["prNumber"]}
@@ -422,8 +446,29 @@ class MergeTurn:
                 {"turnId": waiter["turnId"], "holderTaskId": waiter["holderTaskId"],
                  "candidateHead": waiter["candidateHead"],
                  "prNumber": waiter["prNumber"], "reason": why}
-                for waiter, why in peers if why],
+            for waiter, why in peers if why],
         }
+
+    @staticmethod
+    def _settled(rows):
+        """The newest verdict among the rows sharing the newest instant, or nothing decided.
+
+        merge_turn_checks records recorded_at to the second and check_id is a digest, so two
+        restatements written inside one second carry no order to read. Ordering by the digest
+        is not a chronology; it is a coin that lands the same way every time, which is worse
+        than no answer because it looks like one.
+
+        Where the rows sharing the newest instant agree, that IS the verdict whichever is
+        picked. Where they disagree, nothing stored here knows which came last, and the report
+        says so instead of choosing.
+        """
+        if not rows:
+            return None, ()
+        newest = [row for row in rows if row["recorded_at"] == rows[0]["recorded_at"]]
+        verdicts = {(row["result"], row["refusal_reason"]) for row in newest}
+        if len(verdicts) > 1:
+            return None, tuple(sorted(row["check_id"] for row in newest))
+        return newest[0], ()
 
     def _return_marks(self, turn):
         requested, accepted = None, None
@@ -536,7 +581,7 @@ class MergeTurn:
         recorded has nothing to answer, and this store has no migration path, so demanding an
         answer that cannot exist would wedge that turn permanently with no supported repair.
         """
-        current = self._current_grant_in(db, row["turn_id"])
+        current = self._current_grant_in(db, row["turn_id"], row["tenure"])
         if current is None:
             return None
         answered = db.execute(
@@ -556,7 +601,7 @@ class MergeTurn:
             incumbent=current, challenger=actor)
 
     @staticmethod
-    def _current_grant_in(db, turn):
+    def _current_grant_in(db, turn, tenure):
         """The newest grant recorded on a turn, read rather than re-derived.
 
         By the sequence the grant carries, because the ledger's own order is recorded_at and
@@ -575,7 +620,7 @@ class MergeTurn:
             envelope for envelope in (
                 grant_envelope({"evidenceKind": row["evidence_kind"],
                                 "idempotencyKey": row["idempotency_key"],
-                                "evidence": row["evidence"]})
+                                "evidence": row["evidence"]}, turn, tenure)
                 for row in rows)
             if envelope is not None
         ]
@@ -933,7 +978,7 @@ class MergeTurn:
         refusal = None
         with self.store.transaction() as db:
             row = self._row_in(db, turn)
-            current = self._current_grant_in(db, turn)
+            current = self._current_grant_in(db, turn, row["tenure"])
             if row["holder_task_id"] != actor:
                 refusal = self._not_holder(row, actor, "acknowledge a grant on")
             elif row["state"] != HOLDING:

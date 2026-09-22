@@ -9,10 +9,10 @@ that nothing here advances because time passed. A suite that waited on a wall cl
 that would be testing the opposite of what it claims.
 """
 
-import threading
-import unittest
 import json
 import pathlib
+import threading
+import unittest
 
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.coordination import DOMAIN_MERGE_TARGET, Conflicts
@@ -284,6 +284,30 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
 
     def test_an_unoccupied_target_has_nothing_to_be_waiting_on(self):
         self.assertIsNone(self.turns.target(REPO, BASE)["blocked"])
+
+    def test_a_holder_that_is_not_running_is_reported_as_the_blocker_it_is(self):
+        self.claim(self.alpha, PROJECT_A, "head-a")
+        self.claim(self.beta, PROJECT_B, "head-b")
+        self.set_status(PROJECT_A, "paused")
+        self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["cause"], "holder_paused")
+
+    def test_two_restatements_in_one_instant_that_disagree_decide_nothing(self):
+        """recorded_at is a second and check_id is a digest, so ordering by it is a coin that
+        lands the same way every time - which looks like an answer and is not one."""
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        self.answer_grant(held["turnId"], self.alpha.task_id)
+        self.refused_check(held["turnId"])
+        with self.assertRaises(CoordinationError):
+            self.turns.begin_merge(
+                held["turnId"], actor=self.alpha.task_id, head_sha="head-a",
+                base_sha="base-0", checks=run_checks("head-a"), required=["dev-gate"],
+                review={"hasNextPage": True, "pagesRead": 1, "totalCount": 4,
+                        "threadsSeen": ["thread-1"], "unresolved": 0})
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "restatements_disagree")
+        self.assertEqual(len(blocked["ambiguousRestatements"]), 2)
+        self.assertIsNone(blocked["lastRefusal"])
+        self.assertEqual(blocked["checkSnapshots"], 2)
 
     def test_a_peer_the_promotion_would_skip_is_not_reported_as_ready(self):
         """Returning the turn for a peer that cannot take it frees the target and moves nobody."""
@@ -1241,6 +1265,47 @@ class TheNamesThisModuleWritesAreItsOwn(MergeTurnTestCase):
             held["turnId"], actor=self.alpha.task_id, head_sha="head-a", base_sha="base-0",
             checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
         self.assertEqual(answer["state"], "merging")
+
+    def test_a_well_formed_row_that_is_not_this_turns_grant_cannot_become_it(self):
+        """Shape is not identity.
+
+        A legacy row whose evidence happened to be well-formed JSON with a large sequence
+        became the CURRENT grant, and the engine's own grant was then refused as stale. The
+        envelope now has to BE the one this module would have written for this turn: naming
+        this turn and tenure, with the id derived from those and its own sequence, under that
+        id's key.
+        """
+        held = self.claim(self.alpha, PROJECT_A, "head-a")
+        turn = held["turnId"]
+        mine = self.turns.turn(turn)["grant"]["grantId"]
+        tenure = self.turns.turn(turn)["tenure"]
+
+        forged = [
+            ("grant:mtg-forged", {"grantId": "mtg-forged", "sequence": 9999,
+                                  "turnId": turn, "tenure": tenure,
+                                  "recipientTaskId": self.beta.task_id,
+                                  "candidateHead": "head-x"}),
+            ("grant:" + grant_id(turn, tenure, 9998),
+             {"grantId": grant_id(turn, tenure, 9998), "sequence": 9998,
+              "turnId": "some-other-turn", "tenure": tenure,
+              "recipientTaskId": self.beta.task_id, "candidateHead": "head-x"}),
+            ("wrong-key", {"grantId": grant_id(turn, tenure, 9997), "sequence": 9997,
+                           "turnId": turn, "tenure": tenure,
+                           "recipientTaskId": self.beta.task_id,
+                           "candidateHead": "head-x"}),
+        ]
+        for key, envelope in forged:
+            self.write_row(turn, kind="grant", key=key, evidence=json.dumps(envelope))
+
+        record = self.turns.turn(turn)
+        self.assertEqual(record["grant"]["grantId"], mine)
+        self.assertEqual(len(record["unreadableGrants"]), 3)
+        # And the in-transaction resolver agrees, so the real grant still acknowledges.
+        self.turns.acknowledge_grant(
+            turn, actor=self.alpha.task_id, grant=mine,
+            evidence="the impersonating rows are not this turn's grant")
+        self.assertEqual(self.turns.turn(turn)["grant"]["acknowledgedBy"],
+                         self.alpha.task_id)
 
 
 class TwoParentsRacingForOneTarget(MergeTurnTestCase):
