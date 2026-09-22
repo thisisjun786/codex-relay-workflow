@@ -2124,19 +2124,23 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_l
             # The same attribution question one level along. `probe` and `nonce_lookup` are two
             # independent opens, so an answer can carry this store's device and inode and still
             # have been read through a pathname whose log is a different file. Both sides must
-            # have been measured for a difference to mean anything: an absent measurement is
-            # not a disagreement, and calling it one would turn "could not look" into
-            # "somewhere else". The log arm above refuses that case on its own terms.
+            # have been measured, and an absent one is refused rather than read as agreement -
+            # the rule the device and inode above already follow, and the one this module
+            # states: absence is never agreement. The two are separate answers, so they are
+            # reported separately: could not look, and looked somewhere else.
             read_log = (nonce.get("logDevice"), nonce.get("logInode"), nonce.get("logName"))
             mine_log = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
-            elsewhere = (None not in read_log and None not in mine_log
-                         and read_log != mine_log)
             if None in read_from or None in here or read_from != here:
                 reasons.append((UNPROVEN, (
                     f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
                     f" this comparison is about {here[0]}:{here[1]}"
                 )))
-            elif elsewhere:
+            elif log_location is True and (None in read_log or None in mine_log):
+                reasons.append((UNPROVEN, (
+                    "the log location the nonce was read through could not be measured, so the"
+                    " nonce cannot be attributed to the log this comparison is about"
+                )))
+            elif log_location is True and read_log != mine_log:
                 reasons.append((UNPROVEN, (
                     "the nonce was read through a pathname whose write-ahead log is not the one"
                     " this comparison is about"

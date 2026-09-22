@@ -954,6 +954,17 @@ class Identity(unittest.TestCase):
         self.assertEqual(graded["sameStore"], "unproven", graded)
         self.assertIn("read through a pathname", graded["detail"], graded)
 
+        # And a location that could not be measured at all is refused the same way rather
+        # than read as agreement: absence is never agreement here either, which is the rule
+        # the device and inode attribution beside it already follows.
+        unmeasured = dict(found, logDevice=None, logInode=None, logName=None)
+        graded = compare_store(
+            measured, expect_inode=f"{measured['device']}:{measured['inode']}",
+            expect_log=log_location(measured), nonce=unmeasured,
+        )
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("could not be measured", graded["detail"], graded)
+
     def test_a_nonce_read_from_a_replacement_does_not_prove_the_measured_store(self):
         """The only evidence graded as proof, bound to the file it was read from.
 

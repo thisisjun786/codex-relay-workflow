@@ -62,6 +62,12 @@ CHECKER_VERSION = 1
 # written for version 1 cannot supply it, and a preflight that quietly accepted one would ask
 # doctor a question it can no longer answer with proof.
 RECORD_VERSION = 2
+# What a FINISHED trial can still be graded at. Ledger grading reads the trial root and the
+# window and nothing else, and version 2 changed neither, so refusing a completed version-1 run
+# would destroy evidence that is exactly as readable as the day it was written. It is the same
+# reason ledger mode already declines to require the installed relay or the captures: those are
+# facts about afterwards, and so is a preflight schema that moved on.
+LEDGER_RECORD_VERSIONS = (1, 2)
 
 # The start record may lower these and may not raise them. A record that chose its own ceiling
 # would be choosing how stale its own evidence may be, which is the question the bound exists to
@@ -966,9 +972,11 @@ def load_start(path, *, environment=None, mode="preflight"):
     if record.get("source") != "live-trial-start":
         raise Refused("this file does not stamp itself as a live trial start record",
                       path=str(start), source=record.get("source"))
-    if record.get("recordVersion") != RECORD_VERSION:
+    supported = LEDGER_RECORD_VERSIONS if mode == "ledger" else (RECORD_VERSION,)
+    if record.get("recordVersion") not in supported:
         raise Refused("unsupported record version", path=str(start),
-                      recordVersion=record.get("recordVersion"))
+                      recordVersion=record.get("recordVersion"),
+                      supported=list(supported))
 
     trial_root = absolute(record.get("trialRoot"), "trialRoot")
     if not trial_root.is_dir():

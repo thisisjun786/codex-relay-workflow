@@ -1179,6 +1179,24 @@ class Ledger(TrialCase):
         self.assertEqual(code, 1, stderr)
         self.assertFalse(payload["window"]["windowIsClean"])
 
+    def test_a_trial_that_finished_under_the_older_record_is_still_gradable(self):
+        """A preflight schema that moved on is a fact about afterwards.
+
+        Ledger grading reads the trial root and the window and nothing else, which is why it
+        already declines to require the installed relay or the captures. The record version
+        that carries the store's log location is a preflight requirement, so refusing a run
+        that completed before it would destroy evidence still exactly as readable as the day
+        it was written.
+        """
+        self.base_lines()
+        start = self.world.trial / "start.json"
+        older = json.loads(start.read_text(encoding="utf-8"))
+        older["recordVersion"] = 1
+        start.write_text(json.dumps(older), encoding="utf-8")
+        code, payload, stderr = self.world.run_cli("ledger")
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue(payload["window"]["windowIsClean"], payload)
+
     def test_a_label_disagreeing_with_its_own_timestamp_is_refused(self):
         now, opened, closed = self.base_lines()
         self.base_lines([{"at": startup.stamp(opened + 10), "kind": "intervention",
