@@ -204,7 +204,13 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
         "   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
         "                    WHERE s.relationship_id = g.relationship_id"
         "                      AND s.turn_id = COALESCE(p.turn_id, g.dispatch_turn_id))"
-        "   AND (p.turn_id IS NULL OR p.last_polled_at IS NULL OR p.last_error IS NOT NULL)"
+        # An ATTEMPT must exist. A generation bound a moment ago has no poll row yet and is
+        # not stalled - it has not been due yet - and raising on its absence filed a broken
+        # fault for every healthy new assignment. What this therefore cannot see is a
+        # scheduler that never attempts at all; that absence is recorded in the limits
+        # rather than guessed at.
+        "   AND p.turn_id IS NOT NULL AND p.last_attempt_at IS NOT NULL"
+        "   AND (p.last_polled_at IS NULL OR p.last_error IS NOT NULL)"
         # Zero-padded, because the cursor is compared as TEXT and the rows are ordered
         # numerically: without it a cursor ending at generation 9 hid generation 10.
         "   AND (g.relationship_id || ':' || printf('%020d', g.execution_generation)) > ?"
@@ -264,6 +270,19 @@ def reading_faults(readings, *, product, scope, store=None) -> dict:
             continue
         signature = {"relationship": relationship, "turn": turn}
         placed = scope_of(store, relationship, scope, cache) if store is not None else scope
+        if state in (UNREPORTED, REPORTED):
+            # This reading established something about the relationship, which is exactly
+            # what an unmeasured notice says nobody had. Leaving it open would keep a notice
+            # about a question that has since been answered.
+            observations.append(faults.observation(
+                product=product, fault_class="observation_unmeasured", severity=faults.NOTICE,
+                signature={"relationship": relationship},
+                occurrence_key=f"measured:{relationship}:{turn}:{state}",
+                scope=placed, cleared=True,
+                detail="a later reading of this relationship established something",
+                evidence=[_evidence("reading", OBSERVATION_SCHEMA,
+                                    {"reportingState": state})],
+            ))
         if state == UNREPORTED:
             observations.append(faults.observation(
                 product=product, fault_class="report_omitted", severity=faults.BROKEN,
@@ -420,8 +439,8 @@ def still_present(store, fault_class, signature) -> dict:
             "   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
             "                    WHERE s.relationship_id = g.relationship_id"
             "                      AND s.turn_id = COALESCE(p.turn_id, g.dispatch_turn_id))"
-            "   AND (p.turn_id IS NULL OR p.last_polled_at IS NULL"
-            "        OR p.last_error IS NOT NULL)"
+            "   AND p.turn_id IS NOT NULL AND p.last_attempt_at IS NOT NULL"
+            "   AND (p.last_polled_at IS NULL OR p.last_error IS NOT NULL)"
             " LIMIT 1",
             (signature.get("relationship"), signature.get("generation")))
     # A class this cannot ask about is never cleared by absence.

@@ -586,11 +586,15 @@ class FaultLedger:
                 "   tracker_ref = excluded.tracker_ref, recorded_at = excluded.recorded_at",
                 (scope_key, tracker_ref, now),
             )
+            # Every pending write for this scope, not only the ones pointing nowhere. A
+            # retarget left writes queued against the tracker the scope no longer uses, so
+            # they would have been filed where nobody is looking any more.
             waiting = db.execute(
                 "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-                " WHERE tracker_ref IS NULL AND state = ? AND fault_id IN"
+                " WHERE state = ? AND (tracker_ref IS NULL OR tracker_ref != ?)"
+                "   AND fault_id IN"
                 "   (SELECT fault_id FROM fault_ledger WHERE scope_key = ?)",
-                (tracker_ref, now, PENDING, scope_key),
+                (tracker_ref, now, PENDING, tracker_ref, scope_key),
             ).rowcount
         return {"scopeKey": scope_key, "trackerRef": tracker_ref, "backfilled": waiting}
 

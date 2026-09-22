@@ -419,6 +419,76 @@ class AnExistingStoreGainsTheFaultTables(RelayTestCase):
         self.assertTrue(ledger.next())
 
 
+class FifthReviewFindings(RelayTestCase):
+    """Round five: a false positive that would have filed issues nobody should see."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.register()
+        self.relationship = self.store.one(
+            "SELECT relationship_id FROM relationships")["relationship_id"]
+
+    def bind(self, generation=7, turn="turn-new"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO generations (relationship_id, execution_generation,"
+                "  dispatch_request_id, anchor_state, dispatch_turn_id, opened_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (self.relationship, generation, f"req-{generation}", "bound", turn,
+                 self.clock.iso()))
+
+    def poll(self, generation=7, turn="turn-new", polled=None, error=None):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO poll_observations (relationship_id,"
+                "  execution_generation, turn_id, last_status, last_polled_at,"
+                "  last_attempt_at, last_error) VALUES (?,?,?,?,?,?,?)",
+                (self.relationship, generation, turn, "inProgress", polled,
+                 self.clock.iso(), error))
+
+    def test_an_anchor_bound_a_moment_ago_is_not_a_stalled_one(self):
+        """It has not been due yet. Raising on that filed a fault for every new assignment."""
+        self.bind()
+        self.assertEqual([], faultsweep.observation_faults(
+            self.store, product=PRODUCT, scope={})["observations"])
+
+    def test_an_anchor_whose_attempts_have_never_succeeded_is_still_derived(self):
+        self.bind()
+        self.poll(error="boom")
+        derived = faultsweep.observation_faults(
+            self.store, product=PRODUCT, scope={})["observations"]
+        self.assertEqual(1, len(derived))
+        self.assertEqual(faults.BROKEN, derived[0]["severity"])
+
+    def test_retargeting_a_scope_moves_writes_queued_against_the_old_tracker(self):
+        self.ledger.set_target("crw:CRW", "team-old")
+        answer = self.ledger.record(omission("a"))
+        self.assertEqual("team-old", self.store.one(
+            "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
+            (answer["publication"]["publicationId"],))["tracker_ref"])
+        moved = self.ledger.set_target("crw:CRW", "team-new")
+        self.assertEqual(1, moved["backfilled"])
+        self.assertEqual("team-new", self.store.one(
+            "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
+            (answer["publication"]["publicationId"],))["tracker_ref"])
+
+    def test_a_reading_that_establishes_something_clears_the_unmeasured_notice(self):
+        reading = {"schema": faultsweep.OBSERVATION_SCHEMA,
+                   "relationshipId": self.relationship,
+                   "selectors": {"turn": "turn-7"}, "reportingState": "unmeasured"}
+        first = faultsweep.sweep(self.store, readings=[reading])
+        faultsweep.record_all(self.ledger, first, store=self.store)
+        identifier = faults.fault_id(PRODUCT, "observation_unmeasured",
+                                     {"relationship": self.relationship})
+        self.assertIsNone(self.ledger.get(identifier)["cleared_at"])
+        second = faultsweep.sweep(self.store, readings=[
+            dict(reading, reportingState="reported")])
+        faultsweep.record_all(self.ledger, second, store=self.store)
+        self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
+
+
+
 class Lifecycle(LedgerCase):
     def setUp(self):
         super().setUp()
@@ -950,14 +1020,12 @@ class ReviewFindings(RelayTestCase):
                 " VALUES (?,?,?,?,?,?,?)",
                 (relationship, 9, "turn-current", "inProgress", self.clock.iso(),
                  self.clock.iso(), None))
-        # The registry's own generation 1 has never been polled at all and is correctly
-        # derived; what must NOT appear is generation 9, whose current anchor polls fine and
-        # whose only failure belongs to a turn the scheduler has moved on from.
+        # Generation 9's current anchor polls fine and its only failure belongs to a turn the
+        # scheduler has moved on from, so it raises nothing. The registry's own generation has
+        # never been ATTEMPTED, which is a new assignment rather than a stalled one.
         stalled = faultsweep.observation_faults(
             self.store, product=PRODUCT, scope={})["observations"]
-        self.assertEqual([], [entry for entry in stalled
-                              if entry["signature"]["generation"] == 9])
-        self.assertTrue(stalled, "the never-polled anchor is still derived")
+        self.assertEqual([], stalled)
 
 
 class SecondReviewFindings(LedgerCase):
