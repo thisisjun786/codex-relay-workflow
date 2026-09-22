@@ -537,3 +537,160 @@ class AnUnreadablePolicyNeverAgreesWithItself(DeliveryTestCase):
         self.assertTrue(findings, "two unreadable policies must not agree")
         self.assertEqual(findings[0]["field"], "sandbox")
         self.assertEqual(findings[0]["code"], "settings_not_preserved")
+
+
+class ASandboxRecordedAsSomethingOtherThanAPolicy(DeliveryTestCase):
+    """The row holds a value in place of the SandboxPolicy object, and it has to be REFUSED.
+
+    What it used to do instead is the defect. `sandbox_mode()` read `.get('type')` off whatever
+    the row held, so a legacy or hand-edited record carrying the bare mode name 'workspaceWrite'
+    left an AttributeError where `require_usable()` owes its caller a `DeliveryRefused`, and a
+    `{'type': {...}}` left a TypeError on an unhashable dict key. Registration, delivery and
+    `settings-show` all validate through that one method, so each answered such a row with an
+    exception rather than with the refusal this package already had for a policy it cannot read.
+
+    The reason is that existing one. `normalise_policy()` reads a non-dict as unreadable
+    (settings.py) and the gate below already answers `unsupported_sandbox_type` for exactly that,
+    so these rows were always destined for this code; only the crash one gate earlier hid it.
+    Refusing them as a mistyped field instead would have given one situation two vocabularies.
+
+    Shapes rather than the two reported instances, because the ways a row goes wrong are not
+    alike and two different lines used to raise: a TRUTHY non-dict died in the mode lookup, while
+    a FALSY one ('', 0, [], False) reached the gate's message instead, since `... or {}` had
+    already turned it into an empty dict. `missing()` counts all of them as present -- it tests
+    `is None` -- so nothing earlier catches them.
+    """
+
+    NOT_AN_OBJECT = (
+        "the recorded sandbox is {kind}, not the policy object a creation result reports,"
+        " so it does not record the full policy a resume would have to restore"
+    )
+
+    def test_every_shape_a_row_can_hold_instead_of_a_policy_is_refused(self):
+        """Nine shapes, one refusal, and the detail names the type the row actually holds."""
+        shapes = [
+            ("workspaceWrite", "str"),  # the reported instance: a mode name, not a policy
+            ("", "str"),
+            (["workspaceWrite"], "list"),
+            ([], "list"),
+            (7, "int"),
+            (0, "int"),
+            (1.5, "float"),
+            (True, "bool"),
+            (False, "bool"),
+        ]
+        for recorded, kind in shapes:
+            with self.subTest(recorded=recorded):
+                stale = task_settings("/parent", sandbox=recorded)
+                view = TaskSettings(stale)
+                # Asserted, not assumed: an absent sandbox is refused one gate earlier, and
+                # this test would then be proving completeness rather than shape.
+                self.assertEqual(view.missing(), [], "the record is complete, not incomplete")
+                # Total: the answer comes BACK rather than being raised out of the gate.
+                self.assertIsNone(view.sandbox_mode())
+                refusal = self.assertRefused(
+                    RefusalReason.UNSUPPORTED_SANDBOX_TYPE, view.require_usable,
+                )
+                # Exact, not a substring: 'names no sandbox' would be its own false statement
+                # about a row holding 'workspaceWrite', which IS a mode name. What it lacks is
+                # the policy around it, and the detail has to say that and nothing else.
+                self.assertEqual(refusal.detail, self.NOT_AN_OBJECT.format(kind=kind))
+
+    def test_a_policy_object_whose_type_cannot_be_read_is_refused_not_raised(self):
+        """The same class one level in: the row IS an object and its type is not a mode name.
+
+        The unhashable member is the one no gate ordering reaches: a dict key lookup raises
+        TypeError before any refusal exists, which is the case `normalise_policy()` already
+        guards for itself. Here the record keeps the dict wording, because a dict is what it is.
+        """
+        for recorded in ({"type": {"mode": "workspaceWrite"}}, {"type": ["workspaceWrite"]},
+                         {"type": 7}, {"type": True}, {"type": None}, {}):
+            with self.subTest(recorded=recorded):
+                view = TaskSettings(task_settings("/parent", sandbox=recorded))
+                self.assertEqual(view.missing(), [], "the record is complete")
+                self.assertIsNone(view.sandbox_mode())
+                refusal = self.assertRefused(
+                    RefusalReason.UNSUPPORTED_SANDBOX_TYPE, view.require_usable,
+                )
+                self.assertEqual(
+                    refusal.detail,
+                    f"{recorded.get('type')!r} has no ThreadResumeParams.sandbox mode, so it"
+                    " cannot be restored on a resume",
+                )
+
+    def test_an_absent_sandbox_stays_incomplete_rather_than_unreadable(self):
+        """The class boundary. Absence has its own recovery: record the field.
+
+        Refusing it here would point the repair at re-recording a policy that was never wrong,
+        and `missing()` answers null and omitted alike one gate earlier.
+        """
+        for label, mutate in (("null", lambda row: row.update(sandbox=None)),
+                              ("omitted", lambda row: row.pop("sandbox"))):
+            with self.subTest(sandbox=label):
+                stale = task_settings("/parent")
+                mutate(stale)
+                refusal = self.assertRefused(
+                    RefusalReason.SETTINGS_INCOMPLETE, TaskSettings(stale).require_usable,
+                )
+                self.assertEqual(refusal.detail, "missing sandbox")
+
+    def test_the_answers_for_a_readable_policy_are_unchanged(self):
+        """The other half of the rule: a total function must not start refusing what it carried.
+
+        The unsupported-type detail is asserted EXACTLY rather than by substring, because the
+        ladder elsewhere in this file compares with assertIn and would not notice this text
+        moving underneath it.
+        """
+        usable = TaskSettings(task_settings("/parent"))
+        usable.require_usable()
+        self.assertEqual(usable.sandbox_mode(), "workspace-write")
+        self.assertEqual(usable.resume_params("t-1")["sandbox"], "workspace-write")
+
+        external = TaskSettings(task_settings("/parent", sandbox={"type": "externalSandbox"}))
+        refusal = self.assertRefused(
+            RefusalReason.UNSUPPORTED_SANDBOX_TYPE, external.require_usable,
+        )
+        self.assertEqual(
+            refusal.detail,
+            "'externalSandbox' has no ThreadResumeParams.sandbox mode, so it cannot be"
+            " restored on a resume",
+        )
+
+    def test_the_send_is_withheld_and_the_reason_is_what_a_parent_reads(self):
+        """The PATH, not the rule: what a store holding such a row actually does to a delivery.
+
+        Before this, the settings check raised AttributeError out of the delivery pass instead of
+        withholding, so the journal and `failed_operations` never got the row's real answer.
+        """
+        _relationship, event_id = self.queued_event(
+            settings=task_settings("/parent", sandbox="workspaceWrite"),
+        )
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertEqual(self.attempts_for(event_id), [], "no attempt was claimed")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        entry = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]
+        self.assertIn(RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value, entry["detail"])
+        self.assertIn("the recorded sandbox is str", entry["detail"])
+        failure = self.store.all(
+            "SELECT operation, error_code, retry_safe FROM failed_operations"
+            " ORDER BY rowid DESC LIMIT 1",
+        )[0]
+        self.assertEqual(failure["operation"], "settings_check")
+        self.assertEqual(failure["error_code"], RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value)
+        self.assertEqual(failure["retry_safe"], 1, "re-recording the row is the recovery")
+
+    def test_registration_refuses_the_row_rather_than_storing_it(self):
+        """The earliest surface owns the first answer, and it used to raise here too."""
+        self.assertRefused(
+            RefusalReason.UNSUPPORTED_SANDBOX_TYPE,
+            lambda: record_settings(
+                self.store, self.clock, "01other",
+                task_settings("/parent", sandbox=["workspaceWrite"]),
+                source="creation_result",
+            ),
+        )
+        self.assertIsNone(load_settings(self.store, "01other"), "the refused row was stored")

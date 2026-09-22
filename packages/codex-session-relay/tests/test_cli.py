@@ -932,6 +932,50 @@ class SettingsCommands(CliBase):
         self.assertIn("cwd is int, not str", shown["recordFinding"]["detail"])
 
 
+    def test_a_sandbox_that_is_not_a_policy_object_is_named_not_reported_unexpected(self):
+        """The generic answer this command gives when the validator RAISES, and what it hid.
+
+        A row recording the bare mode name instead of the policy object used to reach
+        `TaskSettings.sandbox_mode()`, which called `.get` on the string; the total except below
+        caught the AttributeError and reported code "unexpected" with a Python type name in the
+        detail. That is this command's answer for a failure it has no vocabulary for, and the
+        package did have one: an unreadable sandbox policy is `unsupported_sandbox_type`.
+
+        Written past the recorder deliberately, like its neighbour above: registration refuses
+        this input now, so the only way a store holds such a row is an older writer or a hand
+        edit - the case this command exists to diagnose.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.run_cli(
+            "settings-record", "--task", PARENT, "--settings", json.dumps(self._settings()),
+        )
+        store = Store(Path(self.tmp) / "relay.sqlite3")
+        with store.transaction() as db:
+            db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                (json.dumps(dict(self._settings(), sandbox="workspaceWrite")), PARENT),
+            )
+        store.db.commit()
+        store.close()
+
+        shown = self.run_cli("settings-show", "--task", PARENT)
+        # Complete and present: this is refused for what the field IS, not for being absent.
+        self.assertTrue(shown["usable"], "the record did not become incomplete")
+        self.assertEqual(shown["missing"], [])
+        self.assertFalse(shown["deliverable"])
+        self.assertEqual(shown["recordFinding"]["code"], "unsupported_sandbox_type")
+        self.assertNotEqual(
+            shown["recordFinding"]["code"], "unexpected",
+            "the validator raised instead of refusing, and this command said so generically",
+        )
+        self.assertIn(
+            "the recorded sandbox is str", shown["recordFinding"]["detail"],
+        )
+
+
 class Diagnosis(unittest.TestCase):
     """doctor has to answer ON the host it is describing, including a broken one."""
 
