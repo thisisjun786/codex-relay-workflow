@@ -2634,6 +2634,44 @@ class BoundsAcrossAProcessBoundary(ServiceTestCase):
 
         self.assertEqual(recovered, [True])
 
+    def test_a_segment_no_worker_could_accept_is_refused_before_any_worker_runs(self):
+        """A length is not a bound the supervisor keeps; it is the one it hands out.
+
+        A worker given nan, inf, zero or a negative length refuses it and exits before its first
+        tick. The supervisor reads that as an ordinary worker failure and answers by launching
+        another - and another - so the service stays alive, backs off, and serves nothing for as
+        long as the owner leaves it running. Refusing the configuration once is the difference
+        between a usage error and a silent outage.
+        """
+        service = self.service("s")
+        service.enable(actor="test")
+        launches = []
+
+        for value in (float("nan"), float("inf"), 0.0, -1.0):
+            with self.subTest(segment_seconds=value):
+                with self.assertRaises(ValueError) as caught:
+                    service.supervise(
+                        allow_isolated=True, sleeper=lambda _s: None, max_segments=1,
+                        segment_seconds=value,
+                        spawn=lambda **call: launches.append(call) or FakeWorker(0),
+                    )
+                self.assertIn("finite number greater than zero", str(caught.exception))
+
+        self.assertEqual(launches, [], "a worker was launched for a length it would refuse")
+
+    def test_an_absent_segment_still_takes_the_policy_default(self):
+        """The default belongs to an absent value. The guard above must not eat it."""
+        service = self.service("t")
+        service.enable(actor="test")
+        launches = []
+
+        service.supervise(
+            allow_isolated=True, sleeper=lambda _s: None, max_segments=1,
+            spawn=lambda **call: launches.append(call) or FakeWorker(0),
+        )
+
+        self.assertEqual(launches[0]["segment_seconds"], RetryPolicy().segment_seconds)
+
     def test_a_bound_no_comparison_can_pass_is_refused_by_the_api_as_well(self):
         """The CLI is not the only caller of supervise.
 

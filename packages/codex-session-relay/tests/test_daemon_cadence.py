@@ -18,7 +18,7 @@ from unittest import mock
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.cli import (
     EXIT_USAGE, PayloadExit, Services, SystemExit2, _run_bounded, _scheduler_wait,
-    _service_for, build_parser, cmd_daemon,
+    _segment_seconds, _service_for, build_parser, cmd_daemon,
 )
 from codex_session_relay.daemon import RelayDaemon
 from codex_session_relay.fakehost import FakeHostAdapter
@@ -436,3 +436,20 @@ class TheFormOfTheBound(unittest.TestCase):
             self.deadline_given_to(services, args, monotonic=lambda: 5_000.0)
 
         self.assertEqual(caught.exception.code, EXIT_BOUND_SPENT)
+
+    def test_a_segment_length_is_checked_where_a_person_typed_it(self):
+        """The supervisor refuses these too, but by then it is a traceback rather than an answer."""
+        for value in (float("nan"), float("inf"), 0.0, -1.0):
+            with self.subTest(segment_seconds=value):
+                args = _Args("/nonexistent-for-this-test")
+                args.segment_seconds = value
+                with self.assertRaises(SystemExit2) as caught:
+                    _segment_seconds(args)
+                self.assertEqual(caught.exception.code, EXIT_USAGE)
+
+    def test_an_absent_segment_length_is_left_for_the_policy_to_answer(self):
+        args = _Args("/nonexistent-for-this-test")
+        args.segment_seconds = None
+        self.assertIsNone(_segment_seconds(args))
+        args.segment_seconds = 1800.0
+        self.assertEqual(_segment_seconds(args), 1800.0)

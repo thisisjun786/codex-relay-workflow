@@ -2304,6 +2304,20 @@ def _bound_already_spent(service, detail):
     )
 
 
+def _segment_seconds(args):
+    """How long each worker gets, checked where a person typed it.
+
+    It becomes the worker's own bound, and a worker given a length it must refuse exits before
+    its first tick - which a supervisor reads as an ordinary failure and answers by launching
+    another one. The service stays alive and serves nothing. Refusing the configuration once is
+    the difference between a usage error and a silent outage.
+    """
+    value = _finite(getattr(args, "segment_seconds", None), "--segment-seconds")
+    if value is not None and value <= 0:
+        raise SystemExit2("--segment-seconds must be greater than zero", EXIT_USAGE)
+    return value
+
+
 def _asked_for_no_ticks(args):
     """A run given a tick budget of zero or less took no tick because it was asked for none.
 
@@ -2493,7 +2507,7 @@ def cmd_service(services, args) -> dict:
         call = service.start if action == "start" else service.restart
         return _refuse_unless_ok(call(
             allow_isolated=args.allow_isolated_scope, deadline=duration,
-            segment_seconds=args.segment_seconds, max_segments=args.max_segments,
+            segment_seconds=_segment_seconds(args), max_segments=args.max_segments,
             actor=args.actor or "cli", takeover=getattr(args, "takeover_scope", False),
         ))
     if action == "run":
@@ -2527,7 +2541,7 @@ def _supervise(services, service, args) -> dict:
     try:
         duration, instant = _declared_bound(args)
         return service.supervise(
-            allow_isolated=args.allow_isolated_scope, segment_seconds=args.segment_seconds,
+            allow_isolated=args.allow_isolated_scope, segment_seconds=_segment_seconds(args),
             max_segments=args.max_segments, deadline=duration, deadline_monotonic=instant,
             on_start=recover,
         )

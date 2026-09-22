@@ -1503,7 +1503,19 @@ class RelayService:
         sleeper = sleeper or time.sleep
         monotonic = monotonic or time.monotonic
         spawn = spawn or self.spawn_worker
-        segment_seconds = segment_seconds or policy.segment_seconds
+        # The default belongs to an absent value, not to a falsy one: zero is a segment length
+        # somebody asked for, and silently turning it into an hour answers a different request.
+        segment_seconds = policy.segment_seconds if segment_seconds is None else segment_seconds
+        if not math.isfinite(segment_seconds) or segment_seconds <= 0:
+            # This becomes every worker's OWN bound. A worker handed one no comparison can pass
+            # is refused on arrival, and a supervisor reads that refusal as an ordinary worker
+            # failure - so it would replace the worker, and replace the replacement, for as
+            # long as the owner left the service running, alive and serving nothing. Refused
+            # here, before any lock is taken or any worker is spawned.
+            raise ValueError(
+                "segment_seconds must be a finite number greater than zero; it is the bound "
+                "every worker is given, and a worker cannot be given a length it must refuse"
+            )
 
         gate = self.authority_check(allow_isolated=allow_isolated)
         if not gate["ok"]:

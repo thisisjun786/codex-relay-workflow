@@ -607,6 +607,12 @@ Two end times are not a preference: `--deadline` together with `--deadline-monot
 is any value no comparison can pass - `nan`, `inf`, or a negative one. `--deadline 0` is a bound with
 nothing in it rather than the absence of one.
 
+`--segment-seconds` is checked the same way, and has to be greater than zero, because it is not a
+bound the supervisor keeps - it is the one it hands to every worker. A worker given a length it must
+refuse exits before its first tick, and a supervisor reads that as an ordinary worker failure and
+launches another, so the service would stay alive and serve nothing for as long as it was left
+running. Only an absent value takes the policy default.
+
 A bound stops a run from STARTING a tick, so a tick already under way finishes and may make several
 deliveries. It is compared on two clocks on purpose. The deadline the daemon reads is a wall instant,
 because that is what it has always read, and a wall clock that steps backwards would push that instant
