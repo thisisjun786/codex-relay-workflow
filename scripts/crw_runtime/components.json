@@ -38,7 +38,7 @@
       "consoleScript": "codex-session-relay",
       "subdirectory": "packages/codex-session-relay",
       "packageLocation": "packages/codex-session-relay/src/codex_session_relay",
-      "subdirectoryTree": "36eecde2d49e38aa59b4c6f0e06602c83e5b15e0",
+      "subdirectoryTree": "6f6d5c39c063cd4877209b9e250944046adb5a60",
       "packageTree": "2c4f978cd6f3d275acd3f937ed107208ea336792",
       "sourceDigest": "4e77b1d6cd66c03c29cb3f7768acb7ce959773f7132e0400e815d8ef70ccbbd8",
       "version": "0.1.0",
