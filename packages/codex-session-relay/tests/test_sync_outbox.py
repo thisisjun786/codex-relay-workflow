@@ -4,7 +4,7 @@ import hashlib
 import json
 
 from codex_session_relay import identity
-from codex_session_relay.criteria import CriteriaService
+from codex_session_relay.criteria import CriteriaService, set_digest
 from codex_session_relay.errors import AckRefused, RefusalReason
 from codex_session_relay.sync import (
     CONFIRMED,
@@ -894,7 +894,45 @@ class CriteriaAndRulingAreInSyncIdentity(OutboxTestCase):
         event_id = self.claimed()
         self.rule(event_id, turn="v1")
         row = self.sync.get(self.jobs()[0]["syncId"])
-        self.assertIn(f"criteria set {self.digest()[:12]}", row["summary"])
+        self.assertIn(f"criteria set {self.digest()[:12]}, ruling 1", row["summary"])
+
+    def test_the_summary_is_what_tells_a_reader_which_ruling_stands(self):
+        """Three blocks, and the first and third carry the same set and the same findings."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        self.criteria.register(self._rid, EDITED, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v2")
+        self.criteria.register(self._rid, SET, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v3")
+
+        summaries = [self.sync.get(one["syncId"])["summary"] for one in self.jobs()]
+        self.assertEqual(
+            [line for text in summaries for line in text.split("\n") if "ruling" in line],
+            [f"criteria set {set_digest(SET)[:12]}, ruling 1",
+             f"criteria set {set_digest(EDITED)[:12]}, ruling 2",
+             f"criteria set {set_digest(SET)[:12]}, ruling 3"],
+        )
+
+    def test_an_older_job_retried_after_a_newer_one_still_names_its_own_ruling(self):
+        """Where a block sits cannot rank it: a job in backoff is passed over and lands later."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        first = self.jobs()[0]["syncId"]
+        claim = self.sync.claim(first, owner="main")
+        self.sync.fail(first, claim_token=claim["claimToken"], error="connector timed out")
+
+        self.criteria.register(self._rid, EDITED, source_ref=SOURCE)
+        self.re_rule(event_id, turn="v2")
+        second = [one["syncId"] for one in self.jobs() if one["syncId"] != first][0]
+
+        self.assertEqual(
+            [one["sync_id"] for one in self.sync.next()], [second],
+            "only the newer ruling is selectable while the older one backs off",
+        )
+        self.clock.advance(1000)
+        self.assertIn(first, [one["sync_id"] for one in self.sync.next()])
+        self.assertIn("ruling 1", self.sync.get(first)["summary"])
+        self.assertIn("ruling 2", self.sync.get(second)["summary"])
 
     def test_a_labelled_job_reconciles_and_completes_from_its_stored_identity(self):
         event_id = self.claimed()
@@ -924,3 +962,25 @@ class CriteriaAndRulingAreInSyncIdentity(OutboxTestCase):
         self.assertEqual(entry["criteriaDigest"], self.digest())
         self.assertIsNone(entry["ruling"], "a first ruling carries no occurrence label")
         self.assertTrue(entry["inserted"])
+
+    def test_the_journal_says_so_when_the_insert_was_ignored(self):
+        """An entry that claims an enqueue either way claims a row that may not exist."""
+        event_id = self.claimed()
+        self.rule(event_id, turn="v1")
+        identifier = self.jobs()[0]["syncId"]
+        event = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        with self.store.transaction() as db:
+            again = self.sync.enqueue_in(
+                db, relationship_id=self._rid, issue_key="REL-1", subject_kind="verdict",
+                summary="a second attempt at a record that already exists", event_id=event_id,
+                generation=event["execution_generation"], revision=event["revision_hash"],
+                verdict="verified", criteria_digest=self.digest(),
+            )
+
+        self.assertEqual(again, identifier, "the same ruling is the same job")
+        entries = [json.loads(one["detail"]) for one in self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? AND subject = ? ORDER BY seq",
+            ("sync_enqueued", identifier),
+        )]
+        self.assertEqual([one["inserted"] for one in entries], [True, False])
+        self.assertEqual(self.sync.get(identifier)["summary"].count("criteria set"), 1)

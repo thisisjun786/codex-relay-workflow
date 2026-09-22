@@ -434,19 +434,31 @@ class SyncOutbox:
 
     def enqueue_verdict_in(self, db, *, relationship, event, verdict, findings, record,
                            criteria_digest=None, ruling=None):
+        """ruling is this ruling's ordinal: 1 for the first, one more for every re-review.
+
+        It reaches the SUMMARY whenever there is a criteria set to name, because a reader of the
+        document cannot get it from anywhere else. Where a block sits does not say it: next()
+        skips a job that is backing off or leased, so a newer ruling can be written first and an
+        older one retried in after it, and in a set edited away and back the two blocks can carry
+        the same criteria and the same findings.
+
+        It reaches IDENTITY only above 1. A first ruling has nothing to be told apart from, and
+        leaving it out is what keeps a verdict with no canonical criteria hashing the payload it
+        hashed before any of this existed.
+        """
         return self.enqueue_in(
             db,
             relationship_id=relationship["relationshipId"],
             issue_key=relationship["issueKey"],
             subject_kind=VERDICT,
             summary=render_verdict_summary(relationship, event, verdict, findings, record,
-                                           criteria_digest=criteria_digest),
+                                           criteria_digest=criteria_digest, ruling=ruling),
             event_id=event["event_id"],
             generation=event["execution_generation"],
             revision=event["revision_hash"],
             verdict=verdict,
             criteria_digest=criteria_digest,
-            ruling=ruling,
+            ruling=ruling if (ruling or 0) > 1 else None,
         )
 
     # ------------------------------------------------------------------ queue
@@ -846,7 +858,7 @@ class SyncOutbox:
 
 
 def render_verdict_summary(relationship, event, verdict, findings, record,
-                           criteria_digest=None) -> str:
+                           criteria_digest=None, ruling=None) -> str:
     lines = [
         f"{relationship['issueKey']} · {relationship['child']['taskId']} · {verdict}",
         f"generation {event['execution_generation']}, revision {event['revision_hash'][:12]}",
@@ -855,7 +867,13 @@ def render_verdict_summary(relationship, event, verdict, findings, record,
         # Which wording the judgment rests on. Identity already separates two rulings made
         # against different criteria, but a person reading the document sees only the summary,
         # and two blocks reaching the same disposition are indistinguishable without this.
-        lines.append(f"criteria set {criteria_digest[:12]}")
+        #
+        # The ordinal travels with it because the container can hold several of these and their
+        # arrangement does not order them. The highest ordinal is the ruling that stands.
+        criteria_line = f"criteria set {criteria_digest[:12]}"
+        if ruling:
+            criteria_line += f", ruling {ruling}"
+        lines.append(criteria_line)
     if record.get("nextExecutionGeneration"):
         lines.append(
             f"a revision request was queued to the same child under generation "

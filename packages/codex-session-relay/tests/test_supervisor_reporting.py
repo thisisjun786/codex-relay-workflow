@@ -11,7 +11,14 @@ import os
 from codex_session_relay import cxc, envelope, identity, report, supervision
 from codex_session_relay.omitted import SCHEMA as OBSERVATION_SCHEMA
 from codex_session_relay.store import Store
-from codex_session_relay.sync import CONFIRMED, PENDING, SyncOutbox, render_block
+from codex_session_relay.sync import (
+    CONFIRMED,
+    FAILED,
+    MAX_ATTEMPTS,
+    PENDING,
+    SyncOutbox,
+    render_block,
+)
 
 from .support import CHILD, PARENT, DeliveryTestCase
 from .test_report_contract import a_report
@@ -959,11 +966,20 @@ class SeveralRulingsOnOneEvent(ReportingTestCase):
         event_id = self.reported()
         self.confirm(self.ruling(event_id, criteria_digest="digest-a"))
         second = self.ruling(event_id, criteria_digest="digest-b", ruling=2)
-        claim = self.sync.claim(second, owner="test")
-        self.sync.fail(second, claim_token=claim["claimToken"], error="linear said no")
+        for _ in range(MAX_ATTEMPTS):
+            claim = self.sync.claim(second, owner="test")
+            self.sync.fail(second, claim_token=claim["claimToken"], error="linear said no")
+            self.clock.advance(1000)
+        self.assertEqual(
+            self.store.one("SELECT state FROM sync_outbox WHERE sync_id = ?",
+                           (second,))["state"],
+            FAILED,
+            "the point of this case is the state that stops being retried",
+        )
 
         decided = supervision.select(self.store, self.obligation_for(event_id))
         self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn(FAILED, decided["dischargeReason"])
 
     def test_the_current_ruling_confirmed_discharges_it(self):
         event_id = self.reported()

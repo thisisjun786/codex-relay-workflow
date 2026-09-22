@@ -689,6 +689,8 @@ class AckService:
                 # Passed only when it exceeds 1. A first ruling has nothing to be told apart
                 # from, and leaving it off is what keeps a verdict with no canonical criteria -
                 # no digest either - producing the identity it produced before this existed.
+                # enqueue_verdict_in owns that rule, because the summary names the ordinal
+                # even when identity leaves it out.
                 ruling = 1 + db.execute(
                     "SELECT COUNT(*) AS seen FROM journal WHERE kind = ? AND subject = ?",
                     ("verdict_superseded", event_id),
@@ -699,7 +701,7 @@ class AckService:
                     # Subscript, not get: coverage() sets this key on both of its return paths,
                     # so get() could only turn a future contract break into a silent None.
                     criteria_digest=cover["setDigest"],
-                    ruling=ruling if ruling > 1 else None,
+                    ruling=ruling,
                 )
         return record
 
