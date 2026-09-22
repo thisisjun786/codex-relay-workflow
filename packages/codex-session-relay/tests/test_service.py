@@ -1366,6 +1366,20 @@ class SupervisorCleanup(ServiceTestCase):
             # workers move the clock through that same method, so clock.spent interleaves the
             # two and is not what this supervisor was asked to wait.
             slept.append(seconds)
+            # The invariant this class is named for, checked where it is decided rather than
+            # test by test: a delay longer than what is left of the bound is one that
+            # outlives it, and a negative one is a length no clock accepts. Holding it for
+            # every sleep is what rules out a clamp that returns some other wrong constant -
+            # a floor of 0.1 rather than 0.0, say - which each test's own expected values
+            # would otherwise let through.
+            remaining = deadline - clock.elapsed
+            self.assertGreaterEqual(
+                seconds, 0.0, f"the supervisor asked to sleep {seconds}, which no clock takes",
+            )
+            self.assertLessEqual(
+                seconds, max(0.0, remaining),
+                f"a restart delay of {seconds} outlives the {remaining} left of the bound",
+            )
             clock.advance(seconds)
 
         outcome = service.supervise(
