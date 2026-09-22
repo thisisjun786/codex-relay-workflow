@@ -70,6 +70,10 @@ OFFLINE_COMMANDS = (
     "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
+    # Records which execution policy file this service's daemon is launched with. It writes
+    # one small file next to the intent and reaches no host, so an operator can configure a
+    # service before anything is running.
+    "service declare",
     # Coordination between parents. Like the linkage surface these read and write the store
     # and never call the host, so an operator can run every one of them with no App Server.
     # Read-only, offline, and constructs no Store at all.
@@ -2202,7 +2206,13 @@ def cmd_doctor(services, args) -> dict:
     # side and can be laid against each other. The bridge's own digest is not fetched; the
     # report names where to read it.
     report["rolePolicy"] = _role_policy_report(services)
-    report["workerPolicy"] = _service_for(services).read_worker_policy()
+    relay_service = _service_for(services)
+    report["workerPolicy"] = relay_service.read_worker_policy()
+    # A third reading, and deliberately a different KIND of one. rolePolicy is what this
+    # process resolved and workerPolicy is what the serving worker resolved; this is neither.
+    # It is the input the NEXT daemon launched from this state directory would be given, so a
+    # host that is about to be restarted can be read before the restart rather than after it.
+    report["launchPolicy"] = relay_service.resolve_launch_policy()
     caller = rolepolicy.snapshot_record()
     worker = report["workerPolicy"].get("policy") or {}
     report["callerWorkerAgreement"] = (
@@ -2523,6 +2533,13 @@ def cmd_service(services, args) -> dict:
         return _refuse_unless_ok(service.enable(actor=args.actor or "cli"))
     if action == "disable":
         return _refuse_unless_ok(service.disable(actor=args.actor or "cli"))
+    if action == "declare":
+        # Writing the declaration never starts, stops or reconfigures anything that is
+        # running: the daemon holding the lock keeps the policy it was launched with.
+        if args.forget_execution_policy:
+            return _refuse_unless_ok(service.forget_launch_policy(actor=args.actor or "cli"))
+        return _refuse_unless_ok(service.declare_launch_policy(
+            args.execution_policy, actor=args.actor or "cli"))
     if action == "stop":
         return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
     if action in ("start", "restart"):
@@ -3467,6 +3484,21 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("status", "enable", "disable", "stop"):
         offline = actions.add_parser(name)
         offline.add_argument("--actor")
+    declare = actions.add_parser("declare")
+    declare.add_argument("--actor")
+    # One or the other. A declaration and its removal in one command would need an order to
+    # be read in, and the answer to "which policy does this service launch with" would then
+    # depend on that order rather than on what was typed.
+    policy = declare.add_mutually_exclusive_group(required=True)
+    policy.add_argument(
+        "--execution-policy",
+        help="the execution policy file this service's daemon is launched with; it is read"
+             " back and refused unless it resolves",
+    )
+    policy.add_argument(
+        "--forget-execution-policy", action="store_true",
+        help="drop the declaration; later launches fall back to their own environment",
+    )
     for name in ("start", "restart", "run"):
         hosted = actions.add_parser(name)
         hosted.add_argument("--actor")
