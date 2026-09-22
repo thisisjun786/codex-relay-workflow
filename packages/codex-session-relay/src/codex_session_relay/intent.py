@@ -346,27 +346,204 @@ def derive_assignment_state(marker, now=None) -> str:
     return CREATION_ACCEPTED if accepted else INTENT_DECLARED
 
 
-def correlated(marker, session_id) -> bool:
+# Why a session's claim does not correlate with the assignment it sits in. Separate conditions
+# because they are separate repairs: nobody claimed yet, the claim withholds its preimage, the
+# claim belongs to another assignment, the intent published no hash, or the intent published a hash
+# that is not the assignment it was published under. Labels rather than states for the reason
+# receipt evidence is one field and several problems: the decision they reach is the same one.
+CLAIM_ABSENT = "claim_absent"
+CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
+CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
+INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+INTENT_ASSIGNMENT_MISMATCH = "intent_assignment_mismatch"
+
+
+def correlation_problem(marker, session_id, assignment=None) -> str | None:
+    """Which correlation condition this session's claim fails, or None when it correlates.
+
+    One implementation of the rule, with the reason attached. correlated() is this function read as
+    a boolean, so the two cannot drift: the pre-bind window only needs to know whether the session
+    is the intent's, while a BOUND session whose claim does not correlate is a contradiction
+    somebody has to settle, and that answer has to say which artifact is wrong.
+
+    The claim comes from the owner the path authorised, and the first match is the only match:
+    claims/<session>/claim.json admits one claim per session per assignment.
+
+    The chain is preimage -> intent hash -> assignment, and all three links are required. Checking
+    only the first two lets a forged intent stand in for the assignment: publish an intent naming a
+    foreign dispatch inside this directory, publish a claim agreeing with it, and the two agree
+    with each other while agreeing with nothing the coordinator dispatched. The assignment is the
+    directory name and the directory name is the hash, so no writer of the facts INSIDE the
+    assignment can choose it. That is the whole of what this link establishes, and it is worth
+    stating narrowly: whether the enumerated directory is itself the one the coordinator created
+    is a property of the enumeration, not of this comparison, and a symlinked entry under another
+    workspace is not rejected today. Passed in rather than derived here, because only the reader
+    that walked to the directory knows which one it read; omitted, the link is not asked rather
+    than assumed to hold, and _evaluate always supplies it.
+
+    Each condition is answered apart from the others. Reporting a mismatching claim for an intent
+    that published no hash, or for one published under the wrong assignment, would send an operator
+    to settle a claim that is correct. malformed() type-checks these fields and requires neither,
+    so every one of them arrives with the marker well-shaped.
+    """
+    claim = next(
+        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
+    )
+    if not claim:
+        return CLAIM_ABSENT
+    presented = claim.get("dispatchRequestId")
+    if not named(presented):
+        return CLAIM_DISPATCH_UNNAMED
+    declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
+    if not named(declared):
+        return INTENT_DISPATCH_UNNAMED
+    if named(assignment) and not same_identity(declared, assignment):
+        return INTENT_ASSIGNMENT_MISMATCH
+    # A preimage the hash cannot be taken of names nothing, and it is answered rather than raised:
+    # the same reasoning as _hashed, applied on the decision path, where a traceback would leave
+    # the turn as guard_faulted with the operator's actual problem unstated.
+    digest = _hashed(presented)
+    if digest is None:
+        return CLAIM_DISPATCH_UNNAMED
+    return None if same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
+
+
+def correlated(marker, session_id, assignment=None) -> bool:
     """Whether this session presented the dispatch request id the intent was declared with.
 
     Replayable evidence, not authentication: the intent stores only the hash, but the child's own
     claim necessarily stores the preimage, so on a single-uid host another session can copy it.
     Doing so confers nothing, because binding is the coordinator's; it produces at most a second
     claim, which is exactly the contested condition the coordinator must resolve.
+
+    The rule itself lives in correlation_problem. This is that answer read as a yes or no, for the
+    callers that only need one; two implementations of one rule is the drift this avoids.
     """
-    claim = next(
-        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
-    )
-    if not claim:
+    problem = correlation_problem(marker, session_id, assignment)
+    if problem is not None:
         return False
-    presented = claim.get("dispatchRequestId")
-    if not named(presented):
-        return False
-    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
-    return same_identity(digest, (marker.get("intent") or {}).get("dispatchRequestIdHash"))
+    return True
 
 
 # ---------------------------------------------------------------- selection
+
+
+def obstructed_claim(marker, session_id):
+    """A claim this session owns whose own record cannot say which assignment it names, or None.
+
+    Shape before meaning, applied to selection. selecting_claim asks what a claim NAMES, and a
+    claim whose dispatchRequestId is not a readable value names nothing - so asking it drops the
+    candidate silently, and an older assignment is judged instead while the corrupt successor is
+    never reported. That is the same "I could not look" reported as "there is nothing there" this
+    module refuses everywhere, arriving through the filter rather than through a read.
+
+    The candidate is kept so the decision path can answer marker_malformed on the assignment that
+    actually carries the corruption. Unlike an unreadable INTENT, this costs nothing in soundness:
+    the declaration is readable here, so recency can still establish that this candidate
+    supersedes an older one.
+
+    Narrow, and the narrowness is the whole safety argument. The test is that THIS claim carries a
+    dispatchRequestId of the wrong type - present, and not a string - which is precisely the fact
+    malformed() reports for a claim and precisely the reason its preimage cannot be read.
+
+    Asking whether the MARKER is malformed is not the same question and must not stand in for it.
+    Some other fact being wrongly typed says nothing about this claim, and an ABSENT preimage is
+    well shaped: malformed() does not flag a missing field, and a claim that names no dispatch is
+    an uncorrelated claim, not an unreadable one. Combining the two hands back exactly the
+    cross-assignment shadowing this filter exists to close, because a claim with no preimage beside
+    any unrelated corruption would select its own directory.
+
+    So a well-formed claim naming a foreign dispatch selects nothing, a claim naming nothing selects
+    nothing, an unencodable preimage is a well-shaped value and selects nothing, and a claim record
+    that is not a record attributes to nobody and is left to the fall-through.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not same_identity(claimant(claim), session_id):
+            continue
+        if "dispatchRequestId" in claim and not isinstance(claim["dispatchRequestId"], str):
+            return claim
+    return None
+
+
+def _hashed(preimage):
+    """The assignment a preimage names, or None when it does not name one at all.
+
+    A lone surrogate is a str, so the shape check passes it and the hash then raises: UTF-8 has no
+    encoding for it. Read straight through, one such value in one stale claim ends the selection
+    walk in a traceback and the turn in guard_faulted, which is a defect in this code reported as
+    one - but it also means a single unencodable byte sequence in an assignment nobody is using
+    switches detection off for the whole workspace. A preimage that cannot be encoded names
+    nothing, which is the same answer a blank one gets, and it is given here rather than raised.
+    """
+    try:
+        return assignment_id(preimage)
+    except (ValueError, TypeError):
+        return None
+
+
+def selecting_claim(marker, session_id, assignment):
+    """This session's claim that independently names this assignment, or None.
+
+    Which assignment a turn is ABOUT is a different question from whether that assignment's facts
+    correlate, and it has to be answerable without reading the intent. An assignment id is the hash
+    of a dispatch request id, so the claim carries the whole answer on its own: the path authorises
+    the owner, the body confirms the writer meant it, and hashing the preimage says which
+    assignment the claim belongs to. Nothing here consults intent.json.
+
+    That independence is the point. Selecting on the intent's content skipped a candidate whose
+    intent could not be read - and an unreadable store is exactly the thing that must never be
+    reported as "there is nothing there". A session's own claim would sit in the newer assignment,
+    its store unreadable, and the reader would drop it, select an older assignment and hold a turn
+    against stale state while nobody was told the current one could not be read. A claim that
+    hashes to this directory identifies the candidate whether or not its intent is readable, so
+    that candidate is selected and its problems reach classification.
+
+    A claim that hashes elsewhere still selects nothing here, which is what stops an uncorrelated
+    claim shadowing an older assignment that owes a hold. Records that are not records are skipped
+    rather than read through, so a malformed claim leaves the candidate to the fall-through and it
+    is reported as malformed instead of ending this walk in a traceback.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not same_identity(claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if not named(presented):
+            continue
+        if not same_identity(_hashed(presented), assignment):
+            continue
+        # Read through a record check: an intent that is not a record cannot be asked this, and
+        # asking it anyway ends the selection walk in the traceback the shape rules exist to
+        # prevent. Not a record is also not a contradiction, so the candidate stays.
+        intent_fact = marker.get("intent")
+        # Shape before meaning, and the record has to pass as a whole. A hash read out of an
+        # intent whose other identity slots are wrongly typed is not evidence about anything: the
+        # record cannot be read as a fact, so it cannot contradict the directory either, and
+        # letting it exclude the candidate held an older assignment instead of reporting the
+        # current marker as malformed.
+        readable = isinstance(intent_fact, dict) and all(
+            isinstance(intent_fact[field], str)
+            for field in IDENTITY_FIELDS.get("intent", ()) if field in intent_fact
+        )
+        declared = intent_fact.get("dispatchRequestIdHash") if readable else None
+        if named(declared) and not same_identity(declared, assignment):
+            # The coordinator's own record says this directory is another assignment's, so the
+            # claim agreeing with the directory does not make it this session's to be judged
+            # under. Selecting it anyway let a newer forged intent take the turn and release,
+            # while an older assignment that was correlated, bound and registered kept an owed
+            # hold nobody looked for - the shadowing this filter exists to close, reached through
+            # the intent instead of through the claim.
+            #
+            # Only a READABLE contradiction excludes. An intent that is absent, unreadable or
+            # malformed says nothing, so its candidate stays and the decision path reports what is
+            # wrong with it; that distinction is why selection can consult this field at all
+            # without reintroducing the skipped-unreadable-candidate failure.
+            continue
+        return claim
+    return None
 
 
 def select_assignment(root, workspace, session_id):
@@ -376,6 +553,23 @@ def select_assignment(root, workspace, session_id):
     assignment it claimed, so declaring a later assignment for the same path can neither release a
     still-running earlier child nor make it read as somebody else's.
 
+    The claim consulted must name THIS assignment, and selecting_claim is how. "A claim naming a
+    different dispatch belongs to a different assignment" is the same sentence the decision path
+    enforces, so a claim that names another one must not be able to select the assignment it sits
+    in either. Read on the claimant alone, a claim written into a newer assignment shadowed an
+    older one this session was legitimately bound to: selection preferred the newer directory, the
+    decision path refused its uncorrelated claim and released, and the older assignment's
+    undeclared turn - which owed a hold - was never looked at. One file could therefore switch
+    holding off for a session correlated, bound and registered somewhere else.
+
+    The test is deliberately the claim against the DIRECTORY and not against the intent. An
+    unreadable or malformed intent must not remove a candidate from consideration, because the
+    reader would then skip it, select an older assignment and hold against stale state while the
+    store it could not read went unreported. Selection says which assignment; the decision path
+    says whether that assignment's facts hold together.
+
+    When no candidate carries such a claim the fall-through is unchanged, so a session whose own
+    claim has not landed yet still reads the newest published intent rather than nothing.
 
     An assignment with no published intent at all is not selectable. It is a directory someone is
     still building, and skipping it leaves the reader on a valid earlier state rather than on
@@ -404,16 +598,33 @@ def select_assignment(root, workspace, session_id):
     if not candidates:
         return None, None, []
 
+    # The candidate's own directory name is what its claim has to hash to, which is why this is
+    # asked per candidate rather than once for the workspace. The claim is kept, because it is also
+    # what orders them.
     claimed = [
         candidate
         for candidate in candidates
-        if any(
-            same_identity(claimant(claim), session_id)
-            for claim in (candidate[1].get("claims") or [])
-            if isinstance(claim, dict)
-        )
+        if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
+        or obstructed_claim(candidate[1], session_id) is not None
     ]
-    directory, facts, problems = max(claimed or candidates, key=_recency)
+    if claimed:
+        # The claim says WHICH assignments are this session's. Which of them is CURRENT is the
+        # declaration, and only the declaration: an assignment comes into existence by being
+        # declared, so a successor's declaration necessarily follows its predecessor's and cannot
+        # be made to precede it. Three other orderings were tried on the way here and each failed
+        # on a fact that can move after a successor is already current - the claim is written by
+        # the child, an attempt is append-only and arrives on reconciliation, and a bind arrives
+        # whenever thread creation happens to finish. Currency taken from any of them lets a stale
+        # assignment be revived and a Stop judged against its dispositions and hold budget.
+        #
+        # The known cost is recorded rather than papered over: a candidate whose intent cannot be
+        # read carries no declaration, so it sorts below every readable sibling and an older
+        # assignment is judged instead. That is the behaviour this walk has always had, and no
+        # ordering fact available here fixes it - every one of them is either inside the record
+        # that is unreadable, or able to arrive late.
+        directory, facts, problems = max(claimed, key=_recency)
+    else:
+        directory, facts, problems = max(candidates, key=_recency)
     return directory, facts, problems
 
 

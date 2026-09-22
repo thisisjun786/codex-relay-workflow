@@ -1,0 +1,94 @@
+{
+  "expected": {
+    "decision": "block",
+    "observation": "undeclared_turn_end",
+    "state": "undeclared_turn_end"
+  },
+  "note": "T29's late-attempt control. X was declared in January and carries an accepted attempt dated March, because a lost creation response was reconciled then; it is unregistered. Y was declared in February and is registered. Taking the newest coordinator timestamp of any kind revives X and reads managed_unregistered; ordering on the declaration selects Y and reads undeclared_turn_end, which is what this asserts. An attempt is append-only and arrives whenever reconciliation happens, so it cannot carry currency - T3 already reads a late acceptance as identity evidence and nothing more. Currency is the declaration alone, the one fact here that cannot arrive after a successor is already current.",
+  "observation": {
+    "disposition": null,
+    "now": "2026-04-01T00:10:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0009"
+    },
+    "workspace": {
+      "assignments": [
+        {
+          "assignmentId": "74fade2f04ace8ca9dda6e033c38d0646fc88b40f5e3fd15c0da25ba835af38c",
+          "attempts": [
+            {
+              "at": "2026-03-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-X",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "74fade2f04ace8ca9dda6e033c38d0646fc88b40f5e3fd15c0da25ba835af38c",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": null
+        },
+        {
+          "assignmentId": "7b6e3847a4472f2f54cab047fed19b7cb57aad3e4d0225039d5347ee6bcfefd5",
+          "attempts": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-Y",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-02-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "7b6e3847a4472f2f54cab047fed19b7cb57aad3e4d0225039d5347ee6bcfefd5",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "relationshipId": "rel-x"
+          }
+        }
+      ],
+      "path": "/workspace/example",
+      "pathHash": "863c29bb9a6e7822955a80f7e09466e156f7019807c3c0c030592cff4af0f348"
+    }
+  }
+}
