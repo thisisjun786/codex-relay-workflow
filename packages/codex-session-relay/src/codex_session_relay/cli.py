@@ -812,9 +812,19 @@ def cmd_supervisor_stage(services, args) -> dict:
         obligation = supervision.from_event(
             services.store, args.event, read_work_report(services.store, args.event))
         about = "event " + repr(args.event)
-    else:
+    elif args.observation and len(args.observation) == 1:
         obligation = supervision.from_observation(_observation_file(args.observation[0]))
         about = "the observation at " + repr(args.observation[0])
+    elif args.observation:
+        raise SystemExit2(
+            "one obligation is one message, so a single staging takes one observation. Pass"
+            " --project to stage several, where each reading is placed by the relationship it"
+            " names", EXIT_USAGE)
+    else:
+        raise SystemExit2(
+            "supervisor-stage needs a subject: --event for one event's obligation, --project"
+            " for everything a project owes, or one --observation for the obligation a turn"
+            " left by ending without reporting", EXIT_USAGE)
     if obligation is None:
         raise SystemExit2(
             about + " raises no obligation, so there is nothing to stage. An event has to be"
@@ -825,6 +835,10 @@ def cmd_supervisor_stage(services, args) -> dict:
 
 def cmd_supervisor_send(services, args) -> dict:
     """One attempt at one staged message. Reaches the host; nothing here is automatic."""
+    _require_host(services, "supervisor-send",
+                  "a send observes the recipient's lifecycle and resumes its thread. Without"
+                  " a host every read fails, which reads as an unmeasured recipient and would"
+                  " record a withholding that describes this process rather than the task")
     record = services.supervisor_channel.attempt(args.message, _LazyAdapter(services))
     if record is None:
         row = services.supervisor_channel.get(args.message)
@@ -841,14 +855,30 @@ def cmd_supervisor_read(services, args) -> dict:
 
     The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain.
     """
+    _require_host(services, "supervisor-read",
+                  "a readback is checked against the host's own turn list and the recipient's"
+                  " transcript. Without a host it would record an unverified readback, which"
+                  " is a statement about this process and reads as one about the recipient")
     return services.supervisor_channel.read_back(
         args.message, read_turn_id=args.turn, proof=args.proof,
-        adapter=_LazyAdapter(services) if services.adapter_requested else None)
+        adapter=_LazyAdapter(services))
 
 
 def cmd_supervisor_show(services, args) -> dict:
     """One staged message whole: what it says, every attempt, and what came back."""
     return services.supervisor_channel.show(args.message)
+
+
+def _require_host(services, command, why) -> None:
+    """Refuse a host-required command that was given no host, before it writes anything.
+
+    HOST_REQUIRED_COMMANDS is a description doctor reports; it enforces nothing. Without this
+    the absence of --socket does not stop the command, it changes what the command records:
+    every host read fails, and the refusal that follows is written down as a fact about the
+    recipient. A missing host is a fact about this invocation and is reported as one.
+    """
+    if not services.adapter_requested:
+        raise SystemExit2(command + " needs --socket: " + why, EXIT_USAGE)
 
 def cmd_packet_check(services, args) -> dict:
     """Whether a packet agrees with the record its receiver read. It decides nothing else.
@@ -3277,15 +3307,21 @@ def build_parser() -> argparse.ArgumentParser:
         "supervisor-stage",
         help="freeze what is owed upward as a message, before anything is sent. Staging is"
              " not sending: one obligation is one message, however often it is staged")
-    subject = stage.add_mutually_exclusive_group(required=True)
+    # Not required here: an observation on its own is a third subject, and it is checked in
+    # the handler so the refusal can say what the three are.
+    subject = stage.add_mutually_exclusive_group()
     subject.add_argument("--event")
     subject.add_argument("--project",
                          help="stage every standing obligation in one project, which is what"
                               " makes this one command rather than one decision per event")
-    subject.add_argument("--observation", action="append",
-                         help="a reporting-observation/1 file from reporting-show. With"
-                              " --project, repeat once per reading; on its own it is the"
-                              " obligation a turn left by ending without reporting")
+    # NOT in the exclusive group. A project-wide staging needs these readings most: a turn
+    # that ended without reporting writes no row any query over this store can find, so
+    # excluding them from --project left the one obligation nobody else can see unstageable
+    # by the command written to stage everything.
+    stage.add_argument("--observation", action="append",
+                       help="a reporting-observation/1 file from reporting-show. With"
+                            " --project, repeat once per reading; on its own it is the"
+                            " obligation a turn left by ending without reporting")
     stage.add_argument("--recipient",
                        help="the supervisor you believe this goes to. A disagreement with the"
                             " linkage is refused rather than resolved by picking one")

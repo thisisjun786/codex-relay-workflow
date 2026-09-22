@@ -28,7 +28,9 @@ from codex_session_relay.models import Endpoint, TurnRef
 from codex_session_relay.registry import record_settings
 from codex_session_relay.store import Store
 from codex_session_relay.supervisorchannel import SupervisorChannel
-from codex_session_relay.transport import DEFERRED_BUSY, DISPATCHED, QUEUED, WITHHELD_PRE_SEND
+from codex_session_relay.transport import (
+    DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, QUEUED, WITHHELD_PRE_SEND,
+)
 
 from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase, task_settings
 
@@ -531,3 +533,148 @@ class TheRoundtrip(ChannelTestCase):
         self.assertEqual(shown["readback"]["verified"], channel_module.HOST_READ)
         self.assertEqual(shown["packet"]["version"], packets.VERSION)
         self.assertIn("Linear record", shown["limits"])
+
+
+class WhatTheReviewFound(ChannelTestCase):
+    """One case per finding, each asserting the behaviour the finding said was missing."""
+
+    def test_a_real_turn_is_not_receipt_when_the_transcript_does_not_confirm_it(self):
+        """RED: a valid turn used to say host_read whatever the transcript answered.
+
+        The whole point of scanning the recipient's items is that the delivered half stops
+        resting on our own send receipt. Recording the scan and then ignoring it put the claim
+        back where it started, and the reach ladder said received on the strength of a turn.
+        """
+        _one, message_id, record = self.delivered()
+        self.adapter.threads[SUPERVISOR].items = []
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
+        self.assertFalse(answer["delivered"]["found"])
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+        self.assertEqual(
+            self.channel.reach(message_id)[envelope.RECEIVED]["state"], envelope.UNMEASURED)
+
+    def test_an_unreadable_transcript_is_not_confirmation_either(self):
+        _one, message_id, record = self.delivered()
+        self.adapter.fail_reads("find_token")
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
+        self.assertFalse(answer["delivered"]["scanned"])
+
+    def test_a_send_interrupted_after_its_claim_is_recovered_rather_than_stranded(self):
+        """RED: the claim commits before the transport call, so a death in between leaves
+        sending - which is not claimable, so nothing ever touched the row again.
+
+        The claim is called directly, because that IS the window: attempt() converts a
+        transport fault into an unknown outcome and settles it, so the only way to reach this
+        state is for the process to stop existing between the two.
+        """
+        _one, message_id = self.staged()
+        self.channel._claim(message_id, now=self.clock.now(), owner="a worker that died",
+                            recipient=SUPERVISOR)
+        row = self.channel.get(message_id)
+        self.assertEqual(row["state"], "sending")
+        self.assertEqual(self.channel.stranded(now=row["lease_until"] + 1)[0]["message_id"],
+                         message_id)
+
+        recovered = self.channel.attempt(message_id, self.adapter,
+                                         now=row["lease_until"] + 1)
+        self.assertIsNone(recovered, "an expired lease authorises no resend")
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.assertEqual(
+            len(self.store.all("SELECT request_id FROM supervisor_attempts")), 1,
+            "what that send did is unknown, and a second one is a second wake for one fact")
+        stranded = [json.loads(row["detail"]) for row in self.store.all(
+            "SELECT detail FROM journal WHERE kind = 'supervisor_message_stranded'")]
+        self.assertEqual(len(stranded), 1)
+        self.assertIn("unknown", stranded[0]["reason"])
+
+    def test_an_unverified_readback_cannot_replace_a_verified_one(self):
+        """The two readings straddle the write, so the second one has to re-read inside it."""
+        _one, message_id, record = self.delivered()
+        self.assertEqual(self.read_back(message_id, record["turnId"])["verified"],
+                         channel_module.HOST_READ)
+        answer = self.read_back(message_id, "turn-nobody-has")
+        self.assertFalse(answer["recorded"])
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(
+            self.store.one("SELECT verified FROM supervisor_readbacks WHERE message_id = ?",
+                           (message_id,))["verified"],
+            channel_module.HOST_READ)
+        self.assertTrue(
+            envelope.stage_holds(self.channel.reach(message_id), envelope.RECEIVED))
+
+    def test_naming_a_newer_message_does_not_send_it_ahead_of_an_older_one(self):
+        """Ordering was a property of eligible() and of nothing else, and any caller may name
+        any message."""
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        refusal = self.assertRefused(
+            RefusalReason.NOT_CLAIMABLE, self.channel.attempt, second, self.adapter)
+        self.assertIn(first, refusal.detail)
+        self.assertEqual(self.store.all("SELECT request_id FROM supervisor_attempts"), [])
+        self.assertIsNotNone(self.channel.attempt(first, self.adapter))
+        self.clock.advance(3600)
+        self.assertIsNotNone(
+            self.channel.attempt(second, self.adapter, now=self.clock.now()))
+
+    def test_a_held_older_message_does_not_block_the_queue_behind_it(self):
+        _one, first = self.staged()
+        self.store.db.execute(
+            "UPDATE supervisor_messages SET hold_reason = 'attempt_cap' WHERE message_id = ?",
+            (first,))
+        self.store.db.commit()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.assertIsNotNone(self.channel.attempt(second, self.adapter))
+
+
+class TheHostRequiredCommandsRefuseWithoutOne(ChannelTestCase):
+    """HOST_REQUIRED_COMMANDS is what doctor reports; it enforces nothing on its own."""
+
+    class _Services:
+        def __init__(self, channel):
+            self.adapter_requested = False
+            self.supervisor_channel = channel
+
+    def test_a_send_with_no_host_refuses_instead_of_recording_a_withholding(self):
+        from codex_session_relay import cli
+
+        _one, message_id = self.staged()
+        args = type("Args", (), {"message": message_id})()
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_supervisor_send(self._Services(self.channel), args)
+        self.assertIn("--socket", str(caught.exception))
+        self.assertEqual(self.store.all("SELECT task_id FROM recipient_lifecycle"), [])
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+
+    def test_a_readback_with_no_host_refuses_instead_of_recording_an_unverified_one(self):
+        from codex_session_relay import cli
+
+        _one, message_id, record = self.delivered()
+        args = type("Args", (), {"message": message_id, "turn": record["turnId"],
+                                 "proof": supervisor_read_proof(message_id, record["turnId"])})()
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_supervisor_read(self._Services(self.channel), args)
+        self.assertIn("--socket", str(caught.exception))
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_readbacks"), [])
+
+    def test_both_are_declared_host_required_as_well_as_enforced(self):
+        from codex_session_relay import cli
+
+        for name in ("supervisor-send", "supervisor-read"):
+            self.assertIn(name, cli.HOST_REQUIRED_COMMANDS)
+        for name in ("supervisor-stage", "supervisor-show"):
+            self.assertIn(name, cli.OFFLINE_COMMANDS)
+
+    def test_project_staging_accepts_the_readings_only_it_can_see(self):
+        """A turn that ended without reporting writes no row any query here can find."""
+        from codex_session_relay import cli
+
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            ["supervisor-stage", "--project", PROJECT, "--observation", "a.json",
+             "--observation", "b.json"])
+        self.assertEqual(args.project, PROJECT)
+        self.assertEqual(args.observation, ["a.json", "b.json"])

@@ -62,6 +62,11 @@ HOST_READ = "host_read"
 NO_HOST = "unverified_turn"
 TURN_NOT_FOUND = "turn_not_found"
 TURN_PREDATES_SEND = "turn_predates_send"
+# The turn is real and the bytes are not where the recipient reads. A separate word from the
+# three above, because those are answers about the TURN and this one is an answer about the
+# MESSAGE: somebody answered from a genuine turn on the right thread, and nothing independent
+# of our own receipt says the message they are answering about ever landed there.
+TRANSCRIPT_UNCONFIRMED = "transcript_unconfirmed"
 
 # And which turn answered, which is what says how much the readback is worth. The relay knows
 # the id of the turn its own send opened, so a readback from that turn rests on nothing the
@@ -402,7 +407,10 @@ class SupervisorChannel:
             "SELECT * FROM supervisor_messages"
             " WHERE state IN (?,?,?) AND hold_reason IS NULL"
             "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
-            " ORDER BY staged_at, rowid LIMIT ?",
+            # message_id breaks a tie rather than rowid, because rowid is not in a SELECT *
+            # and one ordering rule has to be readable from an ordinary row. The id is
+            # derived from the fact, so the tie-break is arbitrary and stable.
+            " ORDER BY staged_at, message_id LIMIT ?",
             (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, limit),
         )
 
@@ -415,6 +423,7 @@ class SupervisorChannel:
         """
         now = self.clock.now() if now is None else now
         row = self.get(message_id)
+        row = self._recover_if_stranded(row, now)
         if row["hold_reason"]:
             return None
         if row["state"] not in CLAIMABLE:
@@ -422,6 +431,15 @@ class SupervisorChannel:
         if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
             return None
         recipient = row["recipient_task_id"]
+        older = self._older_claimable(row, now)
+        if older is not None:
+            raise DeliveryRefused(
+                RefusalReason.NOT_CLAIMABLE,
+                "message " + repr(older["message_id"]) + " was staged for "
+                + repr(recipient) + " first and can be sent now, so this one waits. Two facts"
+                " reach the level above in the order they arose, which is not a property an"
+                " ordered selection can have on its own while any caller may name any row",
+            )
         # Re-read immediately before the send, the way delivery re-checks authorization inside
         # attempt(): a handover committed since staging must not be delivered through.
         resolution = self.resolve(row["relationship_id"])
@@ -482,6 +500,71 @@ class SupervisorChannel:
         self._settle(row, request_id, facts, record, now)
         return record
 
+
+    def _recover_if_stranded(self, row, now):
+        """A send whose process died between the claim and the receipt.
+
+        The claim commits before the transport call, so a worker that dies in between leaves
+        the message in sending with a lease nobody will ever settle. Left alone that is a
+        strand rather than a hold: sending is not claimable, so no later pass touches it and
+        the report can neither be sent nor read back.
+
+        Expiry does not authorize a resend. Nothing observed what the transport did, and the
+        rule the delivery path already follows holds here too - a lease prevents a second
+        concurrent claimer and authorizes nothing on expiry. So the row moves to the state a
+        classified uncertain receipt would have left it in: visible, holding, and never
+        retried automatically, because a second send that lands is a second wake for one fact.
+        """
+        if row["state"] != SENDING:
+            return row
+        if row["lease_until"] is not None and row["lease_until"] > now:
+            return row
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE supervisor_messages SET state = ?, lease_owner = NULL,"
+                " lease_until = NULL, updated_at = ? WHERE message_id = ? AND state = ?"
+                "   AND attempt_count = ?",
+                (HELD_UNCERTAIN, at, row["message_id"], SENDING, row["attempt_count"]))
+            self.store.journal(
+                "supervisor_message_stranded", row["message_id"],
+                {"attemptNo": row["attempt_count"], "leaseOwner": row["lease_owner"],
+                 "leaseUntil": row["lease_until"],
+                 "reason": "the lease expired with no transport receipt, so what that send"
+                           " did is unknown and is not repeated"}, at=at)
+        return self.get(row["message_id"])
+
+    def stranded(self, *, now=None) -> list:
+        """Every message left mid-send by a process that did not come back.
+
+        A read, so an operator can find them without sending anything. attempt() recovers the
+        one it is called for; this is how the rest become visible.
+        """
+        now = self.clock.now() if now is None else now
+        return [dict(row) for row in self.store.all(
+            "SELECT * FROM supervisor_messages WHERE state = ?"
+            "   AND (lease_until IS NULL OR lease_until <= ?) ORDER BY staged_at",
+            (SENDING, now))]
+
+    def _older_claimable(self, row, now):
+        """An earlier message to the same recipient that could go now, or None.
+
+        eligible() returns them oldest first, which orders the SELECTION and nothing else: any
+        caller may name any message, so the ordering was a property of one code path rather
+        than of the queue. Asked here and enforced again inside the claim, so the promise
+        holds whoever is asking and however two callers interleave.
+        """
+        return self.store.one(
+            "SELECT * FROM supervisor_messages"
+            " WHERE recipient_task_id = ? AND message_id <> ?"
+            "   AND state IN (?,?,?) AND hold_reason IS NULL"
+            "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
+            "   AND (staged_at < ? OR (staged_at = ? AND message_id < ?))"
+            " ORDER BY staged_at, message_id LIMIT 1",
+            (row["recipient_task_id"], row["message_id"], QUEUED, DEFERRED_BUSY,
+             WITHHELD_PRE_SEND, now, row["staged_at"], row["staged_at"],
+             row["message_id"]))
+
     def _settings_for(self, task_id, runtime_status=None):
         if self._settings is not None:
             return self._settings(task_id, runtime_status)
@@ -503,9 +586,26 @@ class SupervisorChannel:
                 " WHERE message_id = ?"
                 "   AND state IN (?,?,?)"
                 "   AND hold_reason IS NULL"
-                "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)",
+                "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
+                # And nothing older to this recipient can go right now. Checked here as well
+                # as before the host reads, because between those two a second caller can
+                # stage or release an earlier message, and an ordering that two interleaved
+                # callers can defeat is not an ordering.
+                "   AND NOT EXISTS (SELECT 1 FROM supervisor_messages older"
+                "                    WHERE older.recipient_task_id ="
+                "                          supervisor_messages.recipient_task_id"
+                "                      AND older.message_id <> supervisor_messages.message_id"
+                "                      AND older.state IN (?,?,?)"
+                "                      AND older.hold_reason IS NULL"
+                "                      AND (older.next_eligible_at IS NULL"
+                "                           OR older.next_eligible_at <= ?)"
+                "                      AND (older.staged_at < supervisor_messages.staged_at"
+                "                           OR (older.staged_at = supervisor_messages.staged_at"
+                "                               AND older.message_id <"
+                "                                   supervisor_messages.message_id)))",
                 (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
-                 message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
+                 message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
             )
             if cursor.rowcount != 1:
                 raise _NotClaimable()
@@ -554,6 +654,19 @@ class SupervisorChannel:
                 hold = self.policy.cap_reason("send")
         at = self.clock.iso()
         with self.store.transaction() as db:
+            # Re-read FIRST, inside the write. The check above happens outside the lock and
+            # can be raced: two readbacks of one message both passed it, and whichever
+            # committed second replaced the first - so an unverified answer could overwrite a
+            # verified one and the message would drop back out of read. A verified readback is
+            # settled, whatever the second caller brought.
+            already = db.execute(
+                "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,)
+            ).fetchone()
+            if already is not None and already["verified"] == HOST_READ:
+                return {"schema": VERSION, "messageId": message_id, "recorded": False,
+                        "verified": already["verified"],
+                        "readTurnId": already["read_turn_id"],
+                        "detail": already["detail"], "readAt": already["read_at"]}
             db.execute(
                 "UPDATE supervisor_attempts SET state = ?, send_attempted = ?, retry_safe = ?,"
                 " turn_id = ?, record = ?, observed_at = ? WHERE request_id = ?",
@@ -681,6 +794,20 @@ class SupervisorChannel:
             " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
         verified, detail, origin = self._verify_read_turn(row, attempt, read_turn_id, adapter)
         delivered = self._delivered_evidence(row, attempt, adapter)
+        if verified == HOST_READ and not delivered.get("found"):
+            # The turn is real; the message is not established as having reached the place the
+            # recipient reads. Saying read on the strength of the turn alone would rest the
+            # whole claim on our own send receipt, which is the one thing a roundtrip is
+            # supposed to be independent of - and the scan answers three ways, so an
+            # unreadable or truncated one is not absence either.
+            verified = TRANSCRIPT_UNCONFIRMED
+            detail = ("the turn is real and the transcript does not confirm the message: "
+                      + str(delivered.get("reason")
+                            or ("scanned " + str(delivered.get("itemsRead"))
+                                + " items and did not find " + str(delivered.get("token"))
+                                + ("" if delivered.get("exhausted")
+                                   else ", and the scan was not exhausted, so this is"
+                                   " inconclusive rather than absence"))))
         at = self.clock.iso()
         with self.store.transaction() as db:
             db.execute(
@@ -875,4 +1002,3 @@ def _artifact(report):
     if not (repository and number and head):
         return None
     return packets.pull_request(repository=repository, number=number, head_sha=head)
-

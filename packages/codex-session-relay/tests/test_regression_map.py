@@ -641,6 +641,13 @@ SUMMARY_SITES = (
      "the same folding after a verified readback, and true again pins both conjuncts. The"
      " source is asserted on the next line, so this cannot be satisfied by a stage answered"
      " from a record this direction does not read"),
+    ("test_supervisor_channel.py", "test_an_unverified_readback_cannot_replace_a_verified_one",
+     "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(self.channel.reach(message_id),"
+     " envelope.RECEIVED))",
+     "true pins both conjuncts, and the case is about what SURVIVED: the stored readback is"
+     " asserted host_read on the line above, so this reads the ladder derived from it rather"
+     " than from the unverified answer that arrived second"),
     ("test_supervisor_envelope.py",
      "test_silence_is_never_agreement_and_a_state_needs_a_source", "stage_holds", False,
      "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",
