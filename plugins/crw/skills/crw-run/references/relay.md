@@ -877,6 +877,9 @@ codex-session-relay supervisor-standing --project <key> [--observation <file>]..
 
 # Record that a report was produced for this event's obligation, once.
 codex-session-relay supervisor-report-recorded --event <id> [--message <messageId>]
+
+# The same, for an obligation a turn left by ending without reporting. It has no event.
+codex-session-relay supervisor-report-recorded --observation <file> [--message <messageId>]
 ```
 
 `supervisor-select` answers `report: false` with a reason far more often than it answers true,
@@ -886,6 +889,13 @@ and the reason is the part to read: `no_meaningful_transition` for an ordinary e
 `recipient_is_not_contactable` for a paused or archived supervisor, and
 `recipient_contactability_unmeasured` when nobody has looked recently. Every one of them
 preserves the obligation; none of them discards it.
+
+Without `--recipient` the answer is about the obligation alone and says so with
+`deliverability_was_not_asked_about`: it does not claim anybody is reachable, and it does not
+suppress on a question it was not given the means to ask. Name a recipient and deliverability
+becomes part of the answer, which means a recipient nobody has observed recently - or an
+observation dated in the future, from a clock that went backwards - suppresses the wake rather
+than authorizing one.
 
 `supervisor-report-recorded` says a report was COMPOSED. Whether a turn was created, whether it
 ran, and whether the supervisor acted are three further facts, and no row here carries any of
