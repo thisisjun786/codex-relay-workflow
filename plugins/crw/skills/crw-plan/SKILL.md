@@ -5,7 +5,7 @@ description: "Decompose an agreed goal into Linear projects, useful milestones, 
 
 # CRW Plan
 
-Build a usable product plan from what exists and what the user wants next. Linear holds the canonical product, planning, and decision documents; repositories hold implementation and reproducible evidence.
+Build a usable product plan from what exists and what the user wants next. Linear holds the canonical product, planning, and decision documents; repositories hold implementation and reproducible evidence, under [Linear holds canonical documents](references/integrations.md#linear-holds-canonical-documents).
 
 Use an agreed initiative definition as input, then cover its requested scope through executable issues in one operation: projects → useful milestones → issues and dependencies. If the goal itself needs definition, use [crw-define](../crw-define/SKILL.md); a request for both definition and planning chains the two without another invocation. An existing project or standalone issue can supply the agreed goal without an initiative. Reuse existing levels and create missing items within that request without requiring a separate invocation at each level. A scoped project/issue update stays scoped; do not invent an initiative or extra projects just to fill the hierarchy. Consultation, plan-only, draft-only, and read-only requests do not authorize Linear writes; invoking this skill implicitly does not supply write intent.
 
@@ -78,7 +78,7 @@ Preserve unrelated content, labels, history, and human edits. Refresh before upd
 
 Before reassigning any remaining scope of an issue that already has a PR, align its boundary under [delivered issues](references/issue-boundaries.md#align-a-delivered-issue): compare the scope agreed at assignment, the criteria still open and the current owner, then either keep the remainder in that same unmerged PR or move it to a new issue with the merged one as its prerequisite. An instrumentation or reference PR that satisfies no accepted criterion is not a delivery, a live assignment is never narrowed before its owner has agreed the new boundary, and leaving the issue open with unchanged criteria is not alignment. Narrowing a delivered issue is carried by the authorization the request already gave; it is not a second approval step.
 
-Link issues to the canonical Linear item body or supporting document instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source.
+Link issues to the canonical Linear item body or supporting document instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source. A write that changes an accepted requirement runs the requirements-change case in [Keep the two sides consistent](references/integrations.md#keep-the-two-sides-consistent), so the repository contracts, procedures and open reviews it reaches are named with it.
 
 ## Deliver
 
