@@ -416,7 +416,15 @@ class AssignmentView:
         # stat-ed from the path. Those are two different files if the path is replaced in
         # between, and pairing them would hand out provenance no single store ever had. So the
         # path is identified on both sides of the read and a disagreement returns unknown
-        # rather than a hybrid - the same before-and-after discipline read_only_rows uses.
+        # rather than a hybrid.
+        #
+        # This leg still measures AT THE PATH, so it keeps what that can promise and no more:
+        # it catches a replacement that persists past the read and misses one reverted inside
+        # the window, because both observations then report the original inode. read_only_rows
+        # and nonce_lookup no longer work this way - they hold the file open and identify it by
+        # that descriptor - but this one reads through a live Store whose connection owns the
+        # only descriptor there is, and sqlite3 exposes none. Moving it means giving Store a
+        # held descriptor, which is the whole write path rather than a diagnostic read.
         before = self._path_identity()
         located = self.store.locate()
         recorded_socket = self.store.meta("socket_path")
