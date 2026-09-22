@@ -209,7 +209,13 @@ def from_observation(reading) -> dict | None:
         return None
     relation = reading.get("relationshipId")
     turn = (reading.get("selectors") or {}).get("turn")
-    if not relation or not turn:
+    # Both have to be strings, not merely present. A list here is truthy, so it used to reach
+    # the identifier derivation and produce a well-formed id for a reading nobody could act
+    # on; upstream it also reached a dict membership test and raised on being unhashable,
+    # which took the whole project query down with it.
+    if not isinstance(relation, str) or not relation.strip():
+        return None
+    if not isinstance(turn, str) or not turn.strip():
         return None
     return _obligation(
         UNREPORTED, relation_id=relation, subject=turn,
@@ -229,6 +235,26 @@ def unmeasured_gap(reading) -> dict | None:
     return {"schema": SCHEMA, "gap": "reporting_unmeasured",
             "relationId": reading.get("relationshipId"), "reason": reading.get("reason"),
             "detail": "nothing was established about whether a report was owed here"}
+
+
+def unusable_reading(reading) -> dict:
+    """A reading this cannot place, named rather than dropped and never raised.
+
+    Refusing it quietly would answer that a project owes nothing on the strength of a file
+    nobody could read, and raising would take the whole query down with one bad entry. The
+    caller gets its answer AND is told which of its readings was not usable.
+    """
+    if not isinstance(reading, dict):
+        return {"schema": SCHEMA, "gap": "reading_unusable", "relationId": None,
+                "reason": f"a reading is an object, not {type(reading).__name__}",
+                "detail": "this reading was not placed in any project"}
+    scope = reading.get("relationshipId")
+    return {"schema": SCHEMA, "gap": "reading_unusable",
+            "relationId": scope if isinstance(scope, str) else None,
+            "reason": ("the reading names no usable relationship and turn"
+                       if reading.get("schema") == "reporting-observation/1"
+                       else f"schema {reading.get('schema')!r} is not reporting-observation/1"),
+            "detail": "this reading was not placed in any project"}
 
 
 def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dict:
@@ -484,6 +510,11 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
     gaps = []
     for reading in observations:
         about = reading.get("relationshipId") if isinstance(reading, dict) else None
+        if not isinstance(about, str):
+            # Unhashable before it is foreign: a list here raised on the membership test below
+            # and aborted the whole answer, so one malformed entry decided what a project owed.
+            gaps.append(unusable_reading(reading))
+            continue
         if about not in relations:
             # A reading about somebody else's project is not this project's business, and
             # accepting it would let a caller's list decide what a project owes.
@@ -500,6 +531,13 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
         gap = unmeasured_gap(reading)
         if gap is not None and gap not in gaps:
             gaps.append(gap)
+            continue
+        if gap is None:
+            # It belongs to this project, it raised no obligation, and it said nothing about
+            # being unmeasured. Something in it is unusable, and saying so is the answer.
+            unusable = unusable_reading(reading)
+            if unusable not in gaps:
+                gaps.append(unusable)
     return {"schema": SCHEMA, "projectKey": project_key, "relations": list(relations),
             "standing": obligations, "gaps": gaps,
             "limits": "derived from this store's rows only. It says what is owed upward, never"

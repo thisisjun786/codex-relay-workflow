@@ -80,6 +80,11 @@ OFFLINE_COMMANDS = (
     "region-followup-accept", "region-followup-settle", "region-propose",
     "region-reaffirm", "region-restate-revision", "region-settle", "region-show",
     "slot-release", "slot-reserve", "usage-observe",
+    # What is owed upward, read and recorded in this store alone. supervisor-select and
+    # supervisor-standing only read, and supervisor-report-recorded writes one journal row;
+    # none of the three reaches the host, so leaving them out under-reported what an operator
+    # can run with no App Server.
+    "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
     # Reaches a forge and never the App Server, and constructs no Store at all.
     "merge-evidence",
 ) + MARKER_COMMANDS_BY_NAME

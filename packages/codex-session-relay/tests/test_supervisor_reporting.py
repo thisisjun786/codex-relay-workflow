@@ -453,6 +453,64 @@ class TheReportNobodyWrote(ReportingTestCase):
         self.assertEqual([gap["gap"] for gap in answer["gaps"]], ["reporting_unmeasured"])
         self.assertIn("passed in", answer["limits"])
 
+    def test_one_unusable_reading_does_not_decide_what_the_project_owes(self):
+        """A malformed entry used to abort the answer instead of being refused.
+
+        relationshipId as a list is truthy, so it passed every presence check and then reached
+        a dict membership test that raises on an unhashable key. One bad file in a caller's
+        list therefore took down the whole standing query, and a caller that caught the error
+        would have learned nothing about the obligations that ARE standing.
+        """
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(relationship, [path])
+        self.accept(payload)
+        report.record(self.store, self.clock, event_id=payload["eventId"], **a_report())
+        real = self.obligation_for(payload["eventId"])
+
+        readings = [
+            self.observation("unreported", relationshipId=[self._rid]),
+            self.observation("unreported", relationshipId=self._rid,
+                             selectors={"turn": ["turn-7"]}),
+            {"schema": "something-else/1", "relationshipId": self._rid},
+            "not an object at all",
+        ]
+        answer = supervision.standing_for(self.store, linkage, "CRW", observations=readings)
+        self.assertEqual([entry["obligationId"] for entry in answer["standing"]],
+                         [real["obligationId"]],
+                         "the obligations that are standing are still answered")
+        self.assertEqual([gap["gap"] for gap in answer["gaps"]],
+                         ["reading_unusable"] * 4,
+                         "and every reading that could not be placed is named rather than"
+                         " dropped, including the one that is not an object: a reading whose"
+                         " scope cannot be read is not evidence that it belonged elsewhere")
+        self.assertEqual(
+            sorted({gap["relationId"] for gap in answer["gaps"]}, key=str),
+            sorted({None, self._rid}, key=str),
+            "the ones that named a readable scope carry it, and the ones that did not say so")
+
+    def test_an_unusable_reading_is_named_rather_than_raised(self):
+        for reading in ([], "text", {"schema": "reporting-observation/1"}, None):
+            gap = supervision.unusable_reading(reading)
+            self.assertEqual(gap["gap"], "reading_unusable")
+            self.assertTrue(gap["reason"])
+
+    def test_a_list_where_a_name_belongs_raises_no_obligation(self):
+        self.assertIsNone(supervision.from_observation(
+            self.observation("unreported", relationshipId=["rel-1"])))
+        self.assertIsNone(supervision.from_observation(
+            self.observation("unreported", selectors={"turn": ["turn-7"]})))
+        self.assertIsNone(supervision.from_observation(
+            self.observation("unreported", selectors={"turn": "   "})))
+
     def test_a_reading_about_another_project_is_not_this_project_s_business(self):
         """A caller's list must not decide what a project owes."""
         from codex_session_relay.linkage import Linkage
@@ -680,3 +738,15 @@ class TheCommandsAParentActuallyRuns(ReportingTestCase):
             cli.cmd_supervisor_standing(
                 self.services(), Namespace(project="CRW", observation=[broken]))
         self.assertIn("could not be read", str(caught.exception))
+
+    def test_the_three_commands_are_classified_as_offline(self):
+        """doctor reports what an operator can run with no App Server, from these lists.
+
+        All three read and write this store alone. Leaving them out under-reports the surface
+        rather than misreporting it, which is why nothing failed until somebody looked.
+        """
+        from codex_session_relay import cli
+
+        for name in ("supervisor-select", "supervisor-standing", "supervisor-report-recorded"):
+            self.assertIn(name, cli.OFFLINE_COMMANDS, name)
+            self.assertNotIn(name, cli.HOST_REQUIRED_COMMANDS, name)
