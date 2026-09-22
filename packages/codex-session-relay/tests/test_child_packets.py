@@ -621,6 +621,15 @@ class APacketNobodyConstructed(unittest.TestCase):
         with self.assertRaises(packets.PacketRefused):
             packets.reception(broken, a_record())
 
+    def test_a_policy_value_no_constructor_could_produce_is_refused(self):
+        """Two values that are not settings can agree with each other, and neither is one."""
+        for field in packets.POLICY_FIELDS:
+            with self.subTest(field=field):
+                broken = self.loaded(an_assignment())
+                broken[packets.POLICY][field] = {"name": "opus"}
+                with self.assertRaises(packets.PacketRefused):
+                    packets.reception(broken, a_record())
+
     def test_an_envelope_version_nobody_mapped_is_refused(self):
         broken = self.loaded(a_review_ready())
         broken["envelope"]["version"] = "relay-envelope/2"
