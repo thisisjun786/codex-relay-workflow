@@ -644,6 +644,160 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+    def test_a_corrupt_assignment_nobody_claimed_does_not_switch_detection_off(self):
+        """The protection every rule here has had to keep.
+
+        Applied across the workspace rather than to this session's own claims, a preference for
+        corrupt candidates would let one stale directory nobody is using outrank the current
+        assignment and release every omission it could otherwise detect.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        stale = marker.assignment_dir(self.markers, self.workspace, later)
+        (stale / "claims").mkdir(parents=True)
+        (stale / "intent.json").mkdir()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_late_attempt_does_not_revive_the_assignment_it_belongs_to(self):
+        """Currency comes from a record that stops moving, which an attempt does not.
+
+        Attempts are append-only and arrive late by design: a lost creation response for January's
+        assignment can be reconciled in March. Taking the newest coordinator timestamp of any kind
+        revived it over the one declared in February, and every disposition, receipt and hold
+        decision went to the stale assignment. T3 already reads a late acceptance as identity
+        evidence and nothing more.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        intent.record_attempt(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            outcome="accepted", task_id=CHILD, at="2026-03-01T00:00:00+00:00",
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a late attempt revived the assignment it belongs to")
+
+    def test_a_forward_dated_claim_cannot_move_which_assignment_is_current(self):
+        """Currency is read from the coordinator's records and never from the child's.
+
+        Ordering the claimed candidates on the claim hands the child the answer: forward-date the
+        claim in a stale assignment, publish a releasing disposition there, and every later turn is
+        judged under it while the current assignment is never looked at again. Detection would then
+        depend on a number the party being detected supplies.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        stale = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (stale / "claims" / CHILD / "claim.json").unlink()
+        marker.publish(stale / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": DISPATCH,
+                        "at": "2099-01-01T00:00:00+00:00"})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a forward-dated claim in a stale assignment took the turn")
+
+    def test_a_preimage_that_cannot_be_encoded_does_not_abort_selection(self):
+        """One unencodable value in an assignment nobody is using must not end the walk.
+
+        A lone surrogate is a str, so the shape check passes it and the hash then raises: selection
+        ended in a traceback and the turn in guard_faulted, which reports a defect in the guard and
+        switches detection off for the whole workspace at the same time. It names nothing, which is
+        the answer a blank preimage already gets.
+        """
+        self.managed()
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        stale = marker.assignment_dir(self.markers, self.workspace,
+                                      marker.assignment_id(self.LATER_DISPATCH))
+        path = stale / "claims" / CHILD / "claim.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", errors="surrogatepass") as handle:
+            json.dump({"sessionId": CHILD, "dispatchRequestId": "\ud800", "at": NOW},
+                      handle)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_an_unreadable_candidate_carries_no_declaration_and_so_loses_the_ordering(self):
+        """A known limitation, characterised here rather than left for someone to rediscover.
+
+        Which assignment is current is the declaration, and an assignment whose intent cannot be
+        read has none, so it sorts below every readable sibling and the older one is judged instead.
+        Review asked for the opposite and three orderings were tried to get there; every one was
+        unsound in the same way, because the claim is written by the child, an attempt is
+        append-only, and a bind arrives whenever thread creation finishes. Closing it needs
+        coordinator lineage this marker does not carry, which is a protocol change rather than a
+        change to this walk.
+        """
+        self.managed()
+        later, directory = self.healthy_later()
+        (directory / "intent.json").unlink()
+        (directory / "intent.json").mkdir()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertNotEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+
+    def test_a_newer_assignment_whose_claim_is_malformed_is_still_selected(self):
+        """Shape before meaning, applied to the selection filter rather than to a read.
+
+        selecting_claim asks what a claim NAMES, and a claim whose dispatchRequestId is not a
+        readable value names nothing - so asking it dropped the successor silently, the older
+        assignment was judged instead, and an undeclared Stop consumed ITS hold budget while the
+        corrupt successor was never reported. The corruption is kept with the candidate that
+        carries it, so the turn answers marker_malformed there.
+
+        Sound here in a way the unreadable-intent case is not: this candidate's declaration is
+        readable, so recency can still establish that it supersedes the older assignment.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": [self.LATER_DISPATCH],
+                        "at": self.LATER_CLAIMED})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "the malformed successor was dropped and the older assignment judged")
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_well_formed_foreign_claim_in_a_malformed_marker_still_selects_nothing(self):
+        """The narrowness that keeps the shadowing fix intact.
+
+        A marker can be malformed for a reason that has nothing to do with this session's claim.
+        When that claim is readable and names another dispatch it is evidence about another
+        assignment, and must still not select this one - otherwise the malformed-successor repair
+        hands back the shadowing hole it sits next to.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": "some-other-dispatch",
+                        "at": self.LATER_CLAIMED})
+        marker.publish(directory / "bound.json",
+                       {"sessionId": CHILD, "taskId": [CHILD], "at": NOW})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+
 class Declarations(GuardTestCase):
     def test_a_receipted_readiness_releases(self):
         relationship = self.managed()

@@ -428,6 +428,39 @@ def correlated(marker, session_id, assignment=None) -> bool:
 # ---------------------------------------------------------------- selection
 
 
+def obstructed_claim(marker, session_id):
+    """A claim this session owns whose own record cannot say which assignment it names, or None.
+
+    Shape before meaning, applied to selection. selecting_claim asks what a claim NAMES, and a
+    claim whose dispatchRequestId is not a readable value names nothing - so asking it drops the
+    candidate silently, and an older assignment is judged instead while the corrupt successor is
+    never reported. That is the same "I could not look" reported as "there is nothing there" this
+    module refuses everywhere, arriving through the filter rather than through a read.
+
+    The candidate is kept so the decision path can answer marker_malformed on the assignment that
+    actually carries the corruption. Unlike an unreadable INTENT, this costs nothing in soundness:
+    the declaration is readable here, so recency can still establish that this candidate
+    supersedes an older one.
+
+    Narrow on purpose. It requires the marker to be malformed AND the offending claim to be this
+    session's own AND its preimage to be the unreadable part. A well-formed claim naming a foreign
+    dispatch still selects nothing, which is what keeps an uncorrelated claim from shadowing an
+    assignment that owes a hold, and a claim record that is not a record at all attributes to
+    nobody and is left to the fall-through.
+    """
+    if not malformed(marker):
+        return None
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not same_identity(claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if not isinstance(presented, str) or _hashed(presented) is None:
+            return claim
+    return None
+
+
 def _hashed(preimage):
     """The assignment a preimage names, or None when it does not name one at all.
 
@@ -538,6 +571,7 @@ def select_assignment(root, workspace, session_id):
         candidate
         for candidate in candidates
         if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
+        or obstructed_claim(candidate[1], session_id) is not None
     ]
     if claimed:
         # The claim says WHICH assignments are this session's. Which of them is CURRENT is the

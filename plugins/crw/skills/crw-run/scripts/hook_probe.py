@@ -362,6 +362,30 @@ def _correlated(marker, session_id, assignment=None):
     return True
 
 
+def _obstructed_claim(marker, session_id):
+    """A claim this session owns whose record cannot say which assignment it names, or None.
+
+    Shape before meaning, applied to selection. _selecting_claim asks what a claim NAMES, and a
+    claim whose dispatchRequestId is not a readable value names nothing, so asking it drops the
+    candidate silently and an older assignment is judged while the corrupt successor goes
+    unreported. The candidate is kept so the decision can answer marker_malformed on the assignment
+    that carries the corruption; unlike an unreadable intent this costs no soundness, because the
+    declaration is readable and can still order it.
+
+    Narrow: the offending claim must be this session's own and its preimage must be the unreadable
+    part. A well-formed claim naming a foreign dispatch still selects nothing.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not _same_identity(_claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if not isinstance(presented, str) or _hashed(presented) is None:
+            return claim
+    return None
+
+
 def _hashed(preimage):
     """The assignment a preimage names, or None when it does not name one at all.
 
@@ -658,6 +682,8 @@ def resolve_assignment(workspace, session_id):
     claimed = []
     for row in published:
         claim = _selecting_claim(row[2], session_id, row[1])
+        if claim is None:
+            claim = _obstructed_claim(row[2], session_id)
         if claim is not None:
             claimed.append(row)
     pool = claimed or published
