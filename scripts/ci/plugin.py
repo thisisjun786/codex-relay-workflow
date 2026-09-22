@@ -805,7 +805,13 @@ def record_version():
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
-    expected = payload_version(payload, version)
+    try:
+        expected = payload_version(payload, version)
+    except ValueError as exc:
+        # The same refusal the check reports. Deriving is what this command does, so a manifest
+        # it cannot derive from is a result to report, not an exception to end on.
+        print("working tree manifest: " + str(exc), file=sys.stderr)
+        return 1
     path = PLUGIN_ROOT / MANIFEST
     document = path.read_text(encoding="utf-8")
     recorded = json.dumps(version)

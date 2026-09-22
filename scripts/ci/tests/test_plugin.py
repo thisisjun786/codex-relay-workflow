@@ -590,6 +590,18 @@ class SyntheticRepositoryTests(unittest.TestCase):
             self.assertIn("already recorded", again.stdout)
             self.assertEqual(written.read_text(encoding="utf-8"), settled)
 
+    def test_record_version_reports_a_manifest_it_cannot_derive_from(self):
+        # Another field holding the same string leaves no single spelling to elide. Deriving is
+        # what this command does, so it has to say that and stop, not end in a traceback.
+        declared = json.loads(GOOD[plugin.MANIFEST])
+        declared["description"] = declared["version"]
+        files = dict(GOOD, **{plugin.MANIFEST: json.dumps(declared)})
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_in(self.build(folder, files), "--record-version")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("elided", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
 
 class CommandTests(unittest.TestCase):
     def run_script(self, *args):

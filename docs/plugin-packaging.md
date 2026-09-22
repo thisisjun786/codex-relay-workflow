@@ -67,6 +67,11 @@ release payload, the working tree and an installed cache directory alike, so `--
 answers which bytes the directory in front of you holds rather than which name it was filed
 under.
 
+It reads the manifest in that directory and not the directory's own name. An install derives
+both from one manifest, so they agree by construction; a cache renamed or assembled by hand
+still declares the payload it holds, and comparing that version with the directory it sits in
+is a separate reading this check does not make.
+
 The payload is what installation copies: the roots the manifest declares, `.codex-plugin/` and
 `LICENSE`, each file's path, mode and contents. It is the same payload `--json` reports a
 digest for and the same one `plugin_transition.py check-declaration` reports as
