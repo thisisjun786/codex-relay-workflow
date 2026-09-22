@@ -62,6 +62,28 @@ keep each one inside what it can actually establish.
   permission. Confidence is per layer, not per surface: a bundle or profile finding
   that was already established keeps it when the screen turns out to be unreachable.
 
+Measured 2026-09-22 from a Linux host with authorized SSH access to the macOS client
+machine. All three non-screen layers were reachable, so the earlier round's "no layer
+was read" describes that round's access, not a property of the client. The bundle
+reported ChatGPT.app 26.901.51231 build 8109, the app was running, and the account
+layer showed two remote-control enrollments pointing at this Linux host, one of them
+named `Codex Desktop`. Record which layers YOUR access actually reached.
+
+Two traps this round hit, both worth repeating:
+
+- The profile domain is not named after the app. The bundle is `ChatGPT.app` but its
+  identifier is `com.openai.codex`. A scan of the guessed `com.openai.chat` returned
+  nothing, and it would have read as "the feature stores nothing" if the control
+  string had not ALSO returned zero and invalidated the scan. Read the identifier
+  from the bundle's own Info.plist before scanning, and keep the control string.
+- A background SSH session is not the user's GUI session. `launchctl managername`
+  reported `Background`; `launchctl asuser` was refused without root; `screencapture`
+  failed with "could not create image from display"; and although System Events
+  reported `UI elements enabled` true and could enumerate the ChatGPT process, the
+  window count for that process read 0. So Accessibility being enabled for the machine
+  does not give a background session the rendered screen. The screen layer stays
+  unverified without a session in the GUI login context.
+
 ## Distinguish the identifiers
 
 App Server `projectId` on a thread record, the desktop saved-project identity, the
@@ -218,6 +240,41 @@ nothing about the others. The portable requirement is effective write permission
 every git path the delivery actually needs, demonstrated by producing the artifact
 under the profile the child will really run with, rather than inferred from a granted
 parent directory.
+
+
+## Loop activation inside a managed worktree
+
+Whether a child can run its normal workflow inside a managed worktree is a separate
+question from whether the checkout is correct, and it is easy to answer wrongly,
+because the setup artifacts appear before any work does.
+
+Measured 2026-09-22 on the command-line surface, Codex 0.154.0, for a real issue child
+created with `codex exec --enable worktrees --worktree` and left to run its own
+workflow. It activated: an `active` row in the host goal store keyed on the child's
+thread id and carrying the child's OWN objective; a registered goalplan under the
+worktree's `.codexclaw/goalplans/<slug>/` with its work phases and criteria; an
+accepted transition row in that worktree's `.codexclaw/ledger.jsonl`; and the
+orchestrate call exiting zero in the child's rollout. The checkout's own
+`.codexclaw/` tree is where all of it lands, and none of it appeared in the source
+checkout.
+
+Require all four together, because three cheaper signals each look like activation
+and none of them is:
+
+- The SessionStart hook writes a session file at `phase: IDLE` with an empty slug
+  before anything happens. Its existence is a baseline.
+- `loopArmSeen` can be set because the PROMPT mentioned a loop, with the phase
+  unchanged. It records what was asked for, not what ran.
+- `loop init` writes the goalplan, the session slug and a `created` ledger row on its
+  own, without entering any phase.
+
+This round observed exactly that trap: 31 seconds before the real transition, the
+child's session file already read a populated slug with `loopArmSeen` true while the
+phase was still `IDLE` and orchestration was inactive. A predicate built on those
+fields alone would have recorded activation for a child that had not yet started.
+Take the accepted transition row plus the exit-zero orchestrate call as the evidence,
+and treat a child's own written claim of activation as a lead to check rather than
+proof.
 
 ## Evidence to capture
 
