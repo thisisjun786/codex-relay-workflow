@@ -82,12 +82,24 @@ FACT_IDENTITIES = {"intent": ("dispatchRequestIdHash", "dbPath"),
                    "resolution": ("chosenTaskId", "chosenSessionId")}
 
 
-def _malformed_nested(key, record):
-    """A nested list inside a fact, held to the standard the fact itself is held to."""
+def _malformed_identities(key, record):
+    """An identity slot inside a fact that is present and not a string, or None.
+
+    Asked only of the assignment a turn is judged under, because this is what a fact MEANS rather
+    than whether it can be walked.
+    """
     for field in FACT_IDENTITIES.get(key, ()):
-        value = record.get(field)
-        if field in record and not isinstance(value, str):
+        if field in record and not isinstance(record.get(field), str):
             return key + "." + field
+    return None
+
+
+def _malformed_nested_lists(key, record):
+    """A nested list inside a fact, held to the standard the fact itself is held to.
+
+    Structural, so it is asked of every candidate: a field read landing on a string one level down
+    is the same traceback the outer check exists to prevent.
+    """
     for field in NESTED_FACT_LISTS.get(key, ()):
         value = record.get(field)
         if field in record and not isinstance(value, list):
@@ -106,14 +118,50 @@ def _mapping(value):
     return value if isinstance(value, dict) else {}
 
 
+def _shape_traversable(marker):
+    """The first structural problem that would stop this record being WALKED, or None.
+
+    Structure only: a list where a list belongs, a record where a record belongs. Checked for every
+    candidate in a workspace listing, because selection walks them all and a field read landing on
+    a string ends the walk in a traceback, which records nothing at all.
+    """
+    if not isinstance(marker, dict):
+        return None
+    for key in FACT_LISTS:
+        value = marker.get(key)
+        if value is not None and not isinstance(value, list):
+            return key
+        for item in value or []:
+            if not isinstance(item, dict):
+                return key + " entry"
+            nested = _malformed_nested_lists(key, item)
+            if nested:
+                return nested
+    for key in FACT_OBJECTS:
+        value = marker.get(key)
+        if value is not None and not isinstance(value, dict):
+            return key
+        nested = _malformed_nested_lists(key, value or {})
+        if nested:
+            return nested
+    return None
+
+
 def _malformed(observation):
     """The first published record whose shape stops it being readable as a fact, or None.
 
-    Readable and wrongly shaped is its own answer, and it needs one. Letting a `.get` land on a
+    Readable and wrongly shaped is its own answer, and it needs one. Letting a field read land on a
     string ends the hook in a traceback, and a traceback records nothing at all: no observation, no
     state, no row a coordinator can read, and a turn that then looks exactly like an ordinary turn
     end. Anyone able to write a single fact could otherwise switch detection off for a workspace by
     writing a value of the wrong type.
+
+    Scoped the way the relay scopes it, and the distinction matters. STRUCTURE is checked for every
+    candidate, because selection walks them all. IDENTITY FIELDS are checked only for the assignment
+    this turn is actually judged under: the relay reports malformed facts for the selected candidate
+    and lets read problems stay with the candidate they came from, so validating every entry here
+    let one stale assignment nobody is using answer marker_malformed for the whole workspace and
+    suppress a hold the current assignment owed.
     """
     for key in ("stop_input", "disposition", "receipt", "marker", "workspace"):
         value = observation.get(key)
@@ -130,25 +178,21 @@ def _malformed(observation):
                 return "workspace.assignments entry"
             markers.append(entry)
     for marker in markers:
-        if not isinstance(marker, dict):
-            continue
-        for key in FACT_LISTS:
-            value = marker.get(key)
-            if value is not None and not isinstance(value, list):
-                return key
-            for item in value or []:
-                if not isinstance(item, dict):
-                    return key + " entry"
-                nested = _malformed_nested(key, item)
-                if nested:
-                    return nested
-        for key in FACT_OBJECTS:
-            value = marker.get(key)
-            if value is not None and not isinstance(value, dict):
-                return key
-            nested = _malformed_nested(key, value or {})
+        structural = _shape_traversable(marker)
+        if structural:
+            return structural
+    selected = selected_marker(observation)
+    if not isinstance(selected, dict):
+        return None
+    for key in FACT_LISTS:
+        for item in selected.get(key) or []:
+            nested = _malformed_identities(key, item)
             if nested:
                 return nested
+    for key in FACT_OBJECTS:
+        nested = _malformed_identities(key, selected.get(key) or {})
+        if nested:
+            return nested
     return None
 
 
