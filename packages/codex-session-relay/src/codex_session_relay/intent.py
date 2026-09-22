@@ -508,32 +508,57 @@ def select_assignment(root, workspace, session_id):
     if not candidates:
         return None, None, []
 
-    claimed = [
-        candidate
-        for candidate in candidates
-        # The candidate's own directory name is what its claim has to hash to, which is why this is
-        # asked per candidate rather than once for the workspace.
-        if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
-    ]
+    # The candidate's own directory name is what its claim has to hash to, which is why this is
+    # asked per candidate rather than once for the workspace. The claim is kept, because it is also
+    # what orders them.
+    claimed = []
+    for candidate in candidates:
+        claim = selecting_claim(candidate[1], session_id, candidate[0].name)
+        if claim is not None:
+            claimed.append((candidate, claim))
     if claimed:
-        # Among the assignments this session's own claim selects, one whose facts could not be read
-        # outranks one that could. _recency sorts an unreadable or unparseable declaration BELOW
-        # every real one, so without this the reader picks the candidate it can read, holds a turn
-        # against that assignment, and never says that the one this session actually claimed could
-        # not be read - which is the "I could not look" reported as "there is nothing there" that
-        # this module refuses everywhere else.
+        # Newest CLAIM, not newest declaration. Both halves of this matter and they were found one
+        # at a time. Ordering on the declaration reads the intent, so a candidate whose intent
+        # cannot be read sorts below every readable sibling and the reader silently moves to an
+        # assignment this session did not claim last, holding a turn there while never saying the
+        # current one could not be read. Preferring every unreadable candidate instead is the
+        # opposite failure and the one select_assignment has always warned about: a stale corrupt
+        # assignment this session finished with in January outranks the healthy one it claimed in
+        # February, and releases a turn the current assignment would have held.
         #
-        # Scoped to the claimed set deliberately. Applied across the whole workspace it would be
-        # the failure the comment below describes: one stale corrupt assignment nobody is using
-        # would outrank the current one and switch detection off. A candidate this session's claim
-        # names is not retained state nobody is using. And if the CLAIMS themselves cannot be read
-        # there is no evidence this session claimed it, so it stays an unused corrupt directory and
-        # the fall-through keeps the reader on the assignment it can still judge.
-        unread = [candidate for candidate in claimed if candidate[2] or malformed(candidate[1])]
-        directory, facts, problems = max(unread or claimed, key=_recency)
+        # The claim answers both, because it is the evidence that does not live in the intent: this
+        # session wrote it, it hashes to the directory it sits in, and it says when. So currency is
+        # decided on evidence an unreadable intent cannot suppress, a corrupt candidate wins only
+        # when it really is the current one, and a stale one never outranks a newer claim.
+        (directory, facts, problems), _claim = max(claimed, key=_claim_recency)
     else:
         directory, facts, problems = max(candidates, key=_recency)
     return directory, facts, problems
+
+
+def _claim_recency(entry):
+    """Newest claim first, ties broken on the assignment id. Reads no intent.
+
+    The ordering used among the assignments a session's own claim selects. Compared as instants for
+    the reason _recency is: ISO 8601 sorts chronologically only when the offsets match. An undated
+    or unparseable claim sorts below every dated one rather than raising, and the assignment id
+    still breaks the tie, so every reader of the same listing selects the same entry.
+
+    Provenance is worth stating. This is the child's own record of when it claimed, so it is weaker
+    evidence than the coordinator's declaration - and it is the only currency signal that survives
+    an unreadable intent, which is exactly the case that needs one. What a child can do with it is
+    bounded: a claim selects nothing unless it hashes to the directory it sits in, so the choice is
+    only ever between assignments this session legitimately claimed.
+    """
+    from datetime import datetime, timezone
+
+    (directory, _facts, _problems), claim = entry
+    at = _moment(claim.get("at"))
+    return (
+        at is not None,
+        at or datetime.min.replace(tzinfo=timezone.utc),
+        directory.name,
+    )
 
 
 def _recency(candidate):

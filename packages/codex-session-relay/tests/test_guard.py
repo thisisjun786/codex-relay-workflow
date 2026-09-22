@@ -513,6 +513,10 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
 
     LATER_DISPATCH = "dispatch-2"
     LATER_DECLARED = "2026-01-01T00:02:00+00:00"
+    # Distinct from NOW on purpose: the claim's own timestamp is what orders the claimed
+    # candidates, so two claims written at the same instant would decide this on the assignment id
+    # and these cases would stop measuring the ordering they are named for.
+    LATER_CLAIMED = "2026-01-01T00:05:30+00:00"
 
     def shadow(self, dispatch):
         """A newer assignment in the same workspace, carrying a claim by this session.
@@ -527,7 +531,8 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         )
         directory = marker.assignment_dir(self.markers, self.workspace, later)
         marker.publish(directory / "claims" / CHILD / "claim.json",
-                       {"sessionId": CHILD, "dispatchRequestId": dispatch, "at": NOW})
+                       {"sessionId": CHILD, "dispatchRequestId": dispatch,
+                        "at": self.LATER_CLAIMED})
         intent.bind(self.markers, workspace=self.workspace, assignment=later,
                     session_id=CHILD, task_id=CHILD, at=NOW)
         return later
@@ -561,9 +566,71 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         later = marker.assignment_id(self.LATER_DISPATCH)
         intent.publish_claim(
             self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
-            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN, at=NOW,
+            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN,
+            at=self.LATER_CLAIMED,
         )
         return later, marker.assignment_dir(self.markers, self.workspace, later)
+
+    def healthy_later(self):
+        """A newer assignment this session claimed, bound and registered, so it owes a hold."""
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        intent.publish_claim(
+            self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
+            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN,
+            at=self.LATER_CLAIMED,
+        )
+        intent.bind(self.markers, workspace=self.workspace, assignment=later,
+                    session_id=CHILD, task_id=CHILD, at=NOW)
+        directory = marker.assignment_dir(self.markers, self.workspace, later)
+        marker.publish(directory / "relationship.json",
+                       {"relationshipId": "rel-000000000000abcd", "at": NOW})
+        return later, directory
+
+    def corrupt(self, assignment):
+        """Make this assignment's intent unreadable, leaving its claims intact."""
+        target = marker.assignment_dir(self.markers, self.workspace, assignment) / "intent.json"
+        target.unlink()
+        target.mkdir()
+
+    def test_a_stale_corrupt_assignment_does_not_outrank_a_newer_healthy_claim(self):
+        """The other direction, and the one select_assignment has always warned about.
+
+        Preferring every unreadable candidate inside the claimed set is not the fix for skipping
+        them. A session that finished with an assignment in January and claimed a healthy one in
+        February would have its current turn released as state_unreadable on the retained one,
+        and the hold the current assignment owed would never be evaluated - retained state nobody
+        is using switching detection off, which is exactly what the claimed-set scoping was
+        supposed to prevent and did not.
+
+        Currency decides, measured on the claim, which is the evidence an unreadable intent cannot
+        suppress. So a corrupt candidate wins only when it really is the current one.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        self.corrupt(self.assignment)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a stale corrupt assignment outranked the newer healthy claim")
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_corrupt_current_assignment_still_outranks_an_older_healthy_claim(self):
+        """The pair of the case above, so neither direction is fixed by breaking the other.
+
+        Here the corrupt one IS the current assignment, and it has to be selected and reported
+        rather than skipped in favour of the older readable sibling.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        self.corrupt(later)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
 
     def test_a_newer_claimed_assignment_whose_intent_cannot_be_read_takes_the_turn(self):
         """An unreadable store is never reported as an absent one, and never skipped either.

@@ -1,0 +1,94 @@
+{
+  "expected": {
+    "decision": "block",
+    "observation": "undeclared_turn_end",
+    "state": "undeclared_turn_end"
+  },
+  "note": "Two assignments this session claimed, where the declaration order and the claim order disagree. X was DECLARED later and CLAIMED earlier and is unregistered; Y was declared earlier, claimed later, and is registered. Ordering the claimed candidates on the declaration selects X and reads managed_unregistered. Ordering them on the claim selects Y and reads undeclared_turn_end, which is what this asserts. The claim is what orders them, because it is the evidence that does not live in the intent: ordering on the declaration means a candidate whose intent cannot be read sorts below every readable sibling and is silently passed over, while preferring every unreadable candidate instead lets a stale corrupt assignment outrank a newer healthy claim. Currency read from the claim answers both, and it is the child's own record - bounded, because a claim selects nothing unless it hashes to the directory it sits in.",
+  "observation": {
+    "disposition": null,
+    "now": "2026-03-01T00:10:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0009"
+    },
+    "workspace": {
+      "assignments": [
+        {
+          "assignmentId": "74fade2f04ace8ca9dda6e033c38d0646fc88b40f5e3fd15c0da25ba835af38c",
+          "attempts": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-05T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-X",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-02-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "74fade2f04ace8ca9dda6e033c38d0646fc88b40f5e3fd15c0da25ba835af38c",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": null
+        },
+        {
+          "assignmentId": "7b6e3847a4472f2f54cab047fed19b7cb57aad3e4d0225039d5347ee6bcfefd5",
+          "attempts": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-02-05T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-Y",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "7b6e3847a4472f2f54cab047fed19b7cb57aad3e4d0225039d5347ee6bcfefd5",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "relationshipId": "rel-x"
+          }
+        }
+      ],
+      "path": "/workspace/example",
+      "pathHash": "863c29bb9a6e7822955a80f7e09466e156f7019807c3c0c030592cff4af0f348"
+    }
+  }
+}

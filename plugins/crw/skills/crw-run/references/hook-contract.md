@@ -193,15 +193,23 @@ omission looked for - so a check that only releases within one assignment remove
 
 The selection test is the claim against the DIRECTORY and never against the intent: the path
 authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
-assignment the claim belongs to. Selecting on the intent's content instead drops a candidate whose
-intent cannot be read, and since an unreadable declaration sorts below every real one, the reader
-lands on an older sibling and holds a turn against it while nobody is told the assignment this
-session actually claimed could not be read. Among the assignments a session's own claim selects,
-unreadable or malformed facts therefore outrank readable ones, and the turn reports
-`state_unreadable` or `marker_malformed` on the assignment that carries them. That preference is
-scoped to the claimed set: applied across the workspace, one stale corrupt directory nobody is
-using would outrank the current assignment and switch detection off. When no claim selects
-anything, recency decides exactly as before.
+assignment the claim belongs to.
+
+The claimed candidates are then ordered by the newest CLAIM rather than the newest declaration,
+and that is the one ordering that answers both failures. Ordering on the declaration reads the
+intent, so a candidate whose intent cannot be read sorts below every readable sibling: the reader
+lands on an older assignment and holds a turn against it while nobody is told the current one
+could not be read. Preferring every unreadable candidate instead is the opposite failure, and the
+one this walk has always warned about - a stale corrupt assignment a session finished with in
+January outranks the healthy one it claimed in February and releases a turn the current assignment
+would have held. The claim answers both: this session wrote it, it hashes to the directory it sits
+in, and it says when, so currency survives an unreadable intent and a corrupt candidate wins only
+when it really is the current one. It is the child's own record and therefore weaker evidence than
+the coordinator's declaration, bounded by the fact that a claim selects nothing unless it hashes
+to the directory it sits in: the choice is only ever between assignments this session legitimately
+claimed. When the selected assignment's facts cannot be read the turn reports `state_unreadable`
+or `marker_malformed` on that assignment. When no claim selects anything, recency over the
+declarations decides exactly as before.
 
 The pre-bind window is not blind. A correlated session whose bind has not landed reads as
 `correlated_unbound`: released, never held, but its hook still records the turn's observation. When

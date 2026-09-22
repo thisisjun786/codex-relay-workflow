@@ -360,6 +360,10 @@ def _correlated(marker, session_id, assignment=None):
     return True
 
 
+# The instant an undated record sorts below. Named so the two orderings share one floor.
+_EPOCH = datetime(1, 1, 1, tzinfo=timezone.utc)
+
+
 def _selecting_claim(marker, session_id, assignment):
     """This session's claim that independently names this assignment, or None.
 
@@ -621,6 +625,12 @@ def resolve_assignment(workspace, session_id):
     at. One file would switch holding off for a session correlated and bound somewhere else. The
     test is the claim against the directory and never against the intent, so a candidate whose
     intent cannot be read is still selected and still reported rather than skipped.
+
+    Among the claimed candidates the order is the newest CLAIM, not the newest declaration. The
+    claim is the evidence that does not live in the intent, so currency survives an unreadable one:
+    a corrupt candidate wins only when it really is the current assignment, and a stale corrupt one
+    never outranks a newer healthy claim. The relay's reader keeps a candidate whose intent could
+    not be READ; this listing has no way to say that, so only the ordering is mirrored here.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -629,13 +639,17 @@ def resolve_assignment(workspace, session_id):
         # the reader on a valid earlier state, which is what the create-once layout already gives.
         if declared is not None:
             published.append((declared, str(assignment.get("assignmentId") or ""), assignment))
-    claimed = [row for row in published
-               if _selecting_claim(row[2], session_id, row[1]) is not None]
+    claimed = []
+    for row in published:
+        claim = _selecting_claim(row[2], session_id, row[1])
+        if claim is not None:
+            claimed.append((_moment(claim.get("at")), row[1], row[2]))
     pool = claimed or published
     if not pool:
         return None
-    # Ties break on the assignment id, so every reader of the same listing picks the same one.
-    return max(pool, key=lambda row: (row[0], row[1]))[2]
+    # An undated claim sorts below every dated one rather than raising, and ties break on the
+    # assignment id, so every reader of the same listing picks the same one.
+    return max(pool, key=lambda row: (row[0] is not None, row[0] or _EPOCH, row[1]))[2]
 
 
 def selected_marker(observation):
