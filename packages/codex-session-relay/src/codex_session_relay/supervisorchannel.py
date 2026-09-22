@@ -67,6 +67,10 @@ TURN_PREDATES_SEND = "turn_predates_send"
 # MESSAGE: somebody answered from a genuine turn on the right thread, and nothing independent
 # of our own receipt says the message they are answering about ever landed there.
 TRANSCRIPT_UNCONFIRMED = "transcript_unconfirmed"
+# The readback names the turn the send itself opened, and the delivered bytes are not in that
+# turn. Those two cannot both be true of one message: what the token is IN is where the
+# message landed, so a claim to have read it in the turn it landed in has to be the same turn.
+TRANSCRIPT_TURN_MISMATCH = "transcript_turn_mismatch"
 
 # And which turn answered, which is what says how much the readback is worth. The relay knows
 # the id of the turn its own send opened, so a readback from that turn rests on nothing the
@@ -413,8 +417,15 @@ class SupervisorChannel:
         lines += [
             "",
             "To confirm you read this, from inside your own turn:",
-            "  supervisor-read --message " + region["messageId"]
-            + " --turn <your turn id> --proof <proof>",
+            "  codex-session-relay --socket <your-relay-socket> supervisor-read",
+            "    --message " + region["messageId"] + " --turn <your-turn-id>",
+            "    --proof <your-proof> --as " + envelope.shown(region["recipient"]["taskId"]),
+            "",
+            "Three placeholders and nothing else, each one word so the line splits into an",
+            "argv as it stands: the socket path these bytes cannot know, your own turn id,",
+            "and the proof over it. --socket is global and goes BEFORE the subcommand, and",
+            "--as is required, so the line is refused without either - which is why both are",
+            "written out here rather than left to be remembered.",
             "",
             "The proof is sha256(messageId|<your own turn id>). This message does not and",
             "cannot contain that turn id, which is what separates reading it from quoting it",
@@ -722,12 +733,23 @@ class SupervisorChannel:
             # so two queues feeding one task must not each get their own budget - which does
             # mean a report can wait behind parent-child traffic to a task that is both a
             # parent and a supervisor. That is the intended trade, said out loud.
+            # The INTERVAL is read here, before the increment overwrites last_send_at with
+            # now. _rate_limited checks it too, but that runs before the host reads, so two
+            # callers both pass it and the second never sees the first's send. Reading inside
+            # BEGIN IMMEDIATE is what makes the pacing hold rather than merely usually hold.
+            window = int(now // 3600) * 3600
+            paced = db.execute(
+                "SELECT last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
+                "   AND window_start = ?", (recipient, window)).fetchone()
+            if (paced is not None and paced["last_send_at"] is not None
+                    and (now - paced["last_send_at"])
+                    < self.policy.min_send_interval_seconds):
+                raise _NotClaimable()
             self._count_send(db, recipient, now)
             # Re-read AFTER the increment, inside the same transaction. _rate_limited runs
             # before the host reads and is therefore a preflight: two callers can both pass
             # it, both increment, and the recipient is woken past its own bound. The counter
             # is the thing that knows, so it is asked once it has been moved.
-            window = int(now // 3600) * 3600
             used = db.execute(
                 "SELECT sends FROM recipient_rate WHERE recipient_task_id = ?"
                 "   AND window_start = ?", (recipient, window)).fetchone()
@@ -936,6 +958,19 @@ class SupervisorChannel:
                                 + ("" if delivered.get("exhausted")
                                    else ", and the scan was not exhausted, so this is"
                                    " inconclusive rather than absence"))))
+        elif (verified == HOST_READ and origin == RELAY_OPENED
+              and delivered.get("turnId")
+              and delivered["turnId"] != read_turn_id):
+            # The readback claims the turn this send named, and the delivered token is in a
+            # different one. Where the message landed is where a reader of it reads, so the
+            # two disagreeing is an inconsistent claim rather than a verified read. It ties
+            # the named turn to the delivered evidence in the one case where they CAN be
+            # tied; a turn the recipient opened afterwards is not expected to hold the token,
+            # and is the stronger case anyway because the sender did not know its id.
+            verified = TRANSCRIPT_TURN_MISMATCH
+            detail = ("this readback names the turn the send opened, " + str(read_turn_id)
+                      + ", and the delivered token is in " + str(delivered["turnId"])
+                      + "; where the message landed is where a reader of it reads")
         at = self.clock.iso()
         with self.store.transaction() as db:
             # Re-read FIRST, inside the write, because the check above happens outside the

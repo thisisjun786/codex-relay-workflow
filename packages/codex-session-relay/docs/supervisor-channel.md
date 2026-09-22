@@ -82,6 +82,10 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    supervisor, a report can wait behind parent-child traffic to that same task. The transport
    lock is shared in the same way within one adapter worker, which is where it lives; it is
    not a process-wide or durable lock.
+   Both halves of the bound - the hourly count and the minimum gap between two sends - are
+   decided inside the claim's own transaction, where the counter moves. The reading taken
+   before the host reads is a preflight that two callers pass at the same moment, neither
+   having seen the other's send, so on its own it paces nothing.
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
    It is still weaker than arrival order, deliberately: an older message that is held, inside
@@ -108,7 +112,7 @@ the delivered bytes carry the message id, because a recipient has to be able to 
 they cannot carry the turn id, because that turn does not exist until the message arrives. That
 is the whole of what it rules out, and it is the property `ack.acknowledge` already rests on.
 
-A verified readback says exactly three things, in these words:
+A verified readback says exactly four things, in these words:
 
 - a bounded scan of the recipient's items - at most 200 of them - found THIS attempt's request
   id. Not the frozen message, which is never compared; not necessarily in the turn that
@@ -123,6 +127,11 @@ A verified readback says exactly three things, in these words:
   the turn the attempt reports having opened, because a send can STEER an existing turn rather
   than open one: that turn predates the message, and exempting it let it verify a readback for
   a message it could not have been opened by.
+- where the named turn is the one the SEND opened, the delivered bytes are in that same turn.
+  Those two cannot disagree about one message: what the token is IN is where the message
+  landed, so a claim to have read it where it landed has to name that turn. The tie holds for
+  that case only, and deliberately - a turn the recipient opened AFTERWARDS is not expected to
+  carry the token, and is the stronger reading anyway, because the sender never knew its id.
 
 It does not say who wrote the answer, that the turn answered anything, or that the supervisor
 acted. The turn a send opens is one the sender already knows the id of, so a readback from that
@@ -133,9 +142,10 @@ can see how much was established instead of being told a number. `unknown` is re
 origin is named only when the delivered attempt carries a turn id, and `inbox_only` carries
 none.
 
-There are five verification answers: `host_read`, `transcript_unconfirmed` for a real turn whose
-transcript scan did not confirm the message, `turn_not_found`, `turn_predates_send`, and
-`unverified_turn` where no host could be read at all.
+There are six verification answers: `host_read`, `transcript_unconfirmed` for a real turn whose
+transcript scan did not confirm the message, `transcript_turn_mismatch` where the readback
+names the turn the send opened and the token is in another, `turn_not_found`,
+`turn_predates_send`, and `unverified_turn` where no host could be read at all.
 
 A readback that does not verify is written down, on the path that inserts or updates a row -
 the one taken when no settled `host_read` row exists yet. Hiding it would lose the fact that
@@ -175,7 +185,9 @@ codex-session-relay supervisor-stage --observation <file>
 codex-session-relay --socket <path> supervisor-send --message <id>
 
 # The recipient answering. The message ASKS for a turn id of its own; nothing enforces that.
-codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> --proof <p>
+# --as names the asserting task and is required; it is checked against the message's recipient.
+codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> \
+  --proof <p> --as <your task id>
 
 # What was staged, every attempt, and what came back.
 codex-session-relay supervisor-show --message <id>
@@ -186,6 +198,12 @@ refuse without `--socket`, exiting 4 with usage JSON and writing nothing to the 
 list of host-required commands is what `doctor` reports and enforces nothing, so the refusal
 is its own check. Supplying the option proves an argument was supplied, not that a host is
 reachable.
+
+The line the message itself renders is this one with everything the relay already knows filled
+in, leaving three placeholders: the socket path, the recipient's own turn id, and the proof
+over it. Each is a single word, so the rendered line splits into an argv as it stands -
+`tests/test_supervisor_channel.py` hands it to the real parser rather than checking it looks
+like a command.
 
 Neither reaches the host unconditionally. `supervisor-send` returns `sent: false` without
 touching the adapter when the message is held, inside its backoff, or already sent, and only
@@ -214,15 +232,28 @@ like a command and could not be run. With the reading the pointer is rendered wh
 
 ## What a readback is not
 
-It carries no supervisor authority. Every identifier the proof is computed from is in this
-store, and anyone who can run the command can already write the row it produces - the store is
-a file, not a service with callers to authenticate, so no check on this side could establish
-who is asking. What the channel does instead is record who ASSERTED the readback and refuse an
-assertion that does not name the message's recipient. That is a declaration, and calling it
-anything stronger would be the kind of claim the rest of this document exists to avoid.
+It carries no supervisor authority, and the bound on that is worth stating exactly rather than
+in general. Reaching `host_read` takes four things no caller can produce from this store
+alone: a turn the host will read on the RECIPIENT's own thread, a start time for it that is
+not certainly before the send, this attempt's request id in the recipient's own transcript,
+and - where the readback names the turn the send opened - the token in that same turn. Every
+one of those is a question put to the host about the recipient's thread. A caller holding
+nothing but this database gets `unverified_turn` or `transcript_unconfirmed`, which is
+recorded and leaves the message where it was.
 
-Read `received` on the reach ladder as "a readback was recorded and the host agreed its turn is
-real". It is not "the supervisor acted", and the obligation is not discharged by it.
+One residual is left and this channel cannot close it. A local operator who can DRIVE the
+recipient's thread - open a turn on it and get the request id into it - satisfies all four,
+and so can produce a verified readback the supervisor never wrote. That operator already holds
+the authority to write the row directly: the store is a file, not a service with callers to
+authenticate, so nothing on this side can tell the two apart. Closing it takes an
+authenticated caller, which is a relay-wide change and not this channel's to make. What the
+channel does inside its own reach is record who ASSERTED the readback and refuse an assertion
+that does not name the message's recipient - a declaration, written down as one, and calling
+it anything stronger would be the kind of claim the rest of this document exists to avoid.
+
+Read `received` on the reach ladder as "a readback was recorded, the host agreed its turn is
+real, and the recipient's own transcript holds the message". It is not "the supervisor acted",
+and the obligation is not discharged by it.
 
 ## What this does not do
 

@@ -922,7 +922,9 @@ codex-session-relay supervisor-stage --observation <file>
 codex-session-relay --socket <path> supervisor-send --message <id>
 
 # The recipient answering. The message asks for a turn id of its own; nothing enforces it.
-codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> --proof <p>
+# --as names the asserting task and is required; it is checked against the message's recipient.
+codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> \
+  --proof <p> --as <your task id>
 
 # What was staged, every attempt, and what came back.
 codex-session-relay supervisor-show --message <id>
@@ -936,7 +938,9 @@ A verified readback says a bounded scan of at most 200 of the recipient's items 
 attempt's request id, and that the host can read the named turn on the recipient's thread and
 it carries a start time which is not CERTAINLY earlier than the send. That comparison applies
 to every candidate, including the turn the attempt names, because a send can steer an existing
-turn rather than open one. It does not say the turn answered,
+turn rather than open one. Where the readback names the turn the send itself opened, the
+delivered bytes have to be in that same turn: what the token is in is where the message
+landed. It does not say the turn answered,
 who wrote the answer, or that anybody acted, and it discharges nothing: the obligation stands
 until Linear confirms. Nothing here is automatic - there is no daemon behind these commands, so
 a report is expected to go out inside the parent's own turn, which is an instruction to the

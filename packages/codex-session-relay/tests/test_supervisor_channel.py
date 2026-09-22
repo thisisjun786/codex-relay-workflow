@@ -1059,3 +1059,114 @@ class WhatTheThirdReviewRoundFound(ChannelTestCase):
                           "workspace": self.root, "assignment": "asg-1",
                           "session": "01child-session", "turn": "turn-unreported-1"},
         }
+
+
+class WhatTheFourthReviewRoundFound(ChannelTestCase):
+    """Pacing where the counter moves, a line argparse accepts, and the turn tie."""
+
+    def test_a_second_claim_inside_the_send_interval_is_refused_in_the_transaction(self):
+        """_rate_limited reads last_send_at before the host reads, so two callers pass it.
+
+        The first send commits its own last_send_at while the second is still deciding, and
+        the second never sees it. The hourly COUNT was already re-read inside the claim; the
+        interval was not, so the pacing held only when nothing raced - which is the one
+        condition a bound is for.
+        """
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.assertEqual(self.channel.attempt(first, self.adapter)["deliveryState"],
+                         DISPATCHED)
+        sent_at = self.clock.now()
+
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(second, now=sent_at + 1, owner="a racing caller",
+                                recipient=SUPERVISOR,
+                                resolution=self.channel.resolve(self.rid))
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertEqual(self.channel.get(second)["state"], QUEUED)
+        self.assertEqual(
+            self.store.one("SELECT sends FROM recipient_rate WHERE recipient_task_id = ?",
+                           (SUPERVISOR,))["sends"], 1,
+            "the claim rolled back, so the refused send was not counted against the hour")
+
+    def test_the_same_claim_past_the_interval_goes_through(self):
+        """The bound paces the recipient; it does not stop the queue."""
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        self.channel.attempt(first, self.adapter)
+        past = self.clock.now() + self.channel.policy.min_send_interval_seconds + 1
+        attempt_no, request_id, _message = self.channel._claim(
+            second, now=past, owner="paced", recipient=SUPERVISOR,
+            resolution=self.channel.resolve(self.rid))
+        self.assertEqual(attempt_no, 1)
+        self.assertTrue(request_id)
+
+    def test_the_rendered_readback_line_is_accepted_by_the_real_parser(self):
+        """A command the CLI refuses is a suggestion, not an instruction.
+
+        The message asks the recipient to run one line. It is parsed here by the parser that
+        would actually receive it, because a rendered string only LOOKS runnable.
+        """
+        from codex_session_relay import cli
+
+        _one, message_id, _record = self.delivered()
+        argv = self._rendered_readback(self.bytes_of(message_id))
+        self.assertEqual(argv[0], "codex-session-relay")
+        args = cli.build_parser().parse_args(argv[1:])
+        self.assertEqual(args.command, "supervisor-read")
+        self.assertTrue(args.socket, "--socket is global and has to be on the line itself")
+        self.assertEqual(args.message, message_id)
+        self.assertEqual(args.asserted_by, SUPERVISOR,
+                         "the recipient is known when these bytes are rendered")
+        self.assertEqual([token for token in argv if token.startswith("<")],
+                         ["<your-relay-socket>", "<your-turn-id>", "<your-proof>"],
+                         "what is left to the reader is the socket, the turn and the proof")
+
+    def test_a_readback_naming_the_sends_turn_with_the_token_elsewhere_does_not_verify(self):
+        """Two claims about one message that cannot both be true.
+
+        The readback names the turn the send opened, and the recipient's transcript holds the
+        delivered bytes in a different one. What the token is IN is where the message landed,
+        so a claim to have read it in the turn it landed in has to name that turn.
+        """
+        _one, message_id, record = self.delivered()
+        elsewhere = self.adapter.start_turn(SUPERVISOR, status="completed")
+        thread = self.adapter.threads[SUPERVISOR]
+        thread.items = [(elsewhere.turn_id, text) if turn == record["turnId"] else (turn, text)
+                        for turn, text in thread.items]
+
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["turnOrigin"], channel_module.RELAY_OPENED)
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_TURN_MISMATCH)
+        self.assertIn(elsewhere.turn_id, answer["detail"])
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED,
+                         "an inconsistent claim does not move the message to read")
+
+    def test_a_turn_the_recipient_opened_is_not_required_to_hold_the_delivered_bytes(self):
+        """The tie is the relay-opened case, and only that case.
+
+        A recipient that reads the message and answers from a turn of its own is the STRONGER
+        reading - the sender never knew that turn's id - and the delivered token is not
+        expected to be in it.
+        """
+        _one, message_id, _record = self.delivered()
+        self.clock.advance(30)
+        own = self.adapter.start_turn(SUPERVISOR, status="completed")
+        answer = self.read_back(message_id, own.turn_id)
+        self.assertEqual(answer["turnOrigin"], channel_module.RECIPIENT_OPENED)
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+
+    @staticmethod
+    def _rendered_readback(message):
+        """The invocation as it stands in the bytes, split the way a shell would split it."""
+        taking, lines = False, []
+        for line in message.splitlines():
+            if line.strip().startswith("codex-session-relay --socket"):
+                taking = True
+            elif taking and not line.startswith("    "):
+                break
+            if taking:
+                lines.append(line.strip())
+        return " ".join(lines).split()
