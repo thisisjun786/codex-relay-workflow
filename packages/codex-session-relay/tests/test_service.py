@@ -2596,6 +2596,44 @@ class BoundsAcrossAProcessBoundary(ServiceTestCase):
             msg="the instant was built from a different reading than the length it expresses",
         )
 
+    def test_recovery_does_not_run_for_a_bound_that_was_already_gone(self):
+        """on_start makes real App Server calls for every unresolved attempt.
+
+        A supervisor whose instant had passed before it could read a clock will not serve a
+        single segment, so paying for exhaustive recovery first is work done on behalf of
+        nobody - and on a slow host that work is what made the bound late in the first place.
+        The check after on_start stays as well: recovery can spend a bound that was there when
+        it began.
+        """
+        service = self.service("q")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        recovered = []
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, monotonic=clock,
+            deadline_monotonic=clock() - 5.0, on_start=lambda: recovered.append(True),
+        )
+
+        self.assertEqual(recovered, [], "recovery ran for a supervisor that could not serve")
+        self.assertEqual(outcome["segments"], [])
+
+    def test_recovery_still_runs_when_the_bound_has_time_in_it(self):
+        """The guard above must not become a supervisor that never recovers."""
+        service = self.service("r")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        recovered = []
+
+        service.supervise(
+            allow_isolated=True, spawn=lambda **_k: FakeWorker(0), sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, monotonic=clock,
+            deadline_monotonic=clock() + 600.0, on_start=lambda: recovered.append(True),
+        )
+
+        self.assertEqual(recovered, [True])
+
     def test_a_bound_no_comparison_can_pass_is_refused_by_the_api_as_well(self):
         """The CLI is not the only caller of supervise.
 

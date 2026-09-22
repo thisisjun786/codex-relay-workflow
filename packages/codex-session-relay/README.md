@@ -608,10 +608,15 @@ is any value no comparison can pass - `nan`, `inf`, or a negative one. `--deadli
 nothing in it rather than the absence of one.
 
 A bound stops a run from STARTING a tick, so a tick already under way finishes and may make several
-deliveries. And it stops it in the clock the run compares against: a worker converts its instant into
-a wall deadline, exactly as a duration has always become one, so a wall clock stepping backwards after
-that conversion can still let it begin a tick past the supervisor's own end. That exposure is not new
-here and is recorded in `docs/invariants.md` rather than implied.
+deliveries. It is compared on two clocks on purpose. The deadline the daemon reads is a wall instant,
+because that is what it has always read, and a wall clock that steps backwards would push that instant
+away and hand the run time nobody granted it. So the run also carries a `stop` — the daemon's own
+additional early exit — reading the monotonic bound this process was given. The guard is read once per
+loop, so it bounds when a tick may begin to within one poll interval, whatever the wall clock does.
+
+A supervisor whose bound was already gone when it first read a clock does not run recovery either.
+Recovery makes real App Server calls for every unresolved attempt, and a run that cannot serve one
+segment buys that work no segment to be useful in.
 
 ## Activation
 

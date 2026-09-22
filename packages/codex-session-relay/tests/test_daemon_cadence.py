@@ -161,6 +161,13 @@ class RealWallClockCadence(unittest.TestCase):
         self.assertTrue(all(r.quiet for r in reports), "an empty store has nothing to report")
 
 
+class _Tick:
+    """One tick report, only as much of one as _run_bounded renders."""
+
+    def as_dict(self):
+        return {}
+
+
 class TheFormOfTheBound(unittest.TestCase):
     """Which clock a worker reads its bound against, and what it does when it is already spent.
 
@@ -292,19 +299,18 @@ class TheFormOfTheBound(unittest.TestCase):
         what let a supervisor count a worker which served nothing as a clean segment.
         """
         services, args = build_services(self)
-        clock = FakeClock()
-        services.clock = clock
         args.deadline_monotonic = 5_000.1
+        now = [5_000.0]
 
         def run(_self, *, max_ticks=None, deadline=None, stop=None, sleep=None):
             # What this process still had to pay after it read its own clock.
-            clock.advance(5.0)
+            now[0] += 5.0
             return []
 
         with mock.patch.object(RelayDaemon, "run", run):
             with self.assertRaises(PayloadExit) as caught:
                 _run_bounded(services, _service_for(services), args, require_intent=False,
-                             monotonic=lambda: 5_000.0)
+                             monotonic=lambda: now[0])
 
         self.assertEqual(caught.exception.code, EXIT_BOUND_SPENT)
         self.assertIn("taking its locks", caught.exception.payload["detail"])
@@ -336,3 +342,66 @@ class TheFormOfTheBound(unittest.TestCase):
 
         # The bound really has passed - the assertion is that this is not what ended the run.
         self.assertLessEqual(result, services.clock.now())
+
+    def test_a_wall_clock_that_steps_back_cannot_extend_the_bound(self):
+        """The deadline the daemon compares against is a wall clock, and wall clocks move.
+
+        Converting the instant gives the run an end time on services.clock, exactly as a
+        duration has always produced one. A backward step after that conversion pushes that end
+        away and hands the run time nobody granted it. So the run is also given run's own
+        additional early exit, reading the monotonic bound this process was given, and a tick
+        cannot start past it however the wall clock behaves.
+        """
+        services, args = build_services(self)
+        args.deadline_monotonic = 5_030.0
+        now = [5_000.0]
+        captured = {}
+
+        def run(_self, *, max_ticks=None, deadline=None, stop=None, sleep=None):
+            captured["stop"] = stop
+            return [_Tick()]
+
+        with mock.patch.object(RelayDaemon, "run", run):
+            _run_bounded(services, _service_for(services), args, require_intent=False,
+                         monotonic=lambda: now[0])
+
+        self.assertIsNotNone(captured["stop"], "the run was given no guard on its own clock")
+        self.assertFalse(captured["stop"](), "the guard fired while the bound still had time")
+        now[0] = 5_030.0
+        self.assertTrue(captured["stop"](), "the guard did not fire on its own instant")
+
+    def test_a_duration_run_is_guarded_on_its_own_clock_as_well(self):
+        """The same exposure predates the instant form: --deadline N has always become a wall
+
+        deadline too. The guard is derived from whichever form arrived, so a run told how long
+        is bounded on the same clock as one told when.
+        """
+        services, args = build_services(self, deadline=30.0)
+        now = [5_000.0]
+        captured = {}
+
+        def run(_self, *, max_ticks=None, deadline=None, stop=None, sleep=None):
+            captured["stop"] = stop
+            return [_Tick()]
+
+        with mock.patch.object(RelayDaemon, "run", run):
+            _run_bounded(services, _service_for(services), args, require_intent=False,
+                         monotonic=lambda: now[0])
+
+        self.assertFalse(captured["stop"]())
+        now[0] = 5_030.0
+        self.assertTrue(captured["stop"]())
+
+    def test_an_unbounded_run_is_given_no_guard_to_trip_over(self):
+        services, args = build_services(self, max_ticks=2)
+        captured = {}
+
+        def run(_self, *, max_ticks=None, deadline=None, stop=None, sleep=None):
+            captured["stop"] = stop
+            return [_Tick()]
+
+        with mock.patch.object(RelayDaemon, "run", run):
+            _run_bounded(services, _service_for(services), args, require_intent=False,
+                         monotonic=lambda: 5_000.0)
+
+        self.assertIsNone(captured["stop"])

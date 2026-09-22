@@ -2320,6 +2320,7 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
         # spent, and reading it as "no bound given" turned an explicit zero into a run with
         # no bound at all.
         deadline = None if duration is None else services.clock.now() + duration
+        bound = None if duration is None else monotonic() + duration
     else:
         # Converted against THIS process's monotonic clock, which is the whole point: fork,
         # interpreter start, imports and argument parsing are already behind us, and they come
@@ -2333,6 +2334,7 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 " clock, so it took no tick",
             )
         deadline = services.clock.now() + remaining
+        bound = instant
     allow_isolated = getattr(args, "allow_isolated_scope", False)
     # Before the claim, for the same reason _supervise does it: the probe that built this
     # service answers from a file that may not exist yet, and a scope registration recorded
@@ -2357,8 +2359,15 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
             reports = daemon.run(
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
+                # The deadline above is a WALL clock instant, because that is what the daemon
+                # compares against, and wall clocks move: a backward step after the conversion
+                # pushes that instant away and hands the run time nobody granted it. So the run
+                # also gets `stop`, its own additional early exit, reading the monotonic bound
+                # this process was actually given. A tick cannot START past that however the
+                # wall clock behaves; a tick already under way still finishes.
+                stop=None if bound is None else (lambda: monotonic() >= bound),
             )
-            if (not reports and deadline is not None and services.clock.now() >= deadline
+            if (not reports and bound is not None and monotonic() >= bound
                     and (args.max_ticks is None or args.max_ticks > 0)):
                 # The same ending as the check before the locks, reached one step later. The
                 # bound was still there when this process read its own clock and was gone by

@@ -1559,7 +1559,13 @@ class RelayService:
                 # at it below, so the 0.1 floor on a segment cannot hand a worker a bound that
                 # outlives the one being enforced.
                 ends_at = None if deadline is None else started + deadline
-                if on_start is not None:
+                # Checked BEFORE recovery, not only after it. on_start makes real App Server
+                # calls for every unresolved attempt, and a bound that was already gone when
+                # this process first read a clock buys that work no segment to be useful in.
+                # The check after on_start stays as well: recovery can spend a bound that was
+                # there when it began.
+                spent = deadline is not None and deadline <= 0
+                if on_start is not None and not spent:
                     on_start()
                 # Only now is this service serving. Recovery runs before any worker can send,
                 # and a caller told "started" while it was still in flight would go on to use
