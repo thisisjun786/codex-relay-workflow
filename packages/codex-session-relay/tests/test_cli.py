@@ -1602,21 +1602,22 @@ class ParticipantAccessReceipts(CliBase):
         """Readable is not deliverable, and this field is documented as the second one.
 
         The preparation a send performs stops in more than one place and each place stops on
-        its own: a record missing any REQUIRED field is rejected before the sandbox type is
-        looked at, and the resume-params construction in `_guarded_send` fails after both of
-        those. All three records below are readable and none of them can carry its settings
-        to a host - the first two are refused before any transport call, the third fails
-        while the params are built, after `thread/read` and before `thread/resume`
-        (bridge_adapter.py). Reporting any of them as the sandbox the adapter would carry
-        tells an operator access is fine for a participant whose sends are never made.
+        its own: a record missing any REQUIRED field is rejected before the string fields are
+        typed, those are typed before the sandbox type is looked at, and the resume-params
+        construction in `_guarded_send` fails after all of them. All four records below are
+        readable and none of them can carry its settings to a host - the first three are
+        refused before anything is claimed or sent, the fourth fails while the params are
+        built, after `thread/read` and before `thread/resume` (bridge_adapter.py). Reporting
+        any of them as the sandbox the adapter would carry tells an operator access is fine
+        for a participant whose sends are never made.
 
-        Three cases because three versions of this field each stopped one step short of the
-        path: the sandbox type alone, then `require_usable()` alone. A suite missing the last
-        case passes while the field still lies.
+        Three of the four are here because three versions of this field each stopped one step
+        short of the path: the sandbox type alone, then `require_usable()` alone. A suite
+        missing the params-construction case passes while the field still lies.
 
-        The first two are written past the validating recorder deliberately: registration
+        The first three are written past the validating recorder deliberately: registration
         refuses them, so the only way a store holds one is an older writer or a hand edit,
-        which is the case this helper says it supports. The third needs no hand edit at all -
+        which is the case this helper says it supports. The fourth needs no hand edit at all -
         `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
         so this row can arrive through the ordinary recorder and still fail every send.
         """

@@ -175,8 +175,9 @@ Those three fields are the ones `ThreadResumeParams` types as strings, and the r
 each recorded value as it stands, so a record holding something else is refused rather than sent
 for a host to interpret. `settings-record` and `register` run the same check, so such a record
 is refused when it is written too; a store holds one only from an older writer or a hand edit.
-`runtimeWorkspaceRoots` and `environments` are not typed there - they fail later, inside the
-transformations that consume them.
+`runtimeWorkspaceRoots` and `environments` are not typed there, and that is not a promise that
+a wrong shape is caught further on: `runtimeWorkspaceRoots` of `"abc"` passes and reaches the
+resume as `["a", "b", "c"]`. What those two hold is a separate question from this one.
 
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can

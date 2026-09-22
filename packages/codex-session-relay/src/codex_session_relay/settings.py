@@ -131,8 +131,10 @@ class TaskSettings:
     A record missing a required field cannot say what it is preserving. Neither can one whose
     cwd, model or reasoningEffort is present and is not a string, because resume_params would
     copy it onto the wire and only the host could then say what it had done with it.
-    require_usable() decides both. It does NOT type runtimeWorkspaceRoots or environments;
-    those fail later, inside the transformations that consume them.
+    require_usable() decides both. It does NOT type runtimeWorkspaceRoots or environments, and
+    saying so is not a claim that a wrong shape is caught further on: `runtimeWorkspaceRoots`
+    of "abc" passes here and `list()` turns it into ["a", "b", "c"] on the wire. What those
+    two hold is simply a separate question from this one.
 
     JUN-92 populates this from the creation result Run already receives; it is not a separate
     handshake and it asks for nothing the host did not already report at creation.
