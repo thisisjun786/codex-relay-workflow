@@ -289,14 +289,24 @@ is that pair together rather than the timeout alone.
   `read_only_connection` still takes no timeout parameter, deliberately, so
   `guard.lookup_receipt` and `intent.dispatch_generation_state` cannot be given different
   waits. The signature check in `test_failure_recovery.py` still pins the deciding place.
-- `intent.register_relationship` reads the dispatch generation state and then publishes
-  `relationship.json` as two operations with nothing held between them. An advance
-  committing in that window returns success over a generation the store has already moved
-  past, leaving the marker naming a stale one. Found by
-  `test_registration_contention.py`, which therefore asserts what actually holds - the
-  disagreement stays readable, so the next evaluation sees it - rather than asserting the
-  absence of a race the source does not prevent. Closing the window needs the check and the
-  publication under one hold, which is a source change this issue does not own.
+- The registration check/publish window is CLOSED, and this passage described it as open
+  until PR #107 landed. What it said: `intent.register_relationship` read the dispatch
+  generation state and then published `relationship.json` as two operations with nothing
+  held between them, so an advance committing in that window returned success over a
+  generation the store had already moved past and left the marker naming a stale one, and
+  closing it needed the check and the publication under one hold - a source change that
+  issue did not own. What is there now: `intent.registration_hold` opens the store `mode=rw`
+  and never `rwc`, takes `BEGIN IMMEDIATE`, and `register_relationship` does the generation
+  read, every refusal and the publication inside that one hold, releasing it with a
+  `ROLLBACK` because the hold exists to exclude other writers and records nothing itself.
+  An advance either commits before the lock is granted, and the held read then reports stale
+  and publishes nothing, or it waits until the fact has landed under the generation it
+  names. The published fact carries that generation, so a stored fact naming a different one
+  is a conflict rather than a replay. `test_registration_contention.py` still races the two
+  and asserts what holds under every ordering; `test_registration_hold.py` stops the advance
+  inside its uncommitted transaction so the contested instant is reached on every run, and
+  its third case runs the algorithm this replaced through the same scenario and requires it
+  to publish, so the other two cannot pass by never reaching the window.
 - `scope.is_within` answers two different ways and this suite exercised one of them. The
   derived inventory lists `return: path.startswith('/')` as a producer path it cannot
   reduce, and that path is the whole answer when the root is `/`, which the five cases in
