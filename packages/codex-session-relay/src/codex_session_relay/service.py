@@ -1576,9 +1576,19 @@ class RelayService:
             # was never told had succeeded.
             self._abandon(child, timeout=timeout)
             raise
-        # What this launch was decided under, reported whether it reported itself ready or
+        # What this launch was DECIDED under, reported whether it reported itself ready or
         # not: a launch that failed for another reason still says which policy it carried.
-        result["launchPolicy"] = launch_policy
+        #
+        # Labelled as a reading taken before the launch, because that is all it is. The child
+        # snapshots the file itself, on its own way up, so a file replaced in between leaves
+        # this digest describing bytes the worker never loaded. What the worker actually
+        # resolved is its own published receipt, and a caller checking a launch reads that
+        # rather than this.
+        result["launchPolicy"] = dict(
+            launch_policy, readAt="before this launch",
+            compareWith="the worker's own published policy: doctor workerPolicy, or"
+                        " status launchPolicy.runningDigest",
+        )
         return result
 
     def _await_launch(self, child, launch, deadline_at, *, timeout, poll):
