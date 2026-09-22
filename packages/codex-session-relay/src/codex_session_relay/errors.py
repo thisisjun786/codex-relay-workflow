@@ -59,6 +59,10 @@ class RefusalReason(str, Enum):
     # refused before any transport call rather than allowed to inherit a host default.
     SETTINGS_UNAVAILABLE = "settings_unavailable"
     SETTINGS_INCOMPLETE = "settings_incomplete"
+    # A required field is PRESENT and is not the type the resume contract declares. Kept apart
+    # from SETTINGS_INCOMPLETE, which prescribes recording the absent field: that is not the
+    # repair here, and a row refused for this reason reports an EMPTY missing list beside it.
+    SETTINGS_MISTYPED = "settings_mistyped"
     UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
     # Same string as the finding code the resume verification reports, so a receipt naming
     # this refusal and a delivery journal recording it read alike.
