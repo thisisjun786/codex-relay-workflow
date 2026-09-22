@@ -67,6 +67,12 @@ release payload, the working tree and an installed cache directory alike, so `--
 answers which bytes the directory in front of you holds rather than which name it was filed
 under.
 
+What the refusal offers to do about it differs, because the two trees differ. A tree you author
+is told to record the derived value. An installed cache is not: nothing writes to one, so there
+the refusal states what the reading established — these bytes are not the ones published under
+that version — and leaves installing the package again, or treating the cache as changed since
+installation, as the two things that follow from it.
+
 It reads the manifest in that directory and not the directory's own name. An install derives
 both from one manifest, so they agree by construction; a cache renamed or assembled by hand
 still declares the payload it holds, and comparing that version with the directory it sits in
