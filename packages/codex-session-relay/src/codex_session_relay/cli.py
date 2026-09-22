@@ -21,7 +21,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import envelope, guard, intent, marker, restoration, rolepolicy
+from . import envelope, guard, intent, marker, packets, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -85,6 +85,9 @@ OFFLINE_COMMANDS = (
     # none of the three reaches the host, so leaving them out under-reported what an operator
     # can run with no App Server.
     "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # Compares a packet against a reading the caller supplies. It opens no store, reaches no
+    # host and decides nothing about delivery, so it runs wherever the two files are.
+    "packet-check",
     # Reaches a forge and never the App Server, and constructs no Store at all.
     "merge-evidence",
 ) + MARKER_COMMANDS_BY_NAME
@@ -620,9 +623,12 @@ def cmd_settings_show(services, args) -> dict:
     # restatement of part of it. Until the recorded string fields were typed, `not missing()`
     # and require_usable() agreed on every row this could be asked about; they no longer do,
     # and a row this command called deliverable would be withheld by delivery and reported
-    # refused by doctor. Running it here also answers the case that was already wrong before
-    # that: a sandbox type with no resume mode. "recordFinding" then says WHICH rule refused,
-    # because a false deliverable beside an empty missing list and no roleFinding names nothing.
+    # refused by doctor. They diverge twice now: a mistyped string field, and an approvalPolicy
+    # this transport cannot carry, which is PRESENT on such a row and therefore invisible to
+    # missing(). Running the predicate here also answers the case that was already wrong before
+    # either of them: a sandbox type with no resume mode. "recordFinding" then says WHICH rule
+    # refused, because a false deliverable beside an empty missing list and no roleFinding
+    # names nothing.
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
             "deliverable": unusable is None and finding is None,
@@ -762,6 +768,46 @@ def cmd_linkage_directive(services, args) -> dict:
 def cmd_supervisor_select(services, args) -> dict:
     """Whether one event is news for the level above. A read; it sends and records nothing."""
     return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
+
+
+def cmd_packet_check(services, args) -> dict:
+    """Whether a packet agrees with the record its receiver read. It decides nothing else.
+
+    The reading is SUPPLIED rather than fetched, and the answer says so. That is the honest
+    shape for an offline check: this command has no store, so it cannot be the thing that
+    established the relationship, the generation or the head, and a caller that handed it an
+    agreeing record has proved only that the two files agree. What it does close is the case
+    where nobody compared them at all.
+    """
+    one = _json_document(args.packet, "relay-packet/1 message")
+    record = _json_document(args.record, "receiver's own reading")
+    answer = packets.reception(one, record)
+    answer["recordSource"] = "supplied"
+    # A supplied reading is checked, and an absent one is the honest starting ladder. Those
+    # are different inputs: falling back on falsiness replaced a malformed reading with a
+    # clean one and reported no promotions for it, and passing it through unchecked turned a
+    # valid reception into a host failure. Present means checked; missing means unobserved.
+    supplied = one.get("progression")
+    answer["promotions"] = packets.unsupported_promotions(
+        packets.unobserved() if supplied is None else supplied)
+    return answer
+
+
+def _json_document(path, what) -> dict:
+    """One JSON file from disk, named by what it was supposed to be.
+
+    Separate from _observation_file rather than sharing it: that one names a
+    reporting-observation, and a caller who mistyped a packet path is not helped by being
+    told their packet is not an observation.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        raise SystemExit2(
+            f"the {what} at {path!r} could not be read: {type(error).__name__}: {error}",
+            EXIT_USAGE,
+        ) from error
 
 
 def _observation_file(path) -> dict:
@@ -1722,25 +1768,28 @@ def _sandbox_summary(row) -> dict:
     here rather than described: `TaskSettings.require_usable()` in
     `DeliveryService._settings_for` (delivery.py), the resume-params construction in
     `_guarded_send` (bridge_adapter.py), and `normalise_environments`, which is the one the
-    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising: it exists only
-    as a comparison against a fixed value in the resume verification, so the recorded value is
-    compared against that same value instead.
+    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising on its own: it is
+    a comparison against a fixed value. It reaches `deliverable` anyway, because
+    `require_usable()` now makes that comparison against the recorded row and refuses it, so
+    running the validator answers both kinds.
 
-    The two are reported in different fields because they decide different things. A failing
-    transformation settles the send on the row alone - no host can consume
-    `runtimeWorkspaceRoots: 7` - so it makes `deliverable` false. A violated value constraint
-    settles only what a host that reports the setting BACK will do, and a host that replaces
-    it proceeds, so it lands in `refusedIfPreserved` and leaves `deliverable` describing the
-    preparation. Collapsing them cost a round in the other direction: the receipt denied a
-    send that today's delivery completes when the host normalises the value.
+    This field used to report the two kinds separately, and `refusedIfPreserved` is gone with
+    the reason it existed. It said a row recording another approval policy completed a send
+    against a host that REPLACED the value and was refused only by one that reported it back -
+    which was true, and was the defect: whether the message was delivered depended on what the
+    host did with a fact the record already settled. Now the row is refused before any host is
+    asked, so the field could never again carry a value, and leaving it would describe a send
+    that is no longer attempted.
 
-    Five versions of this field were wrong the same way before those two sentences could be
-    written: each named the answer after the members it had been shown - the sandbox type,
-    then `require_usable()`, then the params construction, then the post-response half, then
-    the constraint that raises nothing at all. The set is not kept by hand here.
+    Six versions of this field were wrong the same way before that could be written: each named
+    the answer after the members it had been shown - the sandbox type, then `require_usable()`,
+    then the params construction, then the post-response half, then the constraint that raises
+    nothing at all, then that constraint reported beside the answer instead of in it. The set is
+    not kept by hand here.
     `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
-    derives both kinds from those two modules and fails if a member of either is added that
-    this does not reach.
+    derives both kinds from those two modules, in both directions - what the response
+    verification refuses and what the record validator refuses, asserted equal - and fails if a
+    member of either is added that this does not reach.
 
     What it does NOT answer is whether the host accepts the parameters. The App Server's own
     schema is not in this repository, so nothing here can say what it does with a value this
@@ -1754,10 +1803,8 @@ def _sandbox_summary(row) -> dict:
     """
     import json
 
-    from .errors import DeliveryRefused, RefusalReason
-    from .settings import (
-        AUTHORIZED_APPROVAL_POLICY, TaskSettings, normalise_environments, normalise_policy,
-    )
+    from .errors import DeliveryRefused
+    from .settings import TaskSettings, normalise_environments, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -1798,36 +1845,10 @@ def _sandbox_summary(row) -> dict:
         # die on one. An unexpected failure is still a refusal, reported as what it was.
         refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
 
-    # The constraint kind, reported BESIDE deliverable rather than folded into it, because it
-    # decides something different. A transformation that fails decides the send on the row
-    # alone: no host can rescue `runtimeWorkspaceRoots: 7`. This one does not. Measured: a
-    # resume that reports "on-request" back produces unsupported_approval_policy and no turn,
-    # while a host that answers "never" regardless returns no findings and the send proceeds.
-    # So a row recording another policy cannot be carried AS RECORDED, and folding that into
-    # `deliverable` would have the receipt deny a send that today's delivery would complete
-    # against a host that replaces the value.
-    recorded_policy = settings.get("approvalPolicy")
-    preserved = None
-    if recorded_policy != AUTHORIZED_APPROVAL_POLICY:
-        preserved = {
-            "field": "approvalPolicy",
-            # The finding code the resume verification reports for this, so a receipt and a
-            # delivery journal name it alike.
-            "refusedBy": RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value,
-            "detail": (
-                f"the recorded approvalPolicy is {recorded_policy!r}; a resume that reports it"
-                f" back is refused, so only {AUTHORIZED_APPROVAL_POLICY!r} can be carried as"
-                " recorded and this row completes a send only against a host that replaces it"
-            ),
-        }
     cwd = settings.get("cwd")
     return {
         "readable": True,
         "deliverable": refused is None,
-        # The other kind of constraint: null when nothing in the row would be refused after a
-        # host reports it back, and otherwise the field, the code and why. Separate from
-        # `deliverable` on purpose - see the comment above the check.
-        "refusedIfPreserved": preserved,
         # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
         # journal name the same thing.
         "refusedBy": None if refused is None else (
@@ -3046,6 +3067,19 @@ def build_parser() -> argparse.ArgumentParser:
     recorded.add_argument("--message", help="the envelope messageId the report was sent under")
     recorded.add_argument("--note")
     recorded.set_defaults(handler=cmd_supervisor_report_recorded)
+
+    packet = subparsers.add_parser(
+        "packet-check",
+        help="whether a relay-packet/1 message carries what its purpose requires and agrees"
+             " with the record its receiver read. A read: it opens no store and sends nothing")
+    packet.add_argument("--packet", required=True,
+                        help="the packet, as relay-packet/1 JSON")
+    packet.add_argument("--record", required=True,
+                        help="what the receiver read for ITSELF: the relationship, the current"
+                             " generation, the registered criteria digest and the head its own"
+                             " forge reading reports. A field this record omits comes back"
+                             " unavailable rather than accepted")
+    packet.set_defaults(handler=cmd_packet_check)
 
     settle = subparsers.add_parser("linkage-settle")
     settle.add_argument("--directive", required=True)

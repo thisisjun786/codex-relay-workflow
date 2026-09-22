@@ -1266,9 +1266,10 @@ def load_start(path, *, environment=None, mode="preflight"):
                               transmittable=list(POLICY_CONFIG_FIELDS.get(sandbox.get("type"),
                                                                           ())))
             if expect.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
-                # A value constraint rather than a comparison: delivery authorises exactly one
-                # policy, so a row recording another is withheld after the resume and never
-                # reaches turn/start. Two payloads agreeing on the wrong one is still wrong.
+                # Delivery authorises exactly one policy and refuses a row recording another on
+                # the record itself, before any resume is built, so such a trial cannot deliver
+                # whatever host it runs against. Two payloads agreeing on the wrong one is
+                # still wrong.
                 raise Refused("delivery authorises one approval policy, so a trial declared with"
                               " another could not send its own correction",
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),

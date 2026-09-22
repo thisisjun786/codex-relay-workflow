@@ -57,32 +57,62 @@ IDENTITY_FIELDS = (
 
 
 def _canonical(target, target_ref, subject_kind, relationship_id, event_id, generation,
-               revision, verdict) -> str:
+               revision, verdict, criteria_digest=None, ruling=None) -> str:
     def render(value):
         return "null" if value is None else str(value)
 
-    return "|".join(render(v) for v in (
+    payload = "|".join(render(v) for v in (
         target, target_ref, subject_kind, relationship_id, event_id, generation, revision,
         verdict,
     ))
+    # Appended only for values actually supplied. With neither, this is byte-for-byte the string
+    # this function has always produced, so every id computed without them - progress jobs, and
+    # verdicts on relationships with no canonical criteria - is exactly the id it was before.
+    # Nothing recomputes identity for a stored row, so those rows stay addressable either way;
+    # what this preserves is that a caller which has not changed keeps producing the same id.
+    #
+    # Labelled rather than positional, because an unlabelled trailing segment could not be told
+    # from the other one when only the second is present. This is labelling and NOT escaping: it
+    # is sound because both producers are relay-generated - a sha256 hexdigest and an integer -
+    # so no delimiter can reach here from a caller. A producer of arbitrary text would need a
+    # real encoding, for the reason set_digest gives for canonical JSON over joined fields.
+    for label, value in (("criteria", criteria_digest), ("ruling", ruling)):
+        if value is not None:
+            payload += f"|{label}={render(value)}"
+    return payload
 
 
 def sync_id(target, target_ref, subject_kind, relationship_id, event_id=None, generation=None,
-            revision=None, verdict=None) -> str:
+            revision=None, verdict=None, criteria_digest=None, ruling=None) -> str:
     """Identity includes the actual target DOCUMENT, not just the target kind.
 
     The same verdict written to two different documents is two different jobs, and a completion
     validated against the wrong document validated nothing.
+
+    It also includes WHICH criteria the ruling rests on and WHICH ruling it was, because the
+    other seven values are all unchanged by a re-review: same event, same generation, same
+    revision, and - when the second reading reaches the same conclusion - the same verdict. With
+    only those, a re-review that ruled against newly edited criteria produced the id that already
+    existed, INSERT OR IGNORE dropped it, and the document kept the summary written against the
+    earlier wording. The digest alone is not enough either: it names the criteria SET, not the
+    occasion, so a set edited away and then back would recompute the first ruling's id. The
+    ordinal is what distinguishes the occasions.
     """
     payload = _canonical(target, target_ref, subject_kind, relationship_id, event_id,
-                         generation, revision, verdict)
+                         generation, revision, verdict, criteria_digest, ruling)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 def identity_digest(target, target_ref, subject_kind, relationship_id, event_id=None,
-                    generation=None, revision=None, verdict=None) -> str:
+                    generation=None, revision=None, verdict=None, criteria_digest=None,
+                    ruling=None) -> str:
+    """The same payload as sync_id, hashed whole rather than truncated.
+
+    They take the same arguments on purpose: the 32-hex id and the 64-hex digest the block
+    carries must never describe different inputs.
+    """
     payload = _canonical(target, target_ref, subject_kind, relationship_id, event_id,
-                         generation, revision, verdict)
+                         generation, revision, verdict, criteria_digest, ruling)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -359,23 +389,27 @@ class SyncOutbox:
 
     def enqueue_in(self, db, *, relationship_id, issue_key, subject_kind, summary,
                    event_id=None, generation=None, revision=None, verdict=None,
-                   target=COORDINATION_DOCUMENT):
+                   target=COORDINATION_DOCUMENT, criteria_digest=None, ruling=None):
         """Inside the caller's transaction, so the decision and its owed summary commit together.
 
         Returns the sync id, or None when no target is registered: an unconfigured target is not
         an error. A local failure here propagates and rolls the caller's transaction back, which
         is the honest behaviour for a write this design promises to be durable.
+
+        criteria_digest and ruling are not validated here, deliberately. Refusing a malformed one
+        would let a synchronisation concern refuse a verification, which is the one thing this
+        module promises never to do; the labelled payload is what keeps the shapes apart instead.
         """
         configured = self.target_for(relationship_id, target)
         if configured is None:
             return None
         target_ref = configured["target_ref"]
         identifier = sync_id(target, target_ref, subject_kind, relationship_id, event_id,
-                             generation, revision, verdict)
+                             generation, revision, verdict, criteria_digest, ruling)
         digest = identity_digest(target, target_ref, subject_kind, relationship_id, event_id,
-                                 generation, revision, verdict)
+                                 generation, revision, verdict, criteria_digest, ruling)
         now = self.clock.iso()
-        db.execute(
+        cursor = db.execute(
             "INSERT OR IGNORE INTO sync_outbox (sync_id, relationship_id, issue_key, target,"
             " target_ref, subject_kind, event_id, execution_generation, revision_hash, verdict,"
             " identity_digest, summary, state, attempts, next_attempt_at, created_at,"
@@ -385,23 +419,46 @@ class SyncOutbox:
                 event_id, generation, revision, verdict, digest, summary, PENDING, now, now,
             ),
         )
+        # "inserted" because INSERT OR IGNORE can do nothing, and an entry that says enqueued
+        # either way claims a row that may not exist. The criteria digest is recorded here for
+        # the same reason it is not recorded in a column: the store has no migration path, and
+        # verdict_context - the other place it lives - is overwritten by the next re-review,
+        # while the journal is append-only. It cannot be recovered from the identity hash.
         self.store.journal(
             "sync_enqueued", identifier,
-            {"subjectKind": subject_kind, "eventId": event_id}, at=now,
+            {"subjectKind": subject_kind, "eventId": event_id, "criteriaDigest": criteria_digest,
+             "ruling": ruling, "inserted": cursor.rowcount == 1},
+            at=now,
         )
         return identifier
 
-    def enqueue_verdict_in(self, db, *, relationship, event, verdict, findings, record):
+    def enqueue_verdict_in(self, db, *, relationship, event, verdict, findings, record,
+                           criteria_digest=None, ruling=None):
+        """ruling is this ruling's ordinal: 1 for the first, one more for every re-review.
+
+        It reaches the SUMMARY whenever there is a criteria set to name, because a reader of the
+        document cannot get it from anywhere else. Where a block sits does not say it: next()
+        skips a job that is backing off or leased, so a newer ruling can be written first and an
+        older one retried in after it, and in a set edited away and back the two blocks can carry
+        the same criteria and the same findings.
+
+        It reaches IDENTITY only above 1. A first ruling has nothing to be told apart from, and
+        leaving it out is what keeps a verdict with no canonical criteria hashing the payload it
+        hashed before any of this existed.
+        """
         return self.enqueue_in(
             db,
             relationship_id=relationship["relationshipId"],
             issue_key=relationship["issueKey"],
             subject_kind=VERDICT,
-            summary=render_verdict_summary(relationship, event, verdict, findings, record),
+            summary=render_verdict_summary(relationship, event, verdict, findings, record,
+                                           criteria_digest=criteria_digest, ruling=ruling),
             event_id=event["event_id"],
             generation=event["execution_generation"],
             revision=event["revision_hash"],
             verdict=verdict,
+            criteria_digest=criteria_digest,
+            ruling=ruling if (ruling or 0) > 1 else None,
         )
 
     # ------------------------------------------------------------------ queue
@@ -800,11 +857,23 @@ class SyncOutbox:
         }
 
 
-def render_verdict_summary(relationship, event, verdict, findings, record) -> str:
+def render_verdict_summary(relationship, event, verdict, findings, record,
+                           criteria_digest=None, ruling=None) -> str:
     lines = [
         f"{relationship['issueKey']} · {relationship['child']['taskId']} · {verdict}",
         f"generation {event['execution_generation']}, revision {event['revision_hash'][:12]}",
     ]
+    if criteria_digest:
+        # Which wording the judgment rests on. Identity already separates two rulings made
+        # against different criteria, but a person reading the document sees only the summary,
+        # and two blocks reaching the same disposition are indistinguishable without this.
+        #
+        # The ordinal travels with it because the container can hold several of these and their
+        # arrangement does not order them. The highest ordinal is the ruling that stands.
+        criteria_line = f"criteria set {criteria_digest[:12]}"
+        if ruling:
+            criteria_line += f", ruling {ruling}"
+        lines.append(criteria_line)
     if record.get("nextExecutionGeneration"):
         lines.append(
             f"a revision request was queued to the same child under generation "
