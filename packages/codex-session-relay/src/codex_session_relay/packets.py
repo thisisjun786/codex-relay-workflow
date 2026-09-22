@@ -92,7 +92,32 @@ REQUIRED_BY_PURPOSE = {
     # it the parent is told there is a problem and not where to look at it.
     (envelope.CHILD_TO_PARENT, "blocked"): (ISSUE, EVIDENCE),
     (envelope.CHILD_TO_PARENT, "decision_request"): (ISSUE, DECISION, EVIDENCE),
+    # And what a parent owes the level above, on the same rules rather than a second
+    # vocabulary. The restraint here is the restraint above. A completion upward is NOT
+    # required to carry an artifact: a noop completion has none and a research assignment may
+    # have only a locator, and demanding one is how a plausible pull request gets invented.
+    # What it cannot do without is the issue that finished, the generation it finished in, and
+    # where the result is readable.
+    (envelope.PARENT_TO_SUPERVISOR, "completion"): (ISSUE, GENERATION, EVIDENCE),
+    # A block and a decision carry evidence for the reason a child's do: a level above told
+    # there is a problem and not where to look at it has been told half of it.
+    (envelope.PARENT_TO_SUPERVISOR, "blocked"): (ISSUE, EVIDENCE),
+    (envelope.PARENT_TO_SUPERVISOR, "decision_request"): (ISSUE, DECISION, EVIDENCE),
+    # status_response is deliberately absent, and the absence is the honest answer rather
+    # than an oversight. BODY here is a dispatch instruction, checked against DISPATCH-TASK-01
+    # by cxc.dispatch_problems, so requiring it of an answer would refuse every real answer;
+    # and supervision.status_answer returns a structured reading rather than prose. An
+    # occasion with no field it cannot do without would be a row that admits anything, which
+    # is what this table exists not to be. So an answer to a midpoint check is carried by the
+    # envelope alone until somebody decides what an answer cannot do without.
 }
+
+# Which name in the receiver's own reading holds each role's task id. A map rather than two
+# conditionals on the sender's role: those answered the parent-child pair correctly and would
+# have compared a report upward against the child of the same relationship, which is a real
+# task id belonging to somebody else and therefore the worst kind of wrong answer.
+RECORD_TASK_KEY = {"parent": "parentTaskId", "child": "childTaskId",
+                   "supervisor": "supervisorTaskId"}
 
 
 def required_for(direction, purpose) -> tuple:
@@ -103,7 +128,7 @@ def required_for(direction, purpose) -> tuple:
     except KeyError:
         raise PacketRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            "relay-packet/1 covers the parent and child relation; "
+            "relay-packet/1 covers the parent-child relation and what a parent owes upward; "
             + direction + " is carried by the envelope alone",
         ) from None
 
@@ -640,11 +665,9 @@ def reception(one, record) -> dict:
     _compare(problems, gaps, WRONG_RELATION, "relationId",
              region.get("relationId"), record.get("relationId"),
              "a packet naming another relationship belongs to another assignment")
-    sender_role, _recipient_role = envelope.ENDPOINT_ROLES[region["direction"]]
-    expected_sender = record.get("parentTaskId") if sender_role == "parent" \
-        else record.get("childTaskId")
-    expected_recipient = record.get("childTaskId") if sender_role == "parent" \
-        else record.get("parentTaskId")
+    sender_role, recipient_role = envelope.ENDPOINT_ROLES[region["direction"]]
+    expected_sender = record.get(RECORD_TASK_KEY[sender_role])
+    expected_recipient = record.get(RECORD_TASK_KEY[recipient_role])
     _compare(problems, gaps, WRONG_SENDER, "sender.taskId",
              (region.get("sender") or {}).get("taskId"), expected_sender,
              "the registered pair is what says who may send this, not the message's own"

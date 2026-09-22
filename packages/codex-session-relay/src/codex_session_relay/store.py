@@ -974,6 +974,79 @@ CREATE UNIQUE INDEX IF NOT EXISTS managed_start_one_pending_issue
     ON managed_start_requests (issue_key)
     WHERE state IN ('reserved', 'create_armed');
 
+-- What a parent owes the level above, staged before it is sent, and what came back.
+--
+-- Three tables rather than a kind on deliveries. A supervisor message is not an event: it has
+-- no receipt, no manifest, no generation of its own and - for a turn that ended without
+-- reporting - no events row anywhere to be keyed on. Putting it in deliveries would mean
+-- loosening the claim statement that exists to refuse exactly those things, and the two queues
+-- would then be one queue with a discriminator. Appended at the END of the script for the
+-- reason the block above gives: a sibling adding tables elsewhere and this work cannot produce
+-- an overlapping hunk.
+--
+-- The message id is the envelope's, derived from the direction, the relation, the purpose and
+-- the subject, so one fact staged twice converges on one row instead of waking a supervisor
+-- twice. The packet is frozen HERE, before any send: what a crash between deciding and sending
+-- must not lose is the decision, and re-deriving it later would compose it out of rows that
+-- have moved on.
+CREATE TABLE IF NOT EXISTS supervisor_messages (
+    message_id        TEXT PRIMARY KEY,
+    obligation_id     TEXT NOT NULL,
+    obligation_kind   TEXT NOT NULL,
+    relationship_id   TEXT NOT NULL,
+    project_key       TEXT,
+    purpose           TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    sender_task_id    TEXT NOT NULL,
+    recipient_task_id TEXT NOT NULL,
+    subject           TEXT NOT NULL,
+    packet            TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    next_eligible_at  REAL,
+    hold_reason       TEXT,
+    lease_owner       TEXT,
+    lease_until       REAL,
+    staged_at         TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
+-- One transport attempt at one of those messages, with the bytes that attempt froze. The bytes
+-- live here rather than beside the packet because they are per attempt: the request id is
+-- rendered into them, so attempt 2 does not say what attempt 1 said, and lost-response
+-- reconciliation searches a recipient for the token the message actually carried.
+CREATE TABLE IF NOT EXISTS supervisor_attempts (
+    request_id     TEXT PRIMARY KEY,
+    message_id     TEXT NOT NULL,
+    attempt_no     INTEGER NOT NULL,
+    message        TEXT NOT NULL,
+    state          TEXT NOT NULL,
+    send_attempted TEXT NOT NULL,
+    retry_safe     INTEGER NOT NULL DEFAULT 0,
+    turn_id        TEXT,
+    record         TEXT NOT NULL,
+    sent_at        TEXT NOT NULL,
+    observed_at    TEXT NOT NULL,
+    UNIQUE (message_id, attempt_no)
+);
+
+-- The recipient saying it read one, from inside its own turn. One row per message, because a
+-- second reading of the same message is the same fact; the proof and the turn are kept so a
+-- later reader can recompute the first rather than trust that somebody checked it.
+CREATE TABLE IF NOT EXISTS supervisor_readbacks (
+    message_id   TEXT PRIMARY KEY,
+    read_turn_id TEXT NOT NULL,
+    proof        TEXT NOT NULL,
+    verified     TEXT NOT NULL,
+    request_id   TEXT,
+    detail       TEXT,
+    read_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS supervisor_messages_eligible ON supervisor_messages
+    (state, next_eligible_at);
+CREATE INDEX IF NOT EXISTS supervisor_messages_recipient ON supervisor_messages
+    (recipient_task_id, staged_at);
+
 
 """
 
