@@ -382,6 +382,34 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
             self.evaluate()
         self.assertEqual(seen["assignment"], self.assignment)
 
+    def test_omitting_the_assignment_is_what_the_third_link_costs(self):
+        """The boundary itself, pinned rather than left to a reading of the call sites.
+
+        decide() and observe_state() take the assignment from the observation, so a caller that
+        builds one without it asks the first two links and not the third - and the forged pair
+        below is exactly what that lets through. No production path does: evaluate() sets it from
+        the directory it walked to, which the case above pins. This exists so that a future caller
+        reopening the gap fails here, where the cost is written down, instead of passing quietly.
+        """
+        forged = marker.assignment_id(self.FOREIGN)
+        facts = {
+            "intent": {"declaredAt": "2026-01-01T00:00:00+00:00", "dispatchRequestIdHash": forged},
+            "bound": {"sessionId": CHILD, "taskId": CHILD, "at": NOW},
+            "claims": [{"factId": "claims/" + CHILD + "/claim.json", "sessionId": CHILD,
+                        "dispatchRequestId": self.FOREIGN, "at": NOW}],
+            "relationship": {"relationshipId": "rel-000000000000abcd", "at": NOW},
+        }
+        observation = {"stop_input": self.stop(), "marker": facts, "disposition": None,
+                       "receipt": None, "store_unreadable": [], "malformed": None, "now": LATER}
+        without = guard.decide(observation, counters={}, mode=guard.HOLD)
+        self.assertEqual(without["observation"], "undeclared_turn_end")
+        self.assertEqual(without["decision"], guard.BLOCK)
+        withit = guard.decide(dict(observation, assignment=self.assignment),
+                              counters={}, mode=guard.HOLD)
+        self.assertEqual(withit["observation"], "claim_uncorrelated")
+        self.assertEqual(withit["decision"], guard.RELEASE)
+        self.assertEqual(withit["claimEvidence"], intent.INTENT_ASSIGNMENT_MISMATCH)
+
     def test_an_absent_claim_stays_distinguishable_from_an_uncorrelated_one(self):
         """The two clear differently, so collapsing them would misdirect the coordinator.
 
