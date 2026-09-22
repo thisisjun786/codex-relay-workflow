@@ -1631,6 +1631,16 @@ def _held_log_location(fd, expected):
     the kernel reported for the descriptor, and an ancestor renamed inside that bracket is
     I-09's existing residual rather than something this closes.
 
+    Nor does it reach an aliased SIDECAR, and that limit is worth stating plainly because it is
+    this function's own hazard one level down. A bind mount over `<name>-wal` leaves this
+    directory, this inode and this basename untouched while SQLite opens a different log, so
+    two participants can agree here and still write into separate logs. It is not closable by
+    the same means: a `-wal` exists only while a connection is open and is unlinked on a clean
+    close, so its identity is not a stable thing two independent invocations could compare -
+    measuring it would refuse the ordinary case, where each participant's log is a different
+    file simply because each opened and closed its own connection. Closing it needs a mechanism
+    this one does not have, not a stricter reading of this one.
+
     Returns the three fields or None. Never raises.
     """
     directory, name = os.path.split(expected)
@@ -2036,7 +2046,10 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_l
     mismatch: it does not establish that the two logs are different FILES, because the sidecars
     can themselves be aliased, an overlay merged path and its upperdir can differ as directories
     while the log entry is one file, and SQLite documents the `-wal` suffix as what it usually
-    appends rather than a guarantee. Read under the default unix VFS with unaliased sidecars.
+    appends rather than a guarantee. Read under the default unix VFS with unaliased sidecars -
+    and the converse of that assumption is a real gap rather than a formality: a participant
+    with a bind mount over its own `-wal` agrees with this comparison and writes elsewhere.
+    `_held_log_location` says why measuring the log file itself does not fix it.
 
     Being the only proof, it has to be evidence about THIS file. The answer carries the
     identity of the file it was read from, because it comes from a second open of the path,
