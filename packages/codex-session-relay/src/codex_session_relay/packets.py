@@ -295,6 +295,15 @@ def activation_class(triple, *, mode=LOOP, earlier=None) -> dict:
     instructed = triple[INSTRUCTED]["state"]
     activated = triple[ACTIVATED]["state"]
     goal = triple[NATIVE_GOAL]["state"]
+    if activated == INAPPLICABLE and mode == LOOP:
+        # The answer that says this mode has no such thing, given by the one mode that does.
+        # Accepting it read an unarmed loop as a working one, which is the L3 misreading in
+        # the direction that hides a defect rather than inventing one.
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a loop reading cannot answer not_applicable for activation: this mode arms a"
+            " goalplan and persists phases, so an absent one is absent rather than"
+            " inapplicable. That answer belongs to a mode that arms nothing")
     if instructed == ABSENT:
         return _class("L0", "the assignment read back from this dispatch carries no"
                             " invocation and names no agreed alternative")
@@ -381,8 +390,26 @@ def check(one, *, required=None) -> None:
     rule that lived only in a constructor was a rule the second path did not have, so each one
     is re-run from this side - the version, the artifact's own fields and the activation
     facts - against whatever the mapping actually contains.
+
+    Shape before meaning, and derivation before comparison. A packet is not always a mapping:
+    a JSON array reaching one.get() raised AttributeError, which is a host failure rather than
+    a producer being told what it sent, and a validator that crashes on malformed input is not
+    validating it. And three of the region's fields are DERIVED from the others, so they are
+    recomputed here rather than read: a caller that can write its own kind, endpoint roles or
+    messageId can relabel a completion as an instruction, or spend an id that a later real
+    request then collides with.
     """
-    region = one.get("envelope") or {}
+    if not isinstance(one, dict):
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a packet is an object with an envelope and its typed data, not a "
+            + type(one).__name__)
+    region = one.get("envelope")
+    if not isinstance(region, dict):
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a packet carries a relay-envelope/1 region under envelope, not a "
+            + type(region).__name__)
     if one.get("version") != VERSION:
         # Refused rather than read hopefully. A newer packet may mean something different by
         # a field this build already knows the name of, and reading it under these rules is
@@ -392,6 +419,7 @@ def check(one, *, required=None) -> None:
             "this reader is " + VERSION + " and the packet says " + repr(one.get("version"))
             + "; a version nobody mapped is diagnosed rather than read under these rules")
     envelope.check(region)
+    _rederive(region)
     direction, purpose = region.get("direction"), region.get("purpose")
     if required is None:
         required = required_for(direction, purpose)
@@ -409,6 +437,11 @@ def check(one, *, required=None) -> None:
                 + envelope.shown(value) + ". It is one of "
                 + ", ".join(required) + ", which this occasion is read against")
     if _present(one.get(POLICY)) is not None:
+        if not isinstance(one[POLICY], dict):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a policy is an object of named settings, not a "
+                + type(one[POLICY]).__name__)
         missing = [name for name in ("model", "effort", "workflow")
                    if _present((one[POLICY] or {}).get(name)) is None]
         if missing:
@@ -427,7 +460,10 @@ def check(one, *, required=None) -> None:
                 "the instruction body is missing " + ", ".join(missing)
                 + "; DISPATCH-TASK-01 fixes these sections because an instruction that omits"
                 " one is an instruction the recipient has to guess at")
-    if _present(one.get("activation")) is not None:
+    if one.get("activation") is not None:
+        # Presence rather than _present: an empty list is not an absent reading, it is a
+        # reading of the wrong shape, and letting it pass as nothing said is how a malformed
+        # activation goes unexamined.
         triple = one["activation"]
         if not isinstance(triple, dict):
             raise PacketRefused(
@@ -452,6 +488,51 @@ def check(one, *, required=None) -> None:
 
 
 # ---------------------------------------------------------------- agreement with the record
+
+def _rederive(region) -> None:
+    """The region's derived fields, recomputed from the facts they come from.
+
+    A comparison of copies would have nothing to catch, because the packet carries no
+    duplicate of anything; what it carries are values COMPUTED from the direction, the
+    relation, the purpose and the subject. Recomputing them is what catches a region belonging
+    to another message, exactly as the directive pointer is checked by re-derivation rather
+    than by comparing stored halves.
+
+    The messageId matters most. It keys the replay and collision reading, so a caller able to
+    write its own could hand a second correction the disposition given to the first, or spend
+    an id in advance that a later real request then collides with.
+    """
+    direction, purpose = region.get("direction"), region.get("purpose")
+    kind = envelope.kind_of(direction, purpose)
+    if region.get("kind") != kind:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "this region says it is a " + repr(region.get("kind")) + ", but "
+            + direction + "/" + purpose + " is a " + kind
+            + "; the kind is what the recipient owes, and it is derived rather than declared")
+    sender_role, recipient_role = envelope.ENDPOINT_ROLES[direction]
+    for name, expected in (("sender", sender_role), ("recipient", recipient_role)):
+        endpoint = region.get(name)
+        if not isinstance(endpoint, dict):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the " + name + " is an object with a role and a task id, not a "
+                + type(endpoint).__name__)
+        if endpoint.get("role") != expected:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the " + name + " claims the role " + repr(endpoint.get("role")) + ", but on "
+                + direction + " it is the " + expected
+                + "; a direction fixes both roles and a caller supplies neither")
+    derived = envelope.message_id(direction=direction, relation_id=region.get("relationId"),
+                                  purpose=purpose, subject=region.get("subject"))
+    if region.get("messageId") != derived:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "this region carries messageId " + repr(region.get("messageId")) + ", but its own"
+            " direction, relation, purpose and subject derive " + derived
+            + "; the identifier belongs to another message")
+
 
 ACCEPTED = "accepted"
 REFUSAL = "refused"
@@ -495,9 +576,17 @@ def reception(one, record) -> dict:
     required data missing used to reach this function and come back accepted on the strength
     of the few values that did agree.
     """
-    region = one.get("envelope") or {}
+    # Checked before anything is read off it, including the region: reaching into a shape
+    # nobody has validated is how a malformed packet becomes a host failure rather than a
+    # producer being told what it sent.
     check(one)
+    region = one["envelope"]
     problems, gaps = [], []
+    if not isinstance(record, dict):
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "the receiver's own reading is an object of named values, not a "
+            + type(record).__name__)
     _compare(problems, gaps, WRONG_RELATION, "relationId",
              region.get("relationId"), record.get("relationId"),
              "a packet naming another relationship belongs to another assignment")
@@ -577,11 +666,23 @@ def _artifact_agreement(one, record, problems, gaps) -> None:
     if not artifact:
         return
     if artifact.get("kind") == PULL_REQUEST:
+        # Identity before currency. Comparing only the head accepted a packet naming another
+        # repository or another pull request that happened to sit on the same commit, which is
+        # the second writer this whole reading exists to keep out.
+        _compare(problems, gaps, STALE_HEAD, "artifact.repository",
+                 artifact.get("repository"), record.get("repository"),
+                 "the same number on two projects is two different pull requests")
+        _compare(problems, gaps, STALE_HEAD, "artifact.number",
+                 artifact.get("number"), record.get("prNumber"),
+                 "this assignment is bound to one pull request, and it is not that one")
         _compare(problems, gaps, STALE_HEAD, "artifact.headSha",
                  artifact.get("headSha"), record.get("headSha"),
                  "the candidate moved after this packet was written, so its checks, its"
                  " review and its readiness are about another commit")
         return
+    _compare(problems, gaps, STALE_HEAD, "artifact.path",
+             artifact.get("path"), record.get("artifactPath"),
+             "a digest identifies bytes and not which deliverable they were supposed to be")
     _compare(problems, gaps, STALE_HEAD, "artifact.digest",
              artifact.get("digest"), record.get("artifactDigest"),
              "the deliverable's bytes are not the ones this packet names")

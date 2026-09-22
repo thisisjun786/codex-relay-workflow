@@ -364,19 +364,34 @@ def dispatch_problems(body) -> list:
     Matched at the start of a line rather than anywhere in the text, so a sentence mentioning
     a section does not satisfy it and SUBTASK: does not answer for TASK:. Leading list and
     heading markers are stepped over, because these travel inside prompts people format.
+
+    A heading is not a section. A body of bare headings and nothing under them named every
+    field and instructed nobody, which is the same guess this shape exists to prevent, so a
+    section counts only once something follows it: text after its own colon, or a non-empty
+    line before the next heading.
     """
     if not isinstance(body, str):
         return list(DISPATCH_SECTIONS)
-    seen = set()
+    seen, current = set(), None
     for line in body.splitlines():
         stripped = line.strip().lstrip("-*#>").strip()
         # Bold and code markers are stripped as characters rather than parsed: this is looking
         # for a section heading, not rendering Markdown, and an unmatched marker is not an
         # error worth raising out of a readability check.
         heading = stripped.strip("*`_").upper()
-        for name in DISPATCH_SECTIONS:
-            if heading.startswith(name + ":") or heading == name:
-                seen.add(name)
+        opened = next((name for name in DISPATCH_SECTIONS
+                       if heading.startswith(name + ":") or heading == name), None)
+        if opened is not None:
+            rest = heading[len(opened):].lstrip(":").strip()
+            if rest:
+                seen.add(opened)
+                current = None
+            else:
+                current = opened
+            continue
+        if current is not None and stripped:
+            seen.add(current)
+            current = None
     return [name for name in DISPATCH_SECTIONS if name not in seen]
 
 # Which owner to re-read when a message resumes work, rather than reloading everything.

@@ -73,9 +73,13 @@ def a_review_ready(**overrides):
 def a_record(**overrides):
     base = {"relationId": RELATION, "parentTaskId": PARENT, "childTaskId": CHILD,
             "issue": ISSUE, "generation": 1, "criteriaDigest": DIGEST, "headSha": HEAD,
+            "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
             "refusedPolicies": []}
     base.update(overrides)
     return base
+
+
+AUDIT = "/state/crw/crw-149/evidence/audit.md"
 
 
 class WhatAnOccasionCannotDoWithout(unittest.TestCase):
@@ -136,24 +140,24 @@ class WhatAnOccasionCannotDoWithout(unittest.TestCase):
 
 class ANonPullRequestAudit(unittest.TestCase):
     def test_a_locator_and_a_digest_are_a_whole_artifact(self):
-        one = a_review_ready(artifact=packets.locator(
-            path="/state/crw/crw-149/evidence/audit.md", digest="9" * 64))
+        one = a_review_ready(artifact=packets.locator(path=AUDIT, digest="9" * 64))
         self.assertEqual(one[packets.ARTIFACT]["kind"], packets.LOCATOR)
         self.assertEqual(
-            packets.reception(one, a_record(artifactDigest="9" * 64))["disposition"],
+            packets.reception(one, a_record(artifactDigest="9" * 64,
+                                            artifactPath=AUDIT))["disposition"],
             packets.ACCEPTED)
 
     def test_an_audit_is_never_measured_against_a_head_it_does_not_have(self):
         """The empty commit and the invented head are what this refuses to ask for."""
-        one = a_review_ready(artifact=packets.locator(
-            path="/state/crw/crw-149/evidence/audit.md", digest="9" * 64))
-        answer = packets.reception(one, a_record(headSha="0" * 40, artifactDigest="9" * 64))
+        one = a_review_ready(artifact=packets.locator(path=AUDIT, digest="9" * 64))
+        answer = packets.reception(one, a_record(headSha="0" * 40, artifactDigest="9" * 64,
+                                                 artifactPath=AUDIT))
         self.assertEqual(answer["disposition"], packets.ACCEPTED)
         self.assertEqual(answer["mismatches"], [])
 
     def test_a_deliverable_nobody_can_hash_is_not_one_this_can_identify(self):
         with self.assertRaises(packets.PacketRefused):
-            packets.locator(path="/state/crw/crw-149/evidence/audit.md", digest=None)
+            packets.locator(path=AUDIT, digest=None)
 
 
 class TheControlsThatMustNotPass(unittest.TestCase):
@@ -375,6 +379,21 @@ class TheInstructionBody(unittest.TestCase):
     def test_something_that_is_not_text_is_missing_everything(self):
         self.assertEqual(cxc.dispatch_problems(None), list(cxc.DISPATCH_SECTIONS))
 
+    def test_bare_headings_with_nothing_under_them_name_every_field_and_instruct_nobody(self):
+        headings = chr(10).join(name + ":" for name in cxc.DISPATCH_SECTIONS)
+        self.assertEqual(cxc.dispatch_problems(headings), list(cxc.DISPATCH_SECTIONS))
+
+    def test_content_on_the_line_below_the_heading_counts(self):
+        body = chr(10).join(
+            line for name in cxc.DISPATCH_SECTIONS
+            for line in (name + ":", "  what this section actually says"))
+        self.assertEqual(cxc.dispatch_problems(body), [])
+
+    def test_a_heading_whose_only_follower_is_the_next_heading_is_still_empty(self):
+        body = "TASK:" + chr(10) + "SCOPE: the references" + chr(10)
+        self.assertIn("TASK", cxc.dispatch_problems(body))
+        self.assertNotIn("SCOPE", cxc.dispatch_problems(body))
+
 
 class TheRestoreSectionOnARealReport(DeliveryTestCase):
     def recorded(self, **overrides):
@@ -509,10 +528,11 @@ class TheWholeRoundTrip(unittest.TestCase):
 
     def test_a_non_pull_request_audit_completes_the_same_round_trip(self):
         """No pull request is opened to fill a field, and nothing is refused for its absence."""
-        record = a_record(artifactDigest="9" * 64)
+        record = a_record(artifactDigest="9" * 64, artifactPath=AUDIT)
         del record["headSha"]
-        artifact = packets.locator(path="/state/crw/crw-149/evidence/audit.md",
-                                   digest="9" * 64)
+        del record["repository"]
+        del record["prNumber"]
+        artifact = packets.locator(path=AUDIT, digest="9" * 64)
         self.accepted(a_review_ready(artifact=artifact), record)
         self.accepted(packets.compose(
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
@@ -566,6 +586,92 @@ class APacketNobodyConstructed(unittest.TestCase):
         one["activation"][packets.ACTIVATED] = {"state": "probably", "source": "a transcript"}
         with self.assertRaises(packets.PacketRefused):
             packets.reception(one, a_record())
+
+    def test_a_packet_that_is_not_an_object_is_refused_rather_than_raised_through(self):
+        """A validator that crashes on malformed input is not validating it."""
+        for shape in ([], "a packet", 7, None):
+            with self.subTest(shape=type(shape).__name__):
+                with self.assertRaises(packets.PacketRefused):
+                    packets.reception(shape, a_record())
+
+    def test_a_nested_field_of_the_wrong_shape_is_refused_by_name(self):
+        for field, value in (("envelope", []), (packets.POLICY, "opus/xhigh"),
+                             ("activation", [])):
+            with self.subTest(field=field):
+                broken = self.loaded(an_assignment(), **{field: value})
+                with self.assertRaises(packets.PacketRefused):
+                    packets.reception(broken, a_record())
+
+
+class TheRegionFieldsNobodyGetsToWrite(unittest.TestCase):
+    """Three of them are derived, so they are recomputed rather than read.
+
+    A comparison of copies would catch nothing here: the packet carries no duplicate of
+    anything, it carries values computed from the direction, relation, purpose and subject.
+    """
+
+    def loaded(self, one):
+        return json.loads(json.dumps(one))
+
+    def test_a_relabelled_kind_is_refused(self):
+        """Otherwise a notification arrives shaped like something that owes an answer."""
+        one = self.loaded(a_review_ready())
+        one["envelope"]["kind"] = envelope.NOTIFICATION
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(one, a_record())
+        self.assertIn("derived rather than declared", caught.exception.detail)
+
+    def test_a_role_a_caller_wrote_for_itself_is_refused(self):
+        one = self.loaded(a_review_ready())
+        one["envelope"]["sender"]["role"] = "parent"
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(one, a_record())
+        self.assertIn("a direction fixes both roles", caught.exception.detail)
+
+    def test_a_message_id_belonging_to_another_message_is_refused(self):
+        """It keys the replay reading, so a writable one can be spent in advance."""
+        one = self.loaded(a_review_ready())
+        one["envelope"]["messageId"] = envelope.message_id(
+            direction=envelope.CHILD_TO_PARENT, relation_id=RELATION,
+            purpose="review_ready", subject="evt-someone-else")
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(one, a_record())
+        self.assertIn("belongs to another message", caught.exception.detail)
+
+
+class ADifferentArtifactUnderTheSameHead(unittest.TestCase):
+    def refused(self, artifact, field):
+        answer = packets.reception(a_review_ready(artifact=artifact), a_record())
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertIn(field, [m["field"] for m in answer["mismatches"]], answer)
+
+    def test_another_repository_on_the_same_commit_is_refused(self):
+        """The same number on two projects is two different pull requests."""
+        self.refused(packets.pull_request(repository="thisisjun786/somewhere-else",
+                                          number=107, head_sha=HEAD), "artifact.repository")
+
+    def test_another_pull_request_on_the_same_commit_is_refused(self):
+        self.refused(packets.pull_request(repository="thisisjun786/codex-relay-workflow",
+                                          number=999, head_sha=HEAD), "artifact.number")
+
+    def test_another_deliverable_with_the_same_digest_is_refused(self):
+        answer = packets.reception(
+            a_review_ready(artifact=packets.locator(path="/state/elsewhere.md",
+                                                    digest="9" * 64)),
+            a_record(artifactPath=AUDIT, artifactDigest="9" * 64))
+        self.assertEqual(answer["disposition"], packets.REFUSAL)
+        self.assertIn("artifact.path", [m["field"] for m in answer["mismatches"]])
+
+
+class AModeThatCannotAnswerThatWay(unittest.TestCase):
+    def test_a_loop_reading_cannot_call_its_activation_inapplicable(self):
+        """Accepting it read an unarmed loop as a working one, which hides a defect."""
+        one = packets.unexamined(packets.LOOP)
+        one[packets.ACTIVATED] = packets.activation_fact(
+            packets.INAPPLICABLE, detail="borrowed from a parent's reading")
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.activation_class(one, mode=packets.LOOP)
+        self.assertIn("arms nothing", caught.exception.detail)
 
 
 class CurrencyTheReceiverCouldNotRead(unittest.TestCase):
