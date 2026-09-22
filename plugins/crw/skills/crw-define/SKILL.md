@@ -55,6 +55,9 @@ A narrow project or standalone issue does not require a new initiative.
 Use Strategy → Scope → Structure → Skeleton → Surface as design lenses, not as
 Linear levels or mandatory headings. Keep the initiative definition in its body;
 linked documents carry requested or necessary supporting detail, not a duplicate.
+Where the definition names a repository contract, a procedure or a research
+result, link it under [where each document type is canonical](../crw-plan/references/integrations.md#where-each-document-type-is-canonical)
+instead of copying it into the body.
 The initiative definition usually supplies Strategy and high-level Scope. Let
 project planning develop project-specific Structure, Skeleton and Surface when
 they become knowable; CLI/API work need not invent screens. Mark unsupported
