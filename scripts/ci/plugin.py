@@ -5,7 +5,8 @@ The installer copies a plugin root into its version cache verbatim, so what sits
 in that directory is what ships. This check rebuilds the release payload from a
 Git revision, reads every packaged fact from that same revision, and refuses the
 shapes that would install silently wrong: a symlink the copier drops, an
-untracked file it publishes, a personal path, a skill the manifest never declared.
+untracked file it publishes, a personal path, a skill the manifest never declared,
+a version that two different payloads could both claim.
 
 It validates structure and hygiene. It installs nothing, and it is not evidence
 that an installed plugin loaded on any host.
@@ -76,6 +77,10 @@ BRAND_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 # The largest timeout a hook may be registered with. Above this the host clamps at discovery
 # and the clamped value is not measured, so a larger number is not the deadline it looks like.
 HOOK_TIMEOUT_SECONDS = 10
+# Hex characters of the payload digest the version carries as build metadata. Long enough that
+# two payloads of this package will not collide by accident, short enough to read in a plugin
+# listing and in the cache path, which is the version.
+PAYLOAD_SUFFIX_LENGTH = 12
 
 
 class PackageError(Exception):
@@ -147,6 +152,68 @@ def digest(payload):
         blocks.append(b"%d:%s %s %s" % (len(encoded), encoded, mode.encode(),
                                         hashlib.sha256(data).hexdigest().encode()))
     return hashlib.sha256(b"\n".join(blocks)).hexdigest()
+
+
+def split_version(version):
+    """A version's release part and the payload suffix it carries; either may be empty."""
+    release, _, suffix = str(version).partition("+")
+    return release, suffix
+
+
+def version_payload(payload, version):
+    """The payload read with the recorded payload suffix elided from the manifest.
+
+    The suffix is a digest of the package and the manifest ships inside that package, so
+    digesting the bytes as they stand has no fixed point: recording the answer changes the
+    answer. Eliding the version this manifest declares, and nothing else, removes that
+    self-reference. Every other byte of every shipped file still reaches the digest, the
+    rest of the manifest included, so that suffix is the only difference between two
+    release trees this digest is unable to see.
+    """
+    release, suffix = split_version(version)
+    if not suffix or MANIFEST not in payload:
+        return payload
+    mode, data = payload[MANIFEST]
+    recorded, plain = json.dumps(str(version)).encode(), json.dumps(release).encode()
+    if data.count(recorded) != 1:
+        raise ValueError(MANIFEST + " spells " + repr(str(version)) + " "
+                         + str(data.count(recorded)) + " times; the suffix has to be elided"
+                         " exactly once for the digest beneath it to be derived at all")
+    return dict(payload, **{MANIFEST: (mode, data.replace(recorded, plain))})
+
+
+def payload_version(payload, version):
+    """The version a payload has to declare: its release version, then its own digest."""
+    release, _ = split_version(version)
+    return release + "+" + digest(version_payload(payload, version))[:PAYLOAD_SUFFIX_LENGTH]
+
+
+def version_errors(manifest, payload, label):
+    """An operator reads a version, never a payload, so the version has to name the payload.
+
+    Two revisions that ship different bytes under one version are indistinguishable in
+    `codex plugin list`, and the second installs over the first, because the cache directory
+    is the version. Which release version to publish stays the release owner's decision; the
+    suffix under it is derived from the bytes that ship and is never typed.
+    """
+    version = str(manifest.get("version", ""))
+    try:
+        expected = payload_version(payload, version)
+    except ValueError as exc:
+        return [label + " manifest: " + str(exc)]
+    suffixes = [part for part in (split_version(expected)[1], split_version(version)[1]) if part]
+    repeated = [name for name in sorted(payload) if name != MANIFEST
+                and any(part.encode() in payload[name][1] for part in suffixes)]
+    if repeated:
+        return [label + " " + name + ": a shipped file repeats the payload suffix, so recording"
+                " the digest would change the digest it records; the manifest version is the"
+                " one place that suffix belongs" for name in repeated]
+    if version == expected:
+        return []
+    return [label + " manifest: version " + repr(version) + " does not name this payload."
+            " Record " + repr(expected) + "; `--record-version` writes it into the working"
+            " tree manifest. The suffix is this payload's own digest, because two packages"
+            " that ship different bytes may not offer one version"]
 
 
 def read_manifest(payload, label):
@@ -516,6 +583,8 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
     if not SEMVER.fullmatch(str(manifest.get("version", ""))):
         errors.append(label + " manifest: version " + repr(manifest.get("version"))
                       + " is not a semantic version")
+    elif payload is not None:
+        errors += version_errors(manifest, payload, label)
     try:
         declared_skills_path(manifest)
     except ValueError as exc:
@@ -720,6 +789,45 @@ def check_installed(path):
                                                  {"source": "payload", "path": str(path)})
 
 
+def record_version():
+    """Write the suffix this working tree derives, so the recorded digest is never typed.
+
+    The working tree is the only payload anyone can edit; the release payload is read from a
+    revision, so this has to be committed before the check reads it there.
+    """
+    payload, errors = directory_payload(PLUGIN_ROOT)
+    manifest = read_manifest(payload, "working tree")
+    version = str(manifest.get("version", ""))
+    if not SEMVER.fullmatch(version):
+        errors.append("working tree manifest: version " + repr(version)
+                      + " is not a semantic version, so no payload suffix can be recorded"
+                        " under it")
+    if errors:
+        print("\n".join(sorted(set(errors))), file=sys.stderr)
+        return 1
+    try:
+        expected = payload_version(payload, version)
+    except ValueError as exc:
+        # The same refusal the check reports. Deriving is what this command does, so a manifest
+        # it cannot derive from is a result to report, not an exception to end on.
+        print("working tree manifest: " + str(exc), file=sys.stderr)
+        return 1
+    path = PLUGIN_ROOT / MANIFEST
+    document = path.read_text(encoding="utf-8")
+    recorded = json.dumps(version)
+    if document.count(recorded) != 1:
+        print(MANIFEST + " spells " + repr(version) + " " + str(document.count(recorded))
+              + " times; exactly one of them is the version to rewrite", file=sys.stderr)
+        return 1
+    if version != expected:
+        path.write_text(document.replace(recorded, json.dumps(expected)), encoding="utf-8")
+    print("Version " + expected + " in " + MANIFEST
+          + (": already recorded" if version == expected else ", recorded from "
+             + str(len(payload)) + " shipped files. Commit it: the release payload is read"
+             " from the revision, not from this tree"))
+    return 0
+
+
 def check_revision(revision):
     resolved = git("rev-parse", revision).strip()
     plugin_relative = PLUGIN_ROOT.relative_to(ROOT).as_posix()
@@ -791,9 +899,14 @@ def main():
                         help="Revision whose tree is the release payload (default HEAD)")
     parser.add_argument("--payload", type=Path,
                         help="Validate an installed payload directory instead of this checkout")
+    parser.add_argument("--record-version", action="store_true",
+                        help="Write the payload suffix this working tree derives into the"
+                             " manifest version, then stop")
     parser.add_argument("--json", action="store_true", help="Print the machine-readable result")
     args = parser.parse_args()
     try:
+        if args.record_version:
+            return record_version()
         if args.payload:
             errors, result = check_installed(args.payload.resolve())
         else:
@@ -809,7 +922,8 @@ def main():
         return 0
     print("Package " + str(result["version"]) + " at "
           + str(result.get("resolved", result.get("path"))) + ": " + str(result["files"])
-          + " files, digest " + result["digest"][:16])
+          + " files, digest " + result["digest"][:16]
+          + ". The version's suffix is these same files digested with that suffix elided")
     print("Skill names under the plugin namespace: " + ", ".join(result["expectedSkillNames"]))
     if result.get("worktreeDrift"):
         print("Working tree differs from the revision payload: "
