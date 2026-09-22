@@ -115,6 +115,25 @@ def directive_id(scope_kind, scope_key, from_scope_key, digest, revision):
     )[:ID_WIDTH]
 
 
+def _pointer_disagreement(stored, incoming):
+    """Whether two envelope pointers on one directive id are about different instructions.
+
+    Only ours are compared. A free-form note on either side is not a claim about purpose, so it
+    cannot disagree with one; an absent pointer on a row written before this contract is the
+    same. What is caught is two pointers that both parse and name different purposes, which is
+    the case the derived id cannot tell apart on its own.
+    """
+    first, second = envelope.parse_reference(stored), envelope.parse_reference(incoming)
+    if first is None or second is None:
+        return None
+    if first["purpose"] == second["purpose"]:
+        return None
+    return ("this directive id already records the purpose " + repr(first["purpose"])
+            + " and the incoming pointer names " + repr(second["purpose"])
+            + "; one digest cannot be two instructions, so the later one is recorded as its"
+            " own directive with its own digest")
+
+
 class _Refusal:
     """A decided refusal, carried from validation to the single place that records it.
 
@@ -1321,20 +1340,37 @@ class Linkage:
                     "SELECT * FROM scope_directives WHERE directive_id = ?", (did,)
                 ).fetchone()
                 if replay is not None:
-                    return self._directive_record(replay)
-                db.execute(
-                    "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
-                    " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
-                    " revision, disposition, decided_by, decided_at, recorded_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
-                    (did, scope_kind, scope_key, from_task_id, from_scope_key, link_id_value,
-                     edge["link_kind"], digest, reference, edge["revision"], now),
-                )
-                self.store.journal(
-                    "directive_recorded", did,
-                    {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
-                     "linkKind": edge["link_kind"]}, at=now,
-                )
+                    # The stored id derives from the scope, the origin, the digest and the link
+                    # revision, and not from what the instruction was FOR. Two directives with
+                    # one digest and different purposes therefore collide here, and returning
+                    # the first silently answered a caller about somebody else's instruction.
+                    # The pointer is what distinguishes them, so it is compared; a disagreement
+                    # is recorded as a contest and refused, exactly like a settled directive
+                    # being re-decided.
+                    disagreement = _pointer_disagreement(replay["reference"], reference)
+                    if disagreement is None:
+                        return self._directive_record(replay)
+                    refusal = _Refusal(
+                        RefusalReason.LINK_CONFLICT, disagreement,
+                        scope_kind=scope_kind, scope_key=scope_key,
+                        incumbent=str(replay["reference"]), challenger=str(reference),
+                    )
+                    self._record_conflict_in(db, refusal, at=now)
+                else:
+                    db.execute(
+                        "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
+                        " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
+                        " revision, disposition, decided_by, decided_at, recorded_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,?)",
+                        (did, scope_kind, scope_key, from_task_id, from_scope_key,
+                         link_id_value, edge["link_kind"], digest, reference, edge["revision"],
+                         now),
+                    )
+                    self.store.journal(
+                        "directive_recorded", did,
+                        {"scopeKey": scope_key, "fromScopeKey": from_scope_key,
+                         "linkKind": edge["link_kind"]}, at=now,
+                    )
             else:
                 self._record_conflict_in(db, refusal, at=now)
         if refusal is not None:

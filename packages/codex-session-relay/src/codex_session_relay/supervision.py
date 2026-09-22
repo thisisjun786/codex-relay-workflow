@@ -23,7 +23,7 @@ the obligation standing, which is the exact failure CRW-148 asks to be regressio
 
 import json
 
-from . import cxc, envelope, sync
+from . import cxc, envelope, intent, sync
 from .identity import sha256_hex
 
 SCHEMA = "supervisor-obligation/1"
@@ -91,6 +91,34 @@ JOURNAL_KIND = "supervisor_report"
 
 ID_WIDTH = 32
 
+# How old an observation of the recipient may be and still authorize a wake. The delivery path
+# re-observes the host before every send for the same reason: a stored yes is a fact about the
+# moment somebody looked.
+CONTACT_FRESH_FOR = 900.0
+
+
+def _subject(kind, row, report) -> str:
+    """What the obligation is ABOUT, which is not always the event that raised it.
+
+    A completion is about one revision, so the event identifies it. A block is not. Each
+    re-emission of an unchanged block is a new event - the execution-level id carries the turn
+    and the attempt - so keying on it made one unresolved block a fresh obligation every time
+    the child said so again, and every one of those got its own wake. The issue's words for
+    this are a NEW real block, not the same block re-explained.
+
+    So a block and a decision are keyed on the generation they arose in and on what they say.
+    A different cause in the same generation is a different block and does wake; the same cause
+    said twice converges on the first, where the prior-report record then suppresses it.
+    """
+    if kind in (BLOCKED, DECISION):
+        cause = " ".join(str(part) for part in (
+            (report or {}).get("cxcStatus") or row["outcome"],
+            (report or {}).get("cxcReason") or "",
+            (report or {}).get("summary") or "",
+        ) if part)
+        return f"g{row['execution_generation']}:{sha256_hex(cause)[:16]}"
+    return row["event_id"]
+
 
 def obligation_id(*, kind, relation_id, subject) -> str:
     """One fact, one id, however many times it is read.
@@ -154,7 +182,7 @@ def from_event(store, event_id, report=None) -> dict | None:
         (row["relationship_id"],),
     )
     return _obligation(
-        kind, relation_id=row["relationship_id"], subject=event_id,
+        kind, relation_id=row["relationship_id"], subject=_subject(kind, row, report),
         generation=row["execution_generation"], revision=row["revision_hash"],
         issue_key=issue["issue_key"] if issue is not None else None,
         basis={"table": "events", "eventId": event_id, "outcome": row["outcome"],
@@ -226,7 +254,7 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
         "  FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = ?"
         "   AND target = ?"
         " ORDER BY created_at",
-        (obligation["relationId"], obligation["subject"], sync.VERDICT, target),
+        (obligation["relationId"], _event_of(obligation), sync.VERDICT, target),
     )
     records = [dict(row) for row in rows]
     configured = store.one(
@@ -311,12 +339,22 @@ def record_report(store, obligation, *, at, messageId=None, note="") -> dict:
     return {"recorded": True, "seq": seq}
 
 
-def contactable(store, task_id) -> dict:
+def _event_of(obligation):
+    """The event a synchronisation row would be keyed on, which a block's subject is not."""
+    return (obligation.get("basis") or {}).get("eventId") or obligation["subject"]
+
+
+def contactable(store, task_id, *, now=None, fresh_for=CONTACT_FRESH_FOR) -> dict:
     """Whether the level above can be reached at all, read from the host's own observation.
 
     A paused or archived recipient is not a failure and is not a reason to drop anything. The
     obligation stays exactly where it was and nobody is woken, which is what a user who paused
     a task asked for.
+
+    A stored yes is a fact about the moment somebody looked at the host, not about now. Without
+    a clock to measure its age against, and past the window, it reads unmeasured rather than
+    permitting: the same direction the delivery path takes when it cannot establish
+    deliverability, and for the same reason.
     """
     if not task_id:
         return {"contactable": None, "reason": "no recipient was named"}
@@ -327,12 +365,30 @@ def contactable(store, task_id) -> dict:
         return {"contactable": None,
                 "reason": "the host has not been observed for this task, so deliverability is"
                           " unmeasured rather than allowed"}
-    return {"contactable": row["deliverable"] == "yes", "deliverable": row["deliverable"],
-            "reason": row["withhold_reason"] or row["deliverable"],
-            "observedAt": row["observed_at"]}
+    answer = {"deliverable": row["deliverable"], "observedAt": row["observed_at"]}
+    if row["deliverable"] != "yes":
+        return {**answer, "contactable": False,
+                "reason": row["withhold_reason"] or row["deliverable"]}
+    moment = intent.moment(row["observed_at"])
+    if moment is None:
+        return {**answer, "contactable": None,
+                "reason": "the observation carries no readable time, so its age is unmeasured"}
+    if now is None:
+        return {**answer, "contactable": None,
+                "reason": "no clock was supplied, so whether this observation is still current"
+                          " is unmeasured"}
+    # intent.moment answers an aware datetime and the clock answers epoch seconds, so the
+    # comparison is made in one of them rather than between the two.
+    age = now - moment.timestamp()
+    if age > fresh_for:
+        return {**answer, "contactable": None, "ageSeconds": age,
+                "reason": f"the observation is {int(age)}s old, past the {int(fresh_for)}s this"
+                          f" reading treats as current"}
+    return {**answer, "contactable": True, "ageSeconds": age, "reason": row["deliverable"]}
 
 
-def select(store, obligation, *, recipient=None) -> dict:
+def select(store, obligation, *, recipient=None, now=None,
+           fresh_for=CONTACT_FRESH_FOR) -> dict:
     """Whether this obligation should produce a report now, and why not when it should not.
 
     Every suppression here preserves the obligation. The two facts are reported separately on
@@ -342,7 +398,7 @@ def select(store, obligation, *, recipient=None) -> dict:
     """
     discharge = discharge_of(store, obligation)
     prior = prior_report(store, obligation["obligationId"])
-    contact = contactable(store, recipient)
+    contact = contactable(store, recipient, now=now, fresh_for=fresh_for)
     decision = {
         "schema": SCHEMA,
         "obligationId": obligation["obligationId"],

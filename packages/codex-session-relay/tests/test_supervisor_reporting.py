@@ -158,6 +158,47 @@ class OneFactOneObligation(ReportingTestCase):
         self.assertEqual(self.obligation_for(event_id)["obligationId"],
                          self.obligation_for(event_id)["obligationId"])
 
+    def test_the_same_block_said_twice_is_one_obligation(self):
+        """A block re-emitted is not a new block.
+
+        The execution-level event id carries the turn and the attempt, so every re-emission of
+        one unresolved block is a different event. Keying the obligation on that made each
+        repetition its own wake, which is the noise this issue exists to stop; the issue's
+        words are a NEW real block, not the same block explained again.
+        """
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        first = self.execution_payload(relationship, "blocked_needs_input", attempt=1)
+        self.accept(first)
+        report.record(self.store, self.clock, event_id=first["eventId"],
+                      **a_report(cxc_status=cxc.BLOCKED, cxc_reason="upstream has not landed",
+                                 pr_number=None, pr_url=None, pr_state=None, handoff=None))
+        second = self.execution_payload(relationship, "blocked_needs_input", attempt=2)
+        self.accept(second)
+        report.record(self.store, self.clock, event_id=second["eventId"],
+                      **a_report(cxc_status=cxc.BLOCKED, cxc_reason="upstream has not landed",
+                                 pr_number=None, pr_url=None, pr_state=None, handoff=None))
+        self.assertNotEqual(first["eventId"], second["eventId"], "two events, by construction")
+        self.assertEqual(self.obligation_for(first["eventId"])["obligationId"],
+                         self.obligation_for(second["eventId"])["obligationId"])
+
+    def test_a_different_cause_in_the_same_generation_is_a_different_block(self):
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        first = self.execution_payload(relationship, "blocked_needs_input", attempt=1)
+        self.accept(first)
+        report.record(self.store, self.clock, event_id=first["eventId"],
+                      **a_report(cxc_status=cxc.BLOCKED, cxc_reason="upstream has not landed",
+                                 pr_number=None, pr_url=None, pr_state=None, handoff=None))
+        second = self.execution_payload(relationship, "blocked_needs_input", attempt=2)
+        self.accept(second)
+        report.record(self.store, self.clock, event_id=second["eventId"],
+                      **a_report(cxc_status=cxc.BLOCKED,
+                                 cxc_reason="the credential this needs was revoked",
+                                 pr_number=None, pr_url=None, pr_state=None, handoff=None))
+        self.assertNotEqual(self.obligation_for(first["eventId"])["obligationId"],
+                            self.obligation_for(second["eventId"])["obligationId"])
+
     def test_the_same_event_survives_a_restart_with_the_same_id_and_still_standing(self):
         """Nothing was remembered between these two readings, which is the whole point."""
         event_id = self.reported()
@@ -175,12 +216,14 @@ class OneFactOneObligation(ReportingTestCase):
         event_id = self.reported()
         one = self.obligation_for(event_id)
         self.lifecycle(SUPERVISOR, "yes")
-        self.assertTrue(supervision.select(self.store, one, recipient=SUPERVISOR)["report"])
+        self.assertTrue(supervision.select(self.store, one, recipient=SUPERVISOR,
+                                           now=self.clock.now())["report"])
         first = supervision.record_report(self.store, one, at=self.clock.iso())
         second = supervision.record_report(self.store, one, at=self.clock.iso())
         self.assertTrue(first["recorded"])
         self.assertFalse(second["recorded"], "a second call converges rather than writing again")
-        decided = supervision.select(self.store, one, recipient=SUPERVISOR)
+        decided = supervision.select(self.store, one, recipient=SUPERVISOR,
+                                     now=self.clock.now())
         self.assertFalse(decided["report"])
         self.assertEqual(decided["reason"], supervision.ALREADY_REPORTED)
 
@@ -314,9 +357,29 @@ class APausedSupervisorIsNotAFailure(ReportingTestCase):
         event_id = self.reported()
         self.lifecycle(SUPERVISOR, "yes")
         decided = supervision.select(self.store, self.obligation_for(event_id),
-                                     recipient=SUPERVISOR)
+                                     recipient=SUPERVISOR, now=self.clock.now())
         self.assertTrue(decided["report"])
         self.assertEqual(decided["reason"], supervision.REPORTABLE)
+
+    def test_an_observation_nobody_dated_against_a_clock_is_unmeasured(self):
+        """A stored yes is a fact about the moment somebody looked."""
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR)
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.CONTACT_UNMEASURED)
+        self.assertIn("no clock was supplied", decided["recipient"]["reason"])
+
+    def test_an_observation_older_than_the_window_does_not_authorize_a_wake(self):
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        self.clock.advance(supervision.CONTACT_FRESH_FOR + 60)
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR, now=self.clock.now())
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.CONTACT_UNMEASURED)
+        self.assertIn("past the", decided["recipient"]["reason"])
 
 
 class TheReportNobodyWrote(ReportingTestCase):

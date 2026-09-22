@@ -135,7 +135,14 @@ def absent(reason, detail="") -> dict:
 
 
 def is_absent(value) -> bool:
-    return isinstance(value, dict) and "absent" in value
+    """A stated absence, and one this module actually states.
+
+    The reason is checked rather than the key. Accepting any mapping with an absent key let a
+    value carrying a word nobody defined - a typo, or a third party's vocabulary - pass every
+    check here as though it were one of the three, which is the opposite of the distinction
+    this module exists to keep.
+    """
+    return isinstance(value, dict) and value.get("absent") in ABSENCES
 
 
 def shown(value) -> str:
@@ -250,11 +257,19 @@ def promotion_refused(ladder) -> list:
 
     Returned rather than raised, because an inconsistent ladder is usually a caller's reading
     of a real store and the useful thing is to name which step was skipped.
+
+    A stage with no mechanism is not a missing prerequisite. The correction direction has no
+    acknowledgement at all and is applied by the next generation's receipt, so treating its
+    impossible stages as unheld reported every legitimate applied=yes as a promotion. Those
+    stages are stepped over; what remains a prerequisite is a stage that COULD have answered
+    and did not.
     """
     out = []
     held = True
     for name in STAGES:
         state = (ladder.get(name) or {}).get("state")
+        if state == IMPOSSIBLE:
+            continue
         if state == YES and not held:
             out.append(name)
         held = state == YES
@@ -487,6 +502,23 @@ REFERENCE_PREFIX = VERSION + "|"
 
 def directive_reference(*, purpose, link_id, digest, correlation_id=None) -> str:
     """The pointer stored on a directive row, derived from facts that row already holds."""
+    if correlation_id is not None:
+        # The pointer is pipe-delimited and its empty slot is a single dash, so a correlation
+        # carrying either one is written in a shape its own parser cannot read back: the pipe
+        # splits into an extra field and is rejected, the dash is read as no correlation at
+        # all. Refused here, where the caller still has the value.
+        if not isinstance(correlation_id, str) or not correlation_id.strip():
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a correlation id is a non-empty string or is absent")
+        if "|" in correlation_id:
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a correlation id cannot contain '|', which separates the pointer's fields")
+        if correlation_id == "-":
+            raise EnvelopeRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "'-' is how the pointer spells no correlation, so it cannot also be one")
     identifier = message_id(direction=SUPERVISOR_TO_PARENT, relation_id=link_id,
                             purpose=purpose, subject=digest)
     return REFERENCE_PREFIX + "|".join(

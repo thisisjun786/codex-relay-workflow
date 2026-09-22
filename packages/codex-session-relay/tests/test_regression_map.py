@@ -607,6 +607,20 @@ SUMMARY_SITES = (
      "paired: stage_holds folds the stage being present with its state equalling yes, and false"
      " alone cannot tell an unanswered stage from a missing one. The line above asserts the"
      " state is unmeasured, which names which of the two this is"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", False, "self.assertFalse(envelope.is_absent({'absent': 'probably'}))",
+     "the subject is a literal written into the assertion and it IS a mapping, so the false"
+     " side is attributable to the reason alone rather than to the type check that shares it."
+     " This is the case the symbol was widened for: a word nobody defined used to pass"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", False, "self.assertFalse(envelope.is_absent({'absent': None}))",
+     "the same shape with the reason absent rather than wrong, written out beside the case"
+     " above so the two failing inputs are named apart"),
+    ("test_supervisor_envelope.py", "test_a_word_nobody_defined_is_not_one_of_the_three",
+     "is_absent", True, "self.assertTrue(envelope.is_absent(envelope.absent(reason)))",
+     "the positive control, over every declared absence in turn: true pins both conjuncts,"
+     " and it is what stops the two assertions above from being satisfied by a predicate that"
+     " answered false to everything"),
 )
 
 

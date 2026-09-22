@@ -114,6 +114,15 @@ class WhatWasNotSaid(unittest.TestCase):
         self.assertIn("inherited", line)
         self.assertIn("stated on the assignment", line)
 
+    def test_a_word_nobody_defined_is_not_one_of_the_three(self):
+        """Checking the key rather than the reason let a typo pass as a stated absence."""
+        self.assertFalse(envelope.is_absent({"absent": "probably"}))
+        self.assertFalse(envelope.is_absent({"absent": None}))
+        for reason in envelope.ABSENCES:
+            self.assertTrue(envelope.is_absent(envelope.absent(reason)))
+        with self.assertRaises(envelope.EnvelopeRefused):
+            envelope.absent("probably")
+
     def test_a_kind_cannot_omit_what_it_exists_to_carry(self):
         with self.assertRaises(envelope.EnvelopeRefused) as caught:
             envelope.region(
@@ -179,6 +188,22 @@ class TheFiveStages(unittest.TestCase):
         ladder[envelope.APPLIED] = envelope.stage(envelope.YES, source="verdicts")
         self.assertEqual(envelope.promotion_refused(ladder), [envelope.APPLIED])
 
+    def test_a_stage_with_no_mechanism_is_not_a_missing_prerequisite(self):
+        """The correction direction's applied=yes is legitimate and used to read as a promotion.
+
+        It has no acknowledgement at all - the next generation's receipt is what shows it was
+        applied - so counting its impossible stages as unheld reported every correct ladder as
+        a false promotion, which is the opposite of what this check is for.
+        """
+        ladder = envelope.unreached(envelope.PARENT_TO_CHILD)
+        ladder[envelope.TRANSPORT_ACCEPTED] = envelope.stage(envelope.YES, source="attempts")
+        ladder[envelope.APPLIED] = envelope.stage(envelope.YES, source="events")
+        self.assertEqual(envelope.promotion_refused(ladder), [])
+        ladder[envelope.TRANSPORT_ACCEPTED] = envelope.stage(
+            envelope.UNMEASURED, detail="nothing answered")
+        self.assertEqual(envelope.promotion_refused(ladder), [envelope.APPLIED],
+                         "a stage that COULD have answered and did not is still a prerequisite")
+
     def test_a_supervisor_acknowledgement_cannot_be_written_into_the_contract(self):
         """The table is enforced, not advice.
 
@@ -222,6 +247,21 @@ class TheDirectivePointer(unittest.TestCase):
         self.assertIsNone(envelope.contradiction("see the thread from Tuesday",
                                                  link_id=LINK, digest=DIGEST))
         self.assertIsNone(envelope.contradiction(None, link_id=LINK, digest=DIGEST))
+
+    def test_a_correlation_the_pointer_cannot_carry_is_refused_where_it_can_be_fixed(self):
+        """Writing a value its own parser erases is worse than refusing it.
+
+        A pipe splits the pointer into an extra field, which parse_reference rejects outright.
+        A bare dash is how the pointer spells no correlation, so storing one reads back as an
+        answer to nothing.
+        """
+        for bad in ("crw-148|extra", "-", "", "   "):
+            with self.assertRaises(envelope.EnvelopeRefused):
+                envelope.directive_reference(purpose="project_assignment", link_id=LINK,
+                                             digest=DIGEST, correlation_id=bad)
+        good = envelope.directive_reference(purpose="project_assignment", link_id=LINK,
+                                            digest=DIGEST, correlation_id="msg-1")
+        self.assertEqual(envelope.parse_reference(good)["correlationId"], "msg-1")
 
 
 class TheRenderedMessage(DeliveryTestCase):
@@ -321,6 +361,38 @@ class TheDirectiveSeam(LinkageTestCase):
         row = self.directive("d-one", None)
         self.assertIsNone(row["reference"])
         self.assertIsNone(envelope.parse_reference(row["reference"]))
+
+    def test_one_digest_cannot_be_two_instructions(self):
+        """The stored id does not carry the purpose, so the pointer is what tells them apart.
+
+        Returning the first row for the second instruction answered a caller about somebody
+        else's directive, which is the same silent collapse this module refuses everywhere.
+        """
+        execution = self.supervise()
+        self._edge = execution
+        assignment = envelope.directive_reference(
+            purpose="project_assignment", link_id=execution["linkId"], digest="d-one")
+        self.directive("d-one", assignment)
+        correction = envelope.directive_reference(
+            purpose="scope_correction", link_id=execution["linkId"], digest="d-one")
+        self.assertRefused(RefusalReason.LINK_CONFLICT,
+                           lambda: self.directive("d-one", correction))
+        self.assertEqual(
+            self.store.one("SELECT reference FROM scope_directives WHERE digest = ?",
+                           ("d-one",))["reference"], assignment,
+            "the instruction that was already recorded is preserved")
+        self.assertTrue(
+            [row for row in self.linkage.conflicts(linkage_module.PROJECT, PROJECT)
+             if row.get("reason") == RefusalReason.LINK_CONFLICT.value])
+
+    def test_replaying_the_same_instruction_still_converges(self):
+        execution = self.supervise()
+        self._edge = execution
+        pointer = envelope.directive_reference(
+            purpose="project_assignment", link_id=execution["linkId"], digest="d-one")
+        first = self.directive("d-one", pointer)
+        self.assertEqual(self.directive("d-one", pointer)["directiveId"],
+                         first["directiveId"])
 
 
 if __name__ == "__main__":
