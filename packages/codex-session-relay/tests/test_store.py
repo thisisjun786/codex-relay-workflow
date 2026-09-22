@@ -1095,6 +1095,22 @@ class DescriptorIdentity(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return done
 
+    def assertRefusedTheMove(self, detail):
+        """The answer was withdrawn BECAUSE the store moved, whichever check noticed first.
+
+        Two of them can: the closing `_relocation`, and the question put to the connection
+        about which file it opened. Which one fires depends on whether SQLite needs the moved
+        name before it is asked, so pinning the wording to one of them would make this test
+        depend on that ordering rather than on the contract. What the contract says is that a
+        move is named as the reason - never passed through as a bare I/O error on a database
+        reported readable.
+        """
+        self.assertTrue(detail, "a withdrawn answer has to say why")
+        self.assertTrue(
+            "no longer the file at" in detail or "rather than the database at" in detail,
+            f"the refusal did not name the move: {detail!r}",
+        )
+
     def test_rows_read_through_a_swap_are_never_attributed_to_this_store(self):
         """The defect this class exists for, asserted on both halves of the answer.
 
@@ -1401,7 +1417,7 @@ class DescriptorIdentity(unittest.TestCase):
         self.assertFalse(answer["readable"], answer)
         self.assertEqual(answer["rows"], [])
         self.assertIsNone(answer["device"], "a withdrawn answer must not carry an identity")
-        self.assertIn("no longer the file at", answer["detail"], answer)
+        self.assertRefusedTheMove(answer["detail"])
 
     def test_a_nonce_read_while_the_store_moves_is_not_proof(self):
         """The same closing question on the only evidence compare_store grades as proof."""
