@@ -1,15 +1,10 @@
 {
   "expected": {
     "decision": "release",
-    "observation": "claim_uncorrelated",
-    "record": {
-      "claimEvidence": "claim_dispatch_mismatch",
-      "held": false,
-      "pendingObservation": "undeclared_turn_end"
-    },
-    "state": "claim_uncorrelated"
+    "observation": "marker_malformed",
+    "state": "marker_malformed"
   },
-  "note": "T28: bound and registered, and the claim at claims/session-1111/claim.json names a dispatch request id that hashes to a different assignment. The post-bind path asked only whether the claimant was this session, so this shape reached undeclared_turn_end and was HELD, indistinguishable in the record from a correlated claim. Both windows now apply the correlation rule. Released and recorded apart from marker_unclaimed, because a create-once claim carrying the wrong dispatch cannot be replaced, so unlike the bind-before-claim race this never clears itself.",
+  "note": "A preimage that is not a string is a record that cannot be read as a fact, and it is reported before any correlation is attempted. The second parity case review found: this reader did not hold claims to the relay's identity-field standard, so the same bytes answered marker_malformed there and claim_uncorrelated here.",
   "observation": {
     "assignment": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
     "disposition": null,
@@ -29,7 +24,9 @@
       "claims": [
         {
           "at": "2026-01-01T00:01:00+00:00",
-          "dispatchRequestId": "some-other-dispatch",
+          "dispatchRequestId": [
+            "foreign-dispatch"
+          ],
           "factId": "claims/session-1111/claim.json",
           "firstTurnId": "turn-0001",
           "sessionId": "session-1111"

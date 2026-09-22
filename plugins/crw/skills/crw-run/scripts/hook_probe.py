@@ -68,7 +68,16 @@ FACT_OBJECTS = ("intent", "bound", "relationship", "resolution")
 # than a discovery: validating only the outer record left a field read to land on a string one level
 # down, which is the same silent detector-disabling failure the outer check exists to prevent.
 NESTED_FACT_LISTS = {"resolutions": ("adjudicated",), "resolution": ("adjudicated",)}
-FACT_IDENTITIES = {"attempts": ("taskId",),
+# Every identity slot a fact may carry, held to the same standard the relay's own reader holds it
+# to (intent.IDENTITY_FIELDS). Kept in step deliberately: a field the relay reports as malformed
+# and this reader reads through answers a different state for the same bytes, and a replay that
+# agrees on every fixture would still be reporting parity it does not have.
+FACT_IDENTITIES = {"intent": ("dispatchRequestIdHash", "dbPath"),
+                   "bound": ("sessionId", "taskId"),
+                   "relationship": ("relationshipId",),
+                   "attempts": ("taskId", "outcome"),
+                   "claims": ("sessionId", "dispatchRequestId"),
+                   "conflicts": ("attemptedSessionId", "attemptedTaskId"),
                    "resolutions": ("chosenTaskId", "chosenSessionId"),
                    "resolution": ("chosenTaskId", "chosenSessionId")}
 
@@ -296,40 +305,28 @@ def identity_contested(marker):
     return any(not _covered(fact, applicable) for fact in _competing_facts(marker))
 
 
-def _correlated(marker, session_id):
-    """Whether this session presented the dispatch request id the intent was declared with.
-
-    The intent stores only the hash. Storing the id in the clear would make correlation empty,
-    because any session able to read the directory could then present it.
-    """
-    claim = next((c for c in (marker.get("claims") or [])
-                  if _same_identity(_claimant(c), session_id)), None)
-    if not claim:
-        return False
-    presented = claim.get("dispatchRequestId")
-    if not presented:
-        return False
-    digest = hashlib.sha256(str(presented).encode("utf-8")).hexdigest()
-    return digest == (marker.get("intent") or {}).get("dispatchRequestIdHash")
-
-
-# Why a session's claim does not correlate with the assignment it sits in. Four conditions, because
-# they are four different repairs; they release identically, so they are labels and not states.
+# Why a session's claim does not correlate with the assignment it sits in. Separate conditions
+# because they are separate repairs; they release identically, so they are labels and not states.
 CLAIM_ABSENT = "claim_absent"
 CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
 CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
 INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+INTENT_ASSIGNMENT_MISMATCH = "intent_assignment_mismatch"
 
 
-def _correlation_problem(marker, session_id):
+def _correlation_problem(marker, session_id, assignment=None):
     """Which correlation condition this session's claim fails, or None when it correlates.
 
-    The same rule as _correlated, said with the reason attached. The pre-bind window only needs to
-    know whether this session is the intent's; a BOUND session whose claim does not correlate is a
-    contradiction somebody has to repair, so that answer has to say which artifact is wrong.
+    The chain is preimage -> intent hash -> assignment, and all three links are required. The
+    intent stores only the hash, because storing the id in the clear would make correlation empty:
+    any session able to read the directory could then present it. But the hash and the preimage can
+    be made to agree with each other by anything that can write the marker, so the assignment is
+    the third link and the only one no writer inside the marker chooses - it is the directory name,
+    and the directory name IS the hash.
 
-    The claim is selected the way _correlated selects it, by the owner the path authorised and the
-    first match, so the two can never disagree about which claim is being judged.
+    Every condition is answered apart from the others: reporting a mismatching claim for an intent
+    that published no hash, or one published under another assignment, sends an operator to settle
+    a claim that is correct.
     """
     claim = next((c for c in (marker.get("claims") or [])
                   if _same_identity(_claimant(c), session_id)), None)
@@ -340,12 +337,40 @@ def _correlation_problem(marker, session_id):
         return CLAIM_DISPATCH_UNNAMED
     declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
     if not _named(declared):
-        # Answered apart from a claim naming the wrong dispatch, which would send an operator to
-        # repair a claim that is fine. The shape check requires this field to be a string and does
-        # not require it to be there, so the condition arrives with every fact well-shaped.
         return INTENT_DISPATCH_UNNAMED
+    if _named(assignment) and not _same_identity(declared, assignment):
+        return INTENT_ASSIGNMENT_MISMATCH
     digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
     return None if _same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
+
+
+def _correlated(marker, session_id, assignment=None):
+    """Whether this session presented the dispatch request id the intent was declared with.
+
+    The rule itself lives in _correlation_problem; this is that answer read as a yes or no. Written
+    as a delegation rather than as its own copy because the two windows must not be able to
+    disagree, and because a looser test here than in _correlation_problem is exactly the drift this
+    reader exists to detect: a blank preimage passed a truthiness test and failed _named, so one
+    window correlated a claim the other refused.
+    """
+    problem = _correlation_problem(marker, session_id, assignment)
+    if problem is not None:
+        return False
+    return True
+
+
+def _selected_assignment(observation):
+    """The assignment id the selected marker was read under, or None when none was supplied.
+
+    A workspace listing names each assignment, so the resolved one carries its own id. A
+    pre-resolved marker has no directory to read, so a fixture states the assignment or leaves the
+    third correlation link unasked; the relay's own reader always supplies it, because it walked to
+    the directory to get there.
+    """
+    workspace = observation.get("workspace")
+    if workspace is None:
+        return observation.get("assignment")
+    return (selected_marker(observation) or {}).get("assignmentId")
 
 
 def _named(value):
@@ -616,7 +641,7 @@ def observe_state(observation):
     if not bound:
         # Binding is coordinator-only, so an unbound session is never the managed child yet.
         # Occupying the workspace is not identity.
-        if not _correlated(marker, session):
+        if not _correlated(marker, session, _selected_assignment(observation)):
             return "dispatch_uncorrelated", "This session presented no matching dispatch request id."
         return "correlated_unbound", (
             "Correlated to the intent but not yet bound by the coordinator. Released; the turn's "
@@ -643,7 +668,7 @@ def observe_state(observation):
     # the pre-bind path above has always made and this one did not. An assignment id IS the hash of
     # a dispatch request id, so a claim naming a different dispatch is evidence about a different
     # assignment, and counting it satisfied the hold precondition with a fact nobody correlated.
-    problem = _correlation_problem(marker, session)
+    problem = _correlation_problem(marker, session, _selected_assignment(observation))
     if problem == CLAIM_ABSENT:
         return "marker_unclaimed", (
             "The coordinator bound this session, but it has not claimed this assignment. Released "
@@ -655,8 +680,9 @@ def observe_state(observation):
         # a conflict, so the correct claim can no longer be published at that path.
         return "claim_uncorrelated", (
             "This session is bound but its claim does not correlate with this assignment ("
-            + problem + "). Released and recorded; the claim is create-once, so this does not "
-            "clear itself - adjudicate the claim, or repair the intent it was compared against.")
+            + problem + "). Released and recorded; every fact this reads is create-once, so it "
+            "does not clear itself - settle the assignment outside the marker by adjudicating it "
+            "or superseding the relationship.")
     if not marker.get("relationship"):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
@@ -705,11 +731,13 @@ def decide(observation):
             # so the coordinator can fold it once the bind lands.
             result["record"]["pendingObservation"] = classify_declaration(observation)
         if state == "claim_uncorrelated" and marker:
-            # Which artifact is wrong, kept separate from the decision. Four conditions release
-            # the same way and are repaired in different places, so the class survives in the
-            # record rather than only in the reason text.
+            # Which artifact is wrong, kept separate from the decision. The conditions release the
+            # same way and are settled differently, so the class survives in the record rather
+            # than only in the reason text, and what the turn WOULD have been judged as is kept
+            # too - this answer replaces a classification the coordinator still needs.
             result["record"]["claimEvidence"] = _correlation_problem(
-                marker, stop.get("session_id"))
+                marker, stop.get("session_id"), _selected_assignment(observation))
+            result["record"]["pendingObservation"] = classify_declaration(observation)
         if marker:
             result["record"]["assignmentState"] = derive_assignment_state(
                 marker, observation.get("now"))

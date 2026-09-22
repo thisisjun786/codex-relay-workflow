@@ -558,7 +558,7 @@ def observe_state(observation):
     if not bound:
         # Binding is coordinator-only, so an unbound session is never the managed child yet.
         # Occupying the workspace is not identity.
-        if not intents.correlated(marker, session):
+        if not intents.correlated(marker, session, observation.get("assignment")):
             return "dispatch_uncorrelated", "This session presented no matching dispatch request id."
         return "correlated_unbound", (
             "Correlated to the intent but not yet bound by the coordinator. Released; the turn's "
@@ -587,7 +587,7 @@ def observe_state(observation):
     # hold, and an assignment id IS the hash of a dispatch request id, so a claim naming a different
     # dispatch is evidence about a different assignment; counting it satisfied the hold precondition
     # with a fact nobody correlated. Both windows now read the same predicate, so they cannot drift.
-    problem = intents.correlation_problem(marker, session)
+    problem = intents.correlation_problem(marker, session, observation.get("assignment"))
     if problem == intents.CLAIM_ABSENT:
         return "marker_unclaimed", (
             "The coordinator bound this session, but it has not claimed this assignment. Released "
@@ -602,8 +602,9 @@ def observe_state(observation):
         # to wait for a fact that cannot arrive. Which artifact is wrong travels in the record.
         return "claim_uncorrelated", (
             "This session is bound but its claim does not correlate with this assignment ("
-            + problem + "). Released and recorded; the claim is create-once, so this does not "
-            "clear itself - adjudicate the claim, or repair the intent it was compared against."
+            + problem + "). Released and recorded; every fact this reads is create-once, so it "
+            "does not clear itself - settle the assignment outside the marker by adjudicating it "
+            "or superseding the relationship."
         )
     if not named((marker.get("relationship") or {}).get("relationshipId")):
         # The identity, not the object. A relationship fact that exists but names nothing has
@@ -684,11 +685,19 @@ def decide(observation, *, counters=None, mode=OBSERVE):
             record["pendingObservation"] = classify_declaration(observation)
         if state == "claim_uncorrelated" and marker:
             # Which artifact is wrong, kept separate from the decision, exactly as receipt evidence
-            # is below. A withheld preimage, a preimage belonging to another assignment and an
-            # intent that published no hash all release the same way and are all repaired in
-            # different places, so the class has to survive in the record rather than in prose.
-            record["claimEvidence"] = intents.correlation_problem(marker, stop.get("session_id"))
+            # is below. A withheld preimage, a preimage belonging to another assignment, an intent
+            # that published no hash and an intent published under another assignment all release
+            # the same way and are all settled differently, so the class has to survive in the
+            # record rather than in prose.
+            record["claimEvidence"] = intents.correlation_problem(
+                marker, stop.get("session_id"), observation.get("assignment")
+            )
             result["claimEvidence"] = record["claimEvidence"]
+            # What the turn WOULD have been judged as, kept for the same reason the pre-bind window
+            # keeps it: this answer replaces a classification the coordinator still needs. Without
+            # it an uncorrelated readiness that no receipt answers records only that the claim was
+            # wrong, and the missing receipt - a different problem, on the same turn - is gone.
+            record["pendingObservation"] = classify_declaration(observation)
         if marker:
             record["assignmentState"] = intents.derive_assignment_state(
                 marker, observation.get("now")
@@ -896,6 +905,11 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
     observation = {
         "stop_input": stop,
         "marker": marker_facts,
+        # The assignment this turn was judged under, which is the directory name and therefore the
+        # hash itself. Correlation needs it: the preimage and the intent hash can be made to agree
+        # with each other by anything that can write the marker, and only the directory says which
+        # dispatch the coordinator actually opened.
+        "assignment": directory.name if directory is not None else None,
         "disposition": disposition,
         "receipt": receipt,
         "store_unreadable": unreadable,

@@ -171,11 +171,15 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
         Returned rather than stored, because the agreement case below reads the same shape twice,
         once unbound and once bound, and a shared workspace would let the first reading select the
         second one's assignment.
+
+        hashed=True declares the intent through the API. A string publishes a raw intent carrying
+        that hash instead, which is how the forged-intent case is built: the directory is still
+        this assignment, and the intent inside it names another.
         """
         workspace = self.workspace / name
         workspace.mkdir()
         directory = marker.assignment_dir(self.markers, workspace, self.assignment)
-        if hashed:
+        if hashed is True:
             intent.declare_intent(
                 self.markers, workspace=workspace, dispatch_request_id=DISPATCH,
                 issue_key="REL-1", declared_at="2026-01-01T00:00:00+00:00",
@@ -185,10 +189,13 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
             # An intent published without its own hash. declare_intent always writes one, and the
             # shape check requires the field to be a string without requiring it to be present, so
             # this arrives with every fact well-shaped and nothing to correlate against.
-            marker.publish(directory / "intent.json", {
+            record = {
                 "declaredAt": "2026-01-01T00:00:00+00:00", "issue": "REL-1",
                 "workspace": str(workspace), "dbPath": str(self.store.path),
-            })
+            }
+            if hashed:
+                record["dispatchRequestIdHash"] = hashed
+            marker.publish(directory / "intent.json", record)
         if claim_body is not None:
             marker.publish(directory / "claims" / CHILD / "claim.json", claim_body)
         if bind:
@@ -202,6 +209,8 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
         if dispatch is not None:
             record["dispatchRequestId"] = dispatch
         return record
+
+    FOREIGN = "foreign-dispatch"
 
     def test_a_correlated_claim_after_the_bind_still_reaches_the_ordinary_path(self):
         """The positive control. A gate that refused everything would pass the cases below too."""
@@ -260,6 +269,119 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
         self.assertEqual(verdict["record"]["claimEvidence"], intent.INTENT_DISPATCH_UNNAMED)
 
+    def test_an_intent_agreeing_with_a_claim_about_a_foreign_dispatch_is_refused(self):
+        """The case that defeats checking only the claim against the intent.
+
+        Both facts inside the marker are writable by the parties publishing there, so a forged
+        intent and a claim agreeing with it correlate with each other perfectly while correlating
+        with nothing the coordinator dispatched. The assignment is the directory name and the
+        directory name IS the dispatch hash, so it is the one link no writer inside the marker can
+        choose, and correlation requires all three.
+        """
+        workspace = self.shape(
+            "forged", self.body(self.FOREIGN),
+            hashed=marker.assignment_id(self.FOREIGN),
+        )
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.INTENT_ASSIGNMENT_MISMATCH)
+
+    def test_the_same_forged_pair_is_refused_before_the_bind_too(self):
+        """Both windows read one rule, so closing the third link closes it on both sides."""
+        workspace = self.shape(
+            "forged-unbound", self.body(self.FOREIGN),
+            hashed=marker.assignment_id(self.FOREIGN), bind=False,
+        )
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "dispatch_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_preimage_that_is_only_whitespace_names_nothing(self):
+        """A blank is not an identity anywhere else here, and it is not one in a claim either."""
+        workspace = self.shape("blank", self.body("   "))
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.CLAIM_DISPATCH_UNNAMED)
+
+    def test_a_preimage_that_is_not_a_string_is_reported_before_correlation(self):
+        """Shape outranks correlation: a record that is not a fact is not a wrong fact."""
+        body = self.body()
+        body["dispatchRequestId"] = [DISPATCH]
+        workspace = self.shape("nonstring", body)
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertNotIn("claimEvidence", verdict["record"])
+
+    def test_a_claim_whose_body_contradicts_its_path_is_not_this_session_s_claim(self):
+        """The owner comes from the path the write was authorised against, and the body must agree.
+
+        So this is answered as an absent claim rather than an uncorrelated one: nothing here is
+        verifiably this session's claim at all, whatever dispatch it names.
+        """
+        body = self.body()
+        body["sessionId"] = "somebody-else"
+        workspace = self.shape("impostor", body)
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "marker_unclaimed")
+        self.assertNotIn("claimEvidence", verdict["record"])
+
+    def test_a_foreign_session_s_claim_beside_a_correlated_one_changes_nothing(self):
+        """Selection reads this session's own claim, so a competitor cannot spend its correlation.
+
+        The contest is recorded separately, which is the coordinator's business and not the hold's.
+        """
+        relationship = self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(directory / "claims" / "second" / "claim.json",
+                       {"sessionId": "second", "dispatchRequestId": self.FOREIGN, "at": NOW})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertTrue(verdict["record"]["identityContested"])
+
+    def test_the_record_keeps_what_the_turn_would_otherwise_have_been_judged_as(self):
+        """This answer replaces a classification, so the replaced one is kept.
+
+        A readiness that no receipt answers is a different problem from an uncorrelated claim, on
+        the same turn. Recording only the claim would lose the receipt finding entirely, which is
+        exactly why the pre-bind window keeps pendingObservation.
+        """
+        relationship = self.register()
+        self.declare()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(directory / "claims" / CHILD / "claim.json", self.body(self.FOREIGN))
+        self.bind()
+        self.register_marker(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.CLAIM_DISPATCH_MISMATCH)
+        self.assertEqual(verdict["record"]["pendingObservation"], "receipt_missing")
+
+    def test_the_assignment_the_turn_was_judged_under_is_always_supplied(self):
+        """The third correlation link is only unasked where no directory was walked to.
+
+        A fixture may omit it; this reader never does, and a silent None here would switch the
+        link off in production while every replay still passed.
+        """
+        self.managed()
+        seen = {}
+        original = guard.observe_state
+
+        def record(observation):
+            seen["assignment"] = observation.get("assignment")
+            return original(observation)
+
+        with mock.patch.object(guard, "observe_state", record):
+            self.evaluate()
+        self.assertEqual(seen["assignment"], self.assignment)
+
     def test_an_absent_claim_stays_distinguishable_from_an_uncorrelated_one(self):
         """The two clear differently, so collapsing them would misdirect the coordinator.
 
@@ -279,23 +401,29 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
     def test_the_two_windows_agree_about_whether_the_claim_correlates(self):
         """The property this issue is about, asserted as an agreement rather than as one branch.
 
-        correlated() cannot be refactored into the labelled reader without moving it between the
-        inventories a fenced suite derives, so the two implementations stay separate and this is
-        what stops them drifting: the same four shapes are read unbound and bound, and the two
-        windows have to agree about whether correlation holds.
+        correlated() is correlation_problem read as a boolean, so one rule serves both windows and
+        neither can drift from the other by construction. This is the contract over that shared
+        rule: every shape either correlates in both windows or in neither, and the matrix is wide
+        enough that a reader loosened in one place fails here rather than in review. A blank
+        preimage is in it because that is the drift review actually found in the probe - a
+        truthiness test accepted what named() refused.
         """
         shapes = {
-            "good": self.body(),
-            "mismatch": self.body("not-this-dispatch"),
-            "unnamed": self.body(None),
-            "missing": None,
+            "good": (self.body(), True),
+            "mismatch": (self.body("not-this-dispatch"), True),
+            "unnamed": (self.body(None), True),
+            "blank": (self.body("   "), True),
+            "missing": (None, True),
+            "impostor": (dict(self.body(), sessionId="somebody-else"), True),
+            "forged": (self.body(self.FOREIGN), marker.assignment_id(self.FOREIGN)),
+            "nohash": (self.body(), False),
         }
         before = {"dispatch_uncorrelated": False, "correlated_unbound": True}
         after = {"claim_uncorrelated": False, "marker_unclaimed": False}
-        for name, body in shapes.items():
+        for name, (body, hashed) in shapes.items():
             with self.subTest(shape=name):
-                unbound = self.shape("pre-" + name, body, bind=False)
-                bound = self.shape("post-" + name, body)
+                unbound = self.shape("pre-" + name, body, hashed=hashed, bind=False)
+                bound = self.shape("post-" + name, body, hashed=hashed)
                 pre = self.evaluate(cwd=str(unbound))["observation"]
                 post = self.evaluate(cwd=str(bound))["observation"]
                 self.assertIn(pre, before, "the pre-bind window changed its vocabulary")

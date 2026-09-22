@@ -346,52 +346,42 @@ def derive_assignment_state(marker, now=None) -> str:
     return CREATION_ACCEPTED if accepted else INTENT_DECLARED
 
 
-def correlated(marker, session_id) -> bool:
-    """Whether this session presented the dispatch request id the intent was declared with.
-
-    Replayable evidence, not authentication: the intent stores only the hash, but the child's own
-    claim necessarily stores the preimage, so on a single-uid host another session can copy it.
-    Doing so confers nothing, because binding is the coordinator's; it produces at most a second
-    claim, which is exactly the contested condition the coordinator must resolve.
-    """
-    claim = next(
-        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
-    )
-    if not claim:
-        return False
-    presented = claim.get("dispatchRequestId")
-    if not named(presented):
-        return False
-    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
-    return same_identity(digest, (marker.get("intent") or {}).get("dispatchRequestIdHash"))
-
-
-# Why a session's claim does not correlate with the assignment it sits in. Four conditions, because
-# they are four different repairs: nobody claimed yet, the claim withholds its preimage, the claim
-# belongs to another assignment, or the intent published no hash to compare against. They are
-# labels rather than states for the reason receipt evidence is: the decision is the same one.
+# Why a session's claim does not correlate with the assignment it sits in. Separate conditions
+# because they are separate repairs: nobody claimed yet, the claim withholds its preimage, the
+# claim belongs to another assignment, the intent published no hash, or the intent published a hash
+# that is not the assignment it was published under. Labels rather than states for the reason
+# receipt evidence is one field and several problems: the decision they reach is the same one.
 CLAIM_ABSENT = "claim_absent"
 CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
 CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
 INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+INTENT_ASSIGNMENT_MISMATCH = "intent_assignment_mismatch"
 
 
-def correlation_problem(marker, session_id) -> str | None:
+def correlation_problem(marker, session_id, assignment=None) -> str | None:
     """Which correlation condition this session's claim fails, or None when it correlates.
 
-    The same rule correlated() applies, said with the reason attached, because the two places that
-    read it need different things. The pre-bind window only has to know whether the session is the
-    intent's, and a bound session whose claim does not correlate is a contradiction somebody has to
-    repair, so the answer has to say which artifact is wrong.
+    One implementation of the rule, with the reason attached. correlated() is this function read as
+    a boolean, so the two cannot drift: the pre-bind window only needs to know whether the session
+    is the intent's, while a BOUND session whose claim does not correlate is a contradiction
+    somebody has to settle, and that answer has to say which artifact is wrong.
 
-    The claim is selected the way correlated() selects it - by the owner the path authorised, and
-    the first match, since claims/<session>/claim.json admits one per session - so the two can
-    never disagree about WHICH claim is being judged.
+    The claim comes from the owner the path authorised, and the first match is the only match:
+    claims/<session>/claim.json admits one claim per session per assignment.
 
-    An intent carrying no hash is answered apart from a claim naming the wrong dispatch. Both fail
-    correlation, and reporting the second for the first would send an operator to repair a claim
-    that is fine. malformed() type-checks that field and does not require it, so the condition is
-    reachable with every fact well-shaped.
+    The chain is preimage -> intent hash -> assignment, and all three links are required. Checking
+    only the first two lets a forged intent stand in for the assignment: publish an intent naming a
+    foreign dispatch inside this directory, publish a claim agreeing with it, and the two agree
+    with each other while agreeing with nothing the coordinator dispatched. The assignment is the
+    directory name and the directory name is the hash, so it is the one link no writer inside the
+    marker can choose. Passed in rather than derived here, because only the reader that walked to
+    the directory knows which one it read; omitted, the link is not asked rather than assumed to
+    hold, and _evaluate always supplies it.
+
+    Each condition is answered apart from the others. Reporting a mismatching claim for an intent
+    that published no hash, or for one published under the wrong assignment, would send an operator
+    to settle a claim that is correct. malformed() type-checks these fields and requires neither,
+    so every one of them arrives with the marker well-shaped.
     """
     claim = next(
         (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
@@ -404,8 +394,27 @@ def correlation_problem(marker, session_id) -> str | None:
     declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
     if not named(declared):
         return INTENT_DISPATCH_UNNAMED
+    if named(assignment) and not same_identity(declared, assignment):
+        return INTENT_ASSIGNMENT_MISMATCH
     digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
     return None if same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
+
+
+def correlated(marker, session_id, assignment=None) -> bool:
+    """Whether this session presented the dispatch request id the intent was declared with.
+
+    Replayable evidence, not authentication: the intent stores only the hash, but the child's own
+    claim necessarily stores the preimage, so on a single-uid host another session can copy it.
+    Doing so confers nothing, because binding is the coordinator's; it produces at most a second
+    claim, which is exactly the contested condition the coordinator must resolve.
+
+    The rule itself lives in correlation_problem. This is that answer read as a yes or no, for the
+    callers that only need one; two implementations of one rule is the drift this avoids.
+    """
+    problem = correlation_problem(marker, session_id, assignment)
+    if problem is not None:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------- selection

@@ -4,12 +4,14 @@
     "observation": "claim_uncorrelated",
     "record": {
       "claimEvidence": "claim_dispatch_unnamed",
-      "held": false
+      "held": false,
+      "pendingObservation": "undeclared_turn_end"
     },
     "state": "claim_uncorrelated"
   },
   "note": "The post-bind counterpart of claim-without-preimage: a claim that carries no dispatch request id at all is not correlation after the bind either. Reported apart from a wrong preimage, because the claim withheld its evidence rather than presenting somebody else's.",
   "observation": {
+    "assignment": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
     "disposition": null,
     "marker": {
       "attempts": [

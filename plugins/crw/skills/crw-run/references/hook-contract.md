@@ -160,17 +160,28 @@ session's own claim is there, its turns read `marker_unclaimed` and are released
 says who the coordinator believes the child is; the claim is the session saying so itself, and a turn
 is only ever held against a session that has said it.
 
-**The claim has to be this assignment's claim, on both sides of the bind.** An assignment id is the
-hash of a dispatch request id, so a claim naming a different dispatch is evidence about a different
-assignment and correlates with nothing here. Before the bind that reads `dispatch_uncorrelated`;
-after it, `claim_uncorrelated`. Both are released and recorded, and the second is answered apart
-from `marker_unclaimed` because the two clear differently: an unclaimed marker is the
-bind-before-claim race and ends the moment the child publishes, while `claims/<session>/claim.json`
-is create-once, so a claim already standing there with the wrong dispatch request id can never be
-replaced by the correct one. The record carries which condition applied - `claim_dispatch_unnamed`,
-`claim_dispatch_mismatch` or `intent_dispatch_unnamed` - because those are repaired in different
-places. A declared releasing outcome is still read first, so this check only ever turns a would-be
-hold into a release.
+**The claim has to be this assignment's claim, on both sides of the bind.** Correlation is a chain
+of three links and all three are required: the claim's `dispatchRequestId` preimage hashes to the
+intent's `dispatchRequestIdHash`, and that hash is the assignment the intent was published under.
+The third link is what makes the first two mean anything. Both facts inside the marker are writable
+by the parties publishing there, so an intent naming a foreign dispatch and a claim agreeing with it
+correlate with each other perfectly while correlating with nothing the coordinator dispatched. The
+assignment is the directory name and the directory name IS the hash, so it is the one link no writer
+inside the marker chooses.
+
+Before the bind a broken chain reads `dispatch_uncorrelated`; after it, `claim_uncorrelated`.
+Both are released and recorded, and the second is answered apart from `marker_unclaimed` because
+the two clear differently: an unclaimed marker is the bind-before-claim race and ends the moment the
+child publishes, while every fact in this chain is create-once, so a claim already standing at
+`claims/<session>/claim.json` with the wrong dispatch request id can never be replaced by the
+correct one. Recovery is therefore adjudication or superseding the relationship, not repair in
+place. The record carries which link broke - `claim_dispatch_unnamed`, `claim_dispatch_mismatch`,
+`intent_dispatch_unnamed` or `intent_assignment_mismatch` - because they are settled differently,
+and it carries `pendingObservation` as well, since this answer replaces a classification the
+coordinator still needs. A claim whose body contradicts its path is not this session's claim at all
+and still reads `marker_unclaimed`; a preimage that is not a string is `marker_malformed`, because
+shape is answered before correlation. A declared releasing outcome is read first, so this check only
+ever turns a would-be hold into a release.
 
 The pre-bind window is not blind. A correlated session whose bind has not landed reads as
 `correlated_unbound`: released, never held, but its hook still records the turn's observation. When
@@ -334,7 +345,7 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | T25 | Array/object identities in either resolution form or an accepted attempt | `marker_malformed` before identity set construction; no traceback can suppress the observation |
 | T26 | Present null chosen identity or adjudication list in either resolution form | `marker_malformed`, released and recorded; absent legacy fields still confer no identity or coverage |
 | T27 | A releasing disposition with corrupt persisted counters | Preserve the declared disposition; counters are validated only when an omission hold is weighed |
-| T28 | Bound and registered, with a claim naming a dispatch request id that hashes elsewhere | `claim_uncorrelated`: released and recorded, with the failing condition in `claimEvidence`. The post-bind path asked only whether the claimant was this session, so an uncorrelated claim satisfied the hold precondition and the turn was held, indistinguishable from a correlated one. Kept apart from `marker_unclaimed` because a create-once claim carrying the wrong dispatch never clears itself, and apart from a declared outcome, which is still read first |
+| T28 | Bound and registered, with a claim naming a dispatch request id that hashes elsewhere; and the variant where a forged intent agrees with that claim | `claim_uncorrelated` both times: released and recorded, with the broken link in `claimEvidence` and the replaced classification in `pendingObservation`. The post-bind path asked only whether the claimant was this session, so an uncorrelated claim satisfied the hold precondition and the turn was held, indistinguishable from a correlated one. The variant is why the chain runs through the assignment: an intent and a claim agreeing about a foreign dispatch correlate with each other and with nothing dispatched. Kept apart from `marker_unclaimed` because a create-once claim carrying the wrong dispatch never clears itself, and apart from a declared outcome, which is still read first |
 
 ### Marker root and permissions, as an integration obligation
 
