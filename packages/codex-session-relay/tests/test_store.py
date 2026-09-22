@@ -1193,7 +1193,9 @@ class DescriptorIdentity(unittest.TestCase):
 
         The read connection and the write probe go through one descriptor, so a rename between
         them puts the write probe on a relocated name - the same failed read and the same stray
-        log as above. The question is asked again immediately before each connect.
+        log as above. That second question is also the CLOSING one for the read that just
+        happened: a store that moved during it leaves behind an identity a caller reads as "the
+        store at this path", so what the read published is withdrawn rather than reported.
         """
         from codex_session_relay import store as store_module
 
@@ -1210,11 +1212,14 @@ class DescriptorIdentity(unittest.TestCase):
 
         with mock.patch.object(store_module.sqlite3, "connect", wrapper):
             report = probe(resolve_state_dir(self.a))
+        self.addCleanup(os.rename, moved, self.path)
 
         self.assertTrue(done, "the seam never fired, so this asserts nothing")
-        self.assertTrue(report["access"]["dbReadable"], report)
         self.assertFalse(report["access"]["dbWritable"], report)
-        self.assertIn("no longer the file at", report["access"]["detail"], report)
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertIsNone(report["store"]["storeId"], report)
+        self.assertIsNone(report["store"]["inode"], report)
+        self.assertIn("moved while it was being read", report["access"]["detail"], report)
         self.assertEqual(
             [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")], [],
             "the refused write probe still opened the relocated name",
@@ -1364,4 +1369,66 @@ class DescriptorIdentity(unittest.TestCase):
             )["sameStore"],
             "unproven",
             report,
+        )
+
+    def test_a_store_that_moves_during_the_read_withdraws_the_answer(self):
+        """The closing question, which is what makes the answer about a whole read.
+
+        The pre-connect check says the file was this store when the read started. Without a
+        closing one, a rename during the read still returns rows and an identity a caller reads
+        as "the store at this path". Together the two say the file was the one at this pathname
+        for the whole read, or there is no answer.
+        """
+        from codex_session_relay import store as store_module
+
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        real = store_module.sqlite3.connect
+        done = []
+
+        def wrapper(*args, **kwargs):
+            connection = real(*args, **kwargs)
+            if not done:
+                done.append(True)
+                os.rename(self.path, moved)
+            return connection
+
+        with mock.patch.object(store_module.sqlite3, "connect", wrapper):
+            answer = read_only_rows(
+                resolve_state_dir(self.a), "SELECT written_by FROM store_challenge")
+        self.addCleanup(os.rename, moved, self.path)
+
+        self.assertTrue(done, "the seam never fired, so this asserts nothing")
+        self.assertFalse(answer["readable"], answer)
+        self.assertEqual(answer["rows"], [])
+        self.assertIsNone(answer["device"], "a withdrawn answer must not carry an identity")
+        self.assertIn("no longer the file at", answer["detail"], answer)
+
+    def test_a_nonce_read_while_the_store_moves_is_not_proof(self):
+        """The same closing question on the only evidence compare_store grades as proof."""
+        from codex_session_relay import store as store_module
+
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        real = store_module.sqlite3.connect
+        done = []
+
+        def wrapper(*args, **kwargs):
+            connection = real(*args, **kwargs)
+            if not done:
+                done.append(True)
+                os.rename(self.path, moved)
+            return connection
+
+        with mock.patch.object(store_module.sqlite3, "connect", wrapper):
+            answer = nonce_lookup(resolve_state_dir(self.a), self.written["nonce"])
+        self.addCleanup(os.rename, moved, self.path)
+
+        self.assertTrue(done, "the seam never fired, so this asserts nothing")
+        self.assertFalse(answer["readable"], answer)
+        self.assertFalse(answer["found"], answer)
+        self.assertNotEqual(
+            compare_store(
+                self.mine, expect_inode=f"{self.mine['device']}:{self.mine['inode']}",
+                nonce=answer,
+            )["sameStore"],
+            "proven",
         )

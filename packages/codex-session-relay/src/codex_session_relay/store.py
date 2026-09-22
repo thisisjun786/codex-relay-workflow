@@ -1558,6 +1558,32 @@ def _held_uri(fd, mode) -> str:
     return f"file:{PROC_FD}/{fd}?mode={mode}"
 
 
+def _opened_elsewhere(connection, expected):
+    """Which file SQLite actually opened, when it is not the one we asked for.
+
+    The descriptor is not what SQLite reads through. It resolves `/proc/self/fd/N` to a real
+    pathname and opens THAT, on its own descriptor - which is what puts the write-ahead log
+    beside the real file, and what leaves a window between our check and its open. So the
+    connection is asked which file it opened, and the answer is compared with the pathname this
+    store is addressed by. A connection that resolved to any other name is not this store's.
+
+    `PRAGMA database_list` is the only view of that decision `sqlite3` exposes; it reports the
+    main database's filename as SQLite computed it. A reading that cannot be obtained is itself
+    a refusal, because an unverifiable open is not a verified one.
+    """
+    try:
+        rows = connection.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error as error:
+        return f"the database this connection opened could not be named: {error}"
+    opened = next((row[2] for row in rows if row[1] == "main"), None)
+    if opened != expected:
+        return (
+            f"this connection opened {opened!r} rather than the database at {expected}, so"
+            " nothing was read from it"
+        )
+    return None
+
+
 def probe(selection: StateSelection) -> dict:
     """Describe the selected state WITHOUT constructing a Store.
 
@@ -1643,32 +1669,44 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "ro"), uri=True, timeout=5)
                             try:
                                 connection.row_factory = sqlite3.Row
-                                access["dbReadable"] = True
-                                for key, field in (
-                                    ("store_id", "storeId"),
-                                    ("store_created_at", "createdAt"),
-                                    ("version", "schemaVersion"),
-                                ):
-                                    row = connection.execute(
-                                        "SELECT value FROM schema_meta WHERE key = ?", (key,)
-                                    ).fetchone()
-                                    # A store written before identity existed has no row here.
-                                    # Absence is reported as absence and never defaulted,
-                                    # because a default could later compare equal to another
-                                    # store's and be read as proof.
-                                    store[field] = row["value"] if row is not None else None
+                                elsewhere = _opened_elsewhere(connection, expected)
+                                if elsewhere is not None:
+                                    notes.append("database read failed: " + elsewhere)
+                                else:
+                                    access["dbReadable"] = True
+                                    for key, field in (
+                                        ("store_id", "storeId"),
+                                        ("store_created_at", "createdAt"),
+                                        ("version", "schemaVersion"),
+                                    ):
+                                        row = connection.execute(
+                                            "SELECT value FROM schema_meta WHERE key = ?",
+                                            (key,),
+                                        ).fetchone()
+                                        # A store written before identity existed has no row
+                                        # here. Absence is reported as absence and never
+                                        # defaulted, because a default could later compare
+                                        # equal to another store's and be read as proof.
+                                        store[field] = row["value"] if row is not None else None
                             finally:
                                 connection.close()
                         except (OSError, sqlite3.Error, TypeError, ValueError) as error:
                             notes.append(
                                 f"database read failed: {type(error).__name__}: {error}")
 
-                    # Asked again. The read connection is closed by now, and a rename between
-                    # the two would otherwise put the write probe on a relocated name, where
-                    # SQLite was measured to fail AND leave a stray log behind.
+                    # Asked again, and it closes two things. A rename between the two
+                    # connections would put the write probe on a relocated name, where SQLite
+                    # was measured to fail AND leave a stray log behind. It is also the closing
+                    # question for the read that just happened: a store that moved during it
+                    # leaves an identity a caller reads as "the store at this path", so what
+                    # that read published is withdrawn rather than reported.
                     moved = _relocation(fd, expected)
                     if moved is not None:
-                        notes.append("database write probe failed: " + moved)
+                        notes.append("the database moved while it was being read: " + moved)
+                        access["dbReadable"] = False
+                        store["storeId"] = store["createdAt"] = None
+                        store["schemaVersion"] = None
+                        store["device"] = store["inode"] = store["links"] = None
                     else:
                         try:
                             connection = sqlite3.connect(
@@ -1677,10 +1715,14 @@ def probe(selection: StateSelection) -> dict:
                             try:
                                 connection.execute("BEGIN IMMEDIATE")
                                 connection.execute("ROLLBACK")
-                                # Acquiring a write transaction is evidence that this process
-                                # can write NOW. It is not a promise that a later commit
-                                # succeeds; a full disk still fails.
-                                access["dbWritable"] = True
+                                elsewhere = _opened_elsewhere(connection, expected)
+                                if elsewhere is not None:
+                                    notes.append("database write probe failed: " + elsewhere)
+                                else:
+                                    # Acquiring a write transaction is evidence that this
+                                    # process can write NOW. It is not a promise that a later
+                                    # commit succeeds; a full disk still fails.
+                                    access["dbWritable"] = True
                             finally:
                                 connection.close()
                         except (OSError, sqlite3.Error) as error:
@@ -1729,12 +1771,30 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
+            # Before the statement runs: which file did SQLite itself open?
+            elsewhere = _opened_elsewhere(connection, expected)
+            if elsewhere is not None:
+                return {**unknown, "readable": False, "rows": [], "detail": elsewhere}
             rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
         except sqlite3.Error as error:
+            # Ask why before reporting what. A store moved out from under the read fails the
+            # statement too, and calling that a readable database whose query failed would
+            # describe the symptom while hiding the cause.
+            moved = _relocation(fd, expected)
+            if moved is not None:
+                return {**unknown, "readable": False, "rows": [], "detail": moved}
             return {**unknown, "readable": True, "rows": [],
                     "detail": f"{type(error).__name__}: {error}"}
         finally:
             connection.close()
+        # Asked once more, now that the read is over. The pre-connect answer says the file was
+        # this store when the read started; without this one, a rename during the read would
+        # still return rows and an identity a caller reads as "the store at this path". The
+        # claim these two make together is that the file was the one at this pathname for the
+        # whole read.
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "readable": False, "rows": [], "detail": moved}
         # Both of this read's own observations, carried as the larger count, for the reason
         # nonce_lookup has always carried it: a second name present at the open and unlinked
         # before the close is the same hazard as one that stayed, because a peer that already
@@ -1784,6 +1844,10 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
+            elsewhere = _opened_elsewhere(connection, expected)
+            if elsewhere is not None:
+                return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                        "detail": elsewhere}
             row = connection.execute(
                 "SELECT written_by, written_at FROM store_challenge WHERE nonce = ?", (nonce,)
             ).fetchone()
@@ -1791,10 +1855,21 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
             # NOT readable. A locked, malformed or momentarily unavailable database answers no
             # question, and calling it readable turns "we could not look" into "it is not
             # there", which compare_store then grades as a definite store mismatch.
+            moved = _relocation(fd, expected)
+            if moved is not None:
+                return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                        "detail": moved}
             return {**unknown, "nonce": nonce, "found": False, "readable": False,
                     "detail": f"{type(error).__name__}: {error}"}
         finally:
             connection.close()
+        # The same closing question the row leg asks, and it matters more here: this answer is
+        # the only evidence compare_store grades as proof, so it must not survive the store
+        # moving out from under it mid-read.
+        moved = _relocation(fd, expected)
+        if moved is not None:
+            return {**unknown, "nonce": nonce, "found": False, "readable": False,
+                    "detail": moved}
         # Both of this read's own observations, carried as the larger count. A second name
         # present at the open and unlinked before the close leaves the closing count at one,
         # and a peer that already opened the removed alias can hold that connection and keep

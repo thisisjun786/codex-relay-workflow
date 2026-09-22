@@ -146,13 +146,15 @@ This is Linux-specific, the same assumption artifact authorization already makes
 `/proc/self/fd` is unavailable a read cannot be bound to the file it came from at all, so it
 is refused rather than answered on the weaker measurement.
 
-Two limits, because a refusal is not the same as the window being gone. SQLite resolves the
-descriptor to a real name and opens that name - which is what puts `-wal` and `-shm` beside the
-real file, and why a relocated database is refused before a connection is opened, since a read
-through the moved name fails against a live log and leaves a stray one behind. That check is an
-observation rather than a lock, so a rename timed inside SQLite's own resolve-then-open, or
-inside the gap between the check and the connect it guards, is still not covered. What it does
-remove is every relocation that already happened, which is the reachable case.
+The answer is bracketed on both sides. SQLite resolves the descriptor to a real name and opens
+that name on its own descriptor - which is what puts `-wal` and `-shm` beside the real file - so
+the connection is also asked which file it opened, through `PRAGMA database_list`, and the
+descriptor is checked again after the read. A store moved before, during or after the read is
+refused rather than answered, and `doctor` withdraws what a moved read had already published.
+
+One limit remains, and no check on this side can observe it: a different file swapped ONTO the
+expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
+locks. What they remove is every move of this store, which is the reachable case.
 
 And a store that is present but will not state its identity is not a store that is absent:
 `doctor` reports it as present and unidentified, and the lifecycle commands treat it as
