@@ -638,6 +638,26 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
+    def test_a_late_attempt_does_not_revive_the_assignment_it_belongs_to(self):
+        """Currency comes from records that stop moving, which the attempts do not.
+
+        Attempts are append-only and arrive late by design: a lost creation response for January's
+        assignment can be reconciled in March. Taking the newest coordinator timestamp of any kind
+        therefore revived it over the assignment declared and bound in February, and every
+        disposition, receipt and hold decision went to the stale one. The contract already settles
+        what such an attempt means - T3 reads a late acceptance as identity evidence and nothing
+        more - so currency reads only the create-once facts, the declaration and the bind.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        intent.record_attempt(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            outcome="accepted", task_id=CHILD, at="2026-03-01T00:00:00+00:00",
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a late attempt revived the assignment it belongs to")
+
     def test_a_forward_dated_claim_cannot_move_which_assignment_is_current(self):
         """Currency is read from the coordinator's records and never from the child's.
 

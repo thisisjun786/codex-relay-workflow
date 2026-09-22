@@ -365,9 +365,12 @@ def _correlated(marker, session_id, assignment=None):
 def _authority_moment(marker):
     """The newest instant the COORDINATOR recorded for this assignment, or None.
 
-    The declaration, the bind and the attempts: never the claim. Currency decides which assignment
-    a Stop is judged under, so a child able to move it could pin every turn to a stale assignment
-    and stop being detected on the current one.
+    The declaration and the bind, both create-once: never the claim, and never the attempts.
+    Currency decides which assignment a Stop is judged under, so a child able to move it could pin
+    every turn to a stale assignment and stop being detected on the current one. The attempts are
+    the coordinator's and are still excluded, because they are append-only: a late reconciliation
+    can record an accepted attempt for an assignment the coordinator has already moved on from,
+    and T3 says such an attempt is identity evidence and nothing more.
     """
     moments = []
     intent_fact = marker.get("intent")
@@ -376,9 +379,6 @@ def _authority_moment(marker):
     bound_fact = marker.get("bound")
     if isinstance(bound_fact, dict):
         moments.append(_moment(bound_fact.get("at")))
-    for attempt in marker.get("attempts") or []:
-        if isinstance(attempt, dict):
-            moments.append(_moment(attempt.get("at")))
     found = [moment for moment in moments if moment is not None]
     return max(found) if found else None
 

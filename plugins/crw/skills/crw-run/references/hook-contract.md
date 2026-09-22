@@ -195,21 +195,26 @@ The selection test is the claim against the DIRECTORY and never against the inte
 authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
 assignment the claim belongs to.
 
-The claimed candidates are then ordered by the newest CLAIM rather than the newest declaration,
-and that is the one ordering that answers both failures. Ordering on the declaration reads the
-intent, so a candidate whose intent cannot be read sorts below every readable sibling: the reader
-lands on an older assignment and holds a turn against it while nobody is told the current one
-could not be read. Preferring every unreadable candidate instead is the opposite failure, and the
-one this walk has always warned about - a stale corrupt assignment a session finished with in
-January outranks the healthy one it claimed in February and releases a turn the current assignment
-would have held. The claim answers both: this session wrote it, it hashes to the directory it sits
-in, and it says when, so currency survives an unreadable intent and a corrupt candidate wins only
-when it really is the current one. It is the child's own record and therefore weaker evidence than
-the coordinator's declaration, bounded by the fact that a claim selects nothing unless it hashes
-to the directory it sits in: the choice is only ever between assignments this session legitimately
-claimed. When the selected assignment's facts cannot be read the turn reports `state_unreadable`
-or `marker_malformed` on that assignment. When no claim selects anything, recency over the
-declarations decides exactly as before.
+The claim says WHICH assignments are this session's; the coordinator says which of them is
+current. Those candidates are ordered by the newest coordinator record that CANNOT ADVANCE once
+the assignment has moved on - the declaration and the bind, both create-once - and by nothing
+else. Three orderings were tried and two of them were wrong in instructive ways. Ordering on the
+declaration alone reads the intent, so a candidate whose intent cannot be read sorts below every
+readable sibling and the current assignment is silently passed over. Preferring every unreadable
+candidate instead is the failure this walk has always warned about: a stale corrupt assignment a
+session finished with in January outranks the healthy one it claimed in February and releases a
+turn the current assignment would have held. Ordering on the claim fixes both and hands the child
+the answer, since the claim's timestamp is child-written: forward-date a stale claim, publish a
+releasing disposition there, and nothing is detected on the current assignment again.
+
+The attempts are coordinator records and are excluded all the same, because append-only is the
+wrong shape for currency: a reconciliation can record an accepted attempt for January's assignment
+in March, and taking the newest would revive it over the one declared and bound in February. T3
+already says a late attempt is identity evidence and nothing more. The bind is what keeps the
+answer available when the declaration is the record that went unreadable. When the selected
+assignment's facts cannot be read the turn reports `state_unreadable` or `marker_malformed` on
+that assignment. When no claim selects anything, recency over the declarations decides exactly as
+before.
 
 The pre-bind window is not blind. A correlated session whose bind has not landed reads as
 `correlated_unbound`: released, never held, but its hook still records the turn's observation. When

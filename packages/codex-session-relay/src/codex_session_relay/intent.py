@@ -561,8 +561,9 @@ def select_assignment(root, workspace, session_id):
 def _authority_moment(facts):
     """The newest instant the COORDINATOR recorded for this assignment, or None.
 
-    Currency decides which assignment a Stop is judged under, so it is read only from records the
-    coordinator writes: the declaration, the bind, and the creation attempts. Never from the claim.
+    Currency decides which assignment a Stop is judged under, so it is read only from coordinator
+    records that CANNOT ADVANCE once the assignment has moved on: the declaration and the bind,
+    both create-once. Never from the claim, and never from the attempts.
 
     That restriction is the whole point. Ordering on the claim reads a timestamp the child itself
     wrote, and a child that can move currency can pin every turn to a stale assignment - publish a
@@ -570,12 +571,17 @@ def _authority_moment(facts):
     are never looked at again. Detection would then depend on a number the party being detected
     supplies.
 
-    Three sources rather than the declaration alone, because the declaration is the record that
-    goes unreadable in the case this exists for. A bind and an accepted attempt are coordinator
-    facts in their own files, so an assignment whose intent cannot be read still carries evidence
-    of when the coordinator last acted on it. One carrying none of the three has no coordinator
-    evidence of being current at all, and does not outrank one that has: it also cannot be held,
-    because a hold needs the bind.
+    The attempts are coordinator records and are still excluded, because append-only is the wrong
+    shape for this: a reconciliation can record an accepted attempt for January's assignment in
+    March, and taking the newest would revive it over the one declared and bound in February. The
+    contract already says a late attempt is identity evidence and nothing more (T3). Currency has
+    to come from a fact that stops moving, and create-once is exactly that guarantee.
+
+    Two sources rather than the declaration alone, because the declaration is the record that goes
+    unreadable in the case this exists for. The bind is a coordinator fact in its own file, so an
+    assignment whose intent cannot be read still says when the coordinator bound it. One carrying
+    neither has no coordinator evidence of being current at all, and does not outrank one that has:
+    it also cannot be held, because a hold needs the bind.
     """
     moments = []
     intent_fact = facts.get("intent")
@@ -584,9 +590,6 @@ def _authority_moment(facts):
     bound_fact = facts.get("bound")
     if isinstance(bound_fact, dict):
         moments.append(_moment(bound_fact.get("at")))
-    for attempt in facts.get("attempts") or []:
-        if isinstance(attempt, dict):
-            moments.append(_moment(attempt.get("at")))
     found = [moment for moment in moments if moment is not None]
     return max(found) if found else None
 
