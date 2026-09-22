@@ -252,8 +252,14 @@ without anybody asking. The pass is bounded like every other pass — each sourc
 `SWEEP_LIMIT` rows — and it ROTATES: `fault_cursors` remembers where each source stopped and the
 next sweep resumes there, wrapping to the start when a page comes back short. A fixed prefix
 re-read on every tick would have starved everything behind it forever, which is the same shape
-the delivery window keeps a per-parent cursor to avoid. A page that did not read its source from
-the start clears nothing, because a partial read establishes no absence.
+the delivery window keeps a per-parent cursor to avoid. The scan over open faults rotates too, for the same reason.
+
+Recovery is asked of each fault DIRECTLY - an existence query for its own signature -
+rather than by differencing against a page. A page is a bounded prefix, so once a source
+holds more rows than one page no page is ever the whole source, and a rule that required
+one would have stopped clearing anything exactly when a store got busy. An existence
+query is exact however large the source is, and a class this cannot ask about is still
+never cleared by absence.
 
 The pass counts only what was NEWLY recorded, so a steady-state failure read again on every tick
 does not hold the loop at its fastest cadence forever. A daemon given no ledger ticks exactly as
