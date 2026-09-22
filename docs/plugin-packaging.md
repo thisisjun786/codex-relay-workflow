@@ -12,7 +12,7 @@ and the launchers only point at what that installer left behind.
 | --- | --- |
 | `.agents/plugins/marketplace.json` | Marketplace entry; its `source.path` names the plugin root |
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
-| `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
+| `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
@@ -39,6 +39,59 @@ non-default skills directory while also holding `./skills/` loaded only the decl
 one. The plugin specification bundled with Codex describes the opposite, saying
 declared components supplement default discovery. This package follows the measured
 behavior and keeps every shipped component under a declared path.
+
+## The version names the payload
+
+`codex plugin list` shows a name and a version, and the cache path is
+`$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`. Both of those are the version,
+so a version several payloads can claim answers no question an operator actually has.
+Revisions `fec0b69` and `174eacd` of this repository ship `plugins/crw` trees that differ in
+21 files, and both manifests declared `0.4.0`: nothing on the host distinguished them, and
+installing the second replaced the first in a directory of the same name.
+
+So the version carries its payload's digest as semantic-version build metadata:
+
+    "version": "0.4.0+640ccf7eadf4"
+
+`0.4.0` remains the release version and stays the release owner's to choose. Semantic
+versioning ignores build metadata when it orders two versions, so the suffix changes nothing
+about precedence; it only makes the displayed version, and the directory named after it,
+specific to the bytes underneath. Under this rule the two revisions above read
+`0.4.0+344a3a6949c7` and `0.4.0+4bbc00f85a6e`.
+
+The suffix is the first twelve hex characters of the digest of the payload, and it is derived
+rather than maintained. `python3 scripts/ci/plugin.py --record-version` writes it into the
+working-tree manifest; `python3 scripts/ci/plugin.py` re-derives it and refuses a version that
+names other bytes, naming the value that should have been recorded. That refusal covers the
+release payload, the working tree and an installed cache directory alike, so `--payload <dir>`
+answers which bytes the directory in front of you holds rather than which name it was filed
+under.
+
+It reads the manifest in that directory and not the directory's own name. An install derives
+both from one manifest, so they agree by construction; a cache renamed or assembled by hand
+still declares the payload it holds, and comparing that version with the directory it sits in
+is a separate reading this check does not make.
+
+The payload is what installation copies: the roots the manifest declares, `.codex-plugin/` and
+`LICENSE`, each file's path, mode and contents. It is the same payload `--json` reports a
+digest for and the same one `plugin_transition.py check-declaration` reports as
+`payloadDigest`, so what ships has one definition and the version is derived from that one.
+
+One field is left out of the digest, and it has to be. The manifest ships inside the payload it
+names, so digesting the bytes as they stand has no fixed point: recording the answer would
+change the answer. The version's build metadata is elided from the manifest before the digest
+is taken, which leaves a value that does not move once written. Every other byte of every
+shipped file still reaches the digest, the rest of the manifest included, so the suffix is the
+only difference between two release trees this rule cannot see. A shipped file that repeats the
+suffix is refused for the same reason: two places holding one derived value could never be
+updated to agree.
+
+Measured on codex-cli 0.154.0, installing from a local marketplace into an isolated
+`CODEX_HOME`: `codex plugin add` accepted `0.4.0+probe0a1b2c3d`, `codex plugin list` displayed
+that version in full, and the cache directory was `plugins/cache/crw/crw/0.4.0+probe0a1b2c3d`.
+`version` is a key the ingestion validator already reads; what this measured is that it accepts
+this spelling of the value and carries it into the path. Whether a published marketplace
+applies a further rule to build metadata was not measured.
 
 ## How hooks and MCP servers load
 
@@ -182,10 +235,13 @@ names as a positive control, so a new skill belongs in that list too. Keep relat
 links between skills pointing at siblings under the same parent; the cache preserves
 that layout.
 
-Bump `version` in the manifest when the change should reach installations, and
+Bump `version` in the manifest when the change should reach installations, run
+`python3 scripts/ci/plugin.py --record-version` so the suffix names the new payload, and
 install the plugin again: a cached version changes only on installation, and a task
 already running may still hold cache-bound references to the version its session started
-with — the same directory the next install removes.
+with — the same directory the next install removes. Adding a skill changes the payload, so
+the suffix moves even when the release version does not, and the check refuses the commit
+that leaves the old one in place.
 
 
 ## The cache lifetime
@@ -298,10 +354,15 @@ a guarantee that the next update will be survivable.
 The cache keeps one version per plugin, and installing a new version replaces the
 previous directory instead of keeping both. Rolling back therefore means making
 the source offer the earlier revision again and reinstalling it, not selecting an
-older copy from the cache. Bump `version` in the manifest for a release; a new
+older copy from the cache. Bump `version` in the manifest for a release and record the
+payload suffix under it; a new
 task picks up the new package when its session starts, and work already running may still hold
 cache-bound references to the version it started with, which is the directory the new install
 removes.
+
+Because the suffix follows the payload, an earlier revision reinstalls into its own directory
+rather than over the one that replaced it, and `codex plugin list` says which of the two is
+present.
 
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a
@@ -323,6 +384,10 @@ working tree, so the bytes it validates are the ones a clone publishes. `--json`
 prints that payload digest, and `--payload <dir>` applies the same rules to an
 installed cache directory, which is how an installed tree is compared against its
 source.
+
+`--record-version` is the one command here that writes: it puts the derived suffix into the
+working-tree manifest and stops without validating anything. Commit what it wrote, because the
+release payload is read from a revision and not from that tree.
 
 A passing check is evidence about this source. It is not evidence that a plugin
 installed, that a skill loaded on any host, or that a running workflow changed.
