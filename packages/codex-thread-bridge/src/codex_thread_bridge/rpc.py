@@ -165,6 +165,9 @@ class AppServer:
         self._pending: dict[int, tuple[str, asyncio.Future, Any]] = {}
         self._counter = 0
         self._connect_lock = asyncio.Lock()
+        # Retirements started out of band, kept so they are neither garbage collected mid-close
+        # nor left for close() to miss. See _retire_out_of_band.
+        self._retiring = set()
         self.info: dict[str, Any] = {}
         # Every server-to-client request this connection refused, newest last and bounded.
         # Kept because "this bridge granted no approval" should be evidence a caller can read,
@@ -359,11 +362,10 @@ class AppServer:
                 # retires for, so it cannot be treated as the gentler case just because the
                 # exception type differs. Detaching is synchronous ON PURPOSE: it is the step
                 # that stops a later request picking this socket up, and a cancelled coroutine
-                # cannot rely on reaching another await. The close is cleanup, so it is shielded
-                # and allowed to finish out of band rather than skipped.
-                self._detach(ws, reader)
-                with contextlib.suppress(asyncio.CancelledError):
-                    await asyncio.shield(self._retire(ws, reader))
+                # cannot rely on reaching another await. The close is cleanup and is handed off
+                # rather than awaited, because the caller that cancelled us is already waiting
+                # out its own deadline and must not also pay for the peer's close handshake.
+                self._retire_out_of_band(ws, reader)
                 raise
             message = await asyncio.wait_for(future, bounds.ack)
         except TimeoutError as error:
@@ -422,6 +424,10 @@ class AppServer:
 
     async def close(self):
         await self._retire(self._ws, self._reader)
+        # Anything handed off by a cancelled write finishes before this client says it closed.
+        outstanding = tuple(self._retiring)
+        if outstanding:
+            await asyncio.gather(*outstanding, return_exceptions=True)
 
     async def _retire(self, ws, reader):
         """Discard exactly one connection, and never whatever replaced it.
@@ -450,3 +456,25 @@ class AppServer:
             self._ws = None
         if self._reader is reader:
             self._reader = None
+
+    def _retire_out_of_band(self, ws, reader):
+        """Detach now, close on this client's own time rather than the cancelled caller's.
+
+        Awaiting the close here - even shielded - spends the peer's close handshake, up to
+        close_timeout, inside a handler that the caller's deadline is already waiting on. The
+        relay's submission backstop and its shutdown drain both wait for exactly this frame, so
+        they would overrun their advertised bound by that much. Detaching is what makes the
+        socket unreachable, and it has already happened by the time this returns; the teardown
+        is owned here and drained by close().
+        """
+        self._detach(ws, reader)
+        task = asyncio.ensure_future(self._retire(ws, reader))
+        self._retiring.add(task)
+        task.add_done_callback(self._retired)
+
+    def _retired(self, task):
+        self._retiring.discard(task)
+        if not task.cancelled():
+            # Retrieved rather than ignored. A teardown failure is not the caller's error, but an
+            # exception nobody reads is a warning that buries the next one.
+            task.exception()

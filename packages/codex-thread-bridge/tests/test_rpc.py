@@ -459,3 +459,57 @@ async def test_a_handshake_phase_expiry_is_reported_as_the_caller_s_establishmen
     finally:
         fake.release.set()
         await client.close()
+
+async def test_a_cancelled_write_does_not_pay_for_the_close_handshake(fake_server):
+    """Detachment is immediate; the teardown is this client's own business.
+
+    The caller that cancelled is already waiting out its own deadline - the relay's submission
+    backstop, or its shutdown drain - and awaiting the close inside the handler would spend the
+    peer's close handshake, up to close_timeout, on top of the bound those two advertise.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=5)
+    try:
+        await client.connect()
+        live = client._ws
+        writing, closing = asyncio.Event(), asyncio.Event()
+
+        class SlowToClose:
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def send(self, _payload):
+                writing.set()
+                await asyncio.Event().wait()
+
+            async def close(self):
+                await closing.wait()
+                await self._inner.close()
+
+            def __aiter__(self):
+                return self._inner.__aiter__()
+
+        client._ws = SlowToClose(live)
+
+        request = asyncio.create_task(client.call("thread/read", {"threadId": "thread-1"}))
+        await asyncio.wait_for(writing.wait(), 5)
+        request.cancel()
+
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        elapsed = asyncio.get_running_loop().time() - started
+
+        # The close has not even been allowed to begin, and the caller is already back.
+        assert elapsed < 1, f"the cancelled caller waited {elapsed}s on someone else's teardown"
+        assert client._ws is None, "the socket was still reachable after a cancelled write"
+        assert client._retiring, "the teardown was dropped rather than handed off"
+
+        # And it is owned rather than orphaned: close() drains it.
+        closing.set()
+        await client.close()
+        assert not client._retiring
+    finally:
+        closing.set()
+        await client.close()
+
