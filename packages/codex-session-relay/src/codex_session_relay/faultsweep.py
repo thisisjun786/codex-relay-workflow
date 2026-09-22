@@ -34,6 +34,11 @@ OBSERVATION_SCHEMA = "reporting-observation/1"
 UNREPORTED = "unreported"
 UNMEASURED = "unmeasured"
 REPORTED = "reported"
+# Every state that ESTABLISHED something, which is what an unmeasured notice says nobody had.
+# in_progress and unmanaged are answers too: the turn is still running, or this relay never
+# managed it. Leaving the notice open after one of those keeps a record about a question that
+# has since been answered.
+ESTABLISHED = (REPORTED, UNREPORTED, "in_progress", "unmanaged")
 
 # A delivery that is nowhere any more, so an unmoving row in one of these is not a fault.
 SETTLED_DELIVERY = ("dispatched", "inbox_only", "superseded")
@@ -270,7 +275,7 @@ def reading_faults(readings, *, product, scope, store=None) -> dict:
             continue
         signature = {"relationship": relationship, "turn": turn}
         placed = scope_of(store, relationship, scope, cache) if store is not None else scope
-        if state in (UNREPORTED, REPORTED):
+        if state in ESTABLISHED:
             # This reading established something about the relationship, which is exactly
             # what an unmeasured notice says nobody had. Leaving it open would keep a notice
             # about a question that has since been answered.

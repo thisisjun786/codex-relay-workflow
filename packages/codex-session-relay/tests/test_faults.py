@@ -487,6 +487,21 @@ class FifthReviewFindings(RelayTestCase):
         faultsweep.record_all(self.ledger, second, store=self.store)
         self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
 
+    def test_a_still_running_turn_also_answers_the_unmeasured_question(self):
+        """in_progress and unmanaged establish something too, so the notice does not linger."""
+        reading = {"schema": faultsweep.OBSERVATION_SCHEMA,
+                   "relationshipId": self.relationship,
+                   "selectors": {"turn": "turn-7"}, "reportingState": "unmeasured"}
+        faultsweep.record_all(self.ledger, faultsweep.sweep(self.store, readings=[reading]),
+                              store=self.store)
+        identifier = faults.fault_id(PRODUCT, "observation_unmeasured",
+                                     {"relationship": self.relationship})
+        self.assertIsNone(self.ledger.get(identifier)["cleared_at"])
+        faultsweep.record_all(self.ledger, faultsweep.sweep(
+            self.store, readings=[dict(reading, reportingState="in_progress")]),
+            store=self.store)
+        self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
+
 
 
 class Lifecycle(LedgerCase):
