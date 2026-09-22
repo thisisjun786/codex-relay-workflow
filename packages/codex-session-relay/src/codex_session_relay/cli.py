@@ -780,8 +780,13 @@ def cmd_packet_check(services, args) -> dict:
     record = _json_document(args.record, "receiver's own reading")
     answer = packets.reception(one, record)
     answer["recordSource"] = "supplied"
+    # A supplied reading is checked, and an absent one is the honest starting ladder. Those
+    # are different inputs: falling back on falsiness replaced a malformed reading with a
+    # clean one and reported no promotions for it, and passing it through unchecked turned a
+    # valid reception into a host failure. Present means checked; missing means unobserved.
+    supplied = one.get("progression")
     answer["promotions"] = packets.unsupported_promotions(
-        one.get("progression") or packets.unobserved())
+        packets.unobserved() if supplied is None else supplied)
     return answer
 
 

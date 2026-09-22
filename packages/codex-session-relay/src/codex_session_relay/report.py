@@ -121,7 +121,7 @@ REVISION_ENVELOPE = (envelope.PARENT_TO_CHILD, "revision_request")
 MEASURED_PURPOSE = "completion"
 
 
-def child_purpose(outcome, report) -> str:
+def child_purpose(outcome) -> str:
     """Which child purpose this event actually is, derived from what the store already holds.
 
     Every child message used to render as a completion. A blocked turn and a candidate handed
@@ -131,14 +131,21 @@ def child_purpose(outcome, report) -> str:
 
     Derived, never supplied. A caller that could pass the purpose in could label a blocked
     report a review-ready one, which is the same trade this package refuses everywhere else.
-    The two facts it reads are the outcome the receipt asserted and whether the child recorded
-    the merge-readiness handoff that asks for a judgement; a ready outcome without one is a
-    result being delivered rather than a candidate being offered.
+
+    It reads the RECEIPT'S OUTCOME and nothing else, and the restraint is the point. The
+    purpose is an input to the message id, which relay-envelope/1 promises stays put across
+    retries, restarts and second readings. An earlier version of this also read whether a
+    merge-readiness handoff had been recorded, which is not a property of the event: a
+    resubmission can add one, so the same event would derive a second id and the recipient
+    would owe two obligations where one fact happened. The outcome is asserted once by the
+    child's receipt and never moves, so a purpose derived from it does not either.
+
+    The distinction between a candidate offered for judgement and a result being delivered
+    has not been lost; it lives in relay-packet/1, where review_ready is its own purpose and
+    the packet carries the handoff evidence that makes it one.
     """
     if outcome == "blocked_needs_input":
         return "blocked"
-    if outcome == READY_OUTCOME and (report or {}).get("handoff"):
-        return "review_ready"
     return MEASURED_PURPOSE
 
 
@@ -312,7 +319,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     if pinned:
         total = sum(_size(line) + 1 for line in pinned)
         room = _confirmations_room(summary, reason, next_action,
-                                   child_purpose(outcome, {"handoff": handoff}))
+                                   child_purpose(outcome))
         if total > room:
             raise ReceiptRefused(
                 RefusalReason.MERGE_EVIDENCE_REQUIRED,
@@ -1390,7 +1397,7 @@ def compose_completion(row, receipt, request, report, *, budget=BUDGET, context=
                    or report["executionGeneration"])
     confirmations = _acceptance_lines(_accepted_dispositions(report.get("handoff")))
     region = envelope_of(row, receipt, report, envelope.CHILD_TO_PARENT,
-                         child_purpose(receipt.get("outcome"), report), context=context)
+                         child_purpose(receipt.get("outcome")), context=context)
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",

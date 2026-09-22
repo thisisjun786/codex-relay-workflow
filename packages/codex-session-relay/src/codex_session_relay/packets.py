@@ -49,6 +49,18 @@ BODY = "body"
 DECISION = "decision"
 CORRELATION = "correlationId"
 
+# What each typed field IS, so a value of the wrong shape is refused rather than compared.
+# Non-empty was the whole test before, and an object-valued generation compared equal to an
+# equally malformed record value, so two wrong answers agreed and the reading came back
+# accepted. A generation is a number; the rest are text.
+FIELD_TYPES = {
+    ISSUE: str,
+    GENERATION: int,
+    CRITERIA_DIGEST: str,
+    CALLBACK: str,
+    BODY: str,
+}
+
 # What each occasion cannot do without, and nothing more. The restraint matters as much as
 # the requirement: demanding a generation from an assignment would refuse every legitimate
 # first dispatch, because a newly created child's registration needs a task id that creation
@@ -170,6 +182,13 @@ def _check_artifact(one):
             RefusalReason.MALFORMED_RECEIPT,
             "a " + one["kind"] + " artifact states " + ", ".join(missing)
             + "; a deliverable identified by half its identity is not identified")
+    if one["kind"] == PULL_REQUEST:
+        number = one.get("number")
+        if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a pull request number is a positive integer, not a "
+                + type(number).__name__)
     return one
 
 
@@ -419,6 +438,15 @@ def check(one, *, required=None) -> None:
             "this reader is " + VERSION + " and the packet says " + repr(one.get("version"))
             + "; a version nobody mapped is diagnosed rather than read under these rules")
     envelope.check(region)
+    if region.get("version") != envelope.VERSION:
+        # The packet's own version says how to read the typed data; the region's says how to
+        # read the identification. Checking one and not the other let a relay-packet/1 carry
+        # an envelope nobody here has mapped and be compared field by field anyway.
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "this reader is " + envelope.VERSION + " and the region says "
+            + repr(region.get("version")) + "; the identification region is read under the"
+            " version that wrote it or not at all")
     _rederive(region)
     direction, purpose = region.get("direction"), region.get("purpose")
     if required is None:
@@ -436,6 +464,28 @@ def check(one, *, required=None) -> None:
                 "a " + str(purpose) + " packet cannot omit " + name + ": "
                 + envelope.shown(value) + ". It is one of "
                 + ", ".join(required) + ", which this occasion is read against")
+    for name, wanted in FIELD_TYPES.items():
+        value = one.get(name)
+        if value is None:
+            continue
+        # bool is an int to Python and is not a generation, so it is excluded by name.
+        if isinstance(value, bool) or not isinstance(value, wanted):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                name + " is " + wanted.__name__ + ", not a " + type(value).__name__
+                + "; a value of the wrong shape compares equal to an equally wrong record"
+                " value and comes back agreed")
+    if one.get(EVIDENCE) is not None:
+        if not isinstance(one[EVIDENCE], (list, tuple)):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "evidence is a list of pointers, not a " + type(one[EVIDENCE]).__name__)
+        for item in one[EVIDENCE]:
+            if not isinstance(item, str) or not item.strip():
+                raise PacketRefused(
+                    RefusalReason.MALFORMED_RECEIPT,
+                    "each evidence entry is a pointer somebody can follow, not "
+                    + repr(item))
     if _present(one.get(POLICY)) is not None:
         if not isinstance(one[POLICY], dict):
             raise PacketRefused(
@@ -842,6 +892,11 @@ def unobserved() -> dict:
 
 def check_progression(ladder) -> None:
     """Refuse a ladder answering with a record this workflow does not read for that state."""
+    if not isinstance(ladder, dict):
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a handover ladder is an object of named states, not a "
+            + type(ladder).__name__)
     for name in PROGRESSION:
         if name not in ladder:
             raise PacketRefused(
@@ -879,6 +934,11 @@ def unsupported_promotions(ladder) -> list:
     steps over its own: read can never be held, and treating it as unheld would report every
     legitimate acknowledgement as a promotion.
     """
+    if not isinstance(ladder, dict):
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a handover ladder is an object of named states, not a "
+            + type(ladder).__name__)
     check_progression(ladder)
     out, held = [], True
     for name in PROGRESSION:

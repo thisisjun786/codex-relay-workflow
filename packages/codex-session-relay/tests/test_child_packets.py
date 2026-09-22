@@ -11,6 +11,7 @@ a case that must NOT pass, because a validator whose negatives were never run is
 nobody has tested.
 """
 
+import inspect
 import json
 import unittest
 
@@ -419,21 +420,25 @@ class TheRestoreSectionOnARealReport(DeliveryTestCase):
 
 class WhichChildMessageThisActuallyIs(unittest.TestCase):
     def test_a_blocked_outcome_no_longer_renders_as_a_completion(self):
-        self.assertEqual(report.child_purpose("blocked_needs_input", {}), "blocked")
+        self.assertEqual(report.child_purpose("blocked_needs_input"), "blocked")
 
-    def test_a_candidate_offered_for_judgement_says_so(self):
+    def test_it_reads_the_receipt_outcome_and_nothing_that_can_move(self):
+        """The purpose feeds the message id, which is promised to stay put across retries.
+
+        An earlier version also read whether a merge-readiness handoff had been recorded.
+        That is not a property of the event: a resubmission can add one, so the same event
+        would derive a second id and the recipient would owe two obligations where one fact
+        happened. Taking only the outcome is what keeps the identity still.
+        """
+        self.assertEqual(report.child_purpose("ready_for_review"), "completion")
         self.assertEqual(
-            report.child_purpose("ready_for_review", {"handoff": {"isDraft": False}}),
-            "review_ready")
-
-    def test_a_ready_outcome_with_nothing_to_review_is_a_result_being_delivered(self):
-        self.assertEqual(report.child_purpose("ready_for_review", {}), "completion")
+            len(inspect.signature(report.child_purpose).parameters), 1,
+            "a second input is a second thing that can move the message id")
 
     def test_every_derived_purpose_is_one_the_envelope_carries(self):
         for outcome in ("ready_for_review", "blocked_needs_input", "failed", "interrupted"):
             with self.subTest(outcome=outcome):
-                envelope.kind_of(envelope.CHILD_TO_PARENT,
-                                 report.child_purpose(outcome, {"handoff": {}}))
+                envelope.kind_of(envelope.CHILD_TO_PARENT, report.child_purpose(outcome))
 
 
 class TheWholeRoundTrip(unittest.TestCase):
@@ -601,6 +606,34 @@ class APacketNobodyConstructed(unittest.TestCase):
                 broken = self.loaded(an_assignment(), **{field: value})
                 with self.assertRaises(packets.PacketRefused):
                     packets.reception(broken, a_record())
+
+    def test_a_typed_field_of_the_wrong_shape_is_refused_rather_than_compared(self):
+        """Two wrong answers compare equal, and the reading comes back agreed."""
+        for field, value in ((packets.GENERATION, {"n": 1}), (packets.ISSUE, 149),
+                             (packets.CRITERIA_DIGEST, ["d"]), (packets.GENERATION, True)):
+            with self.subTest(field=field, shape=type(value).__name__):
+                broken = self.loaded(a_review_ready(), **{field: value})
+                with self.assertRaises(packets.PacketRefused):
+                    packets.reception(broken, a_record(**{field: value}))
+
+    def test_an_evidence_entry_nobody_can_follow_is_refused(self):
+        broken = self.loaded(a_review_ready(), evidence=[{"path": "somewhere"}])
+        with self.assertRaises(packets.PacketRefused):
+            packets.reception(broken, a_record())
+
+    def test_an_envelope_version_nobody_mapped_is_refused(self):
+        broken = self.loaded(a_review_ready())
+        broken["envelope"]["version"] = "relay-envelope/2"
+        with self.assertRaises(packets.PacketRefused) as caught:
+            packets.reception(broken, a_record())
+        self.assertIn("relay-envelope/2", caught.exception.detail)
+
+    def test_a_handover_ladder_of_the_wrong_shape_is_refused_rather_than_replaced(self):
+        """Falling back on falsiness answered for a reading nobody checked."""
+        for shape in ({}, [], "unobserved"):
+            with self.subTest(shape=type(shape).__name__):
+                with self.assertRaises(packets.PacketRefused):
+                    packets.unsupported_promotions(shape)
 
 
 class TheRegionFieldsNobodyGetsToWrite(unittest.TestCase):

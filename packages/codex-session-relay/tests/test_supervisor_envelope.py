@@ -369,17 +369,10 @@ class TheRenderedMessage(DeliveryTestCase):
         return event_id
 
     def test_the_completion_says_what_it_is_and_which_message_it_is(self):
-        """The purpose is the one the outcome and the handoff derive, not a fixed word.
-
-        a_report carries a merge-readiness handoff, so this event is a candidate being
-        offered for judgement rather than a result being delivered, and CRW-149 made the
-        envelope say which. The kind is unchanged: both are requests and both owe the
-        recipient an answer.
-        """
         event_id = self.recorded()
         message = self.delivery.render_message(event_id)
         self.assertIn("message: request", message)
-        self.assertIn("child_to_parent/review_ready", message)
+        self.assertIn("child_to_parent/completion", message)
         self.assertIn("envelope: " + envelope.VERSION, message)
         self.assertIn("an answer is owed by the recipient", message)
 
@@ -388,8 +381,7 @@ class TheRenderedMessage(DeliveryTestCase):
         row = self.delivery.get(event_id)
         expected = envelope.message_id(
             direction=envelope.CHILD_TO_PARENT, relation_id=row["relationship_id"],
-            purpose=report.child_purpose("ready_for_review", report.read(self.store, event_id)),
-            subject=event_id)
+            purpose="completion", subject=event_id)
         self.assertIn(f"messageId: {expected}", self.delivery.render_message(event_id))
 
     def test_the_sender_and_the_scope_are_read_rather_than_asserted(self):
