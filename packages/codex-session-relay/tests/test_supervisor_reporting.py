@@ -199,6 +199,28 @@ class OneFactOneObligation(ReportingTestCase):
         self.assertNotEqual(self.obligation_for(first["eventId"])["obligationId"],
                             self.obligation_for(second["eventId"])["obligationId"])
 
+    def test_two_blockers_that_share_their_words_are_still_two_blockers(self):
+        """The subject hashes prose fields, and prose contains the separator.
+
+        Space-joined, reason "waiting on API" with summary "schema update" hashed the same as
+        reason "waiting on" with summary "API schema update", so recording a report for the
+        first suppressed the second - a changed blocker read as one already reported.
+        """
+        relationship = self.register()
+        self._rid = relationship["relationshipId"]
+        causes = [("waiting on API", "schema update"), ("waiting on", "API schema update")]
+        identifiers = []
+        for attempt, (reason, summary) in enumerate(causes, start=1):
+            payload = self.execution_payload(relationship, "blocked_needs_input",
+                                             attempt=attempt)
+            self.accept(payload)
+            report.record(self.store, self.clock, event_id=payload["eventId"],
+                          **a_report(cxc_status=cxc.BLOCKED, cxc_reason=reason,
+                                     summary=summary, pr_number=None, pr_url=None,
+                                     pr_state=None, handoff=None))
+            identifiers.append(self.obligation_for(payload["eventId"])["obligationId"])
+        self.assertNotEqual(identifiers[0], identifiers[1])
+
     def test_the_same_event_survives_a_restart_with_the_same_id_and_still_standing(self):
         """Nothing was remembered between these two readings, which is the whole point."""
         event_id = self.reported()

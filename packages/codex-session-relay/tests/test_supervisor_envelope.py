@@ -338,6 +338,29 @@ class TheDirectiveCommand(LinkageTestCase):
             self.record(purpose="scope_correction", correlation="msg-1")["directiveId"],
             first["directiveId"])
 
+    def test_a_legacy_row_does_not_swallow_the_pointer_a_caller_asked_for(self):
+        """It used to report success while the purpose and correlation vanished.
+
+        A row written before this contract has no room for them, and the derived id does not
+        carry them either, so returning that row answered a request it had not honoured.
+        """
+        self.record(reference="see the thread from Tuesday")
+        refusal = self.assertRefused(
+            RefusalReason.LINK_CONFLICT,
+            lambda: self.record(purpose="scope_correction", correlation="msg-1"))
+        self.assertIn("nowhere to go", refusal.detail)
+        self.assertEqual(
+            self.store.one("SELECT reference FROM scope_directives WHERE digest = ?",
+                           ("d-one",))["reference"], "see the thread from Tuesday",
+            "and the instruction already recorded is preserved rather than rewritten")
+
+    def test_a_caller_asserting_no_purpose_still_converges_on_the_stored_row(self):
+        """It claims nothing the row could contradict, so this is an ordinary replay."""
+        first = self.record(purpose="scope_correction", correlation="msg-1")
+        self.assertEqual(self.record()["directiveId"], first["directiveId"])
+        self.assertEqual(self.record(reference="an operator note")["directiveId"],
+                         first["directiveId"])
+
 
 class TheRenderedMessage(DeliveryTestCase):
     def recorded(self, **overrides):
