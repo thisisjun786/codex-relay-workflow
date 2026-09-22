@@ -2,7 +2,10 @@
 
 Two relations carry messages here. A parent and its child exchange a completion and a
 correction, and that pair has a queue, a receipt, an acknowledgement and a verdict. A
-supervisor and a parent exchange instructions and reports, and that pair has none of those.
+supervisor and a parent exchange instructions and reports, and that pair has less: an
+instruction downward is a linkage record rather than a send, and a report upward is a staged
+message and the recipient's own readback, which [the supervisor channel](supervisor-channel.md)
+owns. Neither has an acknowledgement or a verdict.
 
 `envelope.py` owns what they share. `supervision.py` owns what the level above is still owed.
 Neither adds a table. Every value is derived from rows another module already writes, which is
@@ -57,7 +60,7 @@ moment nothing has recorded a time.
 | child to parent, completion | `attempts` | `acks` | `acks` | `verdicts` | `verdicts` |
 | parent to child, revision request | `attempts` | none | none | `events` | `verdicts` |
 | supervisor to parent, directive | none | `scope_directives` | `scope_directives` | none | none |
-| parent to supervisor | none | none | none | none | none |
+| parent to supervisor | `supervisor_attempts` | `supervisor_readbacks` | none | none | none |
 
 The halves differ because the directions differ. A child's completion is acknowledged;
 `ack.acknowledge` exists for exactly that message and refuses a revision delivery. What shows a
@@ -98,11 +101,13 @@ obligation however many times it is read, across a restart or a service replacem
 
 ### What this does not claim
 
-That a supervisor received anything. No row in this store could say so: `deliveries` holds one
-recipient per event and serves the registered parent-child pair, `ack.acknowledge` records a
-parent acknowledging a child completion, and the relay carries no supervisor channel at all.
-Convergence means one fact yields one obligation, not that a second wake was prevented
-somewhere else.
+That a supervisor agreed to anything, acted on it, or confirmed it. No row in this store says
+so: `deliveries` holds one recipient per event and serves the registered parent-child pair, and
+`ack.acknowledge` records a parent acknowledging a child completion. What CAN now be said is
+narrower than it sounds - [the supervisor channel](supervisor-channel.md) stages a report, sends
+it and records a readback, which together say the bytes reached the recipient's transcript and a
+real turn on its thread answered. Convergence still means one fact yields one obligation, not
+that a second wake was prevented somewhere else.
 
 ### What discharges one
 
@@ -148,7 +153,8 @@ it, because skipping it would answer a different question from the one that was 
 ## Scope of these claims
 
 Source-implemented and covered by this package's own suite:
-`tests/test_supervisor_envelope.py` and `tests/test_supervisor_reporting.py`. That is evidence
-about this source, not about an installed runtime, an activated service, or any message
-reaching any supervisor on any host. No supervisor round trip is claimed here, because the
-channel for one does not exist.
+`tests/test_supervisor_envelope.py`, `tests/test_supervisor_reporting.py` and
+`tests/test_supervisor_channel.py`. That is evidence about this source and about this package's
+own fake host, not about an installed runtime, an activated service, or any message reaching any
+supervisor on any machine. The round trip that IS claimed is the one
+[the channel document](supervisor-channel.md) describes and bounds.

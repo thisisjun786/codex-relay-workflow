@@ -281,7 +281,36 @@ they implement is OPS-7.4 and the shared "Supervisor, parent and child scope".
 | I-197 | A reading is placed by scope and then interpreted by the state it declares, and one that settled the question is neither an obligation nor a gap | `supervision.standing_for` refuses a `relationshipId` that is present, is not null and is not a name; passes over one naming another project whatever it declares; and only then reads `observed_state`. For the scopes that remain - this project's, or none named at all - `reported`, `in_progress` and `unmanaged` are absorbed without needing a relationship, because `omitted.observe` answers `unmanaged` before it has resolved one, while a non-object, a foreign schema, a `reportingState` outside `OBSERVED_STATES` and an `unreported` reading naming no usable relationship or turn reach `reading_unusable`, whose reason names which | implemented |
 | I-198 | Every entry in the standing list is standing, whichever loop derived it | `supervision.standing_for` applies the same `select()` verdict to an observation-derived obligation as to an event-derived one, so a discharged omission is left out of `standing` and does not fall through into `gaps` either | implemented |
 
+## The supervisor channel
+
+What a parent owes upward can now be sent, which is a smaller change than it sounds; the rows
+below are mostly about what it still does not establish. See
+[the supervisor channel](supervisor-channel.md).
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-200 | A report upward is addressed by the live hierarchy, never by a frozen row, and an unreadable, contested or drifting reading is not a recipient | `supervisorchannel.SupervisorChannel.resolve`, refusing `relation_unreadable`, `duplicate_scope_owner`, `relation_owner_drift` and `link_conflict` before anything is staged | implemented |
+| I-201 | A project no initiative supervises has nowhere to send a report and still owes one | `resolve` refuses `unregistered_scope`; the obligation is untouched, and `supervision.select` still reports it standing | implemented |
+| I-202 | Only a standing obligation `select` reports reportable may be staged, so nothing else has a way onto the channel | `stage` refuses with the selection's own reason, which is how a heartbeat stays unsendable rather than merely discouraged | implemented |
+| I-203 | One fact is one message however often it is staged, and the message is frozen before any transport call | the message id is `envelope.message_id`; `stage` inserts `OR IGNORE` and returns the existing row, and the packet is written before the first send | implemented |
+| I-204 | Staging the message and recording that a report was produced are one transaction | `stage` writes both inside `store.composing()`, so a report cannot exist unrecorded and a record cannot suppress a report nobody can send | implemented |
+| I-205 | The two queues cannot claim each other's rows | `supervisor_messages` is claimed by message id and `deliveries` by event id, in separate statements over separate tables; a supervisor message has no receipt, acknowledgement or verdict | implemented |
+| I-206 | The per-recipient send bound is the recipient's rather than the channel's | both engines count against one `recipient_rate` window, so a task that is both a parent and a supervisor has one budget and a report can wait behind parent-child traffic to it | implemented |
+| I-207 | A send that cannot say what it is preserving does not happen | `supervisorchannel` calls the same `delivery.authorized_settings` gate a delivery calls, and a refusal withholds the message with the reason journalled | implemented |
+| I-208 | An uncertain send is never retried by this channel | `held_uncertain` is outside `CLAIMABLE` and nothing reschedules it; there is no reconciler for this queue, and a second send that lands is a second wake for one fact | implemented, and recorded as a limit |
+| I-209 | A readback is computed over the recipient's own turn id, which the delivered bytes cannot contain | `identity.supervisor_read_proof`; the rendered message carries the message id and no turn id, asserted against the real bytes in `tests/test_supervisor_channel.py` | implemented |
+| I-210 | Only a verified readback says received, and an unverified one is still recorded | `read_back` writes the row whatever the verification says and moves the message to `read` only on `host_read`; `reach` answers `received` from `supervisor_readbacks` alone | implemented |
+| I-211 | The delivered half rests on the recipient's own transcript rather than on our receipt | `_delivered_evidence` scans the recipient's items for the request id and reports whether the scan was exhausted, so a truncated scan is inconclusive rather than absence | implemented |
+| I-212 | Which turn answered is recorded rather than folded into the verdict | `read_back` returns and stores `relay_opened` or `recipient_opened`, because the sender already knows the id of the turn its own send opened | implemented |
+| I-213 | A verified readback does not discharge a reporting obligation | nothing in `read_back` touches `sync_outbox`; `supervision.discharge_of` still requires a confirmed verdict row on the configured target | implemented |
+
 ## Recorded limits, so a row above is not read as more than it is
+
+| Limit | What it means |
+|---|---|
+| A readback does not establish authorship | the transport carries opaque text and no authenticated caller, and the turn a send opens is a turn the sender already knows the id of. A verified readback says the bytes are in the recipient's transcript and a real turn answered; it does not say which party wrote the answer, which is why `relay_opened` and `recipient_opened` are recorded apart |
+| The supervisor channel has no reconciler and no daemon pass | an uncertain send stays held and nothing retries it, and no timer sends anything. A report goes out inside the parent's own turn |
+| A parent cannot answer a midpoint check on this channel | `status_response` has no packet row, because `BODY` is a dispatch instruction and `status_answer` returns a structured reading. The occasion is carried by the envelope alone until somebody decides what an answer cannot do without |
 
 | Limit | Consequence |
 |---|---|

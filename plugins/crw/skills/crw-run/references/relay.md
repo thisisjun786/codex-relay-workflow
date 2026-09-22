@@ -863,9 +863,10 @@ The message form both relations share is one of them. `relay-envelope/1` is defi
 package's own `docs/envelope.md`, with the workflow rule in
 [the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
-relay carries no supervisor channel, so nothing above the record itself is measured on that
-relation; and what discharges a reporting obligation is the Linear record the supervisor reads,
-confirmed, rather than a report having been written.
+a report upward is transported and read back and nothing further is measured on that relation -
+a supervisor agreeing, acting or confirming is not a fact the relay holds; and what discharges a
+reporting obligation is the Linear record the supervisor reads, confirmed, rather than a report
+having been written, sent or even read.
 
 Three commands make that readable rather than remembered. They are the whole surface; there is
 no daemon behind them and nothing wakes anybody.
@@ -904,6 +905,31 @@ than authorizing one.
 ran, and whether the supervisor acted are three further facts, and no row here carries any of
 them. Recording it is what makes the next reading of the same fact converge instead of waking
 the level above again, so record it when the report actually goes out.
+
+Four more actually send one. They are the channel CRW-215 added, and `supervisor-stage` records
+the report itself, so a run that stages does not also call `supervisor-report-recorded`.
+
+```bash
+# Freeze what is owed upward as a message. Staging is not sending.
+codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
+codex-session-relay supervisor-stage --project <key> [--observation <file>]...
+
+# One attempt at one staged message, through the same host rules a delivery obeys.
+codex-session-relay supervisor-send --message <id>
+
+# The recipient confirming it read one, from INSIDE its own turn.
+codex-session-relay supervisor-read --message <id> --turn <your turn id> --proof <proof>
+
+# What was staged, every attempt, and what came back.
+codex-session-relay supervisor-show --message <id>
+```
+
+The proof is `sha256(messageId|<your own turn id>)`, which the delivered bytes cannot contain,
+so quoting the message back does not produce it. A verified readback says the bytes are in the
+recipient's transcript and that a real turn on its thread answered no earlier than the send. It
+does not say who wrote the answer, and it does not discharge anything: the obligation stands
+until Linear confirms. Nothing here is automatic - there is no daemon behind these commands, so
+a report goes out inside the parent's own turn.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another
