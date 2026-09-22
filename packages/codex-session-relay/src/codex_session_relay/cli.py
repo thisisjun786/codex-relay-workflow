@@ -49,6 +49,9 @@ EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
     "service restart", "verify-acks", "managed-start",
+    # A report upward resumes the supervisor's thread, and a readback is checked against the
+    # host's own turn list and the recipient's transcript. Neither can answer without one.
+    "supervisor-send", "supervisor-read",
 )
 # Every command that touches the managed marker and nothing else. Listed once so the store-selection
 # refusal and the doctor reachability report cannot drift apart.
@@ -87,6 +90,9 @@ OFFLINE_COMMANDS = (
     # none of the three reaches the host, so leaving them out under-reported what an operator
     # can run with no App Server.
     "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # Staging writes the message and the journal entry for it and reaches no host, and
+    # showing one reads the rows back. Sending and reading back are in the host list above.
+    "supervisor-stage", "supervisor-show",
     # Compares a packet against a reading the caller supplies. It opens no store, reaches no
     # host and decides nothing about delivery, so it runs wherever the two files are.
     "packet-check",
@@ -134,6 +140,7 @@ class Services:
         self._merge_turn = None
         self._capacity = None
         self._edit_regions = None
+        self._supervisor_channel = None
 
     @property
     def state_directory(self):
@@ -223,6 +230,20 @@ class Services:
             service.sync = self.sync
             self._ack = service
         return self._ack
+
+    @property
+    def supervisor_channel(self):
+        """What a parent owes the level above, staged, sent and read back.
+
+        The linkage is passed because who supervises a project lives nowhere else: unlike a
+        delivery, this channel has no frozen row to fall back on and must not acquire one.
+        """
+        if self._supervisor_channel is None:
+            from .supervisorchannel import SupervisorChannel
+
+            self._supervisor_channel = SupervisorChannel(
+                self.store, self.registry, self.linkage, self.clock)
+        return self._supervisor_channel
 
     @property
     def reconciler(self):
@@ -771,6 +792,63 @@ def cmd_supervisor_select(services, args) -> dict:
     """Whether one event is news for the level above. A read; it sends and records nothing."""
     return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
 
+
+
+def cmd_supervisor_stage(services, args) -> dict:
+    """Freeze what is owed upward, before anything is sent.
+
+    Staging is not sending. What this writes is the message and the record that a report was
+    produced for the fact behind it; whether a supervisor ever sees it is two more commands
+    and a host away.
+    """
+    from . import supervision
+    from .report import read as read_work_report
+
+    if args.project:
+        readings = [_observation_file(path) for path in args.observation or []]
+        return services.supervisor_channel.stage_standing(
+            args.project, observations=readings)
+    if args.event:
+        obligation = supervision.from_event(
+            services.store, args.event, read_work_report(services.store, args.event))
+        about = "event " + repr(args.event)
+    else:
+        obligation = supervision.from_observation(_observation_file(args.observation[0]))
+        about = "the observation at " + repr(args.observation[0])
+    if obligation is None:
+        raise SystemExit2(
+            about + " raises no obligation, so there is nothing to stage. An event has to be"
+            " a completion, a new block or a decision the user owes, and an observation has"
+            " to report state unreported", EXIT_USAGE)
+    return services.supervisor_channel.stage(obligation, expect_recipient=args.recipient)
+
+
+def cmd_supervisor_send(services, args) -> dict:
+    """One attempt at one staged message. Reaches the host; nothing here is automatic."""
+    record = services.supervisor_channel.attempt(args.message, _LazyAdapter(services))
+    if record is None:
+        row = services.supervisor_channel.get(args.message)
+        return {"sent": False, "messageId": args.message, "state": row["state"],
+                "holdReason": row["hold_reason"],
+                "nextEligibleAt": row["next_eligible_at"],
+                "detail": "nothing was sent and nothing is wrong: a busy recipient, a"
+                          " backoff still running, or a message already sent"}
+    return {"sent": True, **record}
+
+
+def cmd_supervisor_read(services, args) -> dict:
+    """The recipient confirming it read one, from inside its own turn.
+
+    The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain.
+    """
+    return services.supervisor_channel.read_back(
+        args.message, read_turn_id=args.turn, proof=args.proof,
+        adapter=_LazyAdapter(services) if services.adapter_requested else None)
+
+
+def cmd_supervisor_show(services, args) -> dict:
+    """One staged message whole: what it says, every attempt, and what came back."""
+    return services.supervisor_channel.show(args.message)
 
 def cmd_packet_check(services, args) -> dict:
     """Whether a packet agrees with the record its receiver read. It decides nothing else.
@@ -3194,6 +3272,47 @@ def build_parser() -> argparse.ArgumentParser:
     recorded.add_argument("--message", help="the envelope messageId the report was sent under")
     recorded.add_argument("--note")
     recorded.set_defaults(handler=cmd_supervisor_report_recorded)
+
+    stage = subparsers.add_parser(
+        "supervisor-stage",
+        help="freeze what is owed upward as a message, before anything is sent. Staging is"
+             " not sending: one obligation is one message, however often it is staged")
+    subject = stage.add_mutually_exclusive_group(required=True)
+    subject.add_argument("--event")
+    subject.add_argument("--project",
+                         help="stage every standing obligation in one project, which is what"
+                              " makes this one command rather than one decision per event")
+    subject.add_argument("--observation", action="append",
+                         help="a reporting-observation/1 file from reporting-show. With"
+                              " --project, repeat once per reading; on its own it is the"
+                              " obligation a turn left by ending without reporting")
+    stage.add_argument("--recipient",
+                       help="the supervisor you believe this goes to. A disagreement with the"
+                            " linkage is refused rather than resolved by picking one")
+    stage.set_defaults(handler=cmd_supervisor_stage)
+
+    send = subparsers.add_parser(
+        "supervisor-send",
+        help="one attempt at one staged message, through the same host rules a delivery"
+             " obeys. A busy recipient is never interrupted")
+    send.add_argument("--message", required=True)
+    send.set_defaults(handler=cmd_supervisor_send)
+
+    readback = subparsers.add_parser(
+        "supervisor-read",
+        help="the recipient confirming it read one, from inside its own turn. The proof is"
+             " sha256(messageId|your own turn id), which the delivered bytes cannot contain")
+    readback.add_argument("--message", required=True)
+    readback.add_argument("--turn", required=True, help="your own turn id")
+    readback.add_argument("--proof", required=True)
+    readback.set_defaults(handler=cmd_supervisor_read)
+
+    shown = subparsers.add_parser(
+        "supervisor-show",
+        help="one staged message whole: what it says, every attempt, and what came back")
+    shown.add_argument("--message", required=True)
+    shown.set_defaults(handler=cmd_supervisor_show)
+
 
     packet = subparsers.add_parser(
         "packet-check",
