@@ -676,9 +676,32 @@ class AckService:
                 # commit together or not at all. It returns None when no target is configured,
                 # and it raises nothing a caller must handle: a synchronisation concern must
                 # never be able to refuse a verification.
+                #
+                # The ruling's own ordinal, counted AFTER the verdict_superseded entry this
+                # ruling may just have written and inside the same transaction, so it counts
+                # this ruling too: the first is 1, each re-review is one more. It has to be
+                # relay-generated. verdict_turn_id cannot do it - verdicts is keyed by event
+                # alone, nothing requires a re-review's turn to differ from the ruling it
+                # replaces, and claim_verification can re-claim under the same turn - so two
+                # rulings could share one, and then a criteria set edited away and back would
+                # recompute the first ruling's sync id and be dropped exactly as before.
+                #
+                # Passed only when it exceeds 1. A first ruling has nothing to be told apart
+                # from, and leaving it off is what keeps a verdict with no canonical criteria -
+                # no digest either - producing the identity it produced before this existed.
+                # enqueue_verdict_in owns that rule, because the summary names the ordinal
+                # even when identity leaves it out.
+                ruling = 1 + db.execute(
+                    "SELECT COUNT(*) AS seen FROM journal WHERE kind = ? AND subject = ?",
+                    ("verdict_superseded", event_id),
+                ).fetchone()["seen"]
                 self.sync.enqueue_verdict_in(
                     db, relationship=relationship, event=event, verdict=verdict,
                     findings=findings, record=record,
+                    # Subscript, not get: coverage() sets this key on both of its return paths,
+                    # so get() could only turn a future contract break into a silent None.
+                    criteria_digest=cover["setDigest"],
+                    ruling=ruling,
                 )
         return record
 

@@ -11,7 +11,14 @@ import os
 from codex_session_relay import cxc, envelope, identity, report, supervision
 from codex_session_relay.omitted import SCHEMA as OBSERVATION_SCHEMA
 from codex_session_relay.store import Store
-from codex_session_relay.sync import CONFIRMED, PENDING, SyncOutbox, render_block
+from codex_session_relay.sync import (
+    CONFIRMED,
+    FAILED,
+    MAX_ATTEMPTS,
+    PENDING,
+    SyncOutbox,
+    render_block,
+)
 
 from .support import CHILD, PARENT, DeliveryTestCase
 from .test_report_contract import a_report
@@ -1134,3 +1141,96 @@ class AnAbsenceIsNotAFault(ReportingTestCase):
         context = self.delivery.envelope_context(self.delivery.get(event_id))
         self.assertEqual(context["senderTaskId"], CHILD)
         self.assertIn("REL-1", context["scope"])
+
+
+class SeveralRulingsOnOneEvent(ReportingTestCase):
+    """CRW-23: identity now separates rulings, so an event can own more than one verdict row.
+
+    Before that, "a confirmed row exists" and "the ruling that stands is recorded" were the same
+    sentence. They are not any more, and reading the old one would report the supervisor served
+    at exactly the moment the current ruling had not reached it.
+    """
+
+    def ruling(self, event_id, *, criteria_digest, ruling=None, target_ref=DOC):
+        """One more accepted ruling on the same event, the way a re-review produces one."""
+        row = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+        self.sync.set_target(self._rid, "coordination_document", target_ref)
+        with self.store.transaction() as db:
+            return self.sync.enqueue_in(
+                db, relationship_id=self._rid, issue_key="REL-1", subject_kind="verdict",
+                summary=f"ruled against {criteria_digest}", event_id=event_id,
+                generation=row["execution_generation"], revision=row["revision_hash"],
+                verdict="verified", criteria_digest=criteria_digest, ruling=ruling)
+
+    def confirm(self, identifier, *, target_ref=DOC):
+        claim = self.sync.claim(identifier, owner="test")
+        row = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (identifier,))
+        self.sync.complete(identifier, claim_token=claim["claimToken"], target_ref=target_ref,
+                           readback=render_block(row), external_ref="linear-doc-1")
+
+    def test_an_old_confirmed_record_does_not_discharge_the_current_ruling(self):
+        event_id = self.reported()
+        first = self.ruling(event_id, criteria_digest="digest-a")
+        self.confirm(first)
+        self.ruling(event_id, criteria_digest="digest-b", ruling=2)
+
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn(PENDING, decided["dischargeReason"])
+
+    def test_a_failed_current_ruling_is_not_covered_by_an_older_confirmation(self):
+        """failed drops out of automatic selection, so it looks terminal and means the opposite."""
+        event_id = self.reported()
+        self.confirm(self.ruling(event_id, criteria_digest="digest-a"))
+        second = self.ruling(event_id, criteria_digest="digest-b", ruling=2)
+        for _ in range(MAX_ATTEMPTS):
+            claim = self.sync.claim(second, owner="test")
+            self.sync.fail(second, claim_token=claim["claimToken"], error="linear said no")
+            self.clock.advance(1000)
+        self.assertEqual(
+            self.store.one("SELECT state FROM sync_outbox WHERE sync_id = ?",
+                           (second,))["state"],
+            FAILED,
+            "the point of this case is the state that stops being retried",
+        )
+
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn(FAILED, decided["dischargeReason"])
+
+    def test_the_current_ruling_confirmed_discharges_it(self):
+        event_id = self.reported()
+        self.confirm(self.ruling(event_id, criteria_digest="digest-a"))
+        self.confirm(self.ruling(event_id, criteria_digest="digest-b", ruling=2))
+
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.DISCHARGED)
+        self.assertEqual(decided["reason"], supervision.ALREADY_RECORDED)
+
+    def test_a_newer_ruling_written_elsewhere_is_not_discharged_by_repointing_back(self):
+        """The newest ruling landed in a document this relationship no longer points at."""
+        event_id = self.reported()
+        self.confirm(self.ruling(event_id, criteria_digest="digest-a"))
+        elsewhere = DOC.replace("000000", "111111")
+        self.confirm(self.ruling(event_id, criteria_digest="digest-b", ruling=2,
+                                 target_ref=elsewhere), target_ref=elsewhere)
+        self.sync.set_target(self._rid, "coordination_document", DOC)
+
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING)
+        self.assertIn("no longer the target", decided["dischargeReason"])
+
+    def test_a_clock_that_moves_backwards_does_not_reorder_the_rulings(self):
+        """created_at is a wall clock. Insertion order is what says which ruling is current."""
+        event_id = self.reported()
+        self.confirm(self.ruling(event_id, criteria_digest="digest-a"))
+        second = self.ruling(event_id, criteria_digest="digest-b", ruling=2)
+        self.store.db.execute(
+            "UPDATE sync_outbox SET created_at = ? WHERE sync_id = ?",
+            ("1999-01-01T00:00:00Z", second),
+        )
+
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertEqual(decided["standing"], supervision.STANDING,
+                         "the later row is still the later ruling")
+        self.assertIn(PENDING, decided["dischargeReason"])
