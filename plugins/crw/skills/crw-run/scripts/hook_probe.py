@@ -119,14 +119,31 @@ def _mapping(value):
 
 
 def _shape_traversable(marker):
-    """The first structural problem that would stop this record being WALKED, or None.
+    """The first structural problem that would stop SELECTION reading this candidate, or None.
 
-    Structure only: a list where a list belongs, a record where a record belongs. Checked for every
-    candidate in a workspace listing, because selection walks them all and a field read landing on
-    a string ends the walk in a traceback, which records nothing at all.
+    Only what resolve_assignment actually touches while choosing: the claims list it scans and the
+    intent record it reads declaredAt from. Everything else in a candidate is read after one is
+    chosen, so validating it here judges records selection never opens.
+
+    That scope is the whole point. The relay chooses among candidates by reading claims through
+    isinstance guards and the intent through one more, then applies its shape check to the marker it
+    selected. Checking every container in every candidate instead let a bare-string claim in an
+    assignment nobody is using answer marker_malformed for the workspace and release a turn the
+    current assignment would have blocked. The entries selection skips are skipped here too.
     """
     if not isinstance(marker, dict):
         return None
+    claims = marker.get("claims")
+    if claims is not None and not isinstance(claims, list):
+        return "claims"
+    intent_fact = marker.get("intent")
+    if intent_fact is not None and not isinstance(intent_fact, dict):
+        return "intent"
+    return None
+
+
+def _malformed_selected(marker):
+    """Every shape the selected assignment is held to: containers, entries and identities."""
     for key in FACT_LISTS:
         value = marker.get(key)
         if value is not None and not isinstance(value, list):
@@ -134,14 +151,15 @@ def _shape_traversable(marker):
         for item in value or []:
             if not isinstance(item, dict):
                 return key + " entry"
-            nested = _malformed_nested_lists(key, item)
+            nested = _malformed_nested_lists(key, item) or _malformed_identities(key, item)
             if nested:
                 return nested
     for key in FACT_OBJECTS:
         value = marker.get(key)
         if value is not None and not isinstance(value, dict):
             return key
-        nested = _malformed_nested_lists(key, value or {})
+        record = value or {}
+        nested = _malformed_nested_lists(key, record) or _malformed_identities(key, record)
         if nested:
             return nested
     return None
@@ -156,18 +174,17 @@ def _malformed(observation):
     end. Anyone able to write a single fact could otherwise switch detection off for a workspace by
     writing a value of the wrong type.
 
-    Scoped the way the relay scopes it, and the distinction matters. STRUCTURE is checked for every
-    candidate, because selection walks them all. IDENTITY FIELDS are checked only for the assignment
-    this turn is actually judged under: the relay reports malformed facts for the selected candidate
-    and lets read problems stay with the candidate they came from, so validating every entry here
-    let one stale assignment nobody is using answer marker_malformed for the whole workspace and
-    suppress a hold the current assignment owed.
+    Scoped the way the relay scopes it. A candidate is held only to what SELECTION must read to
+    choose among candidates; the assignment actually chosen is then held to everything. Validating
+    every entry instead let one stale assignment nobody is using answer for the whole workspace and
+    suppress a hold the current assignment owed, which is the failure the relay's own selection
+    comment warns about.
     """
     for key in ("stop_input", "disposition", "receipt", "marker", "workspace"):
         value = observation.get(key)
         if value is not None and not isinstance(value, dict):
             return key
-    markers = [observation.get("marker")]
+    candidates = [observation.get("marker")]
     workspace = observation.get("workspace")
     if isinstance(workspace, dict):
         assignments = workspace.get("assignments")
@@ -176,24 +193,13 @@ def _malformed(observation):
         for entry in assignments or []:
             if not isinstance(entry, dict):
                 return "workspace.assignments entry"
-            markers.append(entry)
-    for marker in markers:
-        structural = _shape_traversable(marker)
+            candidates.append(entry)
+    for candidate in candidates:
+        structural = _shape_traversable(candidate)
         if structural:
             return structural
     selected = selected_marker(observation)
-    if not isinstance(selected, dict):
-        return None
-    for key in FACT_LISTS:
-        for item in selected.get(key) or []:
-            nested = _malformed_identities(key, item)
-            if nested:
-                return nested
-    for key in FACT_OBJECTS:
-        nested = _malformed_identities(key, selected.get(key) or {})
-        if nested:
-            return nested
-    return None
+    return _malformed_selected(selected) if isinstance(selected, dict) else None
 
 
 def _malformed_counters(observation):
