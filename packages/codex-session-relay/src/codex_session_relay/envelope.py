@@ -77,8 +77,31 @@ ENDPOINT_ROLES = {
 # user asked for. A relayed decision is a REQUEST rather than a decision: Jun has already
 # decided and the parent owes the application, not another opinion.
 PURPOSES = {
-    CHILD_TO_PARENT: {"completion": REQUEST},
-    PARENT_TO_CHILD: {"revision_request": REQUEST},
+    # A child reports five different things and they were one word. A blocked turn asks its
+    # parent for something, a decision is Jun's and nobody else's, a review-ready handover
+    # asks for a judgement, and a progress note asks for nothing at all. Rendering all of
+    # them as a completion told every recipient it owed the same answer to each, and the
+    # difference was recoverable only by reading the outcome underneath.
+    CHILD_TO_PARENT: {
+        "completion": REQUEST,
+        "progress": NOTIFICATION,
+        "blocked": REQUEST,
+        "decision_request": DECISION,
+        "review_ready": REQUEST,
+    },
+    # And a parent sends six. The correction was the only one spelled, which left the
+    # message that STARTS the work unnamed: an assignment and a resume are both requests and
+    # are not the same request, and the three answers a parent gives afterwards - that it
+    # has the report, that the criteria are accepted, that the change landed - owe nothing
+    # back and must not be shaped like something that does.
+    PARENT_TO_CHILD: {
+        "assignment": REQUEST,
+        "revision_request": REQUEST,
+        "resume": REQUEST,
+        "receipt_confirmation": NOTIFICATION,
+        "acceptance": NOTIFICATION,
+        "integration_result": NOTIFICATION,
+    },
     SUPERVISOR_TO_PARENT: {
         "project_assignment": REQUEST,
         "midpoint_check": REQUEST,

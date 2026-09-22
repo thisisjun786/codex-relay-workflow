@@ -905,3 +905,31 @@ the level above again, so record it when the report actually goes out.
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another
 instruction is refused with the contest retained, and one digest cannot carry two purposes.
+
+The packet a parent and a child exchange sits on that same envelope and adds what the
+occasion requires: `relay-packet/1`, in the package's own `docs/packets.md`, with the
+workflow rule in [the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in).
+One command reads it.
+
+```bash
+# Does this packet carry what its purpose requires, and does it agree with what you read?
+# A read: it opens no store, reaches no host and decides nothing about delivery.
+codex-session-relay packet-check --packet <file> --record <file>
+```
+
+`--record` is the reading the receiver did for ITSELF - the relationship, the current
+generation, the registered criteria digest, the head its own forge reading reports. The answer
+says `recordSource: supplied`, and that qualifier is the honest part: this command has no
+store, so it cannot be the thing that established any of those, and handing it an agreeing
+record proves only that two files agree. What it closes is the case where nobody compared
+them at all.
+
+Three dispositions come back and the middle one is the one to read. `accepted` means every
+field the record could answer agreed with it. `refused` names the field and both values.
+`unavailable` means the record could not answer, which is not acceptance: a field the
+receiver could not check is unchecked, and a run that proceeded on it proceeded on nobody's
+authority. A field the record omits produces `unavailable` rather than a pass, so a thin
+record makes less pass rather than more.
+
+A non-PR audit is a first-class shape here. Its artifact is a locator and a digest, it is
+never compared against a head, and it is never asked for a pull request to fill the field.
