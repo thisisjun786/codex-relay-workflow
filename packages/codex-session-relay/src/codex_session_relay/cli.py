@@ -3542,6 +3542,12 @@ def build_parser() -> argparse.ArgumentParser:
             # launched by another process that had already decided when it must stop. start
             # and restart are where a person says how long, and they convert it themselves.
             hosted.add_argument("--deadline-monotonic", type=float)
+            # Set by the launcher, not by a person: it says the launching service already
+            # decided this daemon's execution policy and put it in this environment. Reading
+            # the declaration again here would re-open a question that was settled before the
+            # service it is replacing was stopped.
+            hosted.add_argument("--policy-from-launcher", action="store_true",
+                                help=argparse.SUPPRESS)
         hosted.add_argument("--launch-id")
         # For a registration whose store no longer exists - deleted, lost or deliberately
         # replaced. Refused while anything is live on the scope, so this can only ever
@@ -4250,10 +4256,15 @@ def main(argv=None) -> int:
     try:
         services = Services(args)
         _refuse_ambiguous_state(services, args)
-        # A supervisor started here is the same daemon `service start` spawns, so it runs on
-        # the same declaration. Resolved before the snapshot below, because that snapshot is
-        # what this whole process then enforces.
-        if getattr(args, "service_command", None) == "run":
+        # A supervisor started HERE - in the foreground, or by a unit - is the same daemon
+        # `service start` spawns, so it runs on the same declaration. Resolved before the
+        # snapshot below, because that snapshot is what this whole process then enforces.
+        #
+        # A supervisor launched BY that service already carries its decision in this
+        # environment, and says so. Re-reading the declaration here would let one written in
+        # the meantime refuse a launch whose predecessor has already been stopped.
+        if (getattr(args, "service_command", None) == "run"
+                and not getattr(args, "policy_from_launcher", False)):
             refused = _apply_launch_policy(_service_for(services), os.environ)
             if refused is not None:
                 raise PayloadExit(refused, EXIT_REFUSED)

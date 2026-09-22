@@ -111,6 +111,7 @@ class LaunchPolicyCase(ServiceTestCase):
 
         with mock.patch.object(subprocess, "Popen", popen):
             service.default_launcher(service, allow_isolated=True, **kwargs)
+        self.launched_argv = captured["argv"]
         return captured["env"]
 
     def launch(self, service, *, action="start", timeout=0.4, **call):
@@ -172,6 +173,9 @@ class WhatALaunchCarries(LaunchPolicyCase):
         self.assertEqual(summary["state"], "declared")
         self.assertEqual(summary["digest"], self.digest)
         self.assertEqual(set(summary["roles"]), set(POLICY["roles"]))
+        # And the child is told the question is already settled, so it adopts this environment
+        # instead of re-reading a declaration that may have moved since.
+        self.assertIn("--policy-from-launcher", self.launched_argv)
 
     def test_an_environment_declaration_still_launches_and_says_nothing_recorded_it(self):
         """The behaviour before this record existed, kept, and no longer silent about itself."""
@@ -420,16 +424,20 @@ class WhatStatusSays(LaunchPolicyCase):
 
 
 class ThroughTheCommandLine(LaunchPolicyCase):
-    def cli(self, *args, expect=0, environment=None, state=None):
+    def run_cli(self, *args, environment=None, state=None):
+        """The command, run as a real process, whatever it exits with."""
         state = state or str(self.service("cli").selection.path)
         call = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
         call.pop(rolepolicy.ENVIRONMENT_VARIABLE, None)
         call.pop("CODEX_SESSION_RELAY_STATE", None)
         call.update(environment or {})
-        finished = subprocess.run(
+        return subprocess.run(
             [sys.executable, "-m", "codex_session_relay.cli", "--state", state, *args],
             capture_output=True, text=True, env=call, timeout=60,
         )
+
+    def cli(self, *args, expect=0, environment=None, state=None):
+        finished = self.run_cli(*args, environment=environment, state=state)
         self.assertEqual(finished.returncode, expect,
                          f"exit {finished.returncode}: {finished.stdout}{finished.stderr}")
         return json.loads(finished.stdout)
@@ -447,6 +455,25 @@ class ThroughTheCommandLine(LaunchPolicyCase):
                            environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy})
 
         self.assertEqual(refused["reason"], "launch_policy_conflict")
+
+    def test_a_supervisor_its_own_service_launched_does_not_reopen_the_question(self):
+        """The same command, marked as launched, gets past the question rather than refused.
+
+        A restart stops the old daemon and then starts its replacement. If that replacement
+        read the declaration again on the way up, a declaration written in between would turn
+        an environment the service had already approved into a conflict - and the refusal
+        would land with nothing left running. It exits on its missing host requirement here,
+        which is the next thing that stops it and proof the policy question was already
+        settled.
+        """
+        self.cli("service", "declare", "--execution-policy", self.policy_path)
+
+        failed = self.run_cli("service", "run", "--policy-from-launcher", "--max-segments", "1",
+                              environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy})
+
+        self.assertNotIn("launch_policy_conflict", failed.stdout + failed.stderr)
+        self.assertEqual(failed.returncode, 4, failed.stdout + failed.stderr)
+        self.assertIn("--socket", failed.stdout + failed.stderr)
 
 
 

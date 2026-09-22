@@ -1679,6 +1679,12 @@ class RelayService:
             raise ValueError(policy["detail"])
         if policy["path"]:
             environment[policy["variable"]] = policy["path"]
+        # And the child is told that this environment IS the decision. It would otherwise read
+        # the declaration again on the way up, and a declaration written between this launch
+        # and that read would turn an environment this service already approved into a
+        # conflict - refused by the child, after the restart had stopped the old daemon, which
+        # is the outage the whole freeze exists to prevent, one process boundary further out.
+        argv.append("--policy-from-launcher")
         if self.launch_id:
             argv += ["--launch-id", self.launch_id]
         if self.takeover:
