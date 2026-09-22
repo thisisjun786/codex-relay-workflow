@@ -964,11 +964,23 @@ class Diagnosis(unittest.TestCase):
                 shutil.copy(source, os.path.join(b, f"relay.sqlite3{suffix}"))
         nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
         pair = f"{mine['device']}:{mine['inode']}"
+        log = f"{mine['logDevice']}:{mine['logInode']}:{mine['logName']}"
         proven = self.cli(
             "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
-            "--expect-nonce", nonce, state=a,
+            "--expect-log", log, "--expect-nonce", nonce, state=a,
         )
         self.assertEqual(proven["sameStore"], "proven")
+        # On evidence rather than on the word: the store this doctor measured reports the
+        # same log location that was passed in, and the nonce was read through it too.
+        self.assertEqual(
+            f"{proven['store']['logDevice']}:{proven['store']['logInode']}"
+            f":{proven['store']['logName']}",
+            log,
+        )
+        self.assertEqual(
+            (proven["nonce"]["logDevice"], proven["nonce"]["logInode"]),
+            (proven["store"]["logDevice"], proven["store"]["logInode"]),
+        )
         # The nonce on its own is not proof, and unproven exits non-zero like a mismatch.
         alone = self.cli(
             "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
@@ -976,14 +988,78 @@ class Diagnosis(unittest.TestCase):
         )
         self.assertEqual(alone["sameStore"], "unproven")
         self.assertIn("--expect-inode", alone["detail"])
+        self.assertIn("--expect-log", alone["detail"])
         copied = self.cli(
             "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
-            "--expect-nonce", nonce, state=b, expect=2,
+            "--expect-log", log, "--expect-nonce", nonce, state=b, expect=2,
         )
         self.assertEqual(copied["sameStore"], "mismatch")
         # Identifier alone cannot separate them, which is why it is graded unproven.
         weak = self.cli("doctor", "--expect-store", mine["storeId"], state=b, expect=2)
         self.assertEqual(weak["sameStore"], "unproven")
+
+    def test_a_second_name_for_one_store_is_refused_through_the_command(self):
+        """The second pathname, end to end, by the route that needs no privilege.
+
+        The case CRW-18 is about is a file bind mount, which a test suite cannot make here -
+        this host refuses an unprivileged mount namespace. A hardlink reaches the same hazard:
+        two directories, one inode, and a write-ahead log each. Both refusals are asserted
+        because they are different facts. The name count is this side's own measurement and
+        needs nothing from the peer; the log location is the general answer and needs the peer
+        to say where its log goes. A bind mount leaves the first one blind, which is the whole
+        reason the second exists.
+        """
+        a, b = os.path.join(self.tmp, "one"), os.path.join(self.tmp, "two")
+        mine = self.cli("store-identity", state=a)["store"]
+        nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
+        os.makedirs(b, exist_ok=True)
+        os.link(os.path.join(a, "relay.sqlite3"), os.path.join(b, "relay.sqlite3"))
+        pair = f"{mine['device']}:{mine['inode']}"
+        log = f"{mine['logDevice']}:{mine['logInode']}:{mine['logName']}"
+
+        # Without the peer's log location, the name count is what catches it.
+        counted = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-nonce", nonce, state=b, expect=2,
+        )
+        self.assertEqual(counted["sameStore"], "unproven")
+        self.assertIn("names", counted["detail"])
+
+        # With it, both reasons stand together rather than one outranking the other, because
+        # the log location is graded unproven and not as a mismatch.
+        graded = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-log", log, "--expect-nonce", nonce, state=b, expect=2,
+        )
+        self.assertEqual(graded["sameStore"], "unproven")
+        self.assertIn("names", graded["detail"])
+        self.assertIn("write-ahead log", graded["detail"])
+
+        # And the case is the one described: one inode reached in two directories.
+        self.assertEqual(
+            (graded["store"]["device"], graded["store"]["inode"]),
+            (mine["device"], mine["inode"]),
+        )
+        self.assertEqual(graded["store"]["links"], 2, graded["store"])
+        self.assertNotEqual(graded["store"]["logInode"], mine["logInode"])
+
+    def test_an_expectation_with_no_usable_value_is_still_a_question(self):
+        """An empty flag asked something, and its answer must not exit 0.
+
+        The exit was decided by `any` over the VALUES, which counts only non-empty ones, so an
+        empty expectation was a question nobody had asked and its unproven payload came back
+        at exit 0 - which a caller reads as yes. True of the three expectations that came
+        before the log location as well, so the fix is theirs too.
+        """
+        a = os.path.join(self.tmp, "asked")
+        self.cli("store-identity", state=a)
+        for flag, value in (
+            ("--expect-log", ""), ("--expect-log", "1:2"), ("--expect-log", "nonsense"),
+            ("--expect-store", ""), ("--expect-inode", ""), ("--expect-nonce", ""),
+        ):
+            with self.subTest(flag=flag, value=value):
+                refused = self.cli("doctor", flag, value, state=a, expect=2)
+                self.assertNotEqual(refused["sameStore"], "proven", refused)
 
     def test_doctor_reports_that_state_and_the_transport_ledger_have_split(self):
         state = os.path.join(self.tmp, "state")
@@ -1124,6 +1200,8 @@ class WorkerPolicyRequirements(CliBase):
             "doctor", "--require-worker-policy", self.REQUIREMENTS,
             "--expect-store", mine["storeId"],
             "--expect-inode", f"{mine['device']}:{mine['inode']}",
+            "--expect-log",
+            f"{mine['logDevice']}:{mine['logInode']}:{mine['logName']}",
             "--expect-nonce", nonce, "--issue", ISSUE,
             expect=2,
         )
