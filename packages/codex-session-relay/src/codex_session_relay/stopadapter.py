@@ -203,6 +203,14 @@ def complaints(document):
         found.append("dbPath must be a non-empty string when it is present at all")
     elif isinstance(database, str) and database.strip() and not os.path.isabs(database):
         found.append("dbPath must be an absolute path")
+    served = document.get("socketPath")
+    if served is not None and (not isinstance(served, str) or not served.strip()):
+        found.append("socketPath must be a non-empty string when it is present at all")
+    elif isinstance(served, str) and served.strip() and not os.path.isabs(served):
+        # Absolute for the same reason as the others, and for one more: the relay canonicalises a
+        # socket path before comparing it with the one a store recorded, so a relative spelling
+        # would be resolved against the session's workspace and compared as a different socket.
+        found.append("socketPath must be an absolute path")
     if document.get("mode") not in MODES:
         found.append("mode must be one of " + ", ".join(MODES))
     if document.get("mode") == HOLD:
@@ -340,8 +348,17 @@ def guard_argv(config):
     unmanaged. --db-path is passed only when configured, for the opposite reason: the guard
     prefers the path the coordinator recorded in its own intent. --now is never passed, because
     the time a decision is made is the guard's to observe.
+
+    --socket is passed only when configured, and it is what lets the guard tell that the store it
+    is about to read belongs to another App Server. A store records the socket it serves, so the
+    comparison needs the socket this installation expects; with none configured there is nothing to
+    compare, and an inherited state directory pointing at another installation's store is read as
+    though it were this one's. It goes before the subcommand because it is a global option.
     """
-    argv = [str(config["relayExecutable"]), GUARD_COMMAND,
+    argv = [str(config["relayExecutable"])]
+    if config.get("socketPath"):
+        argv += ["--socket", str(config["socketPath"])]
+    argv += [GUARD_COMMAND,
             "--marker-root", str(config["markerRoot"])]
     if config.get("dbPath"):
         argv += ["--db-path", str(config["dbPath"])]
