@@ -197,7 +197,7 @@ class SupervisorChannel:
                 "no supervisor message is staged as " + repr(message_id))
         return row
 
-    def stage(self, obligation, *, expect_recipient=None) -> dict:
+    def stage(self, obligation, *, expect_recipient=None, reading=None) -> dict:
         """Freeze what this obligation owes upward, before anything is sent.
 
         Idempotent on the message id, which is derived from the fact rather than from the
@@ -208,7 +208,23 @@ class SupervisorChannel:
         finding and is refused: substituting the live owner for the named one would file a
         report with whoever asked, and substituting the named one for the live owner would file
         it with a task that no longer supervises anything.
+
+        An omission carries its READING, and is refused without one. The obligation names a
+        relationship and a turn; the command that produced it needs a state directory, a marker
+        root, a workspace, an assignment and a session as well, and none of those is derivable
+        from the obligation. Composing the pointer without them produced an evidence line that
+        looked like a command and could not be run, which is worse than admitting there is no
+        pointer - so the reading is required where the pointer needs it.
         """
+        if obligation["kind"] == supervision.UNREPORTED and _selectors(reading) is None:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "an omission is staged with the reporting-observation/1 reading it came from:"
+                " the obligation names a relationship and a turn, and the command that found"
+                " it also needs the state directory, marker root, workspace, assignment and"
+                " session. Without them the report would carry an evidence line nobody can"
+                " follow",
+            )
         resolution = self.resolve(obligation["relationId"])
         if expect_recipient is not None and expect_recipient != resolution["recipient"]:
             raise DeliveryRefused(
@@ -218,7 +234,8 @@ class SupervisorChannel:
                 + repr(resolution["recipient"]) + "; a disagreement about who the level above"
                 " is is the finding, not something to resolve by picking one",
             )
-        packet = self.compose(obligation, resolution=resolution, observed_at=self.clock.iso())
+        packet = self.compose(obligation, resolution=resolution, reading=reading,
+                              observed_at=self.clock.iso())
         message_id = packet["envelope"]["messageId"]
         existing = self.find(message_id)
         if existing is not None:
@@ -273,9 +290,17 @@ class SupervisorChannel:
         standing = supervision.standing_for(
             self.store, self.linkage, project_key, observations=observations)
         staged, refused = [], []
+        # The readings are indexed by what an omission obligation is keyed on, so each one is
+        # staged with the reading it came from rather than with whichever arrived first.
+        by_turn = {}
+        for one in observations:
+            found = _selectors(one)
+            if found is not None:
+                by_turn[(one.get("relationshipId"), found["turn"])] = one
         for obligation in standing["standing"]:
             try:
-                staged.append(self.stage(obligation))
+                staged.append(self.stage(obligation, reading=by_turn.get(
+                    (obligation["relationId"], obligation["subject"]))))
             except DeliveryRefused as refusal:
                 refused.append({
                     "obligationId": obligation["obligationId"],
@@ -291,7 +316,7 @@ class SupervisorChannel:
 
     # ------------------------------------------------------------------ what it carries
 
-    def compose(self, obligation, *, resolution, observed_at=None) -> dict:
+    def compose(self, obligation, *, resolution, reading=None, observed_at=None) -> dict:
         """The relay-packet/1 this obligation travels as.
 
         Composed through packets.compose rather than assembled here, so the occasion is checked
@@ -317,7 +342,7 @@ class SupervisorChannel:
             issue=issue,
             generation=obligation.get("executionGeneration"),
             artifact=_artifact(report),
-            evidence=self._evidence(obligation, resolution),
+            evidence=self._evidence(obligation, resolution, reading),
             decision=decision,
             scope=self._scope(resolution, issue),
             basis=self._basis(obligation),
@@ -337,17 +362,24 @@ class SupervisorChannel:
                           " for the user, and recorded nothing further about it")
 
     @staticmethod
-    def _evidence(obligation, resolution) -> list:
+    def _evidence(obligation, resolution, reading=None) -> list:
         """Where the fact is readable. Never the report itself, which is this message."""
         basis = obligation.get("basis") or {}
         event_id = basis.get("eventId")
         if event_id:
             return ["codex-session-relay show --event " + str(event_id)]
-        turn = basis.get("turn")
-        if turn:
-            # An omission has no event, so there is no row to point at. What produced the
-            # reading is the pointer, and the selectors it needs are the caller's own.
-            return ["codex-session-relay reporting-show --turn " + str(turn)]
+        selectors = _selectors(reading)
+        if selectors is not None:
+            # An omission has no event, so there is no row to point at and the command that
+            # found it is the pointer. It is rendered WHOLE - reporting-show requires every
+            # one of these and refuses without them - so the line can be run rather than
+            # merely read.
+            return ["codex-session-relay --state " + str(selectors["state"])
+                    + " reporting-show --marker-root " + str(selectors["markerRoot"])
+                    + " --workspace " + str(selectors["workspace"])
+                    + " --assignment " + str(selectors["assignment"])
+                    + " --session " + str(selectors["session"])
+                    + " --turn " + str(selectors["turn"])]
         return ["codex-session-relay supervisor-standing --project "
                 + str(resolution.get("projectKey"))]
 
@@ -474,7 +506,8 @@ class SupervisorChannel:
             return None
         try:
             attempt_no, request_id, message = self._claim(
-                message_id, now=now, owner=owner, recipient=recipient)
+                message_id, now=now, owner=owner, recipient=recipient,
+                resolution=resolution)
         except _NotClaimable:
             return None
         try:
@@ -575,13 +608,20 @@ class SupervisorChannel:
             return self._settings(task_id, runtime_status)
         return authorized_settings(self.store, task_id, runtime_status)
 
-    def _claim(self, message_id, *, now, owner, recipient):
+    def _claim(self, message_id, *, now, owner, recipient, resolution):
         """Eligibility, the attempt number and the bytes, in one transaction.
 
         The bytes are rendered HERE, against the number this transaction just allocated, for
         the reason delivery renders inside its own claim: the request id is inside the bytes,
         so a render made before the allocation describes an attempt somebody else may have
         taken. Allocation, token and bytes commit together or not at all.
+
+        The hierarchy is re-checked here too, against the scope bindings rather than against
+        the reading taken before the host was read. resolve() runs before the lifecycle reads,
+        the settings gate and this claim, so a handover committing in that window left the
+        staged row naming the former supervisor and the transport woke it - the live one never
+        hearing the report. A preflight check can be raced; a predicate inside the write
+        cannot, which is the closure delivery's own claim uses for a moved generation.
         """
         with self.store.transaction() as db:
             cursor = db.execute(
@@ -610,10 +650,40 @@ class SupervisorChannel:
                 "                      AND (older.staged_at < supervisor_messages.staged_at"
                 "                           OR (older.staged_at = supervisor_messages.staged_at"
                 "                               AND older.message_id <"
-                "                                   supervisor_messages.message_id)))",
+                "                                   supervisor_messages.message_id)))"
+                # And the hierarchy this message was staged under is still the live one. Two
+                # halves: the owner of each level is still the task on the row, and no OTHER
+                # live owner exists for that level - which covers a handover that committed
+                # since resolve() ran and a store that holds two live owners at once. The
+                # project key is compared as well, so a relationship that moved projects
+                # cannot be sent under the hierarchy of the one it left.
+                "   AND supervisor_messages.project_key = ?"
+                "   AND EXISTS (SELECT 1 FROM scope_bindings b"
+                "                WHERE b.scope_kind = 'project' AND b.scope_key = ?"
+                "                  AND b.role = 'parent' AND b.superseded_by IS NULL"
+                "                  AND b.status IN ('active','paused')"
+                "                  AND b.task_id = supervisor_messages.sender_task_id)"
+                "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
+                "                    WHERE b.scope_kind = 'project' AND b.scope_key = ?"
+                "                      AND b.role = 'parent' AND b.superseded_by IS NULL"
+                "                      AND b.status IN ('active','paused')"
+                "                      AND b.task_id <> supervisor_messages.sender_task_id)"
+                "   AND EXISTS (SELECT 1 FROM scope_bindings b"
+                "                WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
+                "                  AND b.role = 'supervisor' AND b.superseded_by IS NULL"
+                "                  AND b.status IN ('active','paused')"
+                "                  AND b.task_id = supervisor_messages.recipient_task_id)"
+                "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
+                "                    WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
+                "                      AND b.role = 'supervisor' AND b.superseded_by IS NULL"
+                "                      AND b.status IN ('active','paused')"
+                "                      AND b.task_id <> supervisor_messages.recipient_task_id)",
                 (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                  message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
-                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now),
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now,
+                 resolution["projectKey"], resolution["projectKey"],
+                 resolution["projectKey"], resolution["initiativeKey"],
+                 resolution["initiativeKey"]),
             )
             if cursor.rowcount != 1:
                 raise _NotClaimable()
@@ -622,6 +692,20 @@ class SupervisorChannel:
             ).fetchone()
             attempt_no = row["attempt_count"]
             request_id = supervisor_request_id(message_id, attempt_no)
+            # A request id keeps 12 hex characters of a 32-character message id, so two
+            # messages CAN derive one. It is the primary key of the attempts table, so an
+            # unchecked insert answers a collision with a raw IntegrityError out of the
+            # driver - a host failure where a refusal belongs. Asked first, and named.
+            clash = db.execute(
+                "SELECT message_id FROM supervisor_attempts WHERE request_id = ?",
+                (request_id,)).fetchone()
+            if clash is not None and clash["message_id"] != message_id:
+                raise DeliveryRefused(
+                    RefusalReason.NOT_CLAIMABLE,
+                    "request id " + repr(request_id) + " already belongs to message "
+                    + repr(clash["message_id"]) + "; two message ids share the prefix this"
+                    " id keeps, so this attempt cannot be told apart from that one",
+                )
             message = self.render(json.loads(row["packet"]), request_id)
             at = self.clock.iso()
             db.execute(
@@ -780,15 +864,30 @@ class SupervisorChannel:
 
     # ------------------------------------------------------------------ reading it back
 
-    def read_back(self, message_id, *, read_turn_id, proof, adapter=None) -> dict:
+    def read_back(self, message_id, *, read_turn_id, proof, adapter=None,
+                  asserted_by=None) -> dict:
         """The recipient saying it read this, and what the host could establish about that.
 
         The proof is recomputed rather than trusted, and the turn is checked against the host's
         own list and against the moment the send started. A readback that does not verify is
         still recorded: hiding it would lose the fact that somebody answered, and the message
         stays where it was rather than moving to read.
+
+        asserted_by is a DECLARATION and not an authentication. Every identifier the proof is
+        computed from is in this store, and anyone who can call this can already write the row
+        it produces, so nothing here can establish who is asking. What it can do is write down
+        who claimed to be asking and refuse a claim that does not name this message's
+        recipient, which turns an unstated assumption into a recorded fact.
         """
         row = self.get(message_id)
+        if asserted_by is not None and asserted_by != row["recipient_task_id"]:
+            raise DeliveryRefused(
+                RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+                repr(asserted_by) + " is not the recipient of this message, which is "
+                + repr(row["recipient_task_id"]) + ". The declaration is checked against the"
+                " row; it is not evidence of who is calling, and nothing on this side could"
+                " be",
+            )
         if row["state"] not in DELIVERED + (READ,):
             raise DeliveryRefused(
                 RefusalReason.NOT_CLAIMABLE,
@@ -865,7 +964,9 @@ class SupervisorChannel:
                 " read_at = excluded.read_at",
                 (message_id, read_turn_id, proof, verified,
                  attempt["request_id"] if attempt is not None else None,
-                 json.dumps({"turnOrigin": origin, "detail": detail, "delivered": delivered},
+                 json.dumps({"turnOrigin": origin, "detail": detail,
+                             "delivered": delivered,
+                             "assertedBy": asserted_by or "undeclared"},
                             ensure_ascii=False, sort_keys=True),
                  at),
             )
@@ -880,6 +981,7 @@ class SupervisorChannel:
         return {"schema": VERSION, "messageId": message_id, "recorded": True,
                 "verified": verified, "readTurnId": read_turn_id, "turnOrigin": origin,
                 "detail": detail, "delivered": delivered, "readAt": at,
+                "assertedBy": asserted_by or "undeclared",
                 "limits": "a verified readback says this message is in the recipient's"
                           " transcript and that a real turn on its thread answered with a value"
                           " these bytes do not contain. It does not say who wrote the answer:"
@@ -1049,6 +1151,25 @@ class SupervisorChannel:
                       " the Linear record it reads for itself, confirmed",
         }
 
+
+
+
+def _selectors(reading):
+    """The five selectors reporting-show needs, plus the state directory, or None.
+
+    All or nothing on purpose. A partial set renders a command that looks runnable and is
+    not, and the caller learns that only when they try it - so a reading missing any of them
+    is treated as no reading at all, and staging says so rather than shipping the line.
+    """
+    if not isinstance(reading, dict):
+        return None
+    found = reading.get("selectors")
+    if not isinstance(found, dict):
+        return None
+    wanted = ("state", "markerRoot", "workspace", "assignment", "session", "turn")
+    if any(not str(found.get(name) or "").strip() for name in wanted):
+        return None
+    return {name: found[name] for name in wanted}
 
 def _artifact(report):
     """The pull request a work report names, when it names one whole.

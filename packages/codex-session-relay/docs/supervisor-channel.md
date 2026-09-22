@@ -207,6 +207,23 @@ recipient never reaches.
 `supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
 rather than ignoring the one it cannot use.
 
+It also refuses an omission staged without the reading that found it. The obligation names a
+relationship and a turn; `reporting-show` needs a state directory, a marker root, a workspace,
+an assignment and a session too, so an evidence line built from the obligation alone looked
+like a command and could not be run. With the reading the pointer is rendered whole.
+
+## What a readback is not
+
+It carries no supervisor authority. Every identifier the proof is computed from is in this
+store, and anyone who can run the command can already write the row it produces - the store is
+a file, not a service with callers to authenticate, so no check on this side could establish
+who is asking. What the channel does instead is record who ASSERTED the readback and refuse an
+assertion that does not name the message's recipient. That is a declaration, and calling it
+anything stronger would be the kind of claim the rest of this document exists to avoid.
+
+Read `received` on the reach ladder as "a readback was recorded and the host agreed its turn is
+real". It is not "the supervisor acted", and the obligation is not discharged by it.
+
 ## What this does not do
 
 Nothing here wakes anybody on a timer. There is no daemon pass behind these commands: a report

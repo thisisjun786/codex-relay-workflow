@@ -813,6 +813,7 @@ def cmd_supervisor_stage(services, args) -> dict:
     from . import supervision
     from .report import read as read_work_report
 
+    reading = None
     if args.project:
         if args.recipient:
             raise SystemExit2(
@@ -833,7 +834,8 @@ def cmd_supervisor_stage(services, args) -> dict:
             services.store, args.event, read_work_report(services.store, args.event))
         about = "event " + repr(args.event)
     elif args.observation and len(args.observation) == 1:
-        obligation = supervision.from_observation(_observation_file(args.observation[0]))
+        reading = _observation_file(args.observation[0])
+        obligation = supervision.from_observation(reading)
         about = "the observation at " + repr(args.observation[0])
     elif args.observation:
         raise SystemExit2(
@@ -850,7 +852,9 @@ def cmd_supervisor_stage(services, args) -> dict:
             about + " raises no obligation, so there is nothing to stage. An event has to be"
             " a completion, a new block or a decision the user owes, and an observation has"
             " to report state unreported", EXIT_USAGE)
-    return services.supervisor_channel.stage(obligation, expect_recipient=args.recipient)
+    return services.supervisor_channel.stage(
+        obligation, expect_recipient=args.recipient,
+        reading=reading if args.observation else None)
 
 
 def cmd_supervisor_send(services, args) -> dict:
@@ -899,7 +903,7 @@ def cmd_supervisor_read(services, args) -> dict:
                   " is a statement about this process and reads as one about the recipient")
     return services.supervisor_channel.read_back(
         args.message, read_turn_id=args.turn, proof=args.proof,
-        adapter=_LazyAdapter(services))
+        adapter=_LazyAdapter(services), asserted_by=args.asserted_by)
 
 
 def cmd_supervisor_show(services, args) -> dict:
@@ -3482,6 +3486,11 @@ def build_parser() -> argparse.ArgumentParser:
     readback.add_argument("--message", required=True)
     readback.add_argument("--turn", required=True, help="your own turn id")
     readback.add_argument("--proof", required=True)
+    readback.add_argument("--as", dest="asserted_by", required=True,
+                          help="the task asserting this readback. Checked against the"
+                               " message's recipient and written down, which is a"
+                               " declaration rather than an authentication: nothing on this"
+                               " side can establish who is calling")
     readback.set_defaults(handler=cmd_supervisor_read)
 
     shown = subparsers.add_parser(

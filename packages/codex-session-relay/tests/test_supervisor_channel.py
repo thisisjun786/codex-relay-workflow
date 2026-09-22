@@ -571,7 +571,8 @@ class WhatTheReviewFound(ChannelTestCase):
         """
         _one, message_id = self.staged()
         self.channel._claim(message_id, now=self.clock.now(), owner="a worker that died",
-                            recipient=SUPERVISOR)
+                            recipient=SUPERVISOR,
+                            resolution=self.channel.resolve(self.rid))
         row = self.channel.get(message_id)
         self.assertEqual(row["state"], "sending")
         self.assertEqual(self.channel.stranded(now=row["lease_until"] + 1)[0]["message_id"],
@@ -812,7 +813,8 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
         self.rate_row(cap, now)
         with self.assertRaises(Exception) as caught:
             self.channel._claim(message_id, now=now, owner="a racing caller",
-                                recipient=SUPERVISOR)
+                                recipient=SUPERVISOR,
+                            resolution=self.channel.resolve(self.rid))
         self.assertIn("NotClaimable", type(caught.exception).__name__)
         self.assertEqual(self.channel.get(message_id)["state"], QUEUED,
                          "the claim rolled back, so nothing was spent")
@@ -822,7 +824,8 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
         now = self.clock.now()
         self.rate_row(self.channel.policy.max_sends_per_recipient_per_hour - 1, now)
         attempt_no, request_id, _message = self.channel._claim(
-            message_id, now=now, owner="the last one in", recipient=SUPERVISOR)
+            message_id, now=now, owner="the last one in", recipient=SUPERVISOR,
+                            resolution=self.channel.resolve(self.rid))
         self.assertEqual(attempt_no, 1)
         self.assertTrue(request_id)
 
@@ -832,7 +835,8 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
         self.clock.advance(5)
         _other, second = self.staged(text="a second deliverable")
         self.channel._claim(first, now=self.clock.now(), owner="in flight",
-                            recipient=SUPERVISOR)
+                            recipient=SUPERVISOR,
+                            resolution=self.channel.resolve(self.rid))
         self.assertEqual(self.channel.get(first)["state"], "sending")
         refusal = self.assertRefused(
             RefusalReason.NOT_CLAIMABLE, self.channel.attempt, second, self.adapter)
@@ -843,7 +847,8 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
         self.clock.advance(5)
         _other, second = self.staged(text="a second deliverable")
         self.channel._claim(first, now=self.clock.now(), owner="a worker that died",
-                            recipient=SUPERVISOR)
+                            recipient=SUPERVISOR,
+                            resolution=self.channel.resolve(self.rid))
         expired = self.channel.get(first)["lease_until"] + 1
         self.assertIsNotNone(self.channel.attempt(second, self.adapter, now=expired))
 
@@ -943,3 +948,114 @@ class WhatTheSecondReviewRoundFound(ChannelTestCase):
                 self.adapter = adapter
 
         return _Services()
+
+
+class WhatTheThirdReviewRoundFound(ChannelTestCase):
+    def test_a_handover_committed_after_resolve_does_not_wake_the_former_supervisor(self):
+        """resolve() runs before the host reads and the claim; that window is real.
+
+        The check before the lifecycle reads cannot see a handover that commits while they
+        run, so the predicate that matters is the one inside the write.
+        """
+        _one, message_id = self.staged()
+        resolution = self.channel.resolve(self.rid)
+        self.linkage.handover(
+            role="supervisor", scope_key=INITIATIVE, expect_task_id=SUPERVISOR,
+            endpoint=Endpoint("01new-supervisor", HOST, cwd="/new", cxc_session="cxc-new"),
+            acknowledged=[], evidence="the initiative changed hands mid-send", actor="a test")
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(message_id, now=self.clock.now(), owner="mid-handover",
+                                recipient=SUPERVISOR, resolution=resolution)
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+        self.assertEqual(self.store.all("SELECT request_id FROM supervisor_attempts"), [],
+                         "the former supervisor was never resumed")
+
+    def test_a_second_live_owner_stops_the_claim_even_when_one_of_them_matches(self):
+        """A store that holds two live owners is a contest, not a resolved hierarchy."""
+        _one, message_id = self.staged()
+        resolution = self.channel.resolve(self.rid)
+        self.store.db.execute("DROP INDEX IF EXISTS scope_bindings_one_live_owner")
+        self.store.db.execute(
+            "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id,"
+            " host_id, cwd, cxc_session, status, revision, supersedes, superseded_by,"
+            " handover_note, created_at, updated_at)"
+            " VALUES ('bnd-contest','supervisor','initiative',?,'01other-supervisor',?,NULL,"
+            " NULL,'active',9,NULL,NULL,NULL,?,?)",
+            (INITIATIVE, HOST, self.clock.iso(), self.clock.iso()))
+        self.store.db.commit()
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(message_id, now=self.clock.now(), owner="contested",
+                                recipient=SUPERVISOR, resolution=resolution)
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+
+    def test_two_messages_sharing_a_request_prefix_are_refused_by_name(self):
+        """The id keeps 12 of 32 hex characters and is the attempts table's primary key."""
+        _one, message_id, record = self.delivered()
+        other, second = self.staged(text="a second deliverable")
+        self.store.db.execute(
+            "UPDATE supervisor_attempts SET request_id = ? WHERE message_id = ?",
+            ("sup-" + second[:12] + "-a1", message_id))
+        self.store.db.commit()
+        refusal = self.assertRefused(
+            RefusalReason.NOT_CLAIMABLE, self.channel._claim, second,
+            now=self.clock.now() + 3600, owner="colliding", recipient=SUPERVISOR,
+            resolution=self.channel.resolve(self.rid))
+        self.assertIn("already belongs to message", refusal.detail)
+
+    def test_an_omission_is_refused_without_the_reading_that_found_it(self):
+        """The pointer needs five selectors the obligation does not carry."""
+        one = supervision.from_observation(self.observation())
+        self.assertEqual(one["kind"], supervision.UNREPORTED)
+        refusal = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT, self.channel.stage, one)
+        self.assertIn("marker root", refusal.detail)
+
+    def test_an_omission_staged_with_its_reading_carries_a_runnable_pointer(self):
+        reading = self.observation()
+        one = supervision.from_observation(reading)
+        staged = self.channel.stage(one, reading=reading)
+        packet = json.loads(
+            self.channel.get(staged["messageId"])["packet"])
+        pointer = packet[packets.EVIDENCE][0]
+        for flag in ("--state", "--marker-root", "--workspace", "--assignment", "--session",
+                     "--turn"):
+            self.assertIn(flag, pointer)
+        self.assertIn("reporting-show", pointer)
+
+    def test_a_readback_records_who_asserted_it_and_refuses_a_foreign_claim(self):
+        """A declaration, not an authentication - and the difference is written down."""
+        _one, message_id, record = self.delivered()
+        self.assertRefused(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED, self.channel.read_back, message_id,
+            read_turn_id=record["turnId"],
+            proof=supervisor_read_proof(message_id, record["turnId"]),
+            adapter=self.adapter, asserted_by="01someone-else")
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_readbacks"), [])
+
+        answer = self.channel.read_back(
+            message_id, read_turn_id=record["turnId"],
+            proof=supervisor_read_proof(message_id, record["turnId"]),
+            adapter=self.adapter, asserted_by=SUPERVISOR)
+        self.assertEqual(answer["assertedBy"], SUPERVISOR)
+        stored = json.loads(self.store.one(
+            "SELECT detail FROM supervisor_readbacks WHERE message_id = ?",
+            (message_id,))["detail"])
+        self.assertEqual(stored["assertedBy"], SUPERVISOR)
+
+    def test_an_undeclared_readback_says_so_rather_than_implying_the_recipient(self):
+        _one, message_id, record = self.delivered()
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["assertedBy"], "undeclared")
+
+    def observation(self):
+        """A reporting-observation/1 reading shaped the way omitted.observe answers one."""
+        return {
+            "schema": "reporting-observation/1",
+            "reportingState": "unreported",
+            "relationshipId": self.rid,
+            "reason": "the turn settled without a report",
+            "selectors": {"state": "/state/relay", "markerRoot": "/marker",
+                          "workspace": self.root, "assignment": "asg-1",
+                          "session": "01child-session", "turn": "turn-unreported-1"},
+        }
