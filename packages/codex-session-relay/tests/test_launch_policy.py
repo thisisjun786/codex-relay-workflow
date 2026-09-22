@@ -161,6 +161,10 @@ class WhatALaunchCarries(LaunchPolicyCase):
         self.assertEqual(payload["start"]["launchPolicy"]["source"], "record")
         self.assertTrue(payload["start"]["launchPolicy"]["persisted"])
         self.assertEqual(payload["start"]["launchPolicy"]["digest"], self.digest)
+        # And the receipt says when that digest was read. The child snapshots the file on its
+        # own way up, so this is the decision, never a reading of the worker that resulted.
+        self.assertEqual(payload["start"]["launchPolicy"]["readAt"], "before this launch")
+        self.assertNotIn("runningDigest", payload["start"]["launchPolicy"])
 
     def test_the_child_can_actually_read_the_policy_it_is_handed(self):
         service = self.enabled_service()
