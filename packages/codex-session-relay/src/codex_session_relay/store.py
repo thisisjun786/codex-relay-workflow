@@ -2012,21 +2012,6 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         os.close(fd)
 
 
-def _read_through_another_log(nonce: dict, store: dict) -> bool:
-    """Was this nonce read through a pathname whose log is not the compared store's?
-
-    True only when BOTH locations were measured and they differ. An absent measurement is not a
-    disagreement - saying so would turn \"could not look\" into \"somewhere else\" - and it is
-    refused where it belongs instead, by the log arm reporting that the location is not
-    comparable here.
-    """
-    read_from = (nonce.get("logDevice"), nonce.get("logInode"), nonce.get("logName"))
-    mine = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
-    if None in read_from or None in mine:
-        return False
-    return read_from != mine
-
-
 def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_log=None,
                   nonce=None) -> dict:
     """Grade the evidence that this participant and another share ONE store.
@@ -2136,15 +2121,22 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, expect_l
         elif nonce.get("found"):
             read_from = (nonce.get("device"), nonce.get("inode"))
             here = (store.get("device"), store.get("inode"))
+            # The same attribution question one level along. `probe` and `nonce_lookup` are two
+            # independent opens, so an answer can carry this store's device and inode and still
+            # have been read through a pathname whose log is a different file. Both sides must
+            # have been measured for a difference to mean anything: an absent measurement is
+            # not a disagreement, and calling it one would turn "could not look" into
+            # "somewhere else". The log arm above refuses that case on its own terms.
+            read_log = (nonce.get("logDevice"), nonce.get("logInode"), nonce.get("logName"))
+            mine_log = (store.get("logDevice"), store.get("logInode"), store.get("logName"))
+            elsewhere = (None not in read_log and None not in mine_log
+                         and read_log != mine_log)
             if None in read_from or None in here or read_from != here:
                 reasons.append((UNPROVEN, (
                     f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
                     f" this comparison is about {here[0]}:{here[1]}"
                 )))
-            elif _read_through_another_log(nonce, store):
-                # The same attribution question one level along. probe and nonce_lookup are two
-                # independent opens, so an answer can carry this store's device and inode and
-                # still have been read through a pathname whose log is a different file.
+            elif elsewhere:
                 reasons.append((UNPROVEN, (
                     "the nonce was read through a pathname whose write-ahead log is not the one"
                     " this comparison is about"
