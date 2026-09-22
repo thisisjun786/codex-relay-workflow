@@ -372,7 +372,7 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-225 | A reading that establishes something clears the unmeasured notice that said nobody had | `faultsweep.reading_faults` | implemented |
 | I-226 | A fault whose scope moved has its pending writes re-pointed at the new scope's tracker | `FaultLedger.record` | implemented |
 | I-227 | A fault that reaches its threshold after a fix was recorded early still opens its record | `faults._transition` | implemented |
-| I-228 | Recovery is an existence query for the fault's own signature, so it stays exact when a source outgrows one page, and both the source and the ledger scan rotate | `faultsweep.still_present`, `recovered` | implemented |
+| I-228 | Recovery is an existence query for the fault's own signature, independent of page completeness, and both the source and the ledger scan rotate and wrap | `faultsweep.still_present`, `recovered` | implemented |
 | I-229 | A clearing observation for a fault that was never recorded records nothing, and `cleared` must be an actual boolean | `FaultLedger.record`, `faults._flag` | implemented |
 | I-230 | A reading the sweep cannot use is named in its gaps and reaches the tick report, never silently dropped | `faultsweep.reading_faults`, `RelayDaemon._sweep_faults` | implemented |
 | I-231 | Cursors advance after the rows are recorded, so a recording failure does not skip that page | `faultsweep.record_all` | implemented |
@@ -387,3 +387,12 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-240 | An episode opens when a fault actually closes, not whenever a clearing reading arrives, so repeated identical clears do not ratchet | `faults._transition` and `record`; a clear against a closed fault is a no-op | implemented |
 | I-241 | Retry failures rotate on their own keyset cursor, so no failure behind the first page is left permanently unobserved | `faultsweep.retry_faults`, `fault_cursors` entry `delivery_retrying` | implemented |
 | I-242 | A reading carrying a state this sweep cannot interpret is named as a gap rather than absorbed | `faultsweep.reading_faults` | implemented |
+| I-243 | Delivery identity takes the attempt's classified state and never the delivery's mutable hold reason, so reaching the cap escalates one fault instead of forking a second | `faultsweep.retry_faults` and `delivery_faults` | implemented |
+| I-244 | Recovery asks both shapes that derive a delivery fault, so a fault whose evidence sits further back does not alternate between withdrawn and reopened | `faultsweep.still_present` | implemented |
+| I-245 | A reverification is an execution: its identity carries the newest remediation it follows, so failed then passed then failed records three, while repeating one check with nothing in between converges | `FaultLedger._remediate` | implemented |
+| I-246 | A fault resolved before it was ever filed still opens a record when it returns and reaches its threshold | `faults._transition` | implemented |
+| I-247 | A write released by an attested absence is re-pointed at the tracker its fault uses now | `FaultLedger.reconcile` | implemented |
+| I-248 | A comment is confirmed only against the issue its fault owns | `FaultLedger.complete` | implemented |
+| I-249 | A source cursor wraps after a bounded run of full pages, because these keys are not monotonic insertion sequences and a row behind the cursor can become eligible at any time | `faultsweep.PAGES_BEFORE_WRAP`, `fault_cursors.pages` | implemented |
+| I-250 | Active and clearing observations have distinct identities, so an adapter that clears under the key it raised still closes the fault | `faults.occurrence_id` | implemented |
+| I-251 | A bound has to bound something: a non-positive limit is refused rather than reaching SQLite, where LIMIT -1 removes the bound | `faults._bounded`, `cli._positive` | implemented |

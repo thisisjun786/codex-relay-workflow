@@ -1518,6 +1518,18 @@ def cmd_fault_sweep(services, args) -> dict:
             "limits": batch["limits"]}
 
 
+def _positive(value, name):
+    """A bound has to bound something. argparse accepts -1 happily and SQLite reads LIMIT -1
+    as no limit, so the flag asking for a page would have materialised the whole queue."""
+    from .errors import RefusalReason
+    from .faults import FaultRefused
+
+    if not isinstance(value, int) or value < 1:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"{name} is a positive integer, not {value!r}")
+    return value
+
+
 def _fault_json(value, what):
     """Parse caller-supplied JSON into a refusal rather than a traceback.
 
@@ -1539,7 +1551,8 @@ def cmd_fault_show(services, args) -> dict:
         record = services.faults.get(args.fault)
         if record is None:
             raise PayloadExit({"faultId": args.fault, "found": False}, EXIT_REFUSED)
-        record["occurrences"] = services.faults.occurrences(args.fault, limit=args.limit)
+        record["occurrences"] = services.faults.occurrences(
+            args.fault, limit=_positive(args.limit, "--limit"))
         record["remediations"] = services.faults.remediations(args.fault)
         return record
     return services.faults.snapshot(scope_key=args.scope, state=args.fault_state)
@@ -1562,7 +1575,7 @@ def cmd_fault_resolve(services, args) -> dict:
 
 def cmd_fault_next(services, args) -> dict:
     services.faults.expire_leases()
-    return {"publications": services.faults.next(limit=args.limit)}
+    return {"publications": services.faults.next(limit=_positive(args.limit, "--limit"))}
 
 
 def cmd_fault_claim(services, args) -> dict:

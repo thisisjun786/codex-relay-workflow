@@ -1072,6 +1072,10 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 CREATE TABLE IF NOT EXISTS fault_cursors (
     source     TEXT PRIMARY KEY,
     position   TEXT,
+    -- Consecutive FULL pages taken since this source last wrapped. These keys are not
+    -- monotonic insertion sequences, so a cursor that only wrapped on a short page would
+    -- never come back for a row behind it while full pages kept arriving.
+    pages      INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
 

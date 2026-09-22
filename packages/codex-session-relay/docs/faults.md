@@ -78,7 +78,7 @@ The domain is the recipient. The individual deliveries are its occurrences.
 
 | Class | Signature (identity) | Occurrence key | Cleared by | Severity |
 |---|---|---|---|---|
-| `delivery_stalled` | recipient, cause, last attempt state | the attempt's `request_id` | the sweep no longer deriving it | degraded, `broken` at the attempt cap |
+| `delivery_stalled` | recipient and the attempt's classified state | the attempt's `request_id` | the sweep no longer deriving it | degraded, `broken` at the attempt cap |
 | `record_sync_failed` | target and target ref | `(sync_id, attempts)` | the sweep no longer deriving it | broken |
 | `observation_stalled` | relationship and generation | `(relationship, generation, turn, last_attempt_at)` | the sweep no longer deriving it | `broken` when never polled, degraded otherwise |
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
@@ -88,7 +88,11 @@ A retrying delivery is read from its ATTEMPT rows, not from the delivery. The ho
 is only set at a cap, so a query that required one saw nothing until a delivery had
 already given up, and the degraded tier - three observations inside a window - could
 never be reached. An attempt's request id advances once per actual failure rather than
-once per sweep, which is the occurrence identity this needs.
+once per sweep, which is the occurrence identity this needs. Identity takes the
+attempt's own classified state and never the delivery's hold reason: that reason is
+set when a delivery gives up and it is MUTABLE, so deriving identity from it meant one
+continuous failure owned two faults the moment it hit its cap. Severity still reads
+it, because severity is not identity and the same fault escalates instead of forking.
 
 The hold reason alone was not enough for a delivery. `attempt_cap` covers every pre-send failure
 there is, so a settings rejection and a transport error would have merged into one record that
@@ -112,8 +116,9 @@ this store could ever clear one, and it is therefore not registered.
 
 ## Occurrences and evidence
 
-Each observation records an occurrence, keyed by `sha256(fault_id | occurrenceKey)[:32]` and
-inserted once. The key matters more than it looks: the sweep runs on every tick and reads the
+Each observation records an occurrence, keyed by
+`sha256(fault_id | episode | direction | occurrenceKey)[:32]` and inserted once, unique on
+(fault, episode, key) in the table as well as in the id. The key matters more than it looks: the sweep runs on every tick and reads the
 same stuck row each time, so without an occurrence identity one stuck delivery would count
 thousands of occurrences within the hour and escalate itself past every threshold. The adapter
 names the occurrence after the underlying fact — the attempt's request id, the publication's
@@ -316,7 +321,7 @@ happened is the work the fix cycle exists for.
 | `fault_remediations` | append-only fixes and structured reverifications, per cycle |
 | `fault_publications` | the outbox: what must be written to Linear, and how far it got |
 | `fault_targets` | where a scope's fault issues are filed |
-| `fault_cursors` | where each source stopped, so the sweep rotates instead of re-reading one page |
+| `fault_cursors` | where each source stopped and how many full pages it has taken, so the sweep rotates and still wraps |
 
 ## Commands
 

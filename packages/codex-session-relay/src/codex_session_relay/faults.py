@@ -123,6 +123,21 @@ class FaultRefused(RelayError):
 CLASS_POLICY = {}
 
 
+def latest_id(db, seq):
+    """The remediation a timeline row points at, so a converged call can name it."""
+    row = db.execute("SELECT ref_id FROM fault_timeline WHERE seq = ?", (seq,)).fetchone()
+    return row["ref_id"] if row else None
+
+
+def _bounded(value, name, ceiling=1000):
+    """A bound has to be a positive integer. SQLite reads LIMIT -1 as no limit at all, so a
+    negative one handed in from a command line removed the bound it was asking for."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"{name} is a positive integer, not {value!r}")
+    return min(value, ceiling)
+
+
 def _named(value):
     """A name is a non-blank string, which a list and a blank both fail."""
     return isinstance(value, str) and bool(value.strip())
@@ -237,14 +252,20 @@ def fault_id(product, fault_class, signature) -> str:
     return sha256_hex(f"{product}|{fault_class}|{canonical_signature(signature)}")[:ID_WIDTH]
 
 
-def occurrence_id(identifier, occurrence_key, episode=1) -> str:
-    """One occurrence, per episode.
+def occurrence_id(identifier, occurrence_key, episode=1, cleared=False) -> str:
+    """One occurrence, per episode, per direction.
 
     The episode is what separates "the sweep read this stuck row again" from "the thing that
     was fixed is back". Both arrive under the same key, because the key names the underlying
     fact; only the episode tells them apart.
+
+    The direction is in here for the adapter that clears under the SAME key it raised: this
+    package's own reading adapter appends a suffix, but nothing forces one, and without the
+    flag such a clear collided with the observation it was meant to close and was dropped as
+    already recorded - leaving a fault open while its cause was gone.
     """
-    return sha256_hex(f"{identifier}|{episode}|{occurrence_key}")[:ID_WIDTH]
+    direction = "cleared" if cleared else "active"
+    return sha256_hex(f"{identifier}|{episode}|{direction}|{occurrence_key}")[:ID_WIDTH]
 
 
 def publication_id(identifier, kind, trigger_key) -> str:
@@ -630,6 +651,7 @@ class FaultLedger:
         return row
 
     def occurrences(self, identifier, *, limit=RENDERED_OCCURRENCES, newest=True) -> list:
+        limit = _bounded(limit, "limit")
         order = "DESC" if newest else "ASC"
         rows = self.store.all(
             f"SELECT * FROM fault_occurrences WHERE fault_id = ? ORDER BY rowid {order}"
@@ -705,7 +727,8 @@ class FaultLedger:
                 return {"faultId": identifier, "recorded": False, "state": row["state"],
                         "occurrenceCount": row["occurrence_count"],
                         "reason": "this fault is already closed", "publication": None}
-            fact["occurrenceId"] = occurrence_id(identifier, fact["occurrenceKey"], episode)
+            fact["occurrenceId"] = occurrence_id(identifier, fact["occurrenceKey"], episode,
+                                                 fact["cleared"])
             # Asked of the TIMELINE, not of the evidence rows, and before the insert rather
             # than off rowcount. The timeline is never pruned, so removing evidence an
             # operator has finished reading cannot make a familiar occurrence look new and
@@ -905,13 +928,32 @@ class FaultLedger:
             # verification that predated the fix it was supposed to verify. Recording the
             # identical check twice with no fix in between still converges, which is the
             # idempotence worth keeping.
-            # Only a REVERIFICATION's meaning depends on which fix it follows. A fix's own
-            # identity must not, or recording the same fix twice would write two rows.
-            after = db.execute(
-                "SELECT MAX(seq) AS seq FROM fault_timeline"
-                " WHERE fault_id = ? AND cycle = ? AND kind = ?",
-                (identifier, row["cycle"], FIX)).fetchone()["seq"] \
-                if kind == REVERIFICATION else None
+            # Only a REVERIFICATION's meaning depends on what it follows. A fix's own identity
+            # must not, or recording the same fix twice would write two rows.
+            #
+            # It follows the newest REMEDIATION, not merely the newest fix. Keyed on the fix
+            # alone, failed -> passed -> failed produced the first failure's id for the last
+            # one, INSERT OR IGNORE dropped it, and resolve() then accepted a pass that a
+            # later run had already contradicted. Repeating one check with nothing in between
+            # still converges, by the identical-predecessor test below.
+            after = None
+            if kind == REVERIFICATION:
+                latest = db.execute(
+                    "SELECT t.seq AS seq, r.kind AS kind, r.ref AS ref, r.method AS method,"
+                    "       r.outcome AS outcome FROM fault_timeline t"
+                    "  JOIN fault_remediations r ON r.remediation_id = t.ref_id"
+                    " WHERE t.fault_id = ? AND t.cycle = ? AND t.kind IN (?,?)"
+                    " ORDER BY t.seq DESC LIMIT 1",
+                    (identifier, row["cycle"], FIX, REVERIFICATION)).fetchone()
+                if latest is not None:
+                    if (latest["kind"] == REVERIFICATION and latest["ref"] == ref
+                            and latest["method"] == method and latest["outcome"] == outcome):
+                        # The same check, run again with nothing in between. One execution.
+                        return {"faultId": identifier, "recorded": False,
+                                "remediationId": latest_id(db, latest["seq"]),
+                                "state": row["state"],
+                                "reason": "this check was already the latest remediation"}
+                    after = latest["seq"]
             remediation_id = sha256_hex(
                 f"{identifier}|{row['cycle']}|{kind}|{ref}|{method}|{outcome}|{after}"
             )[:ID_WIDTH]
@@ -1119,6 +1161,7 @@ class FaultLedger:
     def next(self, *, limit=4, now=None) -> list:
         """The publications a caller may act on. An issued or uncertain row is never among them."""
         moment = self.clock.now() if now is None else now
+        limit = _bounded(limit, "limit")
         # A comment on an issue that does not exist yet is not work anybody can do. It waits
         # here rather than being handed out and failing at the connector.
         rows = self.store.all(
@@ -1252,10 +1295,19 @@ class FaultLedger:
                                   " absence unless somebody says what they read"}
             state = row["state"]
             if state in (ISSUED, UNCERTAIN):
+                # Re-pointed on the way back to pending. An uncertain row deliberately keeps
+                # the tracker it may have landed on while it is being reconciled, but once an
+                # attested absence says nothing landed, reissuing it against a tracker the
+                # fault has since left would file it where nobody is looking.
+                current = db.execute(
+                    "SELECT t.tracker_ref AS tracker_ref FROM fault_ledger f"
+                    "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
+                    " WHERE f.fault_id = ?", (row["fault_id"],)).fetchone()
                 db.execute(
-                    "UPDATE fault_publications SET state = ?, claim_token = NULL,"
-                    "  lease_owner = NULL, lease_until = NULL, updated_at = ?"
-                    " WHERE publication_id = ?", (PENDING, now, publication))
+                    "UPDATE fault_publications SET state = ?, tracker_ref = ?,"
+                    "  claim_token = NULL, lease_owner = NULL, lease_until = NULL,"
+                    "  updated_at = ? WHERE publication_id = ?",
+                    (PENDING, current["tracker_ref"] if current else None, now, publication))
                 state = PENDING
             # Reported as the state the row is actually in. A claimed row is not released by
             # an attested absence - its holder still holds it and can simply write - and
@@ -1298,7 +1350,22 @@ class FaultLedger:
             problems = _block_mismatch(row, fault, found)
             if problems:
                 raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH, "; ".join(problems))
-            reference = external_ref or row["external_ref"]
+            reference = external_ref or row["external_ref"] or fault["external_ref"]
+            if row["kind"] == APPEND_COMMENT:
+                # Against the issue this fault owns, and nothing else. The readback proves a
+                # block is present somewhere; only this comparison ties it to the record the
+                # fault is supposed to be commenting on.
+                owned = fault["external_ref"]
+                if not owned:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_STATE_CONFLICT,
+                        "this fault owns no issue yet, so a comment on it cannot be confirmed",
+                    )
+                if reference != owned:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_READBACK_MISMATCH,
+                        f"this comment names {reference!r}, and the fault owns {owned!r}",
+                    )
             if row["kind"] == OPEN_RECORD and not reference:
                 # Confirming a create without the identifier it created leaves the ledger
                 # owning no issue, and every later comment then waits forever for a reference
@@ -1484,6 +1551,11 @@ def _transition(state, cycle, *, cleared, publishable, escalated, severity, publ
     if state == WITHDRAWN:
         state = OBSERVED
     if state == RESOLVED:
+        if not published:
+            # Resolved locally without ever having been filed. A reopen comment would be
+            # refused for want of an issue and nothing would ever queue again, so the
+            # threshold decides here exactly as it would have the first time.
+            return OPEN, cycle + 1, True, (TRIGGER_OPEN if publishable else None)
         return OPEN, cycle + 1, True, f"{TRIGGER_REOPEN}:{cycle + 1}"
     if state == FIX_PENDING:
         if not published:

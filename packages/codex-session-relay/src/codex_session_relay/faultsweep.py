@@ -23,6 +23,11 @@ from . import faults
 from .policy import RetryPolicy
 
 SWEEP_LIMIT = 32
+# How many consecutive FULL pages a source may take before its cursor wraps anyway.
+# These keys are not monotonic insertion sequences: a row behind the cursor can become
+# eligible at any time, and a cursor that only wrapped on a short page would never come
+# back for it while full pages kept arriving.
+PAGES_BEFORE_WRAP = 4
 
 STORE_SOURCE = "store"
 READING_SOURCE = "reading"
@@ -70,6 +75,7 @@ def _page(observations, rows, key, cursor, limit) -> dict:
         # Wrap to the start when the page was short: the next sweep then re-reads from the
         # beginning rather than sitting past the end seeing nothing forever.
         "cursor": position if filled else None,
+        "filled": filled,
         "complete": cursor is None and not filled,
     }
 
@@ -142,7 +148,6 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
     for row in rows:
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
         signature = {"recipient": row["recipient_task_id"],
-                     "cause": row["hold_reason"] or "retrying",
                      "attemptState": row["last_state"]}
         observations.append(faults.observation(
             product=product, fault_class="delivery_stalled",
@@ -185,14 +190,22 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
         "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
         "   AND a.rowid > ?"
         " ORDER BY a.rowid LIMIT ?",
-        (*SETTLED_DELIVERY, "dispatched", "inbox_only", cursor or 0, limit),
+        # Coerced back to an integer. fault_cursors.position has TEXT affinity, so a rowid
+        # stored there returns as a string, and SQLite orders every integer before every
+        # string - so "rowid > '32'" matched nothing and the rotation silently restarted.
+        (*SETTLED_DELIVERY, "dispatched", "inbox_only", int(cursor or 0), limit),
     )
     cache = {}
     observations = [faults.observation(
         product=product, fault_class="delivery_stalled",
         severity=faults.BROKEN if row["hold_reason"] else faults.DEGRADED,
+        # The attempt's own classified state, never the delivery's hold reason. That reason
+        # is set when a delivery gives up and it is MUTABLE: deriving identity from it meant
+        # that the moment a retrying delivery hit its cap, every historical attempt re-derived
+        # under a new signature and one continuous failure owned two faults and two issues.
+        # Severity still reads it, because severity is not identity - the fault escalates
+        # instead of forking.
         signature={"recipient": row["recipient_task_id"],
-                   "cause": row["hold_reason"] or "retrying",
                    "attemptState": row["attempt_state"]},
         occurrence_key=f"delivery:{row['request_id']}",
         scope=scope_of(store, row["relationship_id"], scope, cache),
@@ -204,9 +217,11 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
             "event": row["event_id"],
         })],
     ) for row in rows]
+    filled = len(rows) >= limit
     return {"observations": observations,
-            "cursor": rows[-1]["seq"] if len(rows) >= limit else None,
-            "complete": cursor is None and len(rows) < limit}
+            "cursor": rows[-1]["seq"] if filled else None,
+            "filled": filled,
+            "complete": cursor is None and not filled}
 
 
 def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
@@ -391,7 +406,7 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     past the bound. Only the classes whose source was read to the end can clear.
     """
     scope = dict(scope or {})
-    cursors = read_cursors(store)
+    cursors, pages = read_cursors(store)
     by_class = {
         "delivery_stalled": delivery_faults(
             store, product=product, scope=scope, limit=limit, policy=policy,
@@ -416,14 +431,17 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     observations = derived + read["observations"]
     recovery = recovered(store, derived, product=product, scope=scope, limit=limit,
                          complete=complete, cursor=cursors.get("recovered"))
-    positions = {name: page["cursor"] for name, page in by_class.items()}
-    positions["recovered"] = recovery["cursor"]
+    positions = {name: _advance(pages, name, page) for name, page in by_class.items()}
+    positions["recovered"] = _advance(
+        pages, "recovered", {"cursor": recovery["cursor"],
+                             "filled": recovery["cursor"] is not None})
     return {
         "observations": observations,
         "clears": recovery["clears"],
         "gaps": read["gaps"],
         "completeSources": list(complete),
-        "cursors": positions,
+        "cursors": {name: advanced[0] for name, advanced in positions.items()},
+        "_advanced": positions,
         "limits": f"each source is read at most {limit} rows, resuming where the last sweep"
                   f" stopped and wrapping at the end, so nothing past one page is starved."
                   f" A source that did not read the whole thing from the start clears"
@@ -487,14 +505,21 @@ def still_present(store, fault_class, signature) -> dict:
     from a class this cannot ask about - which is never cleared by absence at all.
     """
     if fault_class == "delivery_stalled":
+        # Both shapes that derive this class, because either one still produces the fault.
+        # The hold-reason page keys on the delivery's LATEST attempt state, which is NULL when
+        # a delivery was refused before any attempt; the retry page keys on ANY attempt in
+        # that state. Asking only the second one called every held-but-never-attempted
+        # delivery recovered, and asking only the first made a fault whose evidence sat
+        # further back alternate between withdrawn and reopened on every sweep.
         return store.one(
-            "SELECT 1 FROM deliveries d WHERE d.recipient_task_id = ?"
-            "  AND COALESCE(d.hold_reason, 'retrying') = ?"
-            "  AND d.state NOT IN (?,?,?)"
-            "  AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
-            "                 ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
+            "SELECT 1 FROM deliveries d"
+            " WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)"
+            "   AND (COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
+            "                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
+            "        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id"
+            "                     AND a2.state = ?))"
             " LIMIT 1",
-            (signature.get("recipient"), signature.get("cause"), *SETTLED_DELIVERY,
+            (signature.get("recipient"), *SETTLED_DELIVERY, signature.get("attemptState"),
              signature.get("attemptState")))
     if fault_class == "record_sync_failed":
         return store.one(
@@ -521,9 +546,20 @@ def still_present(store, fault_class, signature) -> dict:
     return {"unaskable": True}
 
 
+def _advance(pages, name, page):
+    """Where this source resumes, wrapping after a bounded run of full pages."""
+    if not page.get("filled"):
+        return None, 0
+    taken = pages.get(name, 0) + 1
+    if taken >= PAGES_BEFORE_WRAP:
+        return None, 0
+    return page["cursor"], taken
+
+
 def read_cursors(store) -> dict:
-    return {row["source"]: row["position"]
-            for row in store.all("SELECT source, position FROM fault_cursors")}
+    rows = store.all("SELECT source, position, pages FROM fault_cursors")
+    return ({row["source"]: row["position"] for row in rows},
+            {row["source"]: row["pages"] for row in rows})
 
 
 def write_cursors(store, positions) -> None:
@@ -531,12 +567,14 @@ def write_cursors(store, positions) -> None:
     records where it got to, so the rotation cannot stall on one page."""
     now = _now(store)
     with store.transaction() as db:
-        for source, position in positions.items():
+        for source, advanced in positions.items():
+            position, taken = advanced if isinstance(advanced, tuple) else (advanced, 0)
             db.execute(
-                "INSERT INTO fault_cursors (source, position, updated_at) VALUES (?,?,?)"
+                "INSERT INTO fault_cursors (source, position, pages, updated_at)"
+                " VALUES (?,?,?,?)"
                 " ON CONFLICT(source) DO UPDATE SET position = excluded.position,"
-                "   updated_at = excluded.updated_at",
-                (source, position, now))
+                "   pages = excluded.pages, updated_at = excluded.updated_at",
+                (source, position, taken, now))
 
 
 def _now(store) -> str:
@@ -554,8 +592,8 @@ def record_all(ledger, batch, *, store=None) -> dict:
     results = []
     for entry in list(batch.get("observations", ())) + list(batch.get("clears", ())):
         results.append(ledger.record(entry))
-    if store is not None and batch.get("cursors") is not None:
-        write_cursors(store, batch["cursors"])
+    if store is not None and batch.get("_advanced") is not None:
+        write_cursors(store, batch["_advanced"])
     recorded = [entry for entry in results if entry.get("recorded")]
     queued = [entry["publication"] for entry in recorded
               if entry.get("publication") and entry["publication"].get("queued")]
