@@ -382,6 +382,12 @@ FAILURE_SENTINEL_ALLOWED = {
     ("intent.py", "read_only_connection"): "None is the only thing a failed connection can be, and"
                                            " its callers convert it into their own reported"
                                            " readable=False rather than into an empty result",
+    ("intent.py", "registration_hold"): "the failure IS reported, as the second half of the pair"
+                                        " this context manager yields, and register_relationship"
+                                        " puts that text in the refusal it raises. A context"
+                                        " manager cannot report it the way this scan looks for:"
+                                        " the bare returns here only end the generator after the"
+                                        " pair has already been handed to the caller",
 }
 
 # Named so the gap is not mistaken for a clean result. The scan classifies by PROVENANCE, so the
