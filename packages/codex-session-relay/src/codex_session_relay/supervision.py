@@ -80,6 +80,23 @@ BY_OUTCOME = {"ready_for_review": COMPLETION, "blocked_needs_input": BLOCKED}
 # record's SHAPE rather than its verdict would manufacture obligations out of readings that
 # said the opposite, and an evidence read that failed is not evidence that a report is owed.
 OBSERVED_OMISSION = "unreported"
+# The schema those readings carry. omitted.SCHEMA is where it is defined and a test pins the
+# two equal; it is repeated here rather than imported because importing the observer for one
+# string would pull its whole evidence closure - guard, marker, admission, store, receipts -
+# into every import of this module, and would close a cycle the day any of them needs to know
+# what a reading owes.
+OBSERVATION_SCHEMA = "reporting-observation/1"
+# A reading that established nothing. It is carried as a gap and never as an obligation.
+OBSERVED_UNMEASURED = "unmeasured"
+# The states that SETTLED the question without an omission: the turn reported, it is still
+# running, or this relay never managed it at all. Each is an ordinary midpoint reading and owes
+# nothing, so each is absorbed rather than answered. Without a branch of their own they fell
+# through to unusable_reading, and a project where every child had reported read back as a
+# project whose readings could not be read.
+OBSERVED_SETTLED = ("reported", "in_progress", "unmanaged")
+# Everything omitted.observe() can answer, so a value outside it is a reading this cannot
+# interpret rather than one it may quietly absorb.
+OBSERVED_STATES = (OBSERVED_OMISSION, OBSERVED_UNMEASURED, *OBSERVED_SETTLED)
 
 # Who produced an event, for events that travel UPWARD. A correction is written by the relay
 # on the parent's verdict and travels down to a child, and it carries a report of its own with
@@ -219,19 +236,17 @@ def from_observation(reading) -> dict | None:
     failed evidence read is the absence of an answer, and turning it into an obligation would
     be inventing the one thing the reading refused to assert.
     """
-    if not isinstance(reading, dict) or reading.get("schema") != "reporting-observation/1":
+    if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
         return None
     if reading.get("reportingState") != OBSERVED_OMISSION:
         return None
     relation = reading.get("relationshipId")
-    turn = (reading.get("selectors") or {}).get("turn")
-    # Both have to be strings, not merely present. A list here is truthy, so it used to reach
+    turn = _turn_of(reading)
+    # Both have to be names, not merely present. A list here is truthy, so it used to reach
     # the identifier derivation and produce a well-formed id for a reading nobody could act
     # on; upstream it also reached a dict membership test and raised on being unhashable,
     # which took the whole project query down with it.
-    if not isinstance(relation, str) or not relation.strip():
-        return None
-    if not isinstance(turn, str) or not turn.strip():
+    if not _named(relation) or not _named(turn):
         return None
     return _obligation(
         UNREPORTED, relation_id=relation, subject=turn,
@@ -242,11 +257,40 @@ def from_observation(reading) -> dict | None:
     )
 
 
+def _named(value) -> bool:
+    """A name is a non-blank string. A list is truthy and a blank passes a presence check."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _turn_of(reading):
+    """The turn a reading names, or None when its selectors are not an object at all.
+
+    Read through here rather than as (reading.get("selectors") or {}).get("turn"). A list is
+    truthy, so that expression called .get on it and raised AttributeError out of the whole
+    project answer - the same way an unhashable relationshipId once did, and with the same
+    consequence: one malformed file deciding what a project owed by taking the query down.
+    """
+    selectors = reading.get("selectors")
+    return selectors.get("turn") if isinstance(selectors, dict) else None
+
+
+def observed_state(reading):
+    """Which of the observer's five states this reading declares, or None when it is not one.
+
+    None is the answer for a reading this cannot interpret at all: something that is not an
+    object, a record under another schema, or a reportingState nobody here knows. Absorbing an
+    unknown state would answer that nothing is owed on evidence this module cannot read, which
+    is what from_observation already refuses to do for unmeasured.
+    """
+    if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
+        return None
+    state = reading.get("reportingState")
+    return state if state in OBSERVED_STATES else None
+
+
 def unmeasured_gap(reading) -> dict | None:
     """A reading that could not establish anything, carried as a gap rather than an obligation."""
-    if not isinstance(reading, dict) or reading.get("schema") != "reporting-observation/1":
-        return None
-    if reading.get("reportingState") != "unmeasured":
+    if observed_state(reading) != OBSERVED_UNMEASURED:
         return None
     return {"schema": SCHEMA, "gap": "reporting_unmeasured",
             "relationId": reading.get("relationshipId"), "reason": reading.get("reason"),
@@ -254,23 +298,42 @@ def unmeasured_gap(reading) -> dict | None:
 
 
 def unusable_reading(reading) -> dict:
-    """A reading this cannot place, named rather than dropped and never raised.
+    """A reading this cannot read, named rather than dropped and never raised.
 
     Refusing it quietly would answer that a project owes nothing on the strength of a file
     nobody could read, and raising would take the whole query down with one bad entry. The
     caller gets its answer AND is told which of its readings was not usable.
+
+    The reason names the cause it actually has. It used to say the reading named no usable
+    relationship and turn whatever was wrong with it, so a record under another schema was
+    described by fields it never claimed to carry - and so was the ordinary reading that
+    reached here only because no other branch would take it.
     """
     if not isinstance(reading, dict):
         return {"schema": SCHEMA, "gap": "reading_unusable", "relationId": None,
                 "reason": f"a reading is an object, not {type(reading).__name__}",
                 "detail": "this reading was not placed in any project"}
     scope = reading.get("relationshipId")
+    if reading.get("schema") != OBSERVATION_SCHEMA:
+        reason = f"schema {reading.get('schema')!r} is not {OBSERVATION_SCHEMA}"
+    elif reading.get("reportingState") not in OBSERVED_STATES:
+        reason = (f"reportingState {reading.get('reportingState')!r} is not one a"
+                  f" {OBSERVATION_SCHEMA} reading carries")
+    else:
+        missing = [name for name, value in
+                   (("relationship", scope), ("turn", _turn_of(reading))) if not _named(value)]
+        reason = ("the reading names no usable " + " or ".join(missing) if missing else
+                  "the reading is well formed, and nothing said why it could not be placed")
     return {"schema": SCHEMA, "gap": "reading_unusable",
             "relationId": scope if isinstance(scope, str) else None,
-            "reason": ("the reading names no usable relationship and turn"
-                       if reading.get("schema") == "reporting-observation/1"
-                       else f"schema {reading.get('schema')!r} is not reporting-observation/1"),
+            "reason": reason,
             "detail": "this reading was not placed in any project"}
+
+
+def _carry(gaps, gap) -> None:
+    """Record a gap once. One bad reading handed in twice is one thing wrong, not two."""
+    if gap not in gaps:
+        gaps.append(gap)
 
 
 def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dict:
@@ -501,6 +564,17 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
     have. What is owed because of such a reading is decided here, and a reading that
     established nothing is carried as a gap instead.
 
+    A reading is PLACED and then INTERPRETED, in that order, and the two questions are kept
+    apart because only one of the five states needs an owner. A relationship that is present
+    and is not a name is a corrupt record; a relationship naming another project is not this
+    project's business whatever the record says; and an absent or null relationship is neither,
+    because the observer answers unmanaged before it has resolved a relationship at all. Only
+    then is the state read: the three that settled the question are absorbed, unmeasured is a
+    gap, unreported raises the obligation, and anything outside that vocabulary is a reading
+    this cannot read. Deriving the order from that table rather than from the branches is what
+    two audit rounds on this function asked for; each of them found a case the branch order
+    had missed.
+
     This does NOT say the project is complete or close to it. An obligation is raised about the
     issue it came from and is never promoted into a statement about the project, which
     AssignmentView.project_state owns and stops at complete_candidate.
@@ -537,35 +611,48 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
                                     "supersededBy": about["superseded_by"]})
     gaps = []
     for reading in observations:
-        about = reading.get("relationshipId") if isinstance(reading, dict) else None
-        if not isinstance(about, str):
+        if not isinstance(reading, dict):
+            _carry(gaps, unusable_reading(reading))
+            continue
+        about = reading.get("relationshipId")
+        if about is not None and not _named(about):
             # Unhashable before it is foreign: a list here raised on the membership test below
             # and aborted the whole answer, so one malformed entry decided what a project owed.
-            gaps.append(unusable_reading(reading))
+            # An absent or null relationship is a different thing and is left to the state:
+            # omitted.observe answers unmanaged before it has resolved one, so refusing every
+            # scope-less reading here is what called the ordinary reading unusable.
+            _carry(gaps, unusable_reading(reading))
             continue
-        if about not in relations:
-            # A reading about somebody else's project is not this project's business, and
-            # accepting it would let a caller's list decide what a project owes.
+        if _named(about) and about not in relations:
+            # A reading about somebody else's project is not this project's business, whatever
+            # it declares, and accepting it would let a caller's list decide what a project
+            # owes - including by putting another project's unreadable file in this answer.
+            continue
+        state = observed_state(reading)
+        if state is None:
+            # Not an object under this schema, or a reportingState nobody here can interpret.
+            _carry(gaps, unusable_reading(reading))
+            continue
+        if state in OBSERVED_SETTLED:
+            # The ordinary reading: the turn reported, it is still running, or this relay never
+            # managed it. Nothing is owed because of it and nothing failed to be established,
+            # so it is neither an obligation nor a gap.
+            continue
+        if state == OBSERVED_UNMEASURED:
+            _carry(gaps, unmeasured_gap(reading))
             continue
         one = from_observation(reading)
-        if one is not None:
-            if one["obligationId"] in seen:
-                continue
-            seen.add(one["obligationId"])
-            obligations.append({**one, "decision": select(store, one, recipient=None),
-                                "relationshipStatus": (relations.get(one["relationId"]) or {})
-                                .get("status")})
+        if one is None:
+            # unreported is the one state that needs an owner, because it is the one that
+            # raises something somebody owes, and this reading names no usable one.
+            _carry(gaps, unusable_reading(reading))
             continue
-        gap = unmeasured_gap(reading)
-        if gap is not None and gap not in gaps:
-            gaps.append(gap)
+        if one["obligationId"] in seen:
             continue
-        if gap is None:
-            # It belongs to this project, it raised no obligation, and it said nothing about
-            # being unmeasured. Something in it is unusable, and saying so is the answer.
-            unusable = unusable_reading(reading)
-            if unusable not in gaps:
-                gaps.append(unusable)
+        seen.add(one["obligationId"])
+        obligations.append({**one, "decision": select(store, one, recipient=None),
+                            "relationshipStatus": (relations.get(one["relationId"]) or {})
+                            .get("status")})
     return {"schema": SCHEMA, "projectKey": project_key, "relations": list(relations),
             "standing": obligations, "gaps": gaps,
             "limits": "derived from this store's rows only. It says what is owed upward, never"

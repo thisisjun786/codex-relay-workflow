@@ -589,6 +589,9 @@ class TheReportNobodyWrote(ReportingTestCase):
         answer = supervision.standing_for(self.store, linkage, "CRW",
                                           observations=[elsewhere, elsewhere])
         self.assertEqual(answer["standing"], [])
+        self.assertEqual(answer["gaps"], [],
+                         "not this project's business means nothing about it enters this"
+                         " project's answer, gaps included")
 
     def test_the_same_reading_twice_is_still_one_obligation(self):
         from codex_session_relay.linkage import Linkage
@@ -604,6 +607,198 @@ class TheReportNobodyWrote(ReportingTestCase):
         answer = supervision.standing_for(self.store, linkage, "CRW",
                                           observations=[reading, reading])
         self.assertEqual(len(answer["standing"]), 1)
+
+
+ABSENT = object()
+
+
+class AReadingIsPlacedThenInterpreted(ReportingTestCase):
+    """CRW-213: every scope shape crossed with every state the observer can answer.
+
+    The defect this closes is that an ordinary reading - one saying the child DID report - came
+    back as a gap claiming it named no usable relationship and turn, when it had named both. Two
+    independent audit rounds on the fix each found another case a branch-by-branch reading had
+    missed, so the proof is the whole cross-product rather than a list of remembered examples:
+    a sixth reportingState has to be added to the parameters here, which is a smaller and more
+    visible obligation than keeping prose rows in step with the code.
+    """
+
+    NOTHING, OBLIGATION, UNMEASURED, UNUSABLE = "nothing", "obligation", "unmeasured", "unusable"
+    SETTLED = ("reported", "in_progress", "unmanaged")
+    # A foreign schema and an unknown state are the two ways a record can be outside the
+    # vocabulary while still being an object with a relationship in it.
+    STATES = SETTLED + ("unmeasured", "unreported", "foreign_schema", "something")
+
+    def project(self):
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.models import Endpoint
+
+        linkage = Linkage(self.store, self.clock)
+        linkage.bind_scope(role="parent", scope_key="CRW",
+                           endpoint=Endpoint(PARENT, "host-a", cwd="/parent",
+                                             cxc_session="cxc-parent"))
+        self._relationship = self.register(project_key="CRW")
+        self._rid = self._relationship["relationshipId"]
+        return linkage, self._rid
+
+    def standing_event(self, _rid):
+        """One real event-derived obligation, so both loops can be answered in one call."""
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(self._relationship, [path])
+        self.accept(payload)
+        report.record(self.store, self.clock, event_id=payload["eventId"], **a_report())
+        return self.obligation_for(payload["eventId"])
+
+    def reading(self, state, scope=ABSENT, **overrides):
+        """One reading, with the relationship key genuinely ABSENT when that is what is meant.
+
+        The existing fixture always supplies a relationshipId, which is why nothing caught that
+        omitted.observe answers unmanaged before it has resolved one.
+        """
+        record = {"schema": OBSERVATION_SCHEMA, "reportingState": state,
+                  "reason": "terminal_without_report", "executionGeneration": 1,
+                  "selectors": {"turn": "turn-7"}}
+        if state == "foreign_schema":
+            record.update(schema="something-else/1", reportingState="reported")
+        if scope is not ABSENT:
+            record["relationshipId"] = scope
+        record.update(overrides)
+        return record
+
+    def expected(self, kind, state):
+        if kind == "foreign":
+            return self.NOTHING
+        if kind == "malformed":
+            return self.UNUSABLE
+        if state in self.SETTLED:
+            return self.NOTHING
+        if state == "unmeasured":
+            return self.UNMEASURED
+        if state == "unreported":
+            return self.OBLIGATION if kind == "ours" else self.UNUSABLE
+        return self.UNUSABLE
+
+    def classify(self, answer, scope):
+        kinds = [entry["kind"] for entry in answer["standing"]]
+        gaps = [gap["gap"] for gap in answer["gaps"]]
+        relation = scope if isinstance(scope, str) else None
+        if kinds == [] and gaps == []:
+            return self.NOTHING, None
+        if kinds == [supervision.UNREPORTED] and gaps == []:
+            return self.OBLIGATION, None
+        if kinds == [] and gaps == ["reporting_unmeasured"]:
+            return self.UNMEASURED, answer["gaps"][0]["relationId"] == relation
+        if kinds == [] and gaps == ["reading_unusable"]:
+            return self.UNUSABLE, answer["gaps"][0]["relationId"] == relation
+        return (kinds, gaps), None
+
+    def test_every_scope_shape_against_every_state_the_observer_answers(self):
+        linkage, rid = self.project()
+        scopes = [("absent", ABSENT), ("null", None), ("ours", rid),
+                  ("foreign", "rel-somewhere-else"),
+                  ("malformed", [rid]), ("malformed", "   ")]
+        for kind, scope in scopes:
+            for state in self.STATES:
+                with self.subTest(scope=kind, value=repr(scope), state=state):
+                    answer = supervision.standing_for(
+                        self.store, linkage, "CRW",
+                        observations=[self.reading(state, scope)])
+                    outcome, scoped = self.classify(answer, scope)
+                    self.assertEqual(outcome, self.expected(kind, state))
+                    if scoped is not None:
+                        self.assertTrue(scoped, "a gap carries the scope the reading named,"
+                                                " or none when it named nothing readable")
+
+    def test_an_explicit_null_relationship_answers_exactly_as_an_absent_one(self):
+        """Null and an omitted key assert the same absence, so they cannot diverge."""
+        linkage, _rid = self.project()
+        for state in self.STATES:
+            with self.subTest(state=state):
+                absent = supervision.standing_for(
+                    self.store, linkage, "CRW", observations=[self.reading(state, ABSENT)])
+                null = supervision.standing_for(
+                    self.store, linkage, "CRW", observations=[self.reading(state, None)])
+                self.assertEqual(absent["gaps"], null["gaps"])
+                self.assertEqual([one["kind"] for one in absent["standing"]],
+                                 [one["kind"] for one in null["standing"]])
+
+    def test_each_unusable_reason_names_the_thing_that_was_actually_wrong(self):
+        _linkage, rid = self.project()
+        turn = self.reading("unreported", rid, selectors={"turn": ["turn-7"]})
+        self.assertIn("turn", supervision.unusable_reading(turn)["reason"])
+        self.assertNotIn("relationship", supervision.unusable_reading(turn)["reason"],
+                         "a reading that named its relationship is not described as missing it")
+        self.assertIn("relationship",
+                      supervision.unusable_reading(self.reading("unreported", [rid]))["reason"])
+        self.assertIn("something-else/1",
+                      supervision.unusable_reading(self.reading("foreign_schema", rid))["reason"])
+        self.assertIn("something",
+                      supervision.unusable_reading(self.reading("something", rid))["reason"])
+        for reading in ("not an object at all", [], None):
+            self.assertIn(type(reading).__name__,
+                          supervision.unusable_reading(reading)["reason"])
+
+    def test_a_reading_that_is_not_an_object_is_named_rather_than_raised(self):
+        linkage, _rid = self.project()
+        for reading in ("not an object at all", [], None):
+            with self.subTest(reading=repr(reading)):
+                answer = supervision.standing_for(self.store, linkage, "CRW",
+                                                  observations=[reading])
+                self.assertEqual([gap["gap"] for gap in answer["gaps"]], ["reading_unusable"])
+                self.assertIsNone(answer["gaps"][0]["relationId"])
+
+    def test_one_bad_reading_handed_in_twice_is_one_gap(self):
+        linkage, rid = self.project()
+        each = [self.reading("unmeasured", rid, reason="marker_unreadable"),
+                self.reading("something", rid),
+                self.reading("foreign_schema", rid),
+                self.reading("unreported", [rid]),
+                self.reading("unreported", ABSENT),
+                "not an object at all", [], None]
+        for reading in each:
+            with self.subTest(reading=repr(reading)[:40]):
+                answer = supervision.standing_for(self.store, linkage, "CRW",
+                                                  observations=[reading, reading])
+                self.assertEqual(len(answer["gaps"]), 1)
+        two = supervision.standing_for(
+            self.store, linkage, "CRW",
+            observations=[self.reading("something", rid), self.reading("foreign_schema", rid)])
+        self.assertEqual(len(two["gaps"]), 2,
+                         "two different bad readings are two things wrong")
+
+    def test_a_malformed_selectors_container_does_not_take_the_answer_down(self):
+        """A list where an object belongs used to raise AttributeError out of the whole query.
+
+        The obligation that IS standing has to survive it, which is the whole point of naming a
+        bad reading instead of raising on it: a caller that caught the error would have learned
+        nothing about what the project actually owes.
+        """
+        linkage, rid = self.project()
+        real = self.standing_event(rid)
+        answer = supervision.standing_for(
+            self.store, linkage, "CRW",
+            observations=[self.reading("unreported", rid, selectors=["turn-7"])])
+        self.assertEqual([gap["gap"] for gap in answer["gaps"]], ["reading_unusable"])
+        self.assertIn("turn", answer["gaps"][0]["reason"])
+        self.assertEqual([entry["obligationId"] for entry in answer["standing"]],
+                         [real["obligationId"]])
+
+    def test_the_event_loop_and_the_observation_loop_do_not_erase_each_other(self):
+        linkage, rid = self.project()
+        real = self.standing_event(rid)
+        settled = self.reading("reported", rid)
+        answer = supervision.standing_for(
+            self.store, linkage, "CRW",
+            observations=[settled, settled, self.reading("unmanaged", ABSENT),
+                          self.reading("reported", "rel-somewhere-else")])
+        self.assertEqual([entry["obligationId"] for entry in answer["standing"]],
+                         [real["obligationId"]])
+        self.assertEqual(answer["gaps"], [])
+
+    def test_the_observation_schema_is_the_one_the_observer_writes(self):
+        from codex_session_relay import omitted
+
+        self.assertEqual(supervision.OBSERVATION_SCHEMA, omitted.SCHEMA)
 
 
 class AnExplicitRequestIsItsOwnPath(ReportingTestCase):
