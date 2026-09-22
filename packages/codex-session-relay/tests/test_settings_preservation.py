@@ -52,6 +52,78 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
         unknown["environments"] = None
         self.assertEqual(TaskSettings(unknown).missing(), ["environments"])
 
+    def test_a_recorded_string_field_that_is_not_a_string_is_refused(self):
+        """Present is not usable, and no receipt could ever have said which it was.
+
+        ThreadResumeParams types cwd, model and reasoningEffort as strings, and resume_params
+        copies each recorded value straight into the params. Before this rule every shape below
+        passed the completeness gate and went on the wire, so the only answer about it came back
+        from a host whose schema is not in this repository - which is why the rule has to run
+        before the send rather than be read off the response.
+
+        Seven shapes rather than one, because the ways a row goes wrong are not alike: a
+        number, two containers, and True, which isinstance(x, str) excludes and a truthiness
+        test would have let through as a model name.
+        """
+        shapes = [
+            ("cwd", 7, "int"),
+            ("cwd", {"path": "/parent"}, "dict"),
+            ("cwd", ["/parent"], "list"),
+            ("model", 7, "int"),
+            ("model", True, "bool"),
+            ("reasoningEffort", 7, "int"),
+            ("reasoningEffort", {"level": "xhigh"}, "dict"),
+        ]
+        for field, recorded, kind in shapes:
+            with self.subTest(field=field, recorded=kind):
+                stale = task_settings("/parent")
+                stale[field] = recorded
+                view = TaskSettings(stale)
+                # Asserted, not assumed: a record that were merely incomplete would be refused
+                # by the gate before this one, and this test would prove the wrong rule.
+                self.assertEqual(view.missing(), [], "the record is complete, not incomplete")
+                self.assertEqual(view.mistyped(), [field])
+                refusal = self.assertRefused(
+                    RefusalReason.SETTINGS_MISTYPED, view.require_usable,
+                )
+                # The type it actually holds, because "not a string" does not tell an operator
+                # what the creation result put there.
+                self.assertEqual(refusal.detail, f"{field} is {kind}, not str")
+
+    def test_every_mistyped_field_is_named_in_one_refusal(self):
+        """One round rather than three. missing() answers this way and the two read alike."""
+        stale = task_settings("/parent")
+        stale.update(cwd=7, model=True, reasoningEffort=["xhigh"])
+        view = TaskSettings(stale)
+        self.assertEqual(view.mistyped(), ["cwd", "model", "reasoningEffort"])
+        refusal = self.assertRefused(RefusalReason.SETTINGS_MISTYPED, view.require_usable)
+        self.assertEqual(
+            refusal.detail,
+            "cwd is int, not str; model is bool, not str; reasoningEffort is list, not str",
+        )
+
+    def test_a_mistyped_field_withholds_the_send_before_any_transport_call(self):
+        """The rule is proved above; this proves the PATH, and what a parent ends up reading.
+
+        The unit refusal never touches the serialization, and the journal is where the reason
+        string a parent acts on is actually written. One field rather than seven: the withhold
+        branch treats every refusal from the settings check alike, so repeating the shapes here
+        would re-prove one branch rather than another fact.
+        """
+        mistyped = task_settings("/parent")
+        mistyped["cwd"] = 7
+        _relationship, event_id = self.queued_event(settings=mistyped)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertEqual(self.attempts_for(event_id), [], "no attempt was claimed")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        entry = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]
+        self.assertIn(RefusalReason.SETTINGS_MISTYPED.value, entry["detail"])
+        self.assertIn("cwd is int, not str", entry["detail"])
+
     def test_a_sandbox_type_with_no_resume_mode_is_refused_not_approximated(self):
         external = task_settings("/parent", sandbox={"type": "externalSandbox"})
         _relationship, event_id = self.queued_event(settings=external)

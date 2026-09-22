@@ -448,6 +448,51 @@ class SettingsCommands(CliBase):
         self.assertEqual(refused["reason"], "settings_incomplete")
         self.assertIn("environments", refused["detail"])
 
+    def test_a_mistyped_record_is_refused_at_registration(self):
+        """The same predicate a send runs, run where the record is written."""
+        refused = self.run_cli(
+            "settings-record", "--task", PARENT,
+            "--settings", json.dumps(dict(self._settings(), model=7)), expect=2,
+        )
+        self.assertEqual(refused["reason"], "settings_mistyped")
+        self.assertIn("model is int, not str", refused["detail"])
+
+    def test_a_complete_but_mistyped_record_is_not_reported_deliverable(self):
+        """This command has to answer what delivery and doctor answer, not half of it.
+
+        "usable" is about the record HAVING its fields, and this one has all of them. Until the
+        recorded string fields were typed, `not missing()` and `require_usable()` agreed on
+        every row this could be asked about, so "deliverable" could be computed from the first
+        one. They no longer agree, and a row called deliverable here is one delivery withholds
+        and doctor reports refused - which is why the field now runs the predicate itself and
+        says which rule refused.
+
+        Written past the recorder deliberately: registration refuses this input now, so the
+        only way a store holds such a row is an older writer or a hand edit.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.run_cli(
+            "settings-record", "--task", PARENT, "--settings", json.dumps(self._settings()),
+        )
+        store = Store(Path(self.tmp) / "relay.sqlite3")
+        with store.transaction() as db:
+            db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                (json.dumps(dict(self._settings(), cwd=7)), PARENT),
+            )
+        store.db.commit()
+        store.close()
+
+        shown = self.run_cli("settings-show", "--task", PARENT)
+        self.assertTrue(shown["usable"], "the record did not become incomplete")
+        self.assertEqual(shown["missing"], [])
+        self.assertFalse(shown["deliverable"])
+        self.assertEqual(shown["recordFinding"]["code"], "settings_mistyped")
+        self.assertIn("cwd is int, not str", shown["recordFinding"]["detail"])
+
 
 class Diagnosis(unittest.TestCase):
     """doctor has to answer ON the host it is describing, including a broken one."""
@@ -1585,16 +1630,22 @@ class ParticipantAccessReceipts(CliBase):
         # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
         incomplete = dict(self.settings(self.root))
         del incomplete["cwd"]
-        # Complete, supported, and still not sendable: require_usable() checks that every
-        # REQUIRED field is present and says nothing about its type, while resume_params
-        # calls list() on this one.
+        # Complete, supported, and still not sendable: require_usable() types the three fields
+        # the resume contract declares as strings and says nothing about this one, while
+        # resume_params calls list() on it.
         unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
+        # Complete and supported too, and refused one gate earlier than that: present is not
+        # the same as usable, and no host answer could tell us what it did with cwd: 7.
+        mistyped = dict(self.settings(self.root), cwd=7)
 
         cases = {
             "an unsupported sandbox type": (
                 unsupported, "unsupported_sandbox_type", "externalSandbox",
             ),
             "a record missing a required field": (incomplete, "settings_incomplete", "cwd"),
+            "a field recorded with a type the contract does not declare": (
+                mistyped, "settings_mistyped", "cwd is int, not str",
+            ),
             "a field the params construction cannot use": (
                 unusable_roots, "unexpected", "TypeError",
             ),
@@ -1658,7 +1709,8 @@ class ParticipantAccessReceipts(CliBase):
         taken from `delivery.py` and `bridge_adapter.py`.
 
         A TRANSFORMATION can fail on the row by raising: every recorded field handed to a
-        call inside those methods. Today `normalise_policy(sandbox)`,
+        call inside those methods. Today `normalise_policy(sandbox)`, the `isinstance` checks
+        `require_usable` applies to `cwd`, `model` and `reasoningEffort`,
         `list(runtimeWorkspaceRoots)`, `normalise_environments(environments)`.
 
         A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
@@ -1791,7 +1843,9 @@ class ParticipantAccessReceipts(CliBase):
             "the send path's settings calls were not found, so nothing below is derived",
         )
         self.assertGreaterEqual(
-            fields, {"sandbox", "runtimeWorkspaceRoots", "environments"},
+            fields,
+            {"sandbox", "cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots",
+             "environments"},
             "the extraction found fewer transformations than are known to be there",
         )
         self.assertGreaterEqual(
