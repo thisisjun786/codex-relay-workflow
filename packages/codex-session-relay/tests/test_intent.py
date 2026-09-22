@@ -412,6 +412,59 @@ class TheRegistrationHold(IntentTestCase):
         self.assertFalse(missing.exists(), "the refusal created the store it could not find")
         self.assertNotIn("relationship", self.facts())
 
+    def test_a_replay_carrying_the_same_generation_is_unchanged(self):
+        """The equal case, stated on its own rather than inferred from create-once.
+
+        The generation is compared now, so the ordinary replay has to be pinned where the
+        comparison can see it: this is the case that fails if a present, agreeing value were
+        ever read as a contradiction.
+        """
+        self.declare()
+        self.bind()
+
+        first = self.register()
+        second = self.register(opened=False)
+
+        self.assertEqual(first["outcome"], marker.PUBLISHED)
+        self.assertEqual(second["outcome"], intent.UNCHANGED)
+        self.assertEqual(second["executionGeneration"], 1)
+        self.assertEqual(self.facts()["relationship"]["executionGeneration"], 1)
+
+    def test_a_fact_naming_another_generation_is_a_contradiction_not_a_replay(self):
+        """A create-once fact is immutable, so the caller must not be handed its own answer.
+
+        The relationship id agrees and the generation does not. Reported as unchanged, the
+        coordinator would be told its registration stands at the generation this call just read
+        under the lock, while the fact that actually stands names a different one - and the
+        publication cannot be corrected, so nothing later fixes it.
+
+        Reachable without anybody misbehaving: the generation a dispatch opened is fixed for a
+        given store, but the marker filesystem outlives the store. A store restored from an
+        older copy, or rebuilt from scratch, starts its generations again underneath a marker
+        that already recorded a later one.
+        """
+        self.declare()
+        self.bind()
+        self.open_generation()
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": "rel-0123456789abcdef", "executionGeneration": 2, "at": T0},
+            root=self.root,
+        )
+
+        replayed = self.register(opened=False)
+
+        self.assertEqual(replayed["outcome"], intent.CONFLICT)
+        self.assertEqual(
+            replayed["executionGeneration"], 1,
+            "the returned record must name the generation this call read under the lock, which",
+        )
+        self.assertEqual(
+            self.facts()["relationship"]["executionGeneration"], 2,
+            "the stored fact was rewritten behind the conflict; a create-once publication is",
+        )
+
     def test_a_store_another_writer_is_holding_is_refused_within_the_declared_bound(self):
         """A hold nobody can take is a refusal, not a wait and not a publication.
 

@@ -674,19 +674,31 @@ def _read_published(target):
         return None, False
 
 
-def _publish_or_compare(target, payload, fields, *, root=None) -> str:
+def _publish_or_compare(target, payload, fields, *, root=None, since=()) -> str:
     """Publish a single create-once fact, and say whether losing was a replay or a contradiction.
 
     Returning 'exists' for both would report a coordinator that published a DIFFERENT value exactly
     as it reports one that repeated itself, which is the difference between a retry that is safe to
     ignore and a contest somebody has to settle.
+
+    since names fields that a record published before they existed cannot carry, and it is the
+    only reason a compared field may be missing. Absent, the existing record predates the field
+    and repeating the publication is the ordinary replay it looks like. PRESENT and different, it
+    is a contradiction like any other: the create-once fact is immutable, so a caller told
+    'unchanged' over a value the stored fact disagrees with has been told its own answer. Left out
+    of the comparison entirely - which is what this did when the field was added - that
+    disagreement is reported as agreement.
     """
     if publish(target, payload, root=root) == PUBLISHED:
         return PUBLISHED
     existing, readable = _read_published(target)
     if not readable or not isinstance(existing, dict):
         return CONFLICT
-    return UNCHANGED if all(existing.get(f) == payload.get(f) for f in fields) else CONFLICT
+    if not all(existing.get(f) == payload.get(f) for f in fields):
+        return CONFLICT
+    return UNCHANGED if all(
+        existing[f] == payload.get(f) for f in since if f in existing
+    ) else CONFLICT
 
 
 def malformed_disposition(record) -> str | None:
@@ -959,10 +971,14 @@ def register_relationship(
         outcome = _publish_or_compare(
             directory / "relationship.json",
             {"relationshipId": relationship_id, "executionGeneration": generation, "at": at},
-            # Compared on the relationship id alone. A record published before the generation was
-            # recorded carries no executionGeneration, and comparing a field it never had would
-            # report an ordinary replay as a contradiction somebody has to settle.
             ("relationshipId",),
+            # The generation is compared only where the stored fact has one. A record published
+            # before it was recorded carries none, and requiring it would report an ordinary
+            # replay as a contest; a record carrying a DIFFERENT one contradicts what this call
+            # just read under the lock, and reporting that as unchanged would hand the caller
+            # back its own generation while the immutable fact names another. A store restored or
+            # rebuilt underneath a surviving marker is how the two come to disagree.
+            since=("executionGeneration",),
             root=root,
         )
     return {
