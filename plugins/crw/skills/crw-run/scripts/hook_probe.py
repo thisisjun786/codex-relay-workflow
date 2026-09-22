@@ -341,7 +341,9 @@ def _correlation_problem(marker, session_id, assignment=None):
         return INTENT_DISPATCH_UNNAMED
     if _named(assignment) and not _same_identity(declared, assignment):
         return INTENT_ASSIGNMENT_MISMATCH
-    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+    digest = _hashed(presented)
+    if digest is None:
+        return CLAIM_DISPATCH_UNNAMED
     return None if _same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
 
 
@@ -358,6 +360,41 @@ def _correlated(marker, session_id, assignment=None):
     if problem is not None:
         return False
     return True
+
+
+def _authority_moment(marker):
+    """The newest instant the COORDINATOR recorded for this assignment, or None.
+
+    The declaration, the bind and the attempts: never the claim. Currency decides which assignment
+    a Stop is judged under, so a child able to move it could pin every turn to a stale assignment
+    and stop being detected on the current one.
+    """
+    moments = []
+    intent_fact = marker.get("intent")
+    if isinstance(intent_fact, dict):
+        moments.append(_moment(intent_fact.get("declaredAt")))
+    bound_fact = marker.get("bound")
+    if isinstance(bound_fact, dict):
+        moments.append(_moment(bound_fact.get("at")))
+    for attempt in marker.get("attempts") or []:
+        if isinstance(attempt, dict):
+            moments.append(_moment(attempt.get("at")))
+    found = [moment for moment in moments if moment is not None]
+    return max(found) if found else None
+
+
+def _hashed(preimage):
+    """The assignment a preimage names, or None when it does not name one at all.
+
+    A lone surrogate is a str, so the shape check passes it and UTF-8 encoding then raises. Read
+    straight through, one such value in one stale claim ends the selection walk in a traceback and
+    switches detection off for the whole workspace. A preimage that cannot be encoded names
+    nothing, the same answer a blank one gets.
+    """
+    try:
+        return hashlib.sha256(str(preimage).encode("utf-8")).hexdigest()
+    except (ValueError, TypeError):
+        return None
 
 
 # The instant an undated record sorts below. Named so the two orderings share one floor.
@@ -386,8 +423,7 @@ def _selecting_claim(marker, session_id, assignment):
         presented = claim.get("dispatchRequestId")
         if not _named(presented):
             continue
-        digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
-        if _same_identity(digest, assignment):
+        if _same_identity(_hashed(presented), assignment):
             return claim
     return None
 
@@ -626,11 +662,14 @@ def resolve_assignment(workspace, session_id):
     test is the claim against the directory and never against the intent, so a candidate whose
     intent cannot be read is still selected and still reported rather than skipped.
 
-    Among the claimed candidates the order is the newest CLAIM, not the newest declaration. The
-    claim is the evidence that does not live in the intent, so currency survives an unreadable one:
-    a corrupt candidate wins only when it really is the current assignment, and a stale corrupt one
-    never outranks a newer healthy claim. The relay's reader keeps a candidate whose intent could
-    not be READ; this listing has no way to say that, so only the ordering is mirrored here.
+    The claim says WHICH assignments are this session's; the coordinator says which of them is
+    current. Currency is read only from coordinator records - the declaration, the bind and the
+    attempts - and never from the claim, because a child that can move currency can pin every turn
+    to a stale assignment where it has already published a releasing disposition and never be
+    detected on the current one. Reading three records rather than the declaration alone is what
+    keeps that answer available when the declaration is the record that went unreadable. The
+    relay's reader keeps a candidate whose intent could not be READ; this listing has no way to say
+    that, so only the ordering is mirrored here.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -643,12 +682,12 @@ def resolve_assignment(workspace, session_id):
     for row in published:
         claim = _selecting_claim(row[2], session_id, row[1])
         if claim is not None:
-            claimed.append((_moment(claim.get("at")), row[1], row[2]))
+            claimed.append((_authority_moment(row[2]), row[1], row[2]))
     pool = claimed or published
     if not pool:
         return None
-    # An undated claim sorts below every dated one rather than raising, and ties break on the
-    # assignment id, so every reader of the same listing picks the same one.
+    # An assignment carrying no readable coordinator record sorts below every one that does, and
+    # ties break on the assignment id, so every reader of the same listing picks the same one.
     return max(pool, key=lambda row: (row[0] is not None, row[0] or _EPOCH, row[1]))[2]
 
 

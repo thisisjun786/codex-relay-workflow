@@ -399,7 +399,12 @@ def correlation_problem(marker, session_id, assignment=None) -> str | None:
         return INTENT_DISPATCH_UNNAMED
     if named(assignment) and not same_identity(declared, assignment):
         return INTENT_ASSIGNMENT_MISMATCH
-    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+    # A preimage the hash cannot be taken of names nothing, and it is answered rather than raised:
+    # the same reasoning as _hashed, applied on the decision path, where a traceback would leave
+    # the turn as guard_faulted with the operator's actual problem unstated.
+    digest = _hashed(presented)
+    if digest is None:
+        return CLAIM_DISPATCH_UNNAMED
     return None if same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
 
 
@@ -421,6 +426,22 @@ def correlated(marker, session_id, assignment=None) -> bool:
 
 
 # ---------------------------------------------------------------- selection
+
+
+def _hashed(preimage):
+    """The assignment a preimage names, or None when it does not name one at all.
+
+    A lone surrogate is a str, so the shape check passes it and the hash then raises: UTF-8 has no
+    encoding for it. Read straight through, one such value in one stale claim ends the selection
+    walk in a traceback and the turn in guard_faulted, which is a defect in this code reported as
+    one - but it also means a single unencodable byte sequence in an assignment nobody is using
+    switches detection off for the whole workspace. A preimage that cannot be encoded names
+    nothing, which is the same answer a blank one gets, and it is given here rather than raised.
+    """
+    try:
+        return assignment_id(preimage)
+    except (ValueError, TypeError):
+        return None
 
 
 def selecting_claim(marker, session_id, assignment):
@@ -451,7 +472,9 @@ def selecting_claim(marker, session_id, assignment):
         if not same_identity(claimant(claim), session_id):
             continue
         presented = claim.get("dispatchRequestId")
-        if named(presented) and same_identity(assignment_id(presented), assignment):
+        if not named(presented):
+            continue
+        if same_identity(_hashed(presented), assignment):
             return claim
     return None
 
@@ -511,49 +534,76 @@ def select_assignment(root, workspace, session_id):
     # The candidate's own directory name is what its claim has to hash to, which is why this is
     # asked per candidate rather than once for the workspace. The claim is kept, because it is also
     # what orders them.
-    claimed = []
-    for candidate in candidates:
-        claim = selecting_claim(candidate[1], session_id, candidate[0].name)
-        if claim is not None:
-            claimed.append((candidate, claim))
+    claimed = [
+        candidate
+        for candidate in candidates
+        if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
+    ]
     if claimed:
-        # Newest CLAIM, not newest declaration. Both halves of this matter and they were found one
-        # at a time. Ordering on the declaration reads the intent, so a candidate whose intent
-        # cannot be read sorts below every readable sibling and the reader silently moves to an
-        # assignment this session did not claim last, holding a turn there while never saying the
-        # current one could not be read. Preferring every unreadable candidate instead is the
-        # opposite failure and the one select_assignment has always warned about: a stale corrupt
-        # assignment this session finished with in January outranks the healthy one it claimed in
-        # February, and releases a turn the current assignment would have held.
+        # The claim says WHICH assignments are this session's; the coordinator says which of them is
+        # current. Three failures were found one at a time and this is the ordering that answers all
+        # three. Reading the declaration alone drops a candidate whose intent cannot be read below
+        # every readable sibling, so the current assignment is silently passed over. Preferring
+        # every unreadable candidate instead lets a stale corrupt assignment outrank a newer healthy
+        # claim and release a turn the current one would have held. Ordering on the CLAIM fixes both
+        # and hands the child the answer: forward-date a stale claim, publish a releasing
+        # disposition there, and nothing is ever detected on the current assignment again.
         #
-        # The claim answers both, because it is the evidence that does not live in the intent: this
-        # session wrote it, it hashes to the directory it sits in, and it says when. So currency is
-        # decided on evidence an unreadable intent cannot suppress, a corrupt candidate wins only
-        # when it really is the current one, and a stale one never outranks a newer claim.
-        (directory, facts, problems), _claim = max(claimed, key=_claim_recency)
+        # _authority_moment reads only coordinator records, and reads three of them, so an
+        # unreadable declaration still leaves the bind and the attempts to say when the coordinator
+        # last acted here.
+        directory, facts, problems = max(claimed, key=_claimed_recency)
     else:
         directory, facts, problems = max(candidates, key=_recency)
     return directory, facts, problems
 
 
-def _claim_recency(entry):
-    """Newest claim first, ties broken on the assignment id. Reads no intent.
+def _authority_moment(facts):
+    """The newest instant the COORDINATOR recorded for this assignment, or None.
+
+    Currency decides which assignment a Stop is judged under, so it is read only from records the
+    coordinator writes: the declaration, the bind, and the creation attempts. Never from the claim.
+
+    That restriction is the whole point. Ordering on the claim reads a timestamp the child itself
+    wrote, and a child that can move currency can pin every turn to a stale assignment - publish a
+    releasing disposition there, forward-date that claim, and the current assignment's omissions
+    are never looked at again. Detection would then depend on a number the party being detected
+    supplies.
+
+    Three sources rather than the declaration alone, because the declaration is the record that
+    goes unreadable in the case this exists for. A bind and an accepted attempt are coordinator
+    facts in their own files, so an assignment whose intent cannot be read still carries evidence
+    of when the coordinator last acted on it. One carrying none of the three has no coordinator
+    evidence of being current at all, and does not outrank one that has: it also cannot be held,
+    because a hold needs the bind.
+    """
+    moments = []
+    intent_fact = facts.get("intent")
+    if isinstance(intent_fact, dict):
+        moments.append(_moment(intent_fact.get("declaredAt")))
+    bound_fact = facts.get("bound")
+    if isinstance(bound_fact, dict):
+        moments.append(_moment(bound_fact.get("at")))
+    for attempt in facts.get("attempts") or []:
+        if isinstance(attempt, dict):
+            moments.append(_moment(attempt.get("at")))
+    found = [moment for moment in moments if moment is not None]
+    return max(found) if found else None
+
+
+def _claimed_recency(candidate):
+    """Newest coordinator record first, ties broken on the assignment id.
 
     The ordering used among the assignments a session's own claim selects. Compared as instants for
-    the reason _recency is: ISO 8601 sorts chronologically only when the offsets match. An undated
-    or unparseable claim sorts below every dated one rather than raising, and the assignment id
-    still breaks the tie, so every reader of the same listing selects the same entry.
-
-    Provenance is worth stating. This is the child's own record of when it claimed, so it is weaker
-    evidence than the coordinator's declaration - and it is the only currency signal that survives
-    an unreadable intent, which is exactly the case that needs one. What a child can do with it is
-    bounded: a claim selects nothing unless it hashes to the directory it sits in, so the choice is
-    only ever between assignments this session legitimately claimed.
+    the reason _recency is: ISO 8601 sorts chronologically only when the offsets match. An
+    assignment carrying no readable coordinator record sorts below every one that does, rather than
+    raising, and the assignment id still breaks the tie, so every reader of the same listing
+    selects the same entry.
     """
     from datetime import datetime, timezone
 
-    (directory, _facts, _problems), claim = entry
-    at = _moment(claim.get("at"))
+    directory, facts, _problems = candidate
+    at = _authority_moment(facts)
     return (
         at is not None,
         at or datetime.min.replace(tzinfo=timezone.utc),

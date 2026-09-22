@@ -380,6 +380,13 @@ FAILURE_SENTINEL_ALLOWED = {
     ("intent.py", "_moment"): "the failure IS the answer: a value that does not parse as a"
                               " timestamp is not a moment, and every caller treats the absence as"
                               " the malformed field it is",
+    ("intent.py", "_hashed"): "the failure IS the answer, the same way _moment's is: a preimage"
+                              " UTF-8 cannot encode does not name an assignment, which is exactly"
+                              " what a blank one already answers. Raising instead is what this"
+                              " exists to stop - a lone surrogate passes the shape check because"
+                              " it is a str, and one in a stale claim nobody is using ended the"
+                              " selection walk in a traceback and switched detection off for the"
+                              " whole workspace",
     ("intent.py", "read_only_connection"): "None is the only thing a failed connection can be, and"
                                            " its callers convert it into their own reported"
                                            " readable=False rather than into an empty result",

@@ -9,6 +9,7 @@ fail: a missing receipt is not an unreadable store, an unreadable store is not a
 of the three is ever answered by writing the evidence that was missing.
 """
 
+import json
 import os
 import shutil
 import tempfile
@@ -513,10 +514,11 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
 
     LATER_DISPATCH = "dispatch-2"
     LATER_DECLARED = "2026-01-01T00:02:00+00:00"
-    # Distinct from NOW on purpose: the claim's own timestamp is what orders the claimed
-    # candidates, so two claims written at the same instant would decide this on the assignment id
-    # and these cases would stop measuring the ordering they are named for.
+    # Distinct from NOW on purpose. Currency comes from the coordinator's own records, so the
+    # BIND is what has to differ: two assignments bound at the same instant decide on the
+    # assignment id and these cases stop measuring the ordering they are named for.
     LATER_CLAIMED = "2026-01-01T00:05:30+00:00"
+    LATER_BOUND = "2026-01-01T00:05:45+00:00"
 
     def shadow(self, dispatch):
         """A newer assignment in the same workspace, carrying a claim by this session.
@@ -534,7 +536,7 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
                        {"sessionId": CHILD, "dispatchRequestId": dispatch,
                         "at": self.LATER_CLAIMED})
         intent.bind(self.markers, workspace=self.workspace, assignment=later,
-                    session_id=CHILD, task_id=CHILD, at=NOW)
+                    session_id=CHILD, task_id=CHILD, at=self.LATER_BOUND)
         return later
 
     def test_a_newer_assignment_with_an_uncorrelated_claim_does_not_take_the_turn(self):
@@ -557,20 +559,6 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["assignmentId"], later)
         self.assertEqual(verdict["observation"], "managed_unregistered")
 
-    def claimed_later(self):
-        """A newer assignment carrying this session's VALID claim, published through the API.
-
-        The claim hashes to the assignment it sits in, so it is genuinely this session's - which is
-        what makes the intent's readability the only thing under test in the two cases below.
-        """
-        later = marker.assignment_id(self.LATER_DISPATCH)
-        intent.publish_claim(
-            self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
-            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN,
-            at=self.LATER_CLAIMED,
-        )
-        return later, marker.assignment_dir(self.markers, self.workspace, later)
-
     def healthy_later(self):
         """A newer assignment this session claimed, bound and registered, so it owes a hold."""
         later = marker.assignment_id(self.LATER_DISPATCH)
@@ -584,7 +572,7 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
             at=self.LATER_CLAIMED,
         )
         intent.bind(self.markers, workspace=self.workspace, assignment=later,
-                    session_id=CHILD, task_id=CHILD, at=NOW)
+                    session_id=CHILD, task_id=CHILD, at=self.LATER_BOUND)
         directory = marker.assignment_dir(self.markers, self.workspace, later)
         marker.publish(directory / "relationship.json",
                        {"relationshipId": "rel-000000000000abcd", "at": NOW})
@@ -632,38 +620,67 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         self.assertEqual(verdict["observation"], "state_unreadable")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
-    def test_a_newer_claimed_assignment_whose_intent_cannot_be_read_takes_the_turn(self):
-        """An unreadable store is never reported as an absent one, and never skipped either.
-
-        Selecting on the intent's CONTENT dropped this candidate, and _recency sorts an unreadable
-        declaration below every real one, so the reader landed on the older assignment and held a
-        turn against it while nobody was told the assignment this session actually claimed could
-        not be read. The claim identifies the candidate without the intent; the unreadable facts
-        then outrank a readable sibling, and the turn releases saying so.
-        """
-        self.managed()
-        later, directory = self.claimed_later()
-        # A directory where a fact belongs: the read fails with an OSError rather than depending on
-        # this process's permissions, which root would ignore.
-        (directory / "intent.json").mkdir()
-        verdict = self.evaluate()
-        self.assertEqual(verdict["assignmentId"], later)
-        self.assertEqual(verdict["observation"], "state_unreadable")
-        self.assertEqual(verdict["decision"], guard.RELEASE)
-
-    def test_a_newer_claimed_assignment_whose_intent_is_not_a_record_takes_the_turn(self):
-        """The same boundary one step along: readable, and not a fact.
+    def test_a_current_assignment_whose_intent_is_not_a_record_is_still_selected(self):
+        """Readable, and not a fact, on the assignment the coordinator last acted on.
 
         Reported as malformed on the assignment that actually carries it, rather than leaving the
-        reader to hold the older assignment's turn with the corruption unmentioned.
+        reader to hold an older sibling's turn with the corruption unmentioned. Currency survives
+        losing the declaration because the bind is a coordinator record of its own.
         """
         self.managed()
-        later, directory = self.claimed_later()
+        later, directory = self.healthy_later()
+        # Removed first: every fact here is create-once, so publishing over a declared intent is
+        # the no-op it is designed to be and the case would test nothing.
+        (directory / "intent.json").unlink()
         marker.publish(directory / "intent.json", "bare")
         verdict = self.evaluate()
         self.assertEqual(verdict["assignmentId"], later)
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_forward_dated_claim_cannot_move_which_assignment_is_current(self):
+        """Currency is read from the coordinator's records and never from the child's.
+
+        Ordering the claimed candidates on the claim hands the child the answer: forward-date the
+        claim in a stale assignment, publish a releasing disposition there, and every later turn is
+        judged under it while the current assignment is never looked at again. Detection would then
+        depend on a number the party being detected supplies.
+        """
+        self.managed()
+        later, _directory = self.healthy_later()
+        stale = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (stale / "claims" / CHILD / "claim.json").unlink()
+        marker.publish(stale / "claims" / CHILD / "claim.json",
+                       {"sessionId": CHILD, "dispatchRequestId": DISPATCH,
+                        "at": "2099-01-01T00:00:00+00:00"})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later,
+                         "a forward-dated claim in a stale assignment took the turn")
+
+    def test_a_preimage_that_cannot_be_encoded_does_not_abort_selection(self):
+        """One unencodable value in an assignment nobody is using must not end the walk.
+
+        A lone surrogate is a str, so the shape check passes it and the hash then raises: selection
+        ended in a traceback and the turn in guard_faulted, which reports a defect in the guard and
+        switches detection off for the whole workspace at the same time. It names nothing, which is
+        the answer a blank preimage already gets.
+        """
+        self.managed()
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=self.LATER_DISPATCH,
+            issue_key="REL-2", declared_at=self.LATER_DECLARED, db_path=str(self.store.path),
+        )
+        stale = marker.assignment_dir(self.markers, self.workspace,
+                                      marker.assignment_id(self.LATER_DISPATCH))
+        path = stale / "claims" / CHILD / "claim.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", errors="surrogatepass") as handle:
+            json.dump({"sessionId": CHILD, "dispatchRequestId": "\ud800", "at": NOW},
+                      handle)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
 
     def test_a_corrupt_assignment_nobody_claimed_does_not_switch_detection_off(self):
         """The protection the rule above had to keep.
