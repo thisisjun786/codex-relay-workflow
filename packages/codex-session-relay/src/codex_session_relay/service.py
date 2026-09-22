@@ -29,6 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SCOPE_ENV = "CODEX_SESSION_RELAY_SCOPE_DIR"
+# Carries the id of the launch whose execution policy is already settled. Set by a service on
+# the daemon it launches and read only by that daemon, which is why it is an environment key
+# rather than an option: the command surface is where a caller composes a command from, and
+# nothing about this is a caller's to state.
+LAUNCH_SETTLED_ENV = "CODEX_SESSION_RELAY_LAUNCH_POLICY_SETTLED"
 PRODUCTION, ISOLATED = "production", "isolated"
 
 DAEMON_LOCK = "daemon.lock"
@@ -1679,14 +1684,19 @@ class RelayService:
             raise ValueError(policy["detail"])
         if policy["path"]:
             environment[policy["variable"]] = policy["path"]
-        # And the child is told that this environment IS the decision. It would otherwise read
-        # the declaration again on the way up, and a declaration written between this launch
-        # and that read would turn an environment this service already approved into a
-        # conflict - refused by the child, after the restart had stopped the old daemon, which
-        # is the outage the whole freeze exists to prevent, one process boundary further out.
-        argv.append("--policy-from-launcher")
         if self.launch_id:
             argv += ["--launch-id", self.launch_id]
+            # And this launch's decision is settled: the daemon adopts the environment it was
+            # given instead of reading the declaration again on the way up. Without it a
+            # declaration written between this launch and that read turns an environment this
+            # service already approved into a conflict, refused by the child after the restart
+            # had stopped the old daemon - the outage the frozen resolution exists to prevent,
+            # one process boundary further out.
+            #
+            # Bound to THIS launch's id, so it says nothing about any other one, and it is not
+            # a defence against the user who owns both processes: it cannot be, since that user
+            # can rewrite the declaration itself. It is the launch saying what it decided.
+            environment[LAUNCH_SETTLED_ENV] = self.launch_id
         if self.takeover:
             # The supervisor is the process that CLAIMS the scope, so the flag has to reach
             # it. Set only on this object, it was dropped at the process boundary and the

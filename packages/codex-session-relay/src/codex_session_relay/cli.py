@@ -2564,6 +2564,26 @@ def cmd_service(services, args) -> dict:
     raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
 
 
+def _launch_already_settled(args, environ) -> str | None:
+    """The launch id this environment says was already decided, when it is this launch's.
+
+    A service launching its own daemon has resolved the policy, frozen it and put it in that
+    daemon's environment before stopping anything. The id ties the statement to one launch, so
+    an environment left over from another one says nothing about this one.
+
+    It is not a trust boundary and does not pretend to be. The user who can arrange this
+    environment is the user who can rewrite the declaration, the policy file it names, or the
+    record beside it; `read_worker_policy` states the same limit for the same reason. What it
+    buys is that the question is settled once per launch rather than asked again by the process
+    that is replacing a service already stopped.
+    """
+    from .service import LAUNCH_SETTLED_ENV
+
+    settled = (environ.get(LAUNCH_SETTLED_ENV) or "").strip()
+    launch = getattr(args, "launch_id", None)
+    return settled if settled and launch and settled == launch else None
+
+
 def _apply_launch_policy(service, environ) -> dict | None:
     """Give a supervisor started HERE the policy its service declares, or refuse to start it.
 
@@ -3542,12 +3562,6 @@ def build_parser() -> argparse.ArgumentParser:
             # launched by another process that had already decided when it must stop. start
             # and restart are where a person says how long, and they convert it themselves.
             hosted.add_argument("--deadline-monotonic", type=float)
-            # Set by the launcher, not by a person: it says the launching service already
-            # decided this daemon's execution policy and put it in this environment. Reading
-            # the declaration again here would re-open a question that was settled before the
-            # service it is replacing was stopped.
-            hosted.add_argument("--policy-from-launcher", action="store_true",
-                                help=argparse.SUPPRESS)
         hosted.add_argument("--launch-id")
         # For a registration whose store no longer exists - deleted, lost or deliberately
         # replaced. Refused while anything is live on the scope, so this can only ever
@@ -4264,7 +4278,7 @@ def main(argv=None) -> int:
         # environment, and says so. Re-reading the declaration here would let one written in
         # the meantime refuse a launch whose predecessor has already been stopped.
         if (getattr(args, "service_command", None) == "run"
-                and not getattr(args, "policy_from_launcher", False)):
+                and _launch_already_settled(args, os.environ) is None):
             refused = _apply_launch_policy(_service_for(services), os.environ)
             if refused is not None:
                 raise PayloadExit(refused, EXIT_REFUSED)

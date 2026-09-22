@@ -25,7 +25,7 @@ from unittest import mock
 from codex_session_relay import rolepolicy
 from codex_session_relay.errors import RefusalReason
 from codex_session_relay.service import (
-    LAUNCH_POLICY, canonical_policy_path, owned_service, start_ticks,
+    LAUNCH_POLICY, LAUNCH_SETTLED_ENV, canonical_policy_path, owned_service, start_ticks,
 )
 
 from .test_rolepolicy import POLICY, write_policy
@@ -165,6 +165,8 @@ class WhatALaunchCarries(LaunchPolicyCase):
     def test_the_child_can_actually_read_the_policy_it_is_handed(self):
         service = self.enabled_service()
         service.declare_launch_policy(self.policy_path, actor="test")
+        # What start() sets before it calls the launcher; the settlement names this launch.
+        service.launch_id = "launch-under-test"
 
         with caller_environment(None):
             environment = self.launcher_environment(service)
@@ -173,9 +175,9 @@ class WhatALaunchCarries(LaunchPolicyCase):
         self.assertEqual(summary["state"], "declared")
         self.assertEqual(summary["digest"], self.digest)
         self.assertEqual(set(summary["roles"]), set(POLICY["roles"]))
-        # And the child is told the question is already settled, so it adopts this environment
-        # instead of re-reading a declaration that may have moved since.
-        self.assertIn("--policy-from-launcher", self.launched_argv)
+        # And the environment says which launch already settled the question, so the child
+        # adopts it instead of re-reading a declaration that may have moved since.
+        self.assertEqual(environment[LAUNCH_SETTLED_ENV], service.launch_id)
 
     def test_an_environment_declaration_still_launches_and_says_nothing_recorded_it(self):
         """The behaviour before this record existed, kept, and no longer silent about itself."""
@@ -468,12 +470,31 @@ class ThroughTheCommandLine(LaunchPolicyCase):
         """
         self.cli("service", "declare", "--execution-policy", self.policy_path)
 
-        failed = self.run_cli("service", "run", "--policy-from-launcher", "--max-segments", "1",
-                              environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy})
+        failed = self.run_cli(
+            "service", "run", "--launch-id", "launch-under-test", "--max-segments", "1",
+            environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy,
+                         LAUNCH_SETTLED_ENV: "launch-under-test"},
+        )
 
         self.assertNotIn("launch_policy_conflict", failed.stdout + failed.stderr)
         self.assertEqual(failed.returncode, 4, failed.stdout + failed.stderr)
         self.assertIn("--socket", failed.stdout + failed.stderr)
+
+    def test_a_settlement_from_another_launch_does_not_speak_for_this_one(self):
+        """The statement names one launch, so a leftover environment says nothing about this.
+
+        Without the id this would be a single switch that turns the check off, and any
+        environment carrying it would do.
+        """
+        self.cli("service", "declare", "--execution-policy", self.policy_path)
+
+        refused = self.cli(
+            "service", "run", "--launch-id", "this-launch", "--max-segments", "1", expect=2,
+            environment={rolepolicy.ENVIRONMENT_VARIABLE: self.other_policy,
+                         LAUNCH_SETTLED_ENV: "some-other-launch"},
+        )
+
+        self.assertEqual(refused["reason"], "launch_policy_conflict")
 
 
 
