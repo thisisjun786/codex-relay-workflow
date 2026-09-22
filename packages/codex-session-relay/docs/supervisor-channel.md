@@ -193,6 +193,17 @@ resumes the supervisor's thread past those. `supervisor-read` checks the host's 
 the recipient's transcript only when the message has no settled readback; with one it answers
 from the stored row before the proof is checked and without using an adapter at all.
 
+`sent` is read off the transport receipt rather than asserted. An attempt that was made and
+refused answers `attempted: true` with `sent: false` and the receipt's own `sendAttempted`,
+because reporting a refusal as a delivery is the reading this command exists to prevent.
+
+A recipient the host says cannot receive - archived, paused, usage-limited - gets a recheck
+time and a journal entry, never a hold: that state is one somebody can undo, and a held row is
+skipped by every later attempt, so recording it as a hold would mean recovering the recipient
+never released the report. A busy one is deferred with a backoff that grows and a cap that is
+counted in the journal, because the attempt counter only moves inside the claim a busy
+recipient never reaches.
+
 `supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
 rather than ignoring the one it cannot use.
 

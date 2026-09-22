@@ -726,18 +726,40 @@ class SupervisorChannel:
         """A recipient mid-turn is left strictly alone: no resume, no attempt, no record.
 
         There is nothing to classify, because no transport call was made.
+
+        The deferral is counted in the journal rather than on the row, because attempt_count
+        only moves inside the claim and a busy recipient never reaches one. Counting there
+        made the busy cap unreachable AND froze the backoff at its base interval, so an
+        endlessly busy supervisor was retried at a fixed rate for ever. The journal is durable
+        and already exists, which is what makes this a bound rather than a hope.
         """
-        attempts = row["attempt_count"]
-        hold = self.policy.cap_reason("busy") if attempts >= self.policy.busy_max_attempts \
-            else None
-        self._reschedule(row, now + self.policy.delay_for(attempts + 1, "busy"),
+        deferrals = self._deferrals(row["message_id"]) + 1
+        hold = (self.policy.cap_reason("busy")
+                if deferrals >= self.policy.busy_max_attempts else None)
+        self.store.journal("supervisor_message_deferred", row["message_id"],
+                           {"deferral": deferrals, "holdReason": hold}, at=self.clock.iso())
+        self._reschedule(row, now + self.policy.delay_for(deferrals, "busy"),
                          state=DEFERRED_BUSY, hold=hold)
 
+    def _deferrals(self, message_id) -> int:
+        """How many times this message has been put off for a busy recipient."""
+        row = self.store.one(
+            "SELECT COUNT(*) AS seen FROM journal WHERE kind = ? AND subject = ?",
+            ("supervisor_message_deferred", message_id))
+        return row["seen"] if row is not None else 0
+
     def _withhold(self, row, observation, now) -> None:
-        """A recipient the host says cannot receive holds the report where it is."""
+        """A recipient the host says cannot receive holds the report where it is.
+
+        No hold_reason, deliberately. An archived, paused or usage-limited supervisor is a
+        state somebody can undo, and a held row is skipped by every later attempt - so writing
+        the lifecycle answer as a hold meant unarchiving never released the report and the one
+        the user fixed stayed stuck. What the row gets is a recheck time; what the journal gets
+        is why. A hold is for a bound this channel chose, not for a fact about the recipient
+        that the next observation may contradict.
+        """
         self._reschedule(row, now + self.policy.lifecycle_recheck_seconds,
-                         state=WITHHELD_PRE_SEND,
-                         hold=None if observation.deliverable != "no" else observation.withhold_reason)
+                         state=WITHHELD_PRE_SEND)
         self.store.journal(
             "supervisor_message_withheld", row["message_id"],
             {"deliverable": observation.deliverable, "reason": observation.withhold_reason},

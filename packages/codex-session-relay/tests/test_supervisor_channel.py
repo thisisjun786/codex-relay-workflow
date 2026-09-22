@@ -870,3 +870,76 @@ class WhatTheMergeBoundaryReviewFound(ChannelTestCase):
         self.assertEqual(answer["turnOrigin"], channel_module.RELAY_OPENED,
                          "the attempt names it, which is exactly why it cannot be exempt")
         self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+
+class WhatTheSecondReviewRoundFound(ChannelTestCase):
+    def test_a_recipient_that_recovers_releases_the_report_it_was_holding(self):
+        """Archived is a state somebody can undo; a hold is not."""
+        _one, message_id = self.staged()
+        self.adapter.threads[SUPERVISOR].archived = True
+        self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        row = self.channel.get(message_id)
+        self.assertEqual(row["state"], WITHHELD_PRE_SEND)
+        self.assertIsNone(row["hold_reason"],
+                          "a lifecycle answer is not a bound this channel chose")
+
+        self.adapter.threads[SUPERVISOR].archived = False
+        record = self.channel.attempt(
+            message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertIsNotNone(record, "unarchiving has to release what it stranded")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+
+    def test_a_busy_recipient_backs_off_further_each_time_and_is_finally_held(self):
+        """attempt_count only moves inside the claim, which a busy recipient never reaches."""
+        _one, message_id = self.staged()
+        self.adapter.set_status(SUPERVISOR, "active")
+        now = self.clock.now()
+        waits = []
+        for _ in range(3):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter, now=now))
+            row = self.channel.get(message_id)
+            waits.append(row["next_eligible_at"] - now)
+            now = row["next_eligible_at"]
+        self.assertEqual(waits, sorted(waits))
+        self.assertLess(waits[0], waits[-1], "a fixed interval is not a backoff")
+
+        for _ in range(self.channel.policy.busy_max_attempts):
+            row = self.channel.get(message_id)
+            if row["hold_reason"]:
+                break
+            self.channel.attempt(message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertEqual(self.channel.get(message_id)["hold_reason"], "busy_cap")
+
+    def test_a_refused_transport_is_not_reported_as_a_send(self):
+        from codex_session_relay import cli
+
+        _one, message_id = self.staged()
+        self.adapter.script("read_fail")
+        answer = cli.cmd_supervisor_send(
+            self._sending_services(), type("Args", (), {"message": message_id})())
+        self.assertTrue(answer["attempted"])
+        self.assertFalse(answer["sent"], "sendAttempted no is not a delivery")
+        self.assertEqual(answer["sendAttempted"], "no")
+        self.assertEqual(answer["deliveryState"], WITHHELD_PRE_SEND)
+
+    def test_a_real_send_is_reported_as_one(self):
+        from codex_session_relay import cli
+
+        _one, message_id = self.staged()
+        answer = cli.cmd_supervisor_send(
+            self._sending_services(), type("Args", (), {"message": message_id})())
+        self.assertTrue(answer["attempted"])
+        self.assertTrue(answer["sent"])
+        self.assertEqual(answer["deliveryState"], DISPATCHED)
+
+    def _sending_services(self):
+        channel, adapter = self.channel, self.adapter
+
+        class _Services:
+            adapter_requested = True
+            supervisor_channel = channel
+
+            def __init__(self):
+                self.adapter = adapter
+
+        return _Services()

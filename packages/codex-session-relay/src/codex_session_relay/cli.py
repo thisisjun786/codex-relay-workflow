@@ -859,6 +859,8 @@ def cmd_supervisor_send(services, args) -> dict:
     It reaches the host only past its own guards: a message that is held, inside its backoff or
     already sent answers sent: false without the adapter being touched.
     """
+    from . import supervisorchannel as channel_module
+
     _require_host(services, "supervisor-send",
                   "a send observes the recipient's lifecycle and resumes its thread. Without"
                   " a host every read fails, which reads as an unmeasured recipient and would"
@@ -866,12 +868,18 @@ def cmd_supervisor_send(services, args) -> dict:
     record = services.supervisor_channel.attempt(args.message, _LazyAdapter(services))
     if record is None:
         row = services.supervisor_channel.get(args.message)
-        return {"sent": False, "messageId": args.message, "state": row["state"],
+        return {"attempted": False, "sent": False, "messageId": args.message,
+                "state": row["state"],
                 "holdReason": row["hold_reason"],
                 "nextEligibleAt": row["next_eligible_at"],
                 "detail": "nothing was sent and nothing is wrong: a busy recipient, a"
                           " backoff still running, or a message already sent"}
-    return {"sent": True, **record}
+    # sent is read off the receipt rather than asserted. An attempt that was made and refused
+    # answers sendAttempted no, and reporting that as a send made a transport refusal read as
+    # a delivery - the one reading this command exists to prevent.
+    return {"attempted": True,
+            "sent": record["deliveryState"] in channel_module.DELIVERED,
+            **record}
 
 
 def cmd_supervisor_read(services, args) -> dict:
