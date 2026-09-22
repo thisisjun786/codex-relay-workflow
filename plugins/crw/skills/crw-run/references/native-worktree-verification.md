@@ -62,6 +62,35 @@ keep each one inside what it can actually establish.
   permission. Confidence is per layer, not per surface: a bundle or profile finding
   that was already established keeps it when the screen turns out to be unreachable.
 
+Measured 2026-09-22 from a Linux host with authorized SSH access to the macOS client
+machine. All three non-screen layers were reachable, so the earlier round's "no layer
+was read" describes that round's access, not a property of the client. The bundle
+reported ChatGPT.app 26.901.51231 build 8109, the app was running, and the account
+layer showed two remote-control enrollments pointing at this Linux host, one of them
+named `Codex Desktop`. Record which layers YOUR access actually reached.
+
+Record the shape, not the secrets. Those enrollment rows also carry an account
+identifier, a server identifier and a websocket endpoint, and none of them is reproduced
+here or belongs in a repository document: the count and the product label carry the whole
+finding, which is that this client drives this host. The same restraint applies to every
+store you read during a probe. Publish the aggregate that supports the claim and keep the
+identifiers in the private receipt.
+
+Two traps this round hit, both worth repeating:
+
+- The profile domain is not named after the app. The bundle is `ChatGPT.app` but its
+  identifier is `com.openai.codex`. A scan of the guessed `com.openai.chat` returned
+  nothing, and it would have read as "the feature stores nothing" if the control
+  string had not ALSO returned zero and invalidated the scan. Read the identifier
+  from the bundle's own Info.plist before scanning, and keep the control string.
+- A background SSH session is not the user's GUI session. `launchctl managername`
+  reported `Background`; `launchctl asuser` was refused without root; `screencapture`
+  failed with "could not create image from display"; and although System Events
+  reported `UI elements enabled` true and could enumerate the ChatGPT process, the
+  window count for that process read 0. So Accessibility being enabled for the machine
+  does not give a background session the rendered screen. The screen layer stays
+  unverified without a session in the GUI login context.
+
 ## Distinguish the identifiers
 
 App Server `projectId` on a thread record, the desktop saved-project identity, the
@@ -219,6 +248,45 @@ every git path the delivery actually needs, demonstrated by producing the artifa
 under the profile the child will really run with, rather than inferred from a granted
 parent directory.
 
+
+## Loop activation inside a managed worktree
+
+Whether a child can run its normal workflow inside a managed worktree is a separate
+question from whether the checkout is correct, and it is easy to answer wrongly,
+because the setup artifacts appear before any work does.
+
+Measured 2026-09-22 on the command-line surface, Codex 0.154.0, for a real issue child
+created with `codex exec --enable worktrees --worktree` and left to run its own
+workflow. It activated: an `active` row in the host goal store keyed on the child's
+thread id and carrying the child's OWN objective; a registered goalplan under the
+worktree's `.codexclaw/goalplans/<slug>/` with its work phases and criteria; an
+accepted transition row in that worktree's `.codexclaw/ledger.jsonl`; and the
+orchestrate call exiting zero in the child's rollout. The checkout's own
+`.codexclaw/` tree is where all of it lands, and none of it appeared in the source
+checkout.
+
+Require all four together, because three cheaper signals each look like activation
+and none of them is:
+
+- The SessionStart hook writes a session file at `phase: IDLE` with an empty slug
+  before anything happens. Its existence is a baseline.
+- `loopArmSeen` can be set because the PROMPT mentioned a loop, with the phase
+  unchanged. It records what was asked for, not what ran.
+- `loop init` writes the goalplan, the session slug and a `created` ledger row on its
+  own, without entering any phase.
+
+This round observed exactly that trap: 31 seconds before the real transition, the
+child's session file already read a populated slug with `loopArmSeen` true while the
+phase was still `IDLE` and orchestration was inactive. A predicate built on those
+fields alone would have recorded activation for a child that had not yet started.
+All four stay required. The last two carry the weight, because an accepted transition
+row and an exit-zero orchestrate call are the only ones of the four the three cheap
+signals cannot produce; check those first, then confirm the active goal row and the
+bound goalplan are genuinely there rather than assuming they followed. Dropping either
+of that last pair is how a verifier ends up certifying a child that registered a plan and
+never ran it. Treat a child's own written claim of activation as a lead to check rather
+than proof.
+
 ## Evidence to capture
 
 Keep raw receipts outside the repository and record only the shape here.
@@ -313,6 +381,50 @@ Keep raw receipts outside the repository and record only the shape here.
 
 Record four verdicts separately. A single summary verdict hides the one that fails.
 
+Write each verdict as a cell that is either measured or blocked, and never as a BARE
+"unverified". The word itself stays in use and the rest of this file relies on it; what
+is refused is the form that stops at the word. Unverified alone collapses three different
+situations that need different answers: a thing nobody attempted, a thing attempted and
+inconclusive, and a thing that cannot be reached from here at all. Only the third is a
+property of the environment, and it is the only one where stopping is the correct outcome.
+
+So "unverified" is a complete answer exactly when the missing capability travels with it,
+which is what every other instruction in this file already asks for when it tells you to
+record something unverified and name the access that would settle it. Read those as
+unchanged.
+
+Cite bytes, not files. A verdict that points at an evidence file has only shown the file
+exists; it has not shown the file says anything. Name a literal string from that file
+alongside the claim, and the citation becomes checkable by a reader who was not there and
+by a script that has no judgment at all. This costs one field per claim and it catches the
+failure that matters most in a long verification: a conclusion that drifted away from the
+observation it was built on while the citation stayed put.
+
+Doing this to an already-written evidence set is worth the hour. Applied to 34 cells here,
+33 anchored on the first pass and one did not, which was the interesting one: the claim
+that the parent manufactured its own receipt turned out to rest on a single field in the
+receipt file rather than on any phrase in the claim. Anchoring forced that to be said
+explicitly instead of left as a resemblance between two paragraphs.
+
+So a blocked cell owes three things: which cell is blocked, the capability that is
+missing, and the observation proving it is missing. "The screen is unverified" is not a
+result. "The screen needs a process inside the client machine's GUI login session;
+the session manager reports a background context, elevating to the GUI session is refused
+without root, and screen capture returns a no-display error" is a result, and a reader can
+act on it: the next person knows exactly what to arrange.
+
+Two failure modes this wording exists to stop. The first is inferring a blocked cell from
+an adjacent surface that was measured, which quietly converts one surface's result into
+another's. The second is a measured cell that hedges — "appears to", "probably" — which
+reads as evidence while carrying none. If a measured cell needs a hedge, it is not
+measured; move it to blocked and name what is missing.
+
+A criterion with no subject is its own answer and should be said plainly rather than
+filed as unverified. Measured here on 2026-09-22: project association could not fail or
+pass, because zero projects existed on either side of the client and host pair, so no task
+of any kind could appear under one. That is a fact about the deployment, and it tells the
+next reader to find a deployment with a project rather than to retry the same probe.
+
 **Project association.** Passes only when the created task appears under the
 original project in the client, with the working directory in the separate
 worktree. A section, a pin or a renamed task does not count. When the client cannot
@@ -349,6 +461,59 @@ trimmed to a fixed recent count, is unsuitable for evidence that must outlive th
 task unless the evidence is preserved outside it.
 
 ## Delivery has preconditions beyond emitting
+
+### What the command-line path does and does not carry, measured 2026-09-22
+
+A real issue child was created on this path and supervised to a pull request, and the
+informative part was that its first turn died rather than finished. Record these as CLI
+facts. None of them is a relay leg, and under a DIRECT assignment with no relay
+registration the relay round trip stays unverified whatever these show.
+
+- A turn that dies EMITS NOTHING. When the child's turn failed on a provider capacity
+  error, the `-o` last-message file was left empty, no final agent message was written,
+  and `turn.completed` never appeared. Any handoff convention that lives in the final
+  message, including a status sentinel, is lost exactly when the parent most needs it.
+  Put the child's running state in a file outside the checkout and treat the final
+  message as a convenience.
+- The parent is never told. There is no wake and no notification; the parent learns by
+  polling. Distinguish the three states it must tell apart — a live process whose
+  rollout is still growing, a dead one, and a live one that has stopped progressing —
+  because only the first is safe to leave alone.
+- What survives is the durable state, and it is enough to recover from: the thread row
+  with its model, effort, approval mode and working directory intact, the managed
+  checkout, the branch and every commit, plus whatever the child wrote outside the
+  checkout. What is lost is the final message and any in-flight subagent result.
+- The host goal is moved to `blocked` automatically when the turn fails, and the child
+  CANNOT restore it: the goal tool accepts only complete or blocked. A resumed child
+  therefore works under a goal it cannot return to active. Expect that, and do not read
+  it as the child having given up.
+
+### The create and resume surfaces do not accept the same flags
+
+`codex exec` accepts `-s/--sandbox`; `codex exec resume` does NOT. Passing it there
+fails the whole invocation before any turn starts, with "unexpected argument '-s'" and
+exit 2. Carry the sandbox as the configuration key instead. Check each flag against the
+subcommand you are actually calling, and budget for the fact that a rejected invocation
+can still consume an attempt if attempts are counted at intent.
+
+With the model, effort and approval overrides passed explicitly on resume, all four
+settings read back unchanged afterwards, and the working directory was preserved because
+the resume ran from inside the managed checkout. Record that as an override reapplied
+rather than as a setting preserved: passing the values and then reading them back does
+not show what an un-overridden resume would have inherited.
+
+### Reading the child's CI without being fooled by a superseded run
+
+A concurrency rule that cancels in-progress runs produces, at ONE head sha, both a
+cancelled run and a live one. The cancelled run's aggregate gate still reports FAILURE
+to the pull request, because its own dependencies were cancelled underneath it — its log
+says a required job "did not succeed", which reads exactly like a real failure. This
+was observed twice on the same pull request.
+
+So a check listing that mixes runs cannot settle whether a head is green. Select by run
+identity: list the runs for that sha, take the newest non-cancelled one, and read that
+run's conclusions. Re-read after every push, because a conclusion recorded at an earlier
+head says nothing about the current one.
 
 Treat "the receipt was not delivered" as an unfinished diagnosis. Record which
 precondition stopped it.
@@ -479,6 +644,46 @@ four consecutive creations produced four surviving checkouts, and
 landed under the Codex home root. Neither key was set in the host configuration either.
 So the limit was not merely unobserved, it was absent from the path under test, and the
 trigger cannot be exercised from here. Close this condition on the surface that owns
+
+A second round on 2026-09-22 closed the remaining doubt about `archive` and tightened
+this wording, on the same isolated home. The first round's `archive` had not
+necessarily run with the worktrees feature enabled, which would have made its result a
+statement about a disabled feature rather than about retention. Re-run as
+`codex --enable worktrees archive <id>` it behaved identically: the thread's archived
+flag went from 0 to 1 while the checkout, the worktrees directory count and the git
+registration were all unchanged. One further creation with
+`desktop.worktree-keep-count=1` and `desktop.worktree-auto-cleanup-enabled=true` set for
+that invocation took the home from twelve checkouts to thirteen, and archiving that new
+checkout under the same overrides left all thirteen and its registration in place. With
+a keep count of one and thirteen checkouts present, an applied policy had every
+opportunity to trim and trimmed nothing.
+
+For the command-line surface, then, the recent-count condition is no longer merely
+unobserved. Those `desktop.` keys are accepted and validated but never applied on this
+path, and `archive` is a thread-record operation whatever the feature flag says. Record
+that as unreachable from this surface rather than unverified, and read that as superseding
+the paragraph above for THIS surface only: unverified was the right answer while the
+trigger had not been exercised, and unreachable is the right answer now that it has. The
+desktop surface owns the documented policy, is still unverified, and none of this
+transfers to it.
+
+The recovery half was exercised too, on a fixture created for the purpose, because step 12
+treats an unexercised recovery as leaving the lifecycle verdict unverified. Two commands,
+in the order an operator would reach for them.
+
+`codex delete --force` removed the thread row and left everything else: the checkout, its
+git registration, and a `codex-thread.json` still naming the thread that had just been
+deleted. That is the orphan state, reproduced deliberately rather than inferred.
+
+`git worktree remove`, which is the recovery every removal message in the binary points at,
+then cleaned it properly: the checkout went, the registration dropped with it, and the
+orphaned owner record went too because it lives in the admin directory that removal takes.
+A `prune --dry-run` afterwards found nothing left to do, so no prune is needed on this path
+and none should be run — on a shared repository it reaches every worktree, not just yours.
+
+One residue: the Codex-side container directory above the checkout stays behind, empty. A
+count of the worktrees root therefore keeps counting a checkout that no longer exists, which
+matters if anyone builds a retention check on that count.
 those settings, and record the effective limit and any exemption state next to the
 result, as the table above requires.
 
