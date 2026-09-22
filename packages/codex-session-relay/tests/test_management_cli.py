@@ -280,5 +280,210 @@ class Refusals(MarkerCli):
         self.assertEqual(verdict["record"]["mode"], "observe")
 
 
+class GuardStoreSelection(MarkerCli):
+    """The store a Stop is judged against has to be one somebody actually chose.
+
+    guard-evaluate is exempt from the command-line store-selection refusal so that a legacy store
+    nobody is using cannot switch a Stop hook off. It reads receipts from the first of three
+    sources that answers - the caller's --db-path, the dbPath the coordinator recorded in the
+    intent, then its own resolution - and the exemption used to cover that third one too, which is
+    not a selection at all. These cases drive each corner of the narrowed boundary through the real
+    command line, with a real Stop payload on stdin and a real hostile selection underneath.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.home = tempfile.mkdtemp(prefix="relay-guard-home-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.socket = os.path.join(self.home, "app-server.sock")
+        self.another_socket = os.path.join(self.home, "another-app-server.sock")
+        # What marker_cli pins with --state, which is therefore the store the coordinator's own
+        # commands register against and the one intent-declare records when it records anything.
+        self.coordinator_store = os.path.join(self.tmp, "relay.sqlite3")
+
+    # ------------------------------------------------------------------- fixtures
+
+    def guard_cli(self, *argv, extra=(), expect=0, stdin=None):
+        """guard-evaluate alone, under the selection this case is about.
+
+        Its own runner because marker_cli pins --state, and for three of these cases a pinned
+        directory is exactly what there must not be: discovery is the subject.
+
+        argv carries the global options that choose the store, which argparse takes before the
+        subcommand; extra carries guard-evaluate's own, which it takes after. Passing one in the
+        other's place is a usage error rather than a selection, so they are named apart.
+        """
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=self.home)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            environment.pop(name, None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", *argv,
+             "guard-evaluate", "--marker-root", self.markers, *extra],
+            capture_output=True, text=True, env=environment, timeout=60,
+            input=self.stop_payload() if stdin is None else stdin,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def two_stores_claiming_one_socket(self):
+        """The ambiguity, under the HOME the guard run resolves from and nowhere else."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        for name in ("aaaa888888888888", "bbbb888888888888"):
+            os.makedirs(os.path.join(root, name))
+            Store(Path(root) / name / "relay.sqlite3", socket_path=self.socket).close()
+        return root
+
+    def store_recording_another_socket(self):
+        """A directory an operator could pin for one run, holding another installation's store."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        directory = os.path.join(self.tmp, "pinned-for-one-run")
+        os.makedirs(directory)
+        Store(Path(directory) / "relay.sqlite3", socket_path=self.socket).close()
+        return directory
+
+    def declared_turn(self, *, record_db_path, outcome="ready_for_review", register=True):
+        """The lifecycle up to a declared turn, with or without a recorded receipt store."""
+        declared = self.marker_cli(
+            "intent-declare", "--marker-root", self.markers, "--workspace", self.root,
+            "--dispatch-request-id", DISPATCH, "--issue", "REL-1",
+            *(() if record_db_path else ("--no-db-path",)),
+        )
+        assignment = declared["assignmentId"]
+        self.marker_cli(
+            "intent-bind", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", assignment, "--session", CHILD, "--task-id", CHILD,
+        )
+        if register:
+            relationship = self.register()
+            self.marker_cli(
+                "intent-register", "--marker-root", self.markers, "--workspace", self.root,
+                "--assignment", assignment, "--relationship", relationship["relationshipId"],
+                "--dispatch-request-id", DISPATCH,
+            )
+        self.marker_cli(
+            "intent-claim", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", assignment, "--session", CHILD,
+            "--dispatch-request-id", DISPATCH, "--first-turn", DISPATCH_TURN,
+        )
+        self.marker_cli(
+            "intent-disposition", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", assignment, "--session", CHILD, "--turn", DISPATCH_TURN,
+            "--outcome", outcome,
+        )
+        return assignment
+
+    def observations(self, assignment):
+        """Where record_observation publishes, which is the evidence a Stop was judged at all."""
+        return marker.assignment_dir(self.markers, self.root, assignment) / "hook"
+
+    # --------------------------------------------------------- a selection nobody made
+
+    def test_an_implicit_selection_is_refused_rather_than_guessed_at(self):
+        """Two stores claim this socket, the intent recorded none, and the caller named none.
+
+        So the only candidate left is discovery's own, which is a guess about somebody else's
+        choice. The refusal names the candidates and the commands that tell them apart, which is
+        what an operator has to have; judging the Stop against one of them would be a decision
+        about a store nobody selected.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        self.two_stores_claiming_one_socket()
+        refused = self.guard_cli("--socket", self.socket, expect=2)
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        self.assertEqual(len(refused["candidates"]), 2)
+        self.assertTrue(refused["recover"])
+        # The cost of the refusal, said in the payload rather than left to be inferred.
+        self.assertIn("stopNotJudged", refused)
+        self.assertFalse(
+            self.observations(assignment).exists(),
+            "a refused Stop published an observation, so the refusal was not the whole answer",
+        )
+
+    def test_a_one_run_state_override_holding_another_socket_s_store_is_refused(self):
+        """The half of this that removes a wrong answer rather than sharpening one.
+
+        That store EXISTS and opens. Reading it finds no relationship for this assignment, which
+        is receipt_missing, which holds a child that has finished - on the rows of an installation
+        this assignment has nothing to do with.
+        """
+        self.declared_turn(record_db_path=False)
+        pinned = self.store_recording_another_socket()
+        refused = self.guard_cli(
+            "--state", pinned, "--socket", self.another_socket, expect=2
+        )
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        self.assertEqual(refused["stateDirectory"], pinned)
+        self.assertIn("stopNotJudged", refused)
+
+    # ------------------------------------------------- selections somebody did make
+
+    def test_an_explicit_db_path_keeps_the_exemption_under_the_same_ambiguity(self):
+        """The case the exemption was authorised for: the ambiguity is unrelated to this store."""
+        assignment = self.declared_turn(record_db_path=False)
+        self.two_stores_claiming_one_socket()
+        verdict = self.guard_cli(
+            "--socket", self.socket, extra=("--db-path", self.coordinator_store)
+        )
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], "release")
+        self.assertTrue(verdict["recordedAs"])
+        self.assertTrue(self.observations(assignment).exists())
+
+    def test_the_recorded_intent_db_path_keeps_the_exemption_with_no_flag_at_all(self):
+        """Why the intent carries dbPath: the common hook path never reaches discovery.
+
+        Same ambiguity as the refused case, same absent --db-path. The only difference is that the
+        coordinator recorded where its store lives, which is a durable selection rather than a
+        guess, so the Stop is classified and recorded.
+        """
+        assignment = self.declared_turn(record_db_path=True)
+        self.two_stores_claiming_one_socket()
+        verdict = self.guard_cli("--socket", self.socket)
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], "release")
+        self.assertTrue(verdict["recordedAs"])
+        self.assertTrue(self.observations(assignment).exists())
+
+    # ------------------------------------------- Stops that never reach a store at all
+
+    def test_a_turn_released_on_its_own_declaration_is_never_refused(self):
+        """The guarantee the whole exemption exists for, under the worst selection available.
+
+        An interrupted turn is released on what the child declared, and the receipt store is never
+        opened. Store-selection mechanics must not be able to reach a judgment that does not
+        depend on them, whatever discovery is doing.
+        """
+        assignment = self.declared_turn(record_db_path=False, outcome="interrupted")
+        self.two_stores_claiming_one_socket()
+        verdict = self.guard_cli("--socket", self.socket)
+        self.assertEqual(verdict["observation"], "declared_interrupted")
+        self.assertEqual(verdict["decision"], "release")
+        self.assertTrue(self.observations(assignment).exists())
+
+    def test_a_readiness_with_no_registered_relationship_is_never_refused(self):
+        """Declaring readiness is not what reaches the store; a registered relationship is.
+
+        Without one there is nothing to look a receipt up by, so the guard answers on the marker
+        alone. Refusing here would make the new boundary about the declaration rather than about
+        the store, which is the regression this case exists to catch.
+        """
+        assignment = self.declared_turn(record_db_path=False, register=False)
+        self.two_stores_claiming_one_socket()
+        verdict = self.guard_cli("--socket", self.socket)
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+        self.assertEqual(verdict["decision"], "release")
+        self.assertTrue(self.observations(assignment).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

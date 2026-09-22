@@ -84,6 +84,21 @@ DELIVERABLE_CHANGED = "changed"
 DELIVERABLE_UNVERIFIABLE = "unverifiable"
 
 
+class StoreNotSelected(Exception):
+    """The receipt store was never selected, and the caller will not stand behind the fallback.
+
+    Raised by the resolver a caller may pass as default_db_path, never by this module's own logic.
+    evaluate() re-raises it ahead of the envelope that turns everything else into guard_faulted,
+    because the two are repaired in different places: guard_faulted says the defect is in this
+    code, and this says the operator has to settle which store holds the receipts. It carries
+    whatever the caller needs to explain itself, and nothing here reads that.
+    """
+
+    def __init__(self, detail=None):
+        super().__init__("the receipt store was never selected")
+        self.detail = detail
+
+
 # ---------------------------------------------------------------- the receipt
 
 
@@ -766,6 +781,10 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
     let a real defect in this code masquerade as a data problem in somebody's marker, and the two
     need different repairs. A detector that dies detects nothing and leaves no trace it ran, which
     is the one outcome worse than a wrong answer.
+
+    StoreNotSelected is the one thing that travels out of here unclassified, because it is not a
+    failure of this evaluation: the caller's resolver declined to name a receipt store, and the
+    caller is the only party that can settle which one it should be.
     """
     stop = stop_input or {}
     downgraded = None
@@ -782,6 +801,8 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
             root, stop, now=now, mode=mode, db_path=db_path,
             default_db_path=default_db_path, record=record, reached=reached,
         )
+    except StoreNotSelected:
+        raise
     except Exception as error:
         verdict = _faulted(stop, now, mode, error)
         if record and reached["directory"] is not None:
@@ -845,7 +866,10 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
     Which store to read has three sources in a deliberate order: db_path, when the caller named one
     explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
     that registered the relationship and knows where its store lives; then default_db_path, the
-    caller's own resolution, which is only a guess about somebody else's choice.
+    caller's own resolution, which is only a guess about somebody else's choice. That third source
+    may be a path or a resolver called with no arguments, and the resolver is consulted only when
+    the first two said nothing: it is how a caller gets to refuse a guess at the moment it would
+    actually be used, rather than before this Stop was read.
     """
     workspace = stop.get("cwd")
     session_id, turn_id = stop.get("session_id"), stop.get("turn_id")
@@ -888,8 +912,15 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
                 if isinstance(marker_facts.get("intent"), dict)
                 else None
             )
+            chosen = db_path or recorded
+            if not chosen:
+                # Only here, and only now. A Stop released on the child's own declaration never
+                # reaches this line, and neither does one whose store was named or recorded, so
+                # neither pays for a question about a selection it is not using. The resolver may
+                # raise StoreNotSelected, which travels to the caller intact.
+                chosen = default_db_path() if callable(default_db_path) else default_db_path
             receipt, readable = lookup_receipt(
-                db_path or recorded or default_db_path,
+                chosen,
                 relationship_id=registered.get("relationshipId"),
                 session_id=session_id,
                 turn_id=turn_id,

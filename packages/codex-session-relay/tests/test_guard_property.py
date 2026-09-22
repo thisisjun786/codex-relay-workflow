@@ -307,7 +307,17 @@ class CommandSurface(unittest.TestCase):
             self.assertIn(name, cli.OFFLINE_COMMANDS, name)
 
     def test_marker_commands_are_exempt_from_the_store_selection_refusal(self):
-        """The marker exists so a hook can answer without asking the relay anything."""
+        """The marker exists so a hook can answer without asking the relay anything.
+
+        Exempt on this line is not the same as never refused. Two of the nine reach a store and are
+        exempt conditionally, which is what the cases below name. guard-evaluate is the third: it
+        answers True here because the question it needs settled - did the coordinator record a
+        receipt store - is a fact in a marker whose workspace arrives inside the Stop payload, so
+        cmd_guard_evaluate carries the same refusal to the moment that selection would be consumed.
+        The boundary itself is driven end to end in test_management_cli.py, where a real command
+        line meets a real ambiguous selection; asserting the predicate here would say nothing
+        about it.
+        """
         from argparse import Namespace
         from codex_session_relay import cli
 
@@ -347,8 +357,12 @@ SWALLOWING_ALLOWED = {
     ("cli.py", "cmd_doctor"): "a diagnostic on the constant /proc/self/fd, where False is the right"
                               " answer whether it is absent or unreadable, and no marker path is"
                               " involved",
-    ("cli.py", "_refuse_ambiguous_state"): "pre-existing relay state selection, not a marker path;"
-                                           " owned by the store-selection surface",
+    ("cli.py", "_selection_refusal"): "pre-existing relay state selection, not a marker path;"
+                                      " owned by the store-selection surface. The predicate asks"
+                                      " whether the resolved store is there at all, and both"
+                                      " answers are safe: absent means nothing recorded a socket"
+                                      " to disagree with, and unreadable is answered by the read"
+                                      " that follows",
     ("manifest.py", "freeze"): "the next statement opens the same path for writing, so an access"
                                " error hidden by exists() is raised there rather than absorbed",
     ("manifest.py", "verify_frozen_detailed"): "kept because the two-value contract the intake"
