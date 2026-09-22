@@ -871,8 +871,10 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence, incompleteness and a non-string cwd,
-        model or reasoningEffort all refuse."""
+        """The recorded settings, validated. Absence, incompleteness, a non-string cwd, model or
+        reasoningEffort, and an approvalPolicy this transport cannot carry all refuse -- the last
+        one on the record rather than on what a host later reports back, because a row asking for
+        an interactive policy settles the send whatever the host would have answered."""
         from .registry import load_settings
 
         settings = load_settings(self.store, task_id)

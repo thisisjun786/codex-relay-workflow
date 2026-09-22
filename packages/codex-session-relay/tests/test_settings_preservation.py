@@ -186,6 +186,161 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
         self.assertIsNotNone(self.attempt(event_id, now=later))
 
 
+class AnApprovalPolicyThisTransportCannotCarry(DeliveryTestCase):
+    """The rule read off the RECORD, where it decides the send, rather than off the response.
+
+    It used to live in exactly one place: `mismatches` comparing what the HOST reported back.
+    Nothing compared the recorded value, so a row recording `on-request` was registered, passed
+    `require_usable()`, was built into resume params and sent - and what happened next was the
+    host's choice. A host preserving the requested policy answered it back and the push channel
+    closed; a host normalising it answered `never`, raised no finding, and the message was
+    delivered. Measured both ways before this moved. Whether a message arrived therefore turned
+    on what a host did with a fact the record already contained.
+    """
+
+    def test_a_recorded_policy_this_transport_cannot_carry_is_refused(self):
+        """Four shapes, one rule, because the field can hold more than another policy name.
+
+        A value comparison rather than a type rule, which is why `mistyped()` leaves this field
+        alone: 7 and True and a granular object are all refused here, by the code that says the
+        specific thing, instead of by the one that says only 'not a string'.
+        """
+        for recorded in ("on-request", "untrusted", 7, True, {"mode": "on-request"}):
+            with self.subTest(recorded=recorded):
+                stale = task_settings("/parent")
+                stale["approvalPolicy"] = recorded
+                view = TaskSettings(stale)
+                # Asserted, not assumed: a row refused one gate earlier would prove another rule.
+                self.assertEqual(view.missing(), [], "the record is complete")
+                self.assertEqual(view.mistyped(), [], "no string field is at fault here")
+                refusal = self.assertRefused(
+                    RefusalReason.UNSUPPORTED_APPROVAL_POLICY, view.require_usable,
+                )
+                # The value it actually holds: 'unsupported' does not tell an operator which
+                # row to repair or what the creation result put there.
+                self.assertIn(repr(recorded), refusal.detail)
+                self.assertIn("never", refusal.detail)
+
+    def test_an_absent_policy_stays_incomplete_rather_than_unsupported(self):
+        """Null is an absence, and absence has its own recovery: record the field.
+
+        Refusing it as an unsupported policy would point the repair at choosing a different
+        value, when nothing was chosen at all.
+        """
+        stale = task_settings("/parent")
+        stale["approvalPolicy"] = None
+        refusal = self.assertRefused(
+            RefusalReason.SETTINGS_INCOMPLETE, TaskSettings(stale).require_usable,
+        )
+        self.assertEqual(refusal.detail, "missing approvalPolicy")
+
+    def test_the_gates_decide_in_one_order_whatever_the_row_gets_wrong(self):
+        """Shape before meaning, and the approval policy first among the meaning gates.
+
+        One row wrong in four ways, repaired one way at a time, so the ORDER is what is proved
+        rather than four rows each wrong once. Approval before sandbox is not a preference: it
+        is the order `mismatches` already decides the same two fields in, so a row wrong in
+        both gets one answer instead of two that depend on which surface refused it.
+        """
+        stale = task_settings("/parent", sandbox={"type": "externalSandbox"})
+        del stale["cwd"]
+        stale["model"] = 7
+        stale["approvalPolicy"] = "on-request"
+
+        ladder = [
+            (RefusalReason.SETTINGS_INCOMPLETE, "missing cwd"),
+            (RefusalReason.SETTINGS_MISTYPED, "model is int, not str"),
+            (RefusalReason.UNSUPPORTED_APPROVAL_POLICY, "'on-request'"),
+            (RefusalReason.UNSUPPORTED_SANDBOX_TYPE, "'externalSandbox'"),
+        ]
+        repairs = [
+            lambda row: row.update(cwd="/parent"),
+            lambda row: row.update(model="anthropic/claude-opus-5"),
+            lambda row: row.update(approvalPolicy="never"),
+            lambda row: row.update(sandbox=task_settings("/parent")["sandbox"]),
+        ]
+        for (reason, says), repair in zip(ladder, repairs):
+            with self.subTest(refusal=reason.value):
+                refusal = self.assertRefused(reason, TaskSettings(stale).require_usable)
+                self.assertIn(says, refusal.detail)
+                repair(stale)
+        TaskSettings(stale).require_usable()
+
+    def test_the_record_withholds_the_send_and_a_host_is_never_asked(self):
+        """The path, and the defect stated as what it was.
+
+        The fake host reports `never` regardless of what it is sent, which is precisely the
+        host this row used to be delivered against: the send completed and the parent was woken
+        under a policy the relay cannot service. Now nothing is claimed and nothing is sent, so
+        the host's answer never enters it.
+        """
+        interactive = task_settings("/parent", approvalPolicy="on-request")
+        _relationship, event_id = self.queued_event(settings=interactive)
+        self.assertEqual(self.adapter.threads[PARENT].approval_policy, "never",
+                         "the fixture host is the one that used to make this send succeed")
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertEqual(self.attempts_for(event_id), [], "no attempt was claimed")
+        self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
+        entry = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]
+        self.assertIn(RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value, entry["detail"])
+        self.assertIn("on-request", entry["detail"])
+        failure = self.store.all(
+            "SELECT operation, error_code, retry_safe FROM failed_operations"
+            " ORDER BY rowid DESC LIMIT 1",
+        )[0]
+        self.assertEqual(failure["operation"], "settings_check")
+        self.assertEqual(failure["error_code"],
+                         RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value)
+        self.assertEqual(failure["retry_safe"], 1, "re-recording the row is the recovery")
+
+    def test_registration_refuses_the_row_rather_than_storing_it(self):
+        """One rule, and the earliest surface that can apply it owns the first answer.
+
+        A row refused at every send is a row that should never have been stored: leaving it to
+        delivery means the refusal is discovered once per pass, by whoever is waiting for the
+        message, instead of once by whoever recorded it.
+        """
+        self.assertRefused(
+            RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
+            lambda: record_settings(
+                self.store, self.clock, PARENT,
+                task_settings("/parent", approvalPolicy="on-request"),
+                source="creation_result",
+            ),
+        )
+        self.assertIsNone(load_settings(self.store, PARENT), "the refused row was stored")
+
+    def test_the_record_rule_and_the_response_rule_stay_two_facts(self):
+        """Same policy value, two different situations, and they must not collapse.
+
+        On the RECORD it is a value we chose and can re-record, so the delivery is withheld and
+        stays retryable. In the RESPONSE it is the host's own state, which no re-recording
+        reaches, so the delivery is inbox_only and terminal. Moving the first one did not move
+        the second.
+
+        One event carries both halves, which also proves the recovery: the withhold is not a
+        permanent hold, and re-recording the row is what releases it.
+        """
+        interactive = task_settings("/parent", approvalPolicy="on-request")
+        _relationship, recorded_event = self.queued_event(settings=interactive)
+        self.assertIsNone(self.attempt(recorded_event))
+        self.assertEqual(self.delivery_row(recorded_event)["state"], WITHHELD_PRE_SEND)
+        self.assertEqual(self.adapter.sends, [], "the record decided it; no host was asked")
+
+        record_settings(self.store, self.clock, PARENT, task_settings("/parent"),
+                        source="creation_result")
+        self.adapter.threads[PARENT].approval_policy = "on-request"
+        self.adapter.script("approval_policy")
+        record = self.attempt(recorded_event, now=self.clock.now() + 10_000)
+        self.assertEqual(record["deliveryState"], INBOX_ONLY)
+        self.assertEqual(record["recipientApprovalPolicy"], "on-request")
+        self.assertFalse(record["retrySafe"])
+
+
 class RefusalClassification(DeliveryTestCase):
     """Each settings refusal is a completed pre-send refusal, not an uncertain outcome."""
 
