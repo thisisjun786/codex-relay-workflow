@@ -133,6 +133,12 @@ def assert_assignment_delivery(relationship, *, kind, recipient_task_id,
         expected = relationship["child"]["taskId"]
     elif kind == "completion_event":
         expected = relationship["parent"]["taskId"]
+    elif kind == "merge_turn_grant":
+        # A merge target is claimed by the parent and landed on by the parent, so the notice
+        # that the target is now its turn travels the same way a completion does: to this
+        # assignment's own parent. Spelled as a literal like the two above, so this module
+        # stays free of an import from delivery, which already imports this one.
+        expected = relationship["parent"]["taskId"]
     else:
         raise ScopeError(
             RefusalReason.RECIPIENT_NOT_AUTHORIZED,

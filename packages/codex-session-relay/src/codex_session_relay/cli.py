@@ -172,7 +172,12 @@ class Services:
         if self._merge_turn is None:
             from .mergeturn import MergeTurn
 
-            self._merge_turn = MergeTurn(self.store, self.clock, self.linkage)
+            # With the delivery service, so a promotion can hand the freed target's grant to
+            # the relay's queue in the same transaction. This is the only construction of
+            # MergeTurn outside the tests, so leaving it out would have made the wake path
+            # unreachable everywhere it actually matters while every test still passed.
+            self._merge_turn = MergeTurn(
+                self.store, self.clock, self.linkage, delivery=self.delivery)
         return self._merge_turn
 
     @property
