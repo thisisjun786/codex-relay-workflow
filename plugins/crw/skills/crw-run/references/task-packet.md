@@ -535,6 +535,13 @@ Keep it short. Name what identifies this message, and reference what the existin
 already holds instead of recopying it, exactly as the restoration block carries pointers rather
 than contents.
 
+What identifies it, and what the recipient owes because it arrived, are the shared form rather
+than this file's invention:
+[the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by),
+implemented as `relay-envelope/1`. Take the words from there - request, notification, decision,
+status response - so a parent and a supervisor mean the same thing by them, and keep the five
+delivery states apart in the same way.
+
 One rule covers every value that decides what a receiver does, and it is worth stating once here
 rather than per kind. These transports carry opaque text and no authenticated caller identity, so
 nothing in a message is evidence of itself. Who sent it, the scope it names, a decision returned on
