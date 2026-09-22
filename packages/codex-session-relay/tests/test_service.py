@@ -1297,7 +1297,82 @@ class RecordDurability(ServiceTestCase):
 
 
 class SupervisorCleanup(ServiceTestCase):
-    """What the supervisor leaves behind when it does not get to finish."""
+    """What the supervisor leaves behind when it does not get to finish, and what it waits.
+
+    The bounded runs below are driven on a ScriptedClock through supervise()'s own monotonic
+    parameter, so nothing here waits and no assertion depends on how fast this machine is.
+    That is the rule for this class: a test that hands the supervisor a bound it will actually
+    evaluate - a finite positive deadline or deadline_monotonic - and then asserts where that
+    bound landed has to inject the clock. Asserting that a real machine reached the restart
+    branch inside ten milliseconds is a claim about the host, and on a loaded one it failed
+    while the supervisor was behaving correctly.
+
+    The rule is about the supervisor's own bound, not about waiting in general. It does not
+    reach the generous real-time waits elsewhere in this file - holder()'s twenty seconds,
+    _reap's ten - because those fail in the opposite direction: a slow host makes them wait
+    longer, it never makes them conclude early. Nor does it reach a bound that is refused
+    before any clock is read.
+    """
+
+    def clamped_run(self, service, *, deadline, policy_fields, max_segments, spend,
+                    spends_while_asked=None):
+        """Supervise failing workers on a clock that moves only when this test says so.
+
+        spend is what each worker costs before it exits non-zero: a number of seconds,
+        "segment" for one that uses exactly the length it was granted, or ("segment", extra)
+        for one that returns later than it was granted.
+
+        spends_while_asked puts that many seconds INSIDE the window between the loop's two
+        readings of the clock, by advancing it while the policy is being asked for a delay.
+
+        Every quantity passed here is dyadic. The loop compares its own arithmetic against the
+        bound, and a value like 0.01 does not survive the round trip through the clock's own
+        origin: (1000.0 + 0.01) - 1000.0 is 0.009999999999990905, so a supervisor given that
+        bound would never see it arrive. Below 0.1 the segment floor also grants a worker more
+        than the whole bound, which is a different behaviour from the one under test here.
+        """
+        clock = ScriptedClock()
+        launches, slept, consulted = [], [], []
+
+        class _Policy(RetryPolicy):
+            """The policy this supervisor consults between its two readings of the clock."""
+
+            def restart_delay_for(self, consecutive_failures):
+                if spends_while_asked is not None and not consulted:
+                    # supervise() asks for the delay AFTER the reading that lets the loop
+                    # continue and BEFORE the reading that cuts the answer to what remains,
+                    # so a policy that costs time puts the expiry inside that window - which
+                    # is what a slow host does to it.
+                    clock.advance(spends_while_asked)
+                consulted.append(consecutive_failures)
+                return super().restart_delay_for(consecutive_failures)
+
+        def spawn(**call):
+            launches.append(call)
+            granted = call["segment_seconds"]
+            # A worker running is the only reason time passes inside a segment. supervise()
+            # reads its clock BEFORE calling this, so the length and the instant recorded
+            # above are the ones this launch was actually given.
+            if spend == "segment":
+                clock.advance(granted)
+            elif isinstance(spend, tuple):
+                clock.advance(granted + spend[1])
+            else:
+                clock.advance(spend)
+            return FakeWorker(1)
+
+        def sleeper(seconds):
+            # Its own list. ScriptedClock.advance also records into clock.spent, and the
+            # workers move the clock through that same method, so clock.spent interleaves the
+            # two and is not what this supervisor was asked to wait.
+            slept.append(seconds)
+            clock.advance(seconds)
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=sleeper, monotonic=clock,
+            max_segments=max_segments, deadline=deadline, policy=_Policy(**policy_fields),
+        )
+        return outcome, launches, slept, clock, consulted
 
     def test_a_worker_that_was_never_waited_on_keeps_its_identity(self):
         """The cleanup cleared workerPid unconditionally, including after an exception.
@@ -1331,21 +1406,160 @@ class SupervisorCleanup(ServiceTestCase):
         self.assertIsNone(record["workerStartTicks"])
 
     def test_the_restart_delay_never_outlives_the_supervisors_own_bound(self):
-        """An unclamped delay made a 0.01-second deadline take seconds."""
+        """An unclamped delay made a short deadline take minutes.
+
+        WHAT THIS PROVES: the arithmetic at the restart branch. What reaches the sleeper is
+        what REMAINS of the supervisor's own bound, not the policy's interval and not the
+        whole bound either, and the run lands on its end exactly. WHAT IT DOES NOT: anything
+        about real elapsed time. Nothing here waits.
+
+        The bound was 0.01 while this test raced the wall clock, and on a loaded host the
+        supervisor could spend all ten milliseconds before reaching the branch - so the test
+        failed while the implementation was correct. It reads 0.5 now because a scripted clock
+        has to compute exactly and 0.01 does not survive that arithmetic, not because anything
+        was given more room; clamped_run says why.
+        """
         service = self.service("c")
         service.enable(actor="test")
-        slept = []
-        service.supervise(
-            allow_isolated=True, spawn=lambda **_k: FakeWorker(1),
-            sleeper=slept.append, max_segments=4, deadline=0.01,
-            policy=RetryPolicy(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
+
+        outcome, launches, slept, clock, consulted = self.clamped_run(
+            service, deadline=0.5, max_segments=4, spend=0.125,
+            policy_fields=dict(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
         )
+
+        self.assertEqual(outcome["segments"], [1], "one failed segment, then the bound was gone")
         self.assertTrue(slept, "a failed segment does wait before its replacement")
         self.assertLess(
             max(slept), 30.0,
             "the unclamped delay is the policy interval, which outlives the whole bound",
         )
-        self.assertTrue(all(value <= 0.01 for value in slept), slept)
+        self.assertTrue(all(value <= 0.5 for value in slept), slept)
+        # Nor is it the whole bound: the worker already spent 0.125 of it, and a clamp that
+        # forgot what had elapsed would have handed over all 0.5.
+        self.assertEqual(slept, [0.375])
+        self.assertEqual(clock.elapsed, 0.5, "the run landed exactly on its own bound")
+        self.assertEqual(consulted, [1], "one failure, one delay asked for")
+        # The length and the instant this worker was handed. The clock is read before spawn
+        # runs, so the 0.125 the worker goes on to spend is in neither number.
+        self.assertEqual([call["segment_seconds"] for call in launches], [0.5])
+        self.assertEqual(
+            [call["deadline_monotonic"] for call in launches], [ScriptedClock.START + 0.5],
+        )
+
+    def test_a_bound_spent_inside_the_segment_waits_for_nothing(self):
+        """A supervisor with nothing left schedules no restart at all.
+
+        This is what made the older version of the test above flaky: on a real clock the bound
+        could run out inside the first segment, and a correct supervisor then returns without
+        ever reaching the restart branch. Scripted, it is a contract instead of a race.
+        max_segments is deliberately larger than this run can reach, so what ends it is the
+        bound and not the count.
+        """
+        service = self.service("d")
+        service.enable(actor="test")
+
+        outcome, launches, slept, clock, consulted = self.clamped_run(
+            service, deadline=0.5, max_segments=4, spend="segment",
+            policy_fields=dict(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
+        )
+
+        self.assertEqual(outcome["segments"], [1], "the worker failed, and it was the last one")
+        self.assertEqual(slept, [], "there was no bound left to wait in")
+        self.assertEqual(consulted, [], "the policy was never even asked for a delay")
+        self.assertEqual(clock.elapsed, 0.5)
+        self.assertEqual(
+            [call["segment_seconds"] for call in launches], [0.5],
+            "the only worker was granted the whole bound",
+        )
+
+    def test_a_worker_that_overran_its_bound_still_gets_no_restart_delay(self):
+        """The bound is gone whether the run landed on it or shot past it.
+
+        A worker that returns later than the segment it was granted leaves the supervisor past
+        its own end rather than on it. The check that stops the loop before the restart branch
+        has to read that as spent too: comparing for equality with the bound instead of for
+        having reached it would let this run fall through and ask to sleep the nothing that is
+        left.
+        """
+        service = self.service("e")
+        service.enable(actor="test")
+
+        outcome, launches, slept, clock, consulted = self.clamped_run(
+            service, deadline=0.5, max_segments=4, spend=("segment", 0.25),
+            policy_fields=dict(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
+        )
+
+        self.assertEqual(outcome["segments"], [1])
+        self.assertEqual(slept, [], "a run already past its bound has nothing to wait in")
+        self.assertEqual(consulted, [], "the policy was never even asked for a delay")
+        self.assertEqual(clock.elapsed, 0.75, "the worker overran the 0.5 it was granted")
+        self.assertEqual([call["segment_seconds"] for call in launches], [0.5])
+
+    def test_a_failure_streak_is_clamped_only_where_the_bound_ends(self):
+        """Backoff runs its own schedule until the bound is all that is left.
+
+        Four failures back off one, two and four seconds inside a ten-second bound, and only
+        the last delay is cut - to the one second that remained. A clamp that ignored what had
+        already been spent would hand over eight and overrun by seven.
+        """
+        service = self.service("f")
+        service.enable(actor="test")
+
+        outcome, launches, slept, clock, consulted = self.clamped_run(
+            service, deadline=10.0, max_segments=5, spend=0.5,
+            policy_fields=dict(restart_base_seconds=1.0),
+        )
+
+        self.assertEqual(outcome["segments"], [1, 1, 1, 1])
+        self.assertEqual(slept, [1.0, 2.0, 4.0, 1.0])
+        self.assertTrue(all(value <= 10.0 for value in slept), slept)
+        self.assertEqual(clock.elapsed, 10.0, "the run landed exactly on its own bound")
+        self.assertEqual(consulted, [1, 2, 3, 4])
+        self.assertEqual(outcome["consecutiveFailures"], 4)
+        # Each worker is granted what was left when it started, and its instant is capped at
+        # the supervisor's own end rather than at that worker's own segment.
+        self.assertEqual(
+            [call["segment_seconds"] for call in launches], [10.0, 8.5, 6.0, 1.5],
+        )
+        self.assertEqual(
+            [call["deadline_monotonic"] for call in launches],
+            [ScriptedClock.START + 10.0] * 4,
+        )
+
+    def test_the_clamp_never_asks_for_a_negative_sleep(self):
+        """The bound can expire between the loop's two readings of the clock.
+
+        supervise() reads the clock to decide whether to go on, asks the policy for a delay,
+        then reads it AGAIN to cut that delay to what remains. On a real clock those are two
+        different nows, so the bound can be gone by the second one and the remainder is
+        negative - which time.sleep refuses outright. The floor on that line is what stops it.
+        Asking the policy is what makes the window reachable without counting clock reads:
+        this policy spends the rest of the bound while it is being asked, which is what a slow
+        host does to the same window.
+
+        The assertion is the invariant, not the value. A supervisor that skipped sleeping
+        nothing at all would be just as correct, and pinning the exact zero here would fail it
+        for the wrong reason - which is the fault this whole test class exists to avoid.
+        """
+        service = self.service("g")
+        service.enable(actor="test")
+
+        outcome, _launches, slept, clock, consulted = self.clamped_run(
+            service, deadline=0.5, max_segments=4, spend=0.25, spends_while_asked=0.5,
+            policy_fields=dict(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
+        )
+
+        self.assertEqual(outcome["segments"], [1])
+        self.assertTrue(
+            all(value >= 0.0 for value in slept),
+            f"the supervisor asked to sleep a negative length: {slept}",
+        )
+        self.assertEqual(consulted, [1], "the policy was never asked, so the window never opened")
+        self.assertGreater(
+            clock.elapsed, 0.5,
+            "the policy did not spend the bound while it was being asked, so this run never"
+            " reached the window the test is about",
+        )
 
     def test_a_long_failure_streak_keeps_retrying_at_the_cap(self):
         """The backoff built the product and clamped after, so it overflowed and killed the
