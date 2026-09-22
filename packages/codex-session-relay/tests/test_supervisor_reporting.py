@@ -795,6 +795,28 @@ class AReadingIsPlacedThenInterpreted(ReportingTestCase):
                          [real["obligationId"]])
         self.assertEqual(answer["gaps"], [])
 
+    def test_an_omission_the_record_already_carries_is_not_standing(self):
+        """The event loop has always filtered on select(); the observation loop did not."""
+        linkage, rid = self.project()
+        turn = "turn-7"
+        self.sync.set_target(rid, "coordination_document", DOC)
+        with self.store.transaction() as db:
+            sync_id = self.sync.enqueue_in(
+                db, relationship_id=rid, issue_key="REL-1", subject_kind="verdict",
+                summary="the omission was recorded", event_id=turn, generation=1,
+                revision="a" * 40, verdict="verified")
+        claim = self.sync.claim(sync_id, owner="test")
+        row = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (sync_id,))
+        self.sync.complete(sync_id, claim_token=claim["claimToken"], target_ref=DOC,
+                           readback=render_block(row), external_ref="linear-doc-2")
+        reading = self.reading("unreported", rid)
+        decided = supervision.select(self.store, supervision.from_observation(reading))
+        self.assertEqual(decided["standing"], supervision.DISCHARGED)
+        answer = supervision.standing_for(self.store, linkage, "CRW", observations=[reading])
+        self.assertEqual(answer["standing"], [])
+        self.assertEqual(answer["gaps"], [],
+                         "and it is not quietly re-reported as a reading nobody could read")
+
     def test_the_observation_schema_is_the_one_the_observer_writes(self):
         from codex_session_relay import omitted
 

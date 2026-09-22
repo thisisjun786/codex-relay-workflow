@@ -649,8 +649,15 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
             continue
         if one["obligationId"] in seen:
             continue
+        decided = select(store, one, recipient=None)
+        if decided["standing"] != STANDING:
+            # The same rule the event loop above applies. A discharged omission - its Linear
+            # record confirmed on the target the supervisor currently reads - is not standing,
+            # and a list called standing that carried it asked its reader to check every
+            # entry's decision to learn what the list's own name had already claimed.
+            continue
         seen.add(one["obligationId"])
-        obligations.append({**one, "decision": select(store, one, recipient=None),
+        obligations.append({**one, "decision": decided,
                             "relationshipStatus": (relations.get(one["relationId"]) or {})
                             .get("status")})
     return {"schema": SCHEMA, "projectKey": project_key, "relations": list(relations),
