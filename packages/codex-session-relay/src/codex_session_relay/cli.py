@@ -1701,7 +1701,10 @@ def cmd_store_challenge(services, args) -> dict:
     value written after the copy was taken exists in exactly one of the two files. That
     ordering is what nothing enforces, though - a copy taken after the write carries the nonce
     too - so `compare_store` grades a found nonce as proof only alongside an agreeing device
-    and inode, and `doctor --expect-nonce` on its own is unproven.
+    and inode AND an agreeing log location, and `doctor --expect-nonce` on its own is unproven.
+    The log location is the one that separates a shared store from one inode reached at two
+    pathnames, where a checkpointed nonce is readable through both while the two participants
+    write into logs of their own.
     """
     if args.write:
         return services.store.write_challenge(actor=args.actor or "cli")
@@ -1890,12 +1893,16 @@ def _access_receipt(services, report) -> dict:
     way. A DIFFERENT pair means a different file; an agreeing pair is not sufficient for the
     same one. It is namespace-local, so participants in separate mount namespaces or on
     different hosts can hold one pair while sharing nothing, and one inode can be reached at
-    more than one pathname, which is what decides the write-ahead log. `links` is reported
-    beside the pair because it catches one kind of second pathname, the hardlink; a bind mount
-    adds one without changing it, so a count of one settles nothing. What settles a shared
+    more than one pathname, which is what decides the write-ahead log. That last part is what
+    `logDevice`, `logInode` and `logName` answer: the directory entry this file's `-wal` would
+    be created under, so two participants can compare where their logs GO rather than only
+    which file they opened. `links` is still reported beside the pair, now as the narrower
+    guard it always was - it catches the hardlink, while a file bind mount adds a pathname
+    without changing it, which was measured on this host on 2026-09-22. What settles a shared
     store is `store-challenge` and `doctor --expect-nonce` TOGETHER with the peer's
-    `--expect-inode`: the nonce is the live half, and since a copy taken after the challenge
-    carries it, the physical identity is the half that says the file is still the same one.
+    `--expect-inode` and `--expect-log`: the nonce is the live half, the physical identity says
+    the file is still the same one, and the log location says both participants write into one
+    log rather than two beside one set of bytes.
 
     The identity and the participants come out of ONE read for the same reason. Collected by
     two separate opens, an atomic replacement between them would pair one store's identity
@@ -1962,6 +1969,13 @@ def _access_receipt(services, report) -> dict:
         # How many names this inode has. One agreeing pair is not one live store if the peer
         # may have opened another name for it; compare_store grades that.
         "links": store["links"],
+        # Where a connection on this file writes its write-ahead log: the directory entry it
+        # would create `-wal` under. This is what a second pathname for one inode actually
+        # changes and what the name count cannot see, because a file bind mount leaves the
+        # count at one. A peer sends these three back as --expect-log.
+        "logDevice": store["logDevice"],
+        "logInode": store["logInode"],
+        "logName": store["logName"],
         "selectedBy": {
             "source": services.selection.source,
             "detail": services.selection.detail,
@@ -2157,6 +2171,14 @@ def cmd_doctor(services, args) -> dict:
     Constructs no Store: probe() answers from stat, a read-only connection and a rolled-back
     write transaction, so a missing, unreadable or read-only state directory is an answer
     instead of the failure that would otherwise replace it.
+
+    The same-store expectations are a conjunction, and a caller that supplies any of them and
+    gets no proof exits non-zero. `--expect-inode` says the peer opened this file;
+    `--expect-log` says the peer's write-ahead log goes where this one's does, which is the
+    only thing that separates one shared store from one inode reached at two pathnames; and
+    `--expect-nonce` is the live half. Each is compared against what the PEER reported - a
+    caller that passes its own readings back in has stopped asking the question, which is true
+    of every one of these flags and not a property of the newest.
     """
     import os
 
@@ -2206,9 +2228,13 @@ def cmd_doctor(services, args) -> dict:
     report["nonce"] = nonce
     comparison = compare_store(
         report["store"], expect_store=args.expect_store, expect_inode=args.expect_inode,
-        nonce=nonce,
+        expect_log=args.expect_log, nonce=nonce,
     )
-    asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
+    # Asked, not answerable. `any` over the values counted only NON-EMPTY ones, so an empty
+    # expectation was a question nobody had asked and its unproven answer still exited 0. The
+    # comparison already grades an unusable value as unproven; this makes the exit agree.
+    asked = any(value is not None for value in (
+        args.expect_store, args.expect_inode, args.expect_log, args.expect_nonce))
     report.update(comparison)
     if (asked and comparison["sameStore"] != "proven") or (
             requested is not None and not report["workerReadiness"]["ready"]):
@@ -3473,6 +3499,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("--expect-store", help="the store id another participant reported")
     doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
+    doctor.add_argument(
+        "--expect-log",
+        help="the device:inode:name another participant reported for its write-ahead log",
+    )
     doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")
     doctor.add_argument(
         "--issue",

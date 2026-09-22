@@ -61,8 +61,11 @@ itself measured, against what the probe measured. `same` is the only value to ac
 means the rows came from a file this process did not measure, and it returns `holds: null` and
 exits 2 rather than reporting a relationship you would then adopt out of an unverified store.
 `unknown` means one side could not be established. None of this is proof of store identity on its
-own: an id travels with a copy of the bytes, which is why `--expect-store`, `--expect-inode` and
-`--expect-nonce` still exist and still refuse anything short of `proven`.
+own: an id travels with a copy of the bytes, and an agreeing device and inode does not say the
+peer opened the same pathname for it, which is why `--expect-store`, `--expect-inode`,
+`--expect-log` and `--expect-nonce` still exist and still refuse anything short of `proven`.
+`--expect-log` is the newest and carries the part a name count cannot: where the peer's
+write-ahead log is written, since one inode reached at a second pathname keeps a log of its own.
 
 `unknown` is refused the same way `changed` is, whenever the database WAS readable: a caller that
 asked whether these rows came from its store and got no proof must not read exit 0 as yes, which

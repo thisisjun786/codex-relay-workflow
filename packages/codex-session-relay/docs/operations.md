@@ -111,22 +111,37 @@ is unproven for its own reason.
 
 | Evidence | Verdict |
 |---|---|
-| a nonce readable by the other participant AND an agreeing device/inode | proven |
-| a nonce readable by the other participant, with no physical identity compared | unproven - a copy taken after the challenge carries the nonce |
+| a nonce readable by the other participant AND an agreeing device/inode AND an agreeing log location | proven |
+| a nonce readable by the other participant, with no physical identity or no log location compared | unproven - a copy taken after the challenge carries the nonce, and one inode reached at a second pathname keeps a log of its own |
 | equal store id and equal device/inode, nothing live | unproven - a copy carries the id, and one inode can be reached at more than one pathname |
+| a log location the other participant does not share | unproven - the two were not shown to write into one write-ahead log |
 | an inode with more than one name | unproven - the peer may have opened a different name |
 | a store that states no identity, or a nonce that could not be read, or a nonce read from another file | unproven - absence is not agreement, and an answer that cannot be attributed is not evidence about this store |
 | different store id, different device/inode, or the nonce absent | mismatch |
 
 Insufficient evidence is decided before agreeing evidence, so an inode with more than one
 name is unproven even when a nonce was found: the nonce says the peer's write reached this
-file and cannot say which name the peer keeps writing through. That row catches one case and
-only one - `st_nlink` counts hardlink names, and a bind mount adds a pathname without
-changing it - so one name is not evidence of one pathname either, which is why the row above
-it is unproven rather than proven. `compare_store` grades all of it.
+file and cannot say which name the peer keeps writing through.
 
-`doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` alongside
-`--expect-nonce` is what reaches proven. An unproven result is never reported as healthy.
+The name count catches one case and only one. `st_nlink` counts hardlink names, and a file
+bind mount adds a pathname without changing it - measured on this host on 2026-09-22, where
+such a mount reached `proven` while the two names each grew their own `-wal` and a frame
+written live through one was unreadable through the other. What answers that generally is the
+LOG LOCATION: SQLite writes the log beside the pathname a connection opened, so two
+participants share one log when their opened databases share a directory entry. Each
+participant measures its own and reports it with `store-identity`; the peer sends it back as
+`--expect-log`.
+
+Agreement there is a sufficient condition for one log rather than an equivalence, so a
+DIFFERENCE is unproven rather than a mismatch: the sidecars can themselves be aliased, an
+overlay merged path and its upperdir can differ as directories while the log entry is one
+file, and SQLite documents the `-wal` suffix as what it usually appends. Read under the
+default unix VFS with unaliased sidecars. `compare_store` grades all of it.
+
+`doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` and
+`--expect-log` alongside `--expect-nonce` are what reach proven. Supplying any expectation at
+all and getting no proof exits non-zero, including one whose value is empty or malformed. An
+unproven result is never reported as healthy.
 
 ### Which file the evidence came from
 
