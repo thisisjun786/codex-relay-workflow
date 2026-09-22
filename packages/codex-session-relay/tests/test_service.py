@@ -2564,6 +2564,38 @@ class BoundsAcrossAProcessBoundary(ServiceTestCase):
         self.assertNotIn("--deadline-monotonic", argv)
         self.assertNotIn("--deadline", argv)
 
+    def test_the_length_and_the_instant_come_from_one_reading_of_the_clock(self):
+        """Two readings are two different nows.
+
+        The instant is the granted length expressed as an end time, so building it from a
+        later reading than the length was measured against would hand the worker a segment
+        starting at a moment that had already gone. The gap is small and the cap at the
+        supervisor's own end hides it on the last segment, which is what would have kept it
+        out of sight - and it is the same mistake this class exists to close, one scale down.
+        """
+        service = self.service("p")
+        service.enable(actor="test")
+        clock = ScriptedClock()
+        launches = []
+
+        def spawn(**call):
+            launches.append(clock())
+            launches.append(call)
+            clock.advance(call["segment_seconds"])
+            return FakeWorker(0)
+
+        service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=clock.advance,
+            segment_seconds=self.SEGMENT, max_segments=1, deadline=self.BOUND,
+            monotonic=clock,
+        )
+
+        at_spawn, call = launches
+        self.assertAlmostEqual(
+            call["deadline_monotonic"], at_spawn + call["segment_seconds"], places=9,
+            msg="the instant was built from a different reading than the length it expresses",
+        )
+
     def test_a_bound_no_comparison_can_pass_is_refused_by_the_api_as_well(self):
         """The CLI is not the only caller of supervise.
 

@@ -1582,9 +1582,17 @@ class RelayService:
                     # was running gets no replacement, and the supervisor never writes intent.
                     if not self.intent.read()["enabled"]:
                         break
+                    # ONE reading of the clock, used for both the length and the instant. Two
+                    # readings are two different nows: the second is later by however long the
+                    # arithmetic and the attribute lookups between them took, so the instant
+                    # would express a segment measured from a moment that had already passed.
+                    # The gap is small and the cap below hides it at the end of a bound, which
+                    # is exactly why it would have gone unnoticed - and it is the same mistake
+                    # this whole change is about, one scale down.
+                    now = monotonic()
                     granted = (
                         segment_seconds if deadline is None else
-                        max(0.1, min(segment_seconds, deadline - (monotonic() - started)))
+                        max(0.1, min(segment_seconds, deadline - (now - started)))
                     )
                     child = spawn(
                         lock_fd=lock.fileno(), scope_fd=scope_fd, token=token,
@@ -1597,7 +1605,7 @@ class RelayService:
                         # rounds a remainder under a tenth of a second back up to one.
                         deadline_monotonic=(
                             None if ends_at is None
-                            else min(monotonic() + granted, ends_at)
+                            else min(now + granted, ends_at)
                         ),
                         allow_isolated=allow_isolated,
                     )
