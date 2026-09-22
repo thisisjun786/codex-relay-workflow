@@ -685,9 +685,13 @@ class FaultLedger:
             escalated = severity != row["severity"]
             policy = policy_for(fact["faultClass"], severity)
             suppression = self._suppression(db, identifier, policy, now)
+            opened = db.execute(
+                "SELECT publication_id FROM fault_publications"
+                " WHERE fault_id = ? AND kind = ?", (identifier, OPEN_RECORD)).fetchone()
             state, cycle, reopened, trigger_key = _transition(
                 row["state"], row["cycle"], cleared=fact["cleared"],
                 publishable=suppression["publish"], escalated=escalated, severity=severity,
+                published=bool(row["external_ref"]) or opened is not None,
             )
             db.execute(
                 "UPDATE fault_ledger SET state = ?, cycle = ?, severity = ?,"
@@ -793,8 +797,22 @@ class FaultLedger:
                     f"a {kind} is recorded on a fault that is {allowed}, and this one is"
                     f" {row['state']}",
                 )
+            # The fix this remediation FOLLOWS is part of its identity. Without it, running
+            # the same command again after a second fix produced the first run's id,
+            # INSERT OR IGNORE dropped it, and resolve() then refused forever against a
+            # verification that predated the fix it was supposed to verify. Recording the
+            # identical check twice with no fix in between still converges, which is the
+            # idempotence worth keeping.
+            # Only a REVERIFICATION's meaning depends on which fix it follows. A fix's own
+            # identity must not, or recording the same fix twice would write two rows.
+            after = db.execute(
+                "SELECT MAX(seq) AS seq FROM fault_timeline"
+                " WHERE fault_id = ? AND cycle = ? AND kind = ?",
+                (identifier, row["cycle"], FIX)).fetchone()["seq"] \
+                if kind == REVERIFICATION else None
             remediation_id = sha256_hex(
-                f"{identifier}|{row['cycle']}|{kind}|{ref}|{method}|{outcome}")[:ID_WIDTH]
+                f"{identifier}|{row['cycle']}|{kind}|{ref}|{method}|{outcome}|{after}"
+            )[:ID_WIDTH]
             recorded = db.execute(
                 "INSERT OR IGNORE INTO fault_remediations (remediation_id, fault_id, cycle,"
                 "  kind, ref, method, outcome, detail, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -947,6 +965,16 @@ class FaultLedger:
         opened = db.execute(
             "SELECT publication_id FROM fault_publications WHERE fault_id = ? AND kind = ?",
             (identifier, OPEN_RECORD)).fetchone()
+        if trigger_key != TRIGGER_OPEN and not row["external_ref"] and opened is None:
+            # This fault has never earned a Linear record: the threshold never let it open
+            # one. Recording a fix or a resolution against it is useful locally and must not
+            # be the thing that files the issue suppression already refused - a notice would
+            # otherwise reach Linear through the back door.
+            return {"publicationId": None, "kind": None, "trigger": trigger_key,
+                    "queued": False, "awaitingTarget": target_missing(db, row),
+                    "awaitingRecord": False,
+                    "reason": "this fault has never been published, so nothing is written for"
+                              " it; suppression decides that, not a remediation"}
         kind = OPEN_RECORD if (not row["external_ref"] and opened is None) else APPEND_COMMENT
         publication = publication_id(identifier, kind, trigger_key)
         target = db.execute(
@@ -960,9 +988,9 @@ class FaultLedger:
                                  publication=publication)
         queued = db.execute(
             "INSERT OR IGNORE INTO fault_publications (publication_id, fault_id, kind,"
-            "  trigger_key, tracker_ref, external_ref, summary, identity_digest, state,"
-            "  attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,0,?,?)",
-            (publication, identifier, kind, trigger_key,
+            "  trigger_key, cycle, tracker_ref, external_ref, summary, identity_digest,"
+            "  state, attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)",
+            (publication, identifier, kind, trigger_key, row["cycle"],
              target["tracker_ref"] if target else None, row["external_ref"], summary,
              identity_digest(identifier, kind, trigger_key, row["cycle"]), PENDING, now, now),
         ).rowcount == 1
@@ -1009,6 +1037,14 @@ class FaultLedger:
                     RefusalReason.FAULT_NOT_CLAIMABLE,
                     "no tracker is configured for this fault's scope yet",
                 )
+            if row["next_attempt_at"] is not None and row["next_attempt_at"] > moment:
+                # next() already refuses to offer this row. Checking it here too, because a
+                # caller holding an identifier can claim without asking the queue, and a
+                # backoff only one of the two paths honours is not a backoff.
+                raise FaultRefused(
+                    RefusalReason.FAULT_NOT_CLAIMABLE,
+                    f"this publication backs off until {row['next_attempt_at']}",
+                )
             fault = db.execute("SELECT external_ref FROM fault_ledger WHERE fault_id = ?",
                                (row["fault_id"],)).fetchone()
             if row["kind"] == APPEND_COMMENT and not fault["external_ref"]:
@@ -1051,9 +1087,10 @@ class FaultLedger:
                 " WHERE publication_id = ?", (ISSUED, now, now, publication))
             fault = db.execute(
                 "SELECT * FROM fault_ledger WHERE fault_id = ?", (row["fault_id"],)).fetchone()
+            # The row's own cycle, not the ledger's current one: this write describes the
+            # moment it was queued, and its identity digest was computed then.
             block = render_block({**dict(row), "product": fault["product"],
-                                  "fault_class": fault["fault_class"],
-                                  "cycle": fault["cycle"]})
+                                  "fault_class": fault["fault_class"]})
         return {
             "publicationId": publication,
             "kind": row["kind"],
@@ -1125,6 +1162,15 @@ class FaultLedger:
             if row["state"] == CONFIRMED:
                 return _publication(row) | {"confirmed": False,
                                             "reason": "already confirmed"}
+            if row["state"] not in (CLAIMED, ISSUED, UNCERTAIN):
+                # PENDING in particular. A reconciliation that attested the block was ABSENT
+                # returns the row to pending, and accepting a readback captured before that
+                # would confirm a write somebody has already established is not there.
+                raise FaultRefused(
+                    RefusalReason.FAULT_STATE_CONFLICT,
+                    f"a {row['state']} publication has no write outstanding to confirm;"
+                    f" claim it and write it again",
+                )
             if row["state"] in (CLAIMED, ISSUED) and row["claim_token"] != claim_token:
                 raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
                                    "this claim token is not the current one")
@@ -1247,6 +1293,12 @@ class FaultLedger:
         return row
 
 
+def target_missing(db, row):
+    """Whether this fault's scope has a tracker, asked inside the caller's transaction."""
+    return db.execute("SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
+                      (row["scope_key"],)).fetchone() is None
+
+
 def _protocol(kind) -> list:
     if kind == OPEN_RECORD:
         return [
@@ -1282,7 +1334,7 @@ def _block_mismatch(row, fault, found) -> list:
         "product": fault["product"],
         "faultClass": fault["fault_class"],
         "trigger": row["trigger_key"],
-        "cycle": str(fault["cycle"]),
+        "cycle": str(row["cycle"]),
         "identityDigest": row["identity_digest"],
         "summarySha256": sha256_hex(sync.canonical_summary(row["summary"])),
     }
@@ -1297,17 +1349,20 @@ def _block_mismatch(row, fault, found) -> list:
     return problems
 
 
-def _transition(state, cycle, *, cleared, publishable, escalated, severity):
+def _transition(state, cycle, *, cleared, publishable, escalated, severity, published=False):
     """The next state, and the one reason a write is owed. Returns no reason for most calls.
 
     Most observations change nothing anybody has to be told about, and saying so is the point:
     a ledger that queued a write per observation would be the spray it exists to prevent.
     """
     if cleared:
-        # Clearing withdraws a fault nobody was told about. It does not close a published one:
-        # the cause may have stopped without having been fixed, and the closed loop is what
-        # decides that.
-        return (WITHDRAWN if state == OBSERVED else state), cycle, False, None
+        # Clearing withdraws a fault nobody was told about - including one a locally recorded
+        # fix moved to fix_pending, which is still a fault no Linear record carries. It does
+        # NOT close a published one: the cause may have stopped without having been fixed,
+        # and the closed loop is what decides that.
+        if published or state in (RESOLVED, WITHDRAWN):
+            return state, cycle, False, None
+        return WITHDRAWN, cycle, False, None
     if state == WITHDRAWN:
         state = OBSERVED
     if state == RESOLVED:

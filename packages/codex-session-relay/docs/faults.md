@@ -142,9 +142,13 @@ in from outside — is never cleared that way, because a reading nobody supplied
 nothing. That is the difference between the thing being gone and nobody having looked, and it
 is why an `unmeasured` reading never clears an omission.
 
-A fault cleared before it reached its threshold is withdrawn and never touches Linear. A fault
-cleared after publication is not closed by the clearing either, because the closed loop below
-is what closes it.
+A fault that never earned a Linear record is withdrawn when it clears — including one a locally
+recorded fix moved to `fix_pending`, which is still a fault no record carries. A fault that owns a
+record is not closed by clearing, because the closed loop below is what closes it.
+
+Suppression is also the only thing that opens a record. Recording a fix or a resolution against
+a fault the threshold never published queues nothing: a remediation must not be the back door
+through which a notice reaches Linear.
 
 Occurrences stay append-only. `fault-prune` is an explicit operator act that records in the
 journal how many rows it removed, because a store that silently discards its own evidence on a
@@ -176,6 +180,10 @@ A reverification is structured: the method (`suite`, `command` or `observation`)
 command or reading, and an outcome from a closed vocabulary — `passed`, `absent` or `failed`. The
 vocabulary is closed because an open string let `outcome="still failing"` satisfy the resolution
 gate, which is the one sentence a fault ledger must never accept as proof.
+
+Its identity includes the fix it follows. Running the same command again after a second fix is a
+second verification of a different change; without that, the rerun took the first run's identity,
+was dropped as a duplicate, and the fault could never be resolved again.
 
 `resolve` takes the newest fix in the sequence, requires a reverification recorded after it,
 requires that reverification to have found the fault gone, and requires that no occurrence has
@@ -216,6 +224,11 @@ automatically.**
 Handing out a create operation marks the row `issued`. From there:
 
 - reporting failure moves it to `uncertain`, never back to `pending`;
+- a `pending` row has no write outstanding, so it cannot be completed at all: a readback
+  captured before a reconciliation established the block ABSENT must not confirm it afterwards;
+- a backoff applies to a direct claim as well as to the queue, or it is not a backoff;
+- a publication carries the CYCLE it was queued in, so a fault that reopens while a comment is
+  waiting does not make that comment describe a cycle it was never about;
 - a lease expiring on it moves it to `uncertain`, while a lease expiring on a merely `claimed`
   row — one that never reached the connector — is safely released;
 - nothing but `reconcile` leaves `uncertain`. The caller reports what it observed: the marker
@@ -235,10 +248,16 @@ would be worse than waiting.
 ## What runs by itself, and what does not
 
 The daemon's tick sweeps the store and records what it finds, so a fault is detected and queued
-without anybody asking. The pass is bounded like every other pass — each source is read at most
-`SWEEP_LIMIT` rows — and it counts only what was NEWLY recorded, so a steady-state failure read
-again on every tick does not hold the loop at its fastest cadence forever. A daemon given no
-ledger ticks exactly as it did before.
+without anybody asking. The pass is bounded like every other pass — each source reads at most
+`SWEEP_LIMIT` rows — and it ROTATES: `fault_cursors` remembers where each source stopped and the
+next sweep resumes there, wrapping to the start when a page comes back short. A fixed prefix
+re-read on every tick would have starved everything behind it forever, which is the same shape
+the delivery window keeps a per-parent cursor to avoid. A page that did not read its source from
+the start clears nothing, because a partial read establishes no absence.
+
+The pass counts only what was NEWLY recorded, so a steady-state failure read again on every tick
+does not hold the loop at its fastest cadence forever. A daemon given no ledger ticks exactly as
+it did before.
 
 It cannot own the other half. The relay holds no Linear credential by design, so the write is
 performed by the process that does — the coordination parent, or an operator running the
@@ -269,6 +288,7 @@ happened is the work the fix cycle exists for.
 | `fault_remediations` | append-only fixes and structured reverifications, per cycle |
 | `fault_publications` | the outbox: what must be written to Linear, and how far it got |
 | `fault_targets` | where a scope's fault issues are filed |
+| `fault_cursors` | where each source stopped, so the sweep rotates instead of re-reading one page |
 
 ## Commands
 

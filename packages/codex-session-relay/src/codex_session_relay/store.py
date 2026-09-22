@@ -1039,7 +1039,8 @@ CREATE INDEX IF NOT EXISTS fault_occurrences_fault ON fault_occurrences (fault_i
 
 -- Fixes and reverifications, append-only and per cycle. A fix alone resolves nothing; what
 -- resolves a fault is a reverification recorded AFTER the newest fix with no occurrence
--- after it, and both comparisons are made on rowid.
+-- after it. Both comparisons are made on fault_timeline.seq, because rowids are per-table
+-- and these rows have to be ordered against occurrences in another one.
 CREATE TABLE IF NOT EXISTS fault_remediations (
     remediation_id TEXT PRIMARY KEY,
     fault_id       TEXT NOT NULL,
@@ -1055,6 +1056,15 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 
 -- Where a scope's fault issues are filed. An unconfigured scope is not an error: the fault
 -- stays recorded and its publication waits, because filing into a guessed project is worse.
+-- Where each source got to last time. Without it every sweep re-read the same first page,
+-- so with more persistent faults than one page the ones past it were never observed again -
+-- the starvation shape the delivery window already keeps a per-parent cursor to avoid.
+CREATE TABLE IF NOT EXISTS fault_cursors (
+    source     TEXT PRIMARY KEY,
+    position   TEXT,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS fault_targets (
     scope_key   TEXT PRIMARY KEY,
     tracker_ref TEXT NOT NULL,
@@ -1070,6 +1080,11 @@ CREATE TABLE IF NOT EXISTS fault_publications (
     fault_id        TEXT NOT NULL,
     kind            TEXT NOT NULL,
     trigger_key     TEXT NOT NULL,
+    -- The cycle this write was QUEUED in, not the one the fault is in when somebody gets
+    -- round to writing it. A fault that reopens in between moves to a new cycle, and
+    -- rendering a queued comment against the live cycle made the block disagree with the
+    -- identity digest that was computed when it was queued.
+    cycle           INTEGER NOT NULL DEFAULT 1,
     tracker_ref     TEXT,
     external_ref    TEXT,
     summary         TEXT NOT NULL,

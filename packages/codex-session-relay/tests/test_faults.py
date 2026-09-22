@@ -15,6 +15,7 @@ from codex_session_relay.clock import FakeClock
 from codex_session_relay.store import Store
 
 from .support import RelayTestCase
+from .test_delivery import DeliveryTestCase
 
 SOURCE = pathlib.Path(faults.__file__).parent
 PRODUCT = "crw"
@@ -161,6 +162,102 @@ class Suppression(LedgerCase):
         self.assertFalse(answer["suppression"]["publish"])
         self.assertEqual([], self.ledger.next())
 
+
+class ThirdReviewFindings(RelayTestCase):
+    """Round three, on the code. Each finding keeps its own test."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.ledger.set_target("crw:CRW", TRACKER)
+        self.identifier = self.ledger.record(omission("a"))["faultId"]
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        operation = self.ledger.operation(job, claim_token=claim["claimToken"])
+        self.ledger.complete(job, claim_token=claim["claimToken"],
+                             readback=operation["block"], external_ref="REL-77")
+
+    def test_the_same_check_run_again_after_a_second_fix_is_a_second_verification(self):
+        """Otherwise the second run takes the first run's identity and resolve refuses forever."""
+        self.ledger.record_fix(self.identifier, ref="PR #1")
+        first = self.ledger.record_reverification(
+            self.identifier, method="suite", ref="pytest -q", outcome=faults.PASSED)
+        self.ledger.record_fix(self.identifier, ref="PR #2")
+        second = self.ledger.record_reverification(
+            self.identifier, method="suite", ref="pytest -q", outcome=faults.PASSED)
+        self.assertTrue(second["recorded"])
+        self.assertNotEqual(first["remediationId"], second["remediationId"])
+        self.assertTrue(self.ledger.resolve(self.identifier)["resolved"])
+
+    def test_recording_one_check_twice_with_no_fix_between_is_still_one_record(self):
+        self.ledger.record_fix(self.identifier, ref="PR #1")
+        first = self.ledger.record_reverification(
+            self.identifier, method="suite", ref="pytest -q", outcome=faults.PASSED)
+        again = self.ledger.record_reverification(
+            self.identifier, method="suite", ref="pytest -q", outcome=faults.PASSED)
+        self.assertFalse(again["recorded"])
+        self.assertEqual(first["remediationId"], again["remediationId"])
+
+    def test_a_locally_fixed_fault_that_never_reached_linear_is_withdrawn_when_it_clears(self):
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
+            signature={"relationship": "rel-9"}, occurrence_key="u1", scope=SCOPE))
+        self.ledger.record_fix(answer["faultId"], ref="PR #1")
+        self.assertEqual(faults.FIX_PENDING, self.ledger.get(answer["faultId"])["state"])
+        cleared = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
+            signature={"relationship": "rel-9"}, occurrence_key="u1:cleared", scope=SCOPE,
+            cleared=True))
+        self.assertEqual(faults.WITHDRAWN, cleared["state"])
+
+    def test_a_published_fault_is_not_closed_by_its_cause_going_quiet(self):
+        cleared = self.ledger.record(omission("a:cleared", cleared=True))
+        self.assertEqual(faults.OPEN, cleared["state"])
+
+
+class TheSweepRotatesRatherThanReReadingOnePage(RelayTestCase):
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.register()
+        self.relationship = self.store.one(
+            "SELECT relationship_id FROM relationships")["relationship_id"]
+
+    def stall(self, event_id, recipient):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event_id, self.relationship, "completion_event", recipient, recipient,
+                 "queued", 1, "channel_closed", self.clock.iso(), self.clock.iso()))
+
+    def test_a_fault_past_the_first_page_is_reached_by_a_later_sweep(self):
+        """A fixed prefix re-read every tick starves everything behind it forever."""
+        total = faultsweep.SWEEP_LIMIT + 3
+        for index in range(total):
+            self.stall(f"event-{index:03d}", f"task-{index:03d}")
+        seen = set()
+        for _round in range(4):
+            batch = faultsweep.sweep(self.store)
+            faultsweep.record_all(self.ledger, batch)
+            seen.update(entry["signature"]["recipient"] for entry in batch["observations"]
+                        if entry["faultClass"] == "delivery_stalled")
+        self.assertEqual(total, len(seen))
+        self.assertEqual(total, self.store.one(
+            "SELECT COUNT(*) AS n FROM fault_ledger WHERE fault_class = ?",
+            ("delivery_stalled",))["n"])
+
+    def test_a_short_page_wraps_so_the_next_sweep_starts_again(self):
+        self.stall("event-001", "task-001")
+        first = faultsweep.sweep(self.store)
+        self.assertIsNone(first["cursors"]["delivery_stalled"])
+        self.assertIn("delivery_stalled", first["completeSources"])
+        second = faultsweep.sweep(self.store)
+        self.assertEqual(1, len([entry for entry in second["observations"]
+                                 if entry["faultClass"] == "delivery_stalled"]))
+
+
     def test_clearing_before_the_threshold_withdraws_without_touching_linear(self):
         self.ledger.record(stall("delivery:1"))
         answer = self.ledger.record(stall("cleared:after:1"))
@@ -224,8 +321,25 @@ class Lifecycle(LedgerCase):
         self.ledger.record(omission("b", turn="turn-7"))
         with self.assertRaises(faults.FaultRefused) as refusal:
             self.ledger.resolve(self.identifier)
-        self.assertIn(refusal.exception.reason.value,
-                      ("fault_recurred_after_verification", "fault_state_conflict"))
+        # The recurrence moved the fault out of fix_pending, which is the first thing resolve
+        # checks. The guard BEHIND that check has its own test below.
+        self.assertEqual("fault_state_conflict", refusal.exception.reason.value)
+
+    def test_an_occurrence_after_the_verification_is_refused_on_its_own_terms(self):
+        """The guard behind the state check, exercised where the state cannot mask it."""
+        self.ledger.record_fix(self.identifier, ref="PR #1")
+        self.ledger.record_reverification(self.identifier, method="suite", ref="pytest",
+                                          outcome=faults.PASSED)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
+                "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
+                (self.identifier, 1, "occurrence", "later-occurrence", "it happened again",
+                 self.clock.iso(), self.clock.now()))
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.resolve(self.identifier)
+        self.assertEqual("fault_recurred_after_verification",
+                         refusal.exception.reason.value)
 
     def test_a_misdated_observation_cannot_refuse_an_honest_verification(self):
         """Ordering is this store's sequence, so a caller's clock decides nothing."""
@@ -442,14 +556,17 @@ class Sweep(RelayTestCase):
             self.stall_a_delivery(f"event-{index}", recipient=f"task-{index}")
         batch = faultsweep.sweep(self.store, scope={"projectKey": "CRW"})
         self.assertEqual(faultsweep.SWEEP_LIMIT, len(batch["observations"]))
+        self.assertNotIn("delivery_stalled", batch["completeSources"])
 
 
-class DaemonPass(RelayTestCase):
+class DaemonPass(DeliveryTestCase):
+    """A real daemon with real collaborators, so the tick under test is the tick that ships."""
+
     def daemon(self, ledger):
         from codex_session_relay.daemon import RelayDaemon
 
-        return RelayDaemon(self.store, self.registry, self.intake, None, None, None, None,
-                           clock=self.clock, faults=ledger,
+        return RelayDaemon(self.store, self.registry, self.intake, self.delivery, self.ack,
+                           self.reconciler, self.adapter, clock=self.clock, faults=ledger,
                            fault_scope={"projectKey": "CRW"})
 
     def test_the_tick_records_what_is_broken_and_goes_quiet_once_it_has(self):
@@ -483,13 +600,19 @@ class DaemonPass(RelayTestCase):
         self.assertEqual([], report.notes)
 
     def test_recorded_faults_keep_a_tick_from_being_called_quiet(self):
-        from codex_session_relay.daemon import TickReport
-
-        report = TickReport()
-        report.faultsRecorded = 1
-        report.quiet = not (report.observed or report.reconciled or report.delivered
-                            or report.deferred or report.acksVerified or report.anchorsBound
-                            or report.requeued or report.faultsRecorded)
+        """Through the real tick, so this fails if tick() stops folding the counter in."""
+        ledger = faults.FaultLedger(self.store, self.clock)
+        ledger.set_target("crw:CRW", TRACKER)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("event-quiet", "rel-1", "completion_event", "01parent-task",
+                 "01parent-task", "queued", 1, "channel_closed", self.clock.iso(),
+                 self.clock.iso()))
+        report = self.daemon(ledger).tick()
+        self.assertEqual(1, report.faultsRecorded)
         self.assertFalse(report.quiet)
 
 
@@ -690,10 +813,71 @@ class ReviewFindings(RelayTestCase):
         # The registry's own generation 1 has never been polled at all and is correctly
         # derived; what must NOT appear is generation 9, whose current anchor polls fine and
         # whose only failure belongs to a turn the scheduler has moved on from.
-        stalled = faultsweep.observation_faults(self.store, product=PRODUCT, scope={})
+        stalled = faultsweep.observation_faults(
+            self.store, product=PRODUCT, scope={})["observations"]
         self.assertEqual([], [entry for entry in stalled
                               if entry["signature"]["generation"] == 9])
         self.assertTrue(stalled, "the never-polled anchor is still derived")
+
+
+class SecondReviewFindings(LedgerCase):
+    """Round two of the same independent review. Each finding keeps its own test."""
+
+    def test_claiming_directly_still_honours_the_backoff_the_queue_computed(self):
+        self.ledger.record(omission("a"))
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        self.ledger.fail(job, claim_token=claim["claimToken"], error="transient")
+        self.assertEqual([], self.ledger.next())
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.claim(job, owner="an impatient caller")
+        self.assertEqual("fault_not_claimable", refusal.exception.reason.value)
+        self.clock.advance(faults.BASE_BACKOFF + 1)
+        self.assertTrue(self.ledger.claim(job, owner="operator")["claimToken"])
+
+    def test_a_write_established_absent_cannot_be_confirmed_from_the_earlier_readback(self):
+        self.ledger.record(omission("a"))
+        job = self.ledger.next()[0]["publication_id"]
+        claim = self.ledger.claim(job, owner="operator")
+        operation = self.ledger.operation(job, claim_token=claim["claimToken"])
+        stale = "issue body\n" + operation["block"]
+        self.ledger.fail(job, claim_token=claim["claimToken"], error="the response was lost")
+        self.assertEqual("absent", self.ledger.reconcile(job, "nothing here",
+                                                         searched=True)["outcome"])
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.complete(job, readback=stale, external_ref="REL-1")
+        self.assertEqual("fault_state_conflict", refusal.exception.reason.value)
+
+    def test_a_queued_comment_is_written_against_the_cycle_it_was_queued_in(self):
+        identifier = self.ledger.record(omission("a"))["faultId"]
+        self.publish(identifier, self.ledger.next()[0]["publication_id"])
+        self.ledger.record_fix(identifier, ref="PR #1")
+        self.ledger.record_reverification(identifier, method="suite", ref="pytest",
+                                          outcome=faults.PASSED)
+        self.ledger.resolve(identifier)
+        queued = self.ledger.next()[0]["publication_id"]
+        # The fault reopens before anybody gets round to writing the resolve comment.
+        self.ledger.record(omission("later", turn="turn-7"))
+        self.assertEqual(2, self.ledger.get(identifier)["cycle"])
+        claim = self.ledger.claim(queued, owner="operator")
+        operation = self.ledger.operation(queued, claim_token=claim["claimToken"])
+        self.assertIn("cycle: 1", operation["block"])
+        done = self.ledger.complete(queued, claim_token=claim["claimToken"],
+                                    readback=operation["block"], external_ref="REL-77")
+        self.assertTrue(done["confirmed"])
+
+    def test_a_fault_suppression_never_filed_is_not_filed_by_recording_a_fix(self):
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
+            signature={"relationship": "rel-1"}, occurrence_key="u1", scope=SCOPE))
+        self.assertIsNone(answer["publication"])
+        fix = self.ledger.record_fix(answer["faultId"], ref="PR #1")
+        self.assertFalse(fix["publication"]["queued"])
+        self.assertIsNone(fix["publication"]["publicationId"])
+        self.assertEqual(
+            0, self.store.one("SELECT COUNT(*) AS n FROM fault_publications")["n"])
+        self.assertEqual([], self.ledger.next())
+
 
 
 

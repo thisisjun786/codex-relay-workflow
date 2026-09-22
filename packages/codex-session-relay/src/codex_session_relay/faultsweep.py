@@ -44,6 +44,28 @@ def _named(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def _page(observations, rows, key, cursor, limit) -> dict:
+    """One page of a source, with where it got to and whether it saw the whole thing.
+
+    complete means this call read the source from the START and did not fill its page, which
+    is the only shape that establishes an absence. A page that filled, or one that resumed
+    from a cursor, has seen part of the source and can clear nothing.
+    """
+    if key == "anchor":
+        position = (f"{rows[-1]['relationship_id']}:{rows[-1]['execution_generation']}"
+                    if rows else None)
+    else:
+        position = rows[-1][key] if rows else None
+    filled = len(rows) >= limit
+    return {
+        "observations": observations,
+        # Wrap to the start when the page was short: the next sweep then re-reads from the
+        # beginning rather than sitting past the end seeing nothing forever.
+        "cursor": position if filled else None,
+        "complete": cursor is None and not filled,
+    }
+
+
 def scope_of(store, relationship_id, base=None, cache=None) -> dict:
     """Where a fault about this relationship is filed, read from the relationship's own scope.
 
@@ -77,7 +99,8 @@ def _evidence(kind, ref, observed) -> dict:
     return {"kind": kind, "ref": ref, "observed": observed}
 
 
-def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None) -> list:
+def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
+                    cursor=None) -> dict:
     """Deliveries that are not moving, grouped by the recipient and cause, never by event.
 
     One unreachable recipient strands every delivery queued for it. Keyed on the event, that
@@ -99,8 +122,9 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None) ->
         "         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state"
         "  FROM deliveries d"
         " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
+        "   AND d.event_id > ?"
         " ORDER BY d.event_id LIMIT ?",
-        (*SETTLED_DELIVERY, limit),
+        (*SETTLED_DELIVERY, cursor or "", limit),
     )
     observations = []
     cache = {}
@@ -121,10 +145,10 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None) ->
                 "relationship": row["relationship_id"],
             })],
         ))
-    return observations
+    return _page(observations, rows, "event_id", cursor, limit)
 
 
-def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
+def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
     """Coordination writes that gave up, grouped by the document they could not reach.
 
     Twenty jobs failing against one unreachable document are one problem. The target is the
@@ -132,11 +156,11 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
     """
     rows = store.all(
         "SELECT sync_id, relationship_id, issue_key, target, target_ref, attempts, last_error"
-        "  FROM sync_outbox WHERE state = ? ORDER BY sync_id LIMIT ?",
-        (faults.FAILED, limit),
+        "  FROM sync_outbox WHERE state = ? AND sync_id > ? ORDER BY sync_id LIMIT ?",
+        (faults.FAILED, cursor or "", limit),
     )
     cache = {}
-    return [faults.observation(
+    observations = [faults.observation(
         product=product, fault_class="record_sync_failed", severity=faults.BROKEN,
         signature={"target": row["target"], "targetRef": row["target_ref"]},
         occurrence_key=f"sync:{row['sync_id']}:{row['attempts']}",
@@ -148,9 +172,10 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
             "relationship": row["relationship_id"], "targetRef": row["target_ref"],
         })],
     ) for row in rows]
+    return _page(observations, rows, "sync_id", cursor, limit)
 
 
-def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
+def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
     """Anchors the scheduler is not successfully reading.
 
     Started from the generations rather than from poll_observations, because that table has no
@@ -180,8 +205,9 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
         "                    WHERE s.relationship_id = g.relationship_id"
         "                      AND s.turn_id = COALESCE(p.turn_id, g.dispatch_turn_id))"
         "   AND (p.turn_id IS NULL OR p.last_polled_at IS NULL OR p.last_error IS NOT NULL)"
+        "   AND (g.relationship_id || ':' || g.execution_generation) > ?"
         " ORDER BY g.relationship_id, g.execution_generation LIMIT ?",
-        (limit,),
+        (cursor or "", limit),
     )
     observations = []
     cache = {}
@@ -204,7 +230,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT) -> list:
                 "lastStatus": row["last_status"],
             })],
         ))
-    return observations
+    return _page(observations, rows, "anchor", cursor, limit)
 
 
 def reading_faults(readings, *, product, scope, store=None) -> list:
@@ -269,15 +295,21 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     past the bound. Only the classes whose source was read to the end can clear.
     """
     scope = dict(scope or {})
+    cursors = read_cursors(store)
     by_class = {
-        "delivery_stalled": delivery_faults(store, product=product, scope=scope, limit=limit,
-                                            policy=policy),
-        "record_sync_failed": sync_faults(store, product=product, scope=scope, limit=limit),
-        "observation_stalled": observation_faults(store, product=product, scope=scope,
-                                                  limit=limit),
+        "delivery_stalled": delivery_faults(
+            store, product=product, scope=scope, limit=limit, policy=policy,
+            cursor=cursors.get("delivery_stalled")),
+        "record_sync_failed": sync_faults(
+            store, product=product, scope=scope, limit=limit,
+            cursor=cursors.get("record_sync_failed")),
+        "observation_stalled": observation_faults(
+            store, product=product, scope=scope, limit=limit,
+            cursor=cursors.get("observation_stalled")),
     }
-    complete = tuple(name for name, rows in by_class.items() if len(rows) < limit)
-    derived = [entry for rows in by_class.values() for entry in rows]
+    write_cursors(store, {name: page["cursor"] for name, page in by_class.items()})
+    complete = tuple(name for name, page in by_class.items() if page["complete"])
+    derived = [entry for page in by_class.values() for entry in page["observations"]]
     observations = derived + reading_faults(readings, product=product, scope=scope,
                                             store=store)
     return {
@@ -285,9 +317,12 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
         "clears": recovered(store, derived, product=product, scope=scope, limit=limit,
                             complete=complete),
         "completeSources": list(complete),
-        "limits": f"each source is read at most {limit} rows. A source that filled its page"
-                  f" cannot clear anything, and a class this sweep does not derive is never"
-                  f" cleared by its absence here",
+        "cursors": {name: page["cursor"] for name, page in by_class.items()},
+        "limits": f"each source is read at most {limit} rows, resuming where the last sweep"
+                  f" stopped and wrapping at the end, so nothing past one page is starved."
+                  f" A source that did not read the whole thing from the start clears"
+                  f" nothing, and a class this sweep does not derive is never cleared by its"
+                  f" absence here",
     }
 
 
@@ -304,7 +339,7 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
     present = {entry["faultClass"] + "|" + faults.canonical_signature(entry["signature"])
                for entry in derived}
     rows = store.all(
-        "SELECT fault_id, fault_class, signature, cycle FROM fault_ledger"
+        "SELECT fault_id, fault_class, signature, cycle, scope FROM fault_ledger"
         " WHERE product = ? AND state IN (?,?,?) AND cleared_at IS NULL"
         "   AND fault_class IN (" + ",".join("?" * len(complete)) + ")"
         " ORDER BY rowid LIMIT ?",
@@ -318,15 +353,45 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
             "SELECT occurrence_id FROM fault_occurrences"
             " WHERE fault_id = ? AND cleared = 0 ORDER BY rowid DESC LIMIT 1",
             (row["fault_id"],))
+        try:
+            placed = json.loads(row["scope"])
+        except (TypeError, ValueError):
+            placed = dict(scope or {})
         clears.append(faults.observation(
             product=product, fault_class=row["fault_class"], severity=faults.NOTICE,
             signature=json.loads(row["signature"]),
             occurrence_key=f"cleared:after:{last['occurrence_id'] if last else row['cycle']}",
-            scope=scope, cleared=True,
+            # The fault's OWN scope. Clearing it with the sweep's empty scope rewrote a
+            # crw:CRW fault to a bare crw, and a later fix then queued against no tracker.
+            scope=placed, cleared=True,
             detail="this sweep read the source and no longer derives this fault",
             evidence=[_evidence("sweep", row["fault_class"], {"derived": False})],
         ))
     return clears
+
+
+def read_cursors(store) -> dict:
+    return {row["source"]: row["position"]
+            for row in store.all("SELECT source, position FROM fault_cursors")}
+
+
+def write_cursors(store, positions) -> None:
+    """Advance each source, including back to the start. A sweep that read nothing new still
+    records where it got to, so the rotation cannot stall on one page."""
+    now = _now(store)
+    with store.transaction() as db:
+        for source, position in positions.items():
+            db.execute(
+                "INSERT INTO fault_cursors (source, position, updated_at) VALUES (?,?,?)"
+                " ON CONFLICT(source) DO UPDATE SET position = excluded.position,"
+                "   updated_at = excluded.updated_at",
+                (source, position, now))
+
+
+def _now(store) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def record_all(ledger, batch) -> dict:
