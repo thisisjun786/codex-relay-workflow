@@ -151,6 +151,196 @@ class UnmanagedAndUnclaimed(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+class ClaimCorrelationAfterTheBind(GuardTestCase):
+    """The claim that authorises a hold has to be THIS assignment's claim, both sides of the bind.
+
+    An assignment id is the hash of a dispatch request id, so a claim naming a different dispatch is
+    evidence about a different assignment. The pre-bind path has always checked that. The post-bind
+    path asked only whether some claim's path-derived owner was this session, so an uncorrelated
+    claim satisfied the hold precondition and the turn was held, indistinguishable in the record
+    from a correlated one.
+
+    publish_claim refuses these shapes, so none of them can come through the API. The file is what
+    actually gets judged, and the marker subtree is writable by the party publishing into it, so
+    they are published directly - which is the only way to reach the reading end this closes.
+    """
+
+    def shape(self, name, claim_body, *, hashed=True, bind=True):
+        """One claim shape in a workspace of its own, so several can stand side by side.
+
+        Returned rather than stored, because the agreement case below reads the same shape twice,
+        once unbound and once bound, and a shared workspace would let the first reading select the
+        second one's assignment.
+        """
+        workspace = self.workspace / name
+        workspace.mkdir()
+        directory = marker.assignment_dir(self.markers, workspace, self.assignment)
+        if hashed:
+            intent.declare_intent(
+                self.markers, workspace=workspace, dispatch_request_id=DISPATCH,
+                issue_key="REL-1", declared_at="2026-01-01T00:00:00+00:00",
+                db_path=str(self.store.path),
+            )
+        else:
+            # An intent published without its own hash. declare_intent always writes one, and the
+            # shape check requires the field to be a string without requiring it to be present, so
+            # this arrives with every fact well-shaped and nothing to correlate against.
+            marker.publish(directory / "intent.json", {
+                "declaredAt": "2026-01-01T00:00:00+00:00", "issue": "REL-1",
+                "workspace": str(workspace), "dbPath": str(self.store.path),
+            })
+        if claim_body is not None:
+            marker.publish(directory / "claims" / CHILD / "claim.json", claim_body)
+        if bind:
+            intent.bind(self.markers, workspace=workspace, assignment=self.assignment,
+                        session_id=CHILD, task_id=CHILD, at=NOW)
+        return workspace
+
+    @staticmethod
+    def body(dispatch=DISPATCH):
+        record = {"sessionId": CHILD, "firstTurnId": DISPATCH_TURN, "at": NOW}
+        if dispatch is not None:
+            record["dispatchRequestId"] = dispatch
+        return record
+
+    def test_a_correlated_claim_after_the_bind_still_reaches_the_ordinary_path(self):
+        """The positive control. A gate that refused everything would pass the cases below too."""
+        relationship = self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertNotIn("claimEvidence", verdict["record"])
+
+    def test_the_order_of_the_bind_and_the_claim_does_not_change_the_answer(self):
+        """T22's ordering, carried through to a claim that arrives afterwards.
+
+        The coordinator holds the creation receipt, so it can bind first. A correlated claim
+        published after that bind is the same claim, and the turn is judged exactly as it is when
+        the claim came first.
+        """
+        relationship = self.register()
+        self.declare()
+        self.bind()
+        self.register_marker(relationship)
+        self.assertEqual(self.evaluate()["observation"], "marker_unclaimed")
+        self.claim()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_claim_naming_another_dispatch_cannot_authorise_a_hold(self):
+        workspace = self.shape("mismatch", self.body("not-this-dispatch"))
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.CLAIM_DISPATCH_MISMATCH)
+        self.assertFalse(verdict["record"]["held"])
+
+    def test_a_claim_withholding_its_preimage_cannot_authorise_a_hold(self):
+        """Reported apart from a wrong preimage: this claim presented nothing at all."""
+        workspace = self.shape("unnamed", self.body(None))
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.CLAIM_DISPATCH_UNNAMED)
+
+    def test_an_intent_naming_no_hash_is_answered_apart_from_a_wrong_claim(self):
+        """The claim here is fine and the intent is what needs repair.
+
+        Folding this into the mismatch label would send an operator to adjudicate a claim that is
+        correct, which is the one repair that cannot work: the claim is create-once.
+        """
+        workspace = self.shape("nohash", self.body(), hashed=False)
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "claim_uncorrelated")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["record"]["claimEvidence"], intent.INTENT_DISPATCH_UNNAMED)
+
+    def test_an_absent_claim_stays_distinguishable_from_an_uncorrelated_one(self):
+        """The two clear differently, so collapsing them would misdirect the coordinator.
+
+        marker_unclaimed is the bind-before-claim race and ends when the child publishes.
+        claims/<session>/claim.json is create-once and a differing dispatch request id is a
+        conflict, so an uncorrelated claim can never be replaced by the correct one. Reported as
+        unclaimed it would tell the coordinator to wait for a fact that cannot arrive.
+        """
+        absent = self.evaluate(cwd=str(self.shape("absent", None)))
+        self.assertEqual(absent["observation"], "marker_unclaimed")
+        self.assertNotIn("claimEvidence", absent["record"])
+        wrong = self.evaluate(cwd=str(self.shape("wrong", self.body("other-dispatch"))))
+        self.assertEqual(wrong["observation"], "claim_uncorrelated")
+        self.assertEqual(wrong["record"]["claimEvidence"], intent.CLAIM_DISPATCH_MISMATCH)
+        self.assertEqual({absent["decision"], wrong["decision"]}, {guard.RELEASE})
+
+    def test_the_two_windows_agree_about_whether_the_claim_correlates(self):
+        """The property this issue is about, asserted as an agreement rather than as one branch.
+
+        correlated() cannot be refactored into the labelled reader without moving it between the
+        inventories a fenced suite derives, so the two implementations stay separate and this is
+        what stops them drifting: the same four shapes are read unbound and bound, and the two
+        windows have to agree about whether correlation holds.
+        """
+        shapes = {
+            "good": self.body(),
+            "mismatch": self.body("not-this-dispatch"),
+            "unnamed": self.body(None),
+            "missing": None,
+        }
+        before = {"dispatch_uncorrelated": False, "correlated_unbound": True}
+        after = {"claim_uncorrelated": False, "marker_unclaimed": False}
+        for name, body in shapes.items():
+            with self.subTest(shape=name):
+                unbound = self.shape("pre-" + name, body, bind=False)
+                bound = self.shape("post-" + name, body)
+                pre = self.evaluate(cwd=str(unbound))["observation"]
+                post = self.evaluate(cwd=str(bound))["observation"]
+                self.assertIn(pre, before, "the pre-bind window changed its vocabulary")
+                self.assertEqual(
+                    before[pre], after.get(post, True),
+                    f"the two windows disagree about {name}: {pre} before, {post} after",
+                )
+
+    def test_a_declared_release_is_still_read_before_the_claim_is_examined(self):
+        """Precedence unchanged, which is what keeps this a release-only policy change.
+
+        Holding a turn the child declared waiting, interrupted or failed is the trade this policy
+        refuses to make, and that is decided before the claim is looked at. So an uncorrelated
+        claim never takes a declaration away from the record; it only stops a hold.
+        """
+        workspace = self.shape("declared", self.body("not-this-dispatch"))
+        intent.publish_disposition(
+            self.markers, workspace=workspace, assignment=self.assignment,
+            session_id=CHILD, turn_id=DISPATCH_TURN, outcome="in_progress", at=NOW,
+        )
+        verdict = self.evaluate(cwd=str(workspace))
+        self.assertEqual(verdict["observation"], "declared_in_progress")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertNotIn("claimEvidence", verdict["record"])
+
+    def test_a_receipted_readiness_is_reconciled_as_it_always_was(self):
+        """The criterion-3 reconciliation - marker, identity and disposition against the real
+        receipt - is a separate comparison and is untouched by this check.
+
+        The claim here does not correlate, and the receipt still answers for the turn it names, so
+        the turn reads its own declaration rather than the new refusal.
+        """
+        relationship = self.register()
+        self.declare()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(directory / "claims" / CHILD / "claim.json", self.body("not-this-dispatch"))
+        self.bind()
+        self.register_marker(relationship)
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
 class Declarations(GuardTestCase):
     def test_a_receipted_readiness_releases(self):
         relationship = self.managed()

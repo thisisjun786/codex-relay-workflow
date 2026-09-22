@@ -38,7 +38,8 @@ RELEASING = ("in_progress", "blocked_needs_input", "interrupted", "failed")
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 TRACED_FUNCTIONS = ("observe_state", "decide", "derive_assignment_state",
                     "identity_contested", "classify_declaration", "_correlated",
-                    "_covered", "_ambiguity_resolved", "resolve_assignment",
+                    "_correlation_problem", "_covered", "_ambiguity_resolved",
+                    "resolve_assignment",
                     "selected_marker", "_claimant")
 BINDING_WINDOW_MINUTES = 30
 MAX_HOLDS_PER_TURN = 1
@@ -310,6 +311,41 @@ def _correlated(marker, session_id):
         return False
     digest = hashlib.sha256(str(presented).encode("utf-8")).hexdigest()
     return digest == (marker.get("intent") or {}).get("dispatchRequestIdHash")
+
+
+# Why a session's claim does not correlate with the assignment it sits in. Four conditions, because
+# they are four different repairs; they release identically, so they are labels and not states.
+CLAIM_ABSENT = "claim_absent"
+CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
+CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
+INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+
+
+def _correlation_problem(marker, session_id):
+    """Which correlation condition this session's claim fails, or None when it correlates.
+
+    The same rule as _correlated, said with the reason attached. The pre-bind window only needs to
+    know whether this session is the intent's; a BOUND session whose claim does not correlate is a
+    contradiction somebody has to repair, so that answer has to say which artifact is wrong.
+
+    The claim is selected the way _correlated selects it, by the owner the path authorised and the
+    first match, so the two can never disagree about which claim is being judged.
+    """
+    claim = next((c for c in (marker.get("claims") or [])
+                  if _same_identity(_claimant(c), session_id)), None)
+    if not claim:
+        return CLAIM_ABSENT
+    presented = claim.get("dispatchRequestId")
+    if not _named(presented):
+        return CLAIM_DISPATCH_UNNAMED
+    declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
+    if not _named(declared):
+        # Answered apart from a claim naming the wrong dispatch, which would send an operator to
+        # repair a claim that is fine. The shape check requires this field to be a string and does
+        # not require it to be there, so the condition arrives with every fact well-shaped.
+        return INTENT_DISPATCH_UNNAMED
+    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+    return None if _same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
 
 
 def _named(value):
@@ -602,11 +638,25 @@ def observe_state(observation):
     # the creation receipt, so it can bind before the child publishes its claim, and that race must
     # not prompt a session which never claimed this assignment. Checked after the declared outcomes
     # so a turn that did declare keeps the more useful record.
-    if not any(_same_identity(_claimant(claim), session)
-               for claim in marker.get("claims") or []):
+    #
+    # Asked through the correlation rule rather than through the claimant alone, which is the check
+    # the pre-bind path above has always made and this one did not. An assignment id IS the hash of
+    # a dispatch request id, so a claim naming a different dispatch is evidence about a different
+    # assignment, and counting it satisfied the hold precondition with a fact nobody correlated.
+    problem = _correlation_problem(marker, session)
+    if problem == CLAIM_ABSENT:
         return "marker_unclaimed", (
             "The coordinator bound this session, but it has not claimed this assignment. Released "
             "and recorded; a hold needs the child's own claim, not only the coordinator's bind.")
+    if problem:
+        # Apart from marker_unclaimed because the two clear differently. An unclaimed marker is the
+        # bind-before-claim race and ends when the child publishes; this never ends by itself,
+        # because claims/<session>/claim.json is create-once and a differing dispatch request id is
+        # a conflict, so the correct claim can no longer be published at that path.
+        return "claim_uncorrelated", (
+            "This session is bound but its claim does not correlate with this assignment ("
+            + problem + "). Released and recorded; the claim is create-once, so this does not "
+            "clear itself - adjudicate the claim, or repair the intent it was compared against.")
     if not marker.get("relationship"):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
@@ -654,6 +704,12 @@ def decide(observation):
             # The pre-bind window is not blind: keep what the turn would have been judged as,
             # so the coordinator can fold it once the bind lands.
             result["record"]["pendingObservation"] = classify_declaration(observation)
+        if state == "claim_uncorrelated" and marker:
+            # Which artifact is wrong, kept separate from the decision. Four conditions release
+            # the same way and are repaired in different places, so the class survives in the
+            # record rather than only in the reason text.
+            result["record"]["claimEvidence"] = _correlation_problem(
+                marker, stop.get("session_id"))
         if marker:
             result["record"]["assignmentState"] = derive_assignment_state(
                 marker, observation.get("now"))

@@ -366,6 +366,48 @@ def correlated(marker, session_id) -> bool:
     return same_identity(digest, (marker.get("intent") or {}).get("dispatchRequestIdHash"))
 
 
+# Why a session's claim does not correlate with the assignment it sits in. Four conditions, because
+# they are four different repairs: nobody claimed yet, the claim withholds its preimage, the claim
+# belongs to another assignment, or the intent published no hash to compare against. They are
+# labels rather than states for the reason receipt evidence is: the decision is the same one.
+CLAIM_ABSENT = "claim_absent"
+CLAIM_DISPATCH_UNNAMED = "claim_dispatch_unnamed"
+CLAIM_DISPATCH_MISMATCH = "claim_dispatch_mismatch"
+INTENT_DISPATCH_UNNAMED = "intent_dispatch_unnamed"
+
+
+def correlation_problem(marker, session_id) -> str | None:
+    """Which correlation condition this session's claim fails, or None when it correlates.
+
+    The same rule correlated() applies, said with the reason attached, because the two places that
+    read it need different things. The pre-bind window only has to know whether the session is the
+    intent's, and a bound session whose claim does not correlate is a contradiction somebody has to
+    repair, so the answer has to say which artifact is wrong.
+
+    The claim is selected the way correlated() selects it - by the owner the path authorised, and
+    the first match, since claims/<session>/claim.json admits one per session - so the two can
+    never disagree about WHICH claim is being judged.
+
+    An intent carrying no hash is answered apart from a claim naming the wrong dispatch. Both fail
+    correlation, and reporting the second for the first would send an operator to repair a claim
+    that is fine. malformed() type-checks that field and does not require it, so the condition is
+    reachable with every fact well-shaped.
+    """
+    claim = next(
+        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
+    )
+    if not claim:
+        return CLAIM_ABSENT
+    presented = claim.get("dispatchRequestId")
+    if not named(presented):
+        return CLAIM_DISPATCH_UNNAMED
+    declared = (marker.get("intent") or {}).get("dispatchRequestIdHash")
+    if not named(declared):
+        return INTENT_DISPATCH_UNNAMED
+    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+    return None if same_identity(digest, declared) else CLAIM_DISPATCH_MISMATCH
+
+
 # ---------------------------------------------------------------- selection
 
 

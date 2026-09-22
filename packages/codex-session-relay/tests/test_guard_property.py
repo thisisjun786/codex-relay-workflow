@@ -52,7 +52,8 @@ STAGE_INJECTIONS = {
 
 CLASSIFICATIONS = {
     "unmanaged", "dispatch_uncorrelated", "correlated_unbound", "bound_identity_unnamed",
-    "marker_claimed_by_other_session", "marker_unclaimed", "marker_malformed", "state_unreadable",
+    "marker_claimed_by_other_session", "marker_unclaimed", "claim_uncorrelated",
+    "marker_malformed", "state_unreadable",
     "managed_unregistered", "receipt_missing", "undeclared_turn_end", "declared_ready_receipted",
     "declared_in_progress", "declared_blocked_needs_input", "declared_interrupted",
     "declared_failed", guard.FAULTED,

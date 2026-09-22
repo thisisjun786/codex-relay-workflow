@@ -581,12 +581,29 @@ def observe_state(observation):
     # Nothing is held against a session that has not asserted it is the child. The coordinator holds
     # the creation receipt, so it can bind before the child publishes its claim, and that race must
     # not prompt a session which never claimed this assignment.
-    if not any(
-        same_identity(intents.claimant(claim), session) for claim in marker.get("claims") or []
-    ):
+    #
+    # Asked through the correlation rule rather than through the claimant alone, which is the check
+    # the pre-bind path above has always made and this one did not. A claim is what authorises a
+    # hold, and an assignment id IS the hash of a dispatch request id, so a claim naming a different
+    # dispatch is evidence about a different assignment; counting it satisfied the hold precondition
+    # with a fact nobody correlated. Both windows now read the same predicate, so they cannot drift.
+    problem = intents.correlation_problem(marker, session)
+    if problem == intents.CLAIM_ABSENT:
         return "marker_unclaimed", (
             "The coordinator bound this session, but it has not claimed this assignment. Released "
             "and recorded; a hold needs the child's own claim, not only the coordinator's bind."
+        )
+    if problem:
+        # Answered apart from marker_unclaimed because the two clear differently. An unclaimed
+        # marker is the ordinary bind-before-claim race and ends the moment the child publishes;
+        # this one never ends by itself, because claims/<session>/claim.json is create-once and
+        # _publish_or_compare answers CONFLICT on a different dispatch, so the correct claim can
+        # no longer be published at that path. Reporting it as unclaimed would tell the coordinator
+        # to wait for a fact that cannot arrive. Which artifact is wrong travels in the record.
+        return "claim_uncorrelated", (
+            "This session is bound but its claim does not correlate with this assignment ("
+            + problem + "). Released and recorded; the claim is create-once, so this does not "
+            "clear itself - adjudicate the claim, or repair the intent it was compared against."
         )
     if not named((marker.get("relationship") or {}).get("relationshipId")):
         # The identity, not the object. A relationship fact that exists but names nothing has
@@ -665,6 +682,13 @@ def decide(observation, *, counters=None, mode=OBSERVE):
             # The pre-bind window is not blind: keep what the turn would have been judged as, so the
             # coordinator can fold it once the bind lands.
             record["pendingObservation"] = classify_declaration(observation)
+        if state == "claim_uncorrelated" and marker:
+            # Which artifact is wrong, kept separate from the decision, exactly as receipt evidence
+            # is below. A withheld preimage, a preimage belonging to another assignment and an
+            # intent that published no hash all release the same way and are all repaired in
+            # different places, so the class has to survive in the record rather than in prose.
+            record["claimEvidence"] = intents.correlation_problem(marker, stop.get("session_id"))
+            result["claimEvidence"] = record["claimEvidence"]
         if marker:
             record["assignmentState"] = intents.derive_assignment_state(
                 marker, observation.get("now")

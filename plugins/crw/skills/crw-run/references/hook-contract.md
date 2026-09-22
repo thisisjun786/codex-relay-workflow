@@ -42,7 +42,7 @@ because that is the form the rule gets violated in: `None == None` is not eviden
 | -- | -- |
 | A turn disposition against the current turn | The disposition is not this turn's, so this turn declared nothing and reads `undeclared_turn_end` |
 | A readiness receipt against the current turn and the selected assignment | The receipt is unmatched, so readiness stands unreceipted |
-| A claim against the session being judged | The claim names no verified owner, so it selects no assignment |
+| A claim against the session being judged | The claim names no verified owner, so it selects no assignment. A claim whose `dispatchRequestId` names nothing correlates with no assignment either, so after a bind it reads `claim_uncorrelated` and the turn is released |
 | A bind record against the session being judged | Nothing can be shown to be the bound child, so the state is `bound_identity_unnamed` and the turn is released, never held |
 
 The disposition comparison is the load-bearing one because it is upstream. A disposition admitted on
@@ -159,6 +159,18 @@ coordinator can publish the bind and the relationship before the child publishes
 session's own claim is there, its turns read `marker_unclaimed` and are released and recorded. The bind
 says who the coordinator believes the child is; the claim is the session saying so itself, and a turn
 is only ever held against a session that has said it.
+
+**The claim has to be this assignment's claim, on both sides of the bind.** An assignment id is the
+hash of a dispatch request id, so a claim naming a different dispatch is evidence about a different
+assignment and correlates with nothing here. Before the bind that reads `dispatch_uncorrelated`;
+after it, `claim_uncorrelated`. Both are released and recorded, and the second is answered apart
+from `marker_unclaimed` because the two clear differently: an unclaimed marker is the
+bind-before-claim race and ends the moment the child publishes, while `claims/<session>/claim.json`
+is create-once, so a claim already standing there with the wrong dispatch request id can never be
+replaced by the correct one. The record carries which condition applied - `claim_dispatch_unnamed`,
+`claim_dispatch_mismatch` or `intent_dispatch_unnamed` - because those are repaired in different
+places. A declared releasing outcome is still read first, so this check only ever turns a would-be
+hold into a release.
 
 The pre-bind window is not blind. A correlated session whose bind has not landed reads as
 `correlated_unbound`: released, never held, but its hook still records the turn's observation. When
@@ -322,6 +334,7 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | T25 | Array/object identities in either resolution form or an accepted attempt | `marker_malformed` before identity set construction; no traceback can suppress the observation |
 | T26 | Present null chosen identity or adjudication list in either resolution form | `marker_malformed`, released and recorded; absent legacy fields still confer no identity or coverage |
 | T27 | A releasing disposition with corrupt persisted counters | Preserve the declared disposition; counters are validated only when an omission hold is weighed |
+| T28 | Bound and registered, with a claim naming a dispatch request id that hashes elsewhere | `claim_uncorrelated`: released and recorded, with the failing condition in `claimEvidence`. The post-bind path asked only whether the claimant was this session, so an uncorrelated claim satisfied the hold precondition and the turn was held, indistinguishable from a correlated one. Kept apart from `marker_unclaimed` because a create-once claim carrying the wrong dispatch never clears itself, and apart from a declared outcome, which is still read first |
 
 ### Marker root and permissions, as an integration obligation
 
