@@ -710,6 +710,14 @@ def cmd_linkage_completion(services, args) -> dict:
 
 def cmd_linkage_directive(services, args) -> dict:
     reference = args.reference
+    if args.correlation and not args.purpose:
+        # The correlation is a FIELD of the envelope pointer, so without a purpose there is no
+        # pointer to put it in and it was silently dropped: the command reported success and
+        # the reply link the caller asked for was simply absent from the stored row.
+        raise SystemExit2(
+            "--correlation is part of an envelope pointer, so it requires --purpose",
+            EXIT_USAGE,
+        )
     if args.purpose:
         if reference:
             raise SystemExit2(

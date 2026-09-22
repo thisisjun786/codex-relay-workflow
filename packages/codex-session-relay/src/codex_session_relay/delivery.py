@@ -10,7 +10,7 @@ side effect.
 
 import json
 
-from .errors import DeliveryRefused, RefusalReason
+from .errors import DeliveryRefused, RefusalReason, RelayError
 from .currency import (
     STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision,
 )
@@ -375,27 +375,30 @@ class DeliveryService:
         lives on the scope row, and report.py holds neither. Read here, once, from the same
         store the delivery is already using.
 
-        Every failure degrades to an empty context rather than to an exception. This runs
-        inside the claim transaction, and a message that cannot name its sender is still a
-        message worth sending; the envelope prints unknown for what was not read, which is the
-        honest answer and is exactly what an unreadable row means.
+        An ABSENCE degrades to an empty context rather than to an exception. This runs inside
+        the claim transaction, and a message that cannot name its sender is still a message
+        worth sending; the envelope prints unknown for what was not read, which is the honest
+        answer for a relationship this store does not hold.
+
+        A FAULT is not an absence and is not caught. Converting every exception here meant a
+        programming error or a broken database produced a message that looked fine and carried
+        unknown where a real value belonged, with nothing anywhere saying why - the failure
+        this package refuses everywhere else. So only the refusal taxonomy is caught, and a
+        scope lookup that cannot answer a primary-key read inside an open transaction is left
+        to travel: the absent-row case is the None below, not an exception.
         """
         try:
             relationship = self.registry.get(row["relationship_id"])
-        except Exception:  # noqa: BLE001 - an unreadable relationship is an absence, not a fault
+        except RelayError:
             return {}
         sender = (relationship["parent"] if row["kind"] == REVISION
                   else relationship["child"]).get("taskId")
         issue = relationship.get("issueKey")
-        project = None
-        try:
-            found = self.store.one(
-                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
-                (row["relationship_id"],),
-            )
-            project = found["project_key"] if found is not None else None
-        except Exception:  # noqa: BLE001 - same reason
-            project = None
+        found = self.store.one(
+            "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+            (row["relationship_id"],),
+        )
+        project = found["project_key"] if found is not None else None
         if project and issue:
             scope = f"project {project}, issue {issue}"
         elif issue:
