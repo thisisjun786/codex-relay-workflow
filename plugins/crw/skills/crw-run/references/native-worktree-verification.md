@@ -370,6 +370,19 @@ answers: a thing nobody attempted, a thing attempted and inconclusive, and a thi
 cannot be reached from here at all. Only the third is a property of the environment, and
 it is the only one where stopping is the correct outcome.
 
+Cite bytes, not files. A verdict that points at an evidence file has only shown the file
+exists; it has not shown the file says anything. Name a literal string from that file
+alongside the claim, and the citation becomes checkable by a reader who was not there and
+by a script that has no judgment at all. This costs one field per claim and it catches the
+failure that matters most in a long verification: a conclusion that drifted away from the
+observation it was built on while the citation stayed put.
+
+Doing this to an already-written evidence set is worth the hour. Applied to 34 cells here,
+33 anchored on the first pass and one did not, which was the interesting one: the claim
+that the parent manufactured its own receipt turned out to rest on a single field in the
+receipt file rather than on any phrase in the claim. Anchoring forced that to be said
+explicitly instead of left as a resemblance between two paragraphs.
+
 So a blocked cell owes three things: which cell is blocked, the capability that is
 missing, and the observation proving it is missing. "The screen is unverified" is not a
 result. "The screen needs a process inside the client machine's GUI login session;
