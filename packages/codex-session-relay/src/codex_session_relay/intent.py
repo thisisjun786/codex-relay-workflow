@@ -373,10 +373,13 @@ def correlation_problem(marker, session_id, assignment=None) -> str | None:
     only the first two lets a forged intent stand in for the assignment: publish an intent naming a
     foreign dispatch inside this directory, publish a claim agreeing with it, and the two agree
     with each other while agreeing with nothing the coordinator dispatched. The assignment is the
-    directory name and the directory name is the hash, so it is the one link no writer inside the
-    marker can choose. Passed in rather than derived here, because only the reader that walked to
-    the directory knows which one it read; omitted, the link is not asked rather than assumed to
-    hold, and _evaluate always supplies it.
+    directory name and the directory name is the hash, so no writer of the facts INSIDE the
+    assignment can choose it. That is the whole of what this link establishes, and it is worth
+    stating narrowly: whether the enumerated directory is itself the one the coordinator created
+    is a property of the enumeration, not of this comparison, and a symlinked entry under another
+    workspace is not rejected today. Passed in rather than derived here, because only the reader
+    that walked to the directory knows which one it read; omitted, the link is not asked rather
+    than assumed to hold, and _evaluate always supplies it.
 
     Each condition is answered apart from the others. Reporting a mismatching claim for an intent
     that published no hash, or for one published under the wrong assignment, would send an operator
@@ -420,6 +423,39 @@ def correlated(marker, session_id, assignment=None) -> bool:
 # ---------------------------------------------------------------- selection
 
 
+def selecting_claim(marker, session_id, assignment):
+    """This session's claim that independently names this assignment, or None.
+
+    Which assignment a turn is ABOUT is a different question from whether that assignment's facts
+    correlate, and it has to be answerable without reading the intent. An assignment id is the hash
+    of a dispatch request id, so the claim carries the whole answer on its own: the path authorises
+    the owner, the body confirms the writer meant it, and hashing the preimage says which
+    assignment the claim belongs to. Nothing here consults intent.json.
+
+    That independence is the point. Selecting on the intent's content skipped a candidate whose
+    intent could not be read - and an unreadable store is exactly the thing that must never be
+    reported as "there is nothing there". A session's own claim would sit in the newer assignment,
+    its store unreadable, and the reader would drop it, select an older assignment and hold a turn
+    against stale state while nobody was told the current one could not be read. A claim that
+    hashes to this directory identifies the candidate whether or not its intent is readable, so
+    that candidate is selected and its problems reach classification.
+
+    A claim that hashes elsewhere still selects nothing here, which is what stops an uncorrelated
+    claim shadowing an older assignment that owes a hold. Records that are not records are skipped
+    rather than read through, so a malformed claim leaves the candidate to the fall-through and it
+    is reported as malformed instead of ending this walk in a traceback.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not same_identity(claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if named(presented) and same_identity(assignment_id(presented), assignment):
+            return claim
+    return None
+
+
 def select_assignment(root, workspace, session_id):
     """Which assignment under this workspace this session's turn is about.
 
@@ -427,18 +463,23 @@ def select_assignment(root, workspace, session_id):
     assignment it claimed, so declaring a later assignment for the same path can neither release a
     still-running earlier child nor make it read as somebody else's.
 
-    The claim consulted is a CORRELATED claim, and it has to be. "A claim naming a different
-    dispatch belongs to a different assignment" is the same sentence the decision path enforces, so
-    a claim that fails correlation must not be able to select the assignment it sits in either.
-    Read on the claimant alone, a claim written into a newer assignment shadowed an older one this
-    session was legitimately bound to: selection preferred the newer directory, the decision path
-    refused its uncorrelated claim and released, and the older assignment's undeclared turn - which
-    owed a hold - was never looked at. One uncorrelated file could therefore switch holding off for
-    a session that was correlated, bound and registered somewhere else. The refusal has to be
-    scoped to the assignment that produced it, which means not selecting that assignment at all.
+    The claim consulted must name THIS assignment, and selecting_claim is how. "A claim naming a
+    different dispatch belongs to a different assignment" is the same sentence the decision path
+    enforces, so a claim that names another one must not be able to select the assignment it sits
+    in either. Read on the claimant alone, a claim written into a newer assignment shadowed an
+    older one this session was legitimately bound to: selection preferred the newer directory, the
+    decision path refused its uncorrelated claim and released, and the older assignment's
+    undeclared turn - which owed a hold - was never looked at. One file could therefore switch
+    holding off for a session correlated, bound and registered somewhere else.
 
-    When no candidate carries a correlated claim the fall-through is unchanged, so a session whose
-    own claim has not landed yet still reads the newest published intent rather than nothing.
+    The test is deliberately the claim against the DIRECTORY and not against the intent. An
+    unreadable or malformed intent must not remove a candidate from consideration, because the
+    reader would then skip it, select an older assignment and hold against stale state while the
+    store it could not read went unreported. Selection says which assignment; the decision path
+    says whether that assignment's facts hold together.
+
+    When no candidate carries such a claim the fall-through is unchanged, so a session whose own
+    claim has not landed yet still reads the newest published intent rather than nothing.
 
     An assignment with no published intent at all is not selectable. It is a directory someone is
     still building, and skipping it leaves the reader on a valid earlier state rather than on
@@ -470,17 +511,28 @@ def select_assignment(root, workspace, session_id):
     claimed = [
         candidate
         for candidate in candidates
-        # Shape before meaning, and in that order for the usual reason: correlation reads the
-        # intent, so asking it of a candidate whose intent is not a record ends this walk in a
-        # traceback, and a traceback records nothing at all. A malformed candidate therefore stays
-        # out of the preference and stays IN the fall-through pool below, which is what lets it be
-        # selected and reported as malformed instead of disappearing.
-        #
-        # The candidate's own directory name is the assignment its claim has to correlate to, which
-        # is why this is asked per candidate rather than once for the workspace.
-        if not malformed(candidate[1]) and correlated(candidate[1], session_id, candidate[0].name)
+        # The candidate's own directory name is what its claim has to hash to, which is why this is
+        # asked per candidate rather than once for the workspace.
+        if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
     ]
-    directory, facts, problems = max(claimed or candidates, key=_recency)
+    if claimed:
+        # Among the assignments this session's own claim selects, one whose facts could not be read
+        # outranks one that could. _recency sorts an unreadable or unparseable declaration BELOW
+        # every real one, so without this the reader picks the candidate it can read, holds a turn
+        # against that assignment, and never says that the one this session actually claimed could
+        # not be read - which is the "I could not look" reported as "there is nothing there" that
+        # this module refuses everywhere else.
+        #
+        # Scoped to the claimed set deliberately. Applied across the whole workspace it would be
+        # the failure the comment below describes: one stale corrupt assignment nobody is using
+        # would outrank the current one and switch detection off. A candidate this session's claim
+        # names is not retained state nobody is using. And if the CLAIMS themselves cannot be read
+        # there is no evidence this session claimed it, so it stays an unused corrupt directory and
+        # the fall-through keeps the reader on the assignment it can still judge.
+        unread = [candidate for candidate in claimed if candidate[2] or malformed(candidate[1])]
+        directory, facts, problems = max(unread or claimed, key=_recency)
+    else:
+        directory, facts, problems = max(candidates, key=_recency)
     return directory, facts, problems
 
 

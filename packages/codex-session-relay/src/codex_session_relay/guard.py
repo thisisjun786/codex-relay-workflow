@@ -603,8 +603,9 @@ def observe_state(observation):
         return "claim_uncorrelated", (
             "This session is bound but its claim does not correlate with this assignment ("
             + problem + "). Released and recorded; every fact this reads is create-once, so it "
-            "does not clear itself - settle the assignment outside the marker by adjudicating it "
-            "or superseding the relationship."
+            "does not clear itself and no resolution consumed here will: correlation reads the "
+            "claim and the intent, never the adjudications. Recovery is a new assignment, "
+            "declared for a fresh dispatch request id."
         )
     if not named((marker.get("relationship") or {}).get("relationshipId")):
         # The identity, not the object. A relationship fact that exists but names nothing has

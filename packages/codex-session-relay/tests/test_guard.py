@@ -399,14 +399,16 @@ class ClaimCorrelationAfterTheBind(GuardTestCase):
         self.assertEqual({absent["decision"], wrong["decision"]}, {guard.RELEASE})
 
     def test_the_two_windows_agree_about_whether_the_claim_correlates(self):
-        """The property this issue is about, asserted as an agreement rather than as one branch.
+        """Window drift, and only that. Not a semantic oracle for the rule itself.
 
         correlated() is correlation_problem read as a boolean, so one rule serves both windows and
-        neither can drift from the other by construction. This is the contract over that shared
-        rule: every shape either correlates in both windows or in neither, and the matrix is wide
-        enough that a reader loosened in one place fails here rather than in review. A blank
-        preimage is in it because that is the drift review actually found in the probe - a
-        truthiness test accepted what named() refused.
+        neither can drift from the other by construction; this is what fails if somebody gives
+        either window its own copy again. It cannot catch a change to the SHARED rule, because both
+        windows move together - review confirmed that by deleting the third link and watching all
+        eight shapes still pass. The conditions themselves are pinned by the cases above, one each.
+
+        A blank preimage is in the matrix because that is the drift review actually found in the
+        probe: a truthiness test accepted what named() refused.
         """
         shapes = {
             "good": (self.body(), True),
@@ -521,6 +523,69 @@ class AnUncorrelatedClaimCannotShadowAnotherAssignment(GuardTestCase):
         verdict = self.evaluate()
         self.assertEqual(verdict["assignmentId"], later)
         self.assertEqual(verdict["observation"], "managed_unregistered")
+
+    def claimed_later(self):
+        """A newer assignment carrying this session's VALID claim, published through the API.
+
+        The claim hashes to the assignment it sits in, so it is genuinely this session's - which is
+        what makes the intent's readability the only thing under test in the two cases below.
+        """
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        intent.publish_claim(
+            self.markers, workspace=self.workspace, assignment=later, session_id=CHILD,
+            dispatch_request_id=self.LATER_DISPATCH, first_turn_id=DISPATCH_TURN, at=NOW,
+        )
+        return later, marker.assignment_dir(self.markers, self.workspace, later)
+
+    def test_a_newer_claimed_assignment_whose_intent_cannot_be_read_takes_the_turn(self):
+        """An unreadable store is never reported as an absent one, and never skipped either.
+
+        Selecting on the intent's CONTENT dropped this candidate, and _recency sorts an unreadable
+        declaration below every real one, so the reader landed on the older assignment and held a
+        turn against it while nobody was told the assignment this session actually claimed could
+        not be read. The claim identifies the candidate without the intent; the unreadable facts
+        then outrank a readable sibling, and the turn releases saying so.
+        """
+        self.managed()
+        later, directory = self.claimed_later()
+        # A directory where a fact belongs: the read fails with an OSError rather than depending on
+        # this process's permissions, which root would ignore.
+        (directory / "intent.json").mkdir()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_newer_claimed_assignment_whose_intent_is_not_a_record_takes_the_turn(self):
+        """The same boundary one step along: readable, and not a fact.
+
+        Reported as malformed on the assignment that actually carries it, rather than leaving the
+        reader to hold the older assignment's turn with the corruption unmentioned.
+        """
+        self.managed()
+        later, directory = self.claimed_later()
+        marker.publish(directory / "intent.json", "bare")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], later)
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_corrupt_assignment_nobody_claimed_does_not_switch_detection_off(self):
+        """The protection the rule above had to keep.
+
+        Unreadable facts outrank a readable sibling only among the assignments this session's own
+        claim selects. Applied across the workspace, one stale corrupt directory nobody is using
+        would outrank the current assignment and release every omission it could otherwise detect.
+        """
+        self.managed()
+        later = marker.assignment_id(self.LATER_DISPATCH)
+        stale = marker.assignment_dir(self.markers, self.workspace, later)
+        (stale / "claims").mkdir(parents=True)
+        (stale / "intent.json").mkdir()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["assignmentId"], self.assignment)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
 
     def test_a_session_whose_own_claim_has_not_landed_still_reads_the_newest_intent(self):
         """The fall-through is unchanged: no correlated candidate means recency decides, so an

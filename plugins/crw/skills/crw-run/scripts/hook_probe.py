@@ -321,8 +321,9 @@ def _correlation_problem(marker, session_id, assignment=None):
     intent stores only the hash, because storing the id in the clear would make correlation empty:
     any session able to read the directory could then present it. But the hash and the preimage can
     be made to agree with each other by anything that can write the marker, so the assignment is
-    the third link and the only one no writer inside the marker chooses - it is the directory name,
-    and the directory name IS the hash.
+    the third link, and no writer of the facts inside the assignment chooses it: it is the
+    directory name, and the directory name IS the hash. Narrowly that and no more - whether the
+    enumerated directory is the one the coordinator created is a property of the enumeration.
 
     Every condition is answered apart from the others: reporting a mismatching claim for an intent
     that published no hash, or one published under another assignment, sends an operator to settle
@@ -359,6 +360,34 @@ def _correlated(marker, session_id, assignment=None):
     return True
 
 
+def _selecting_claim(marker, session_id, assignment):
+    """This session's claim that independently names this assignment, or None.
+
+    Which assignment a turn is about, answered without reading the intent. An assignment id is the
+    hash of a dispatch request id, so the claim carries the whole answer: the path authorises the
+    owner, the body confirms the writer meant it, and hashing the preimage says which assignment
+    the claim belongs to.
+
+    Independent of the intent on purpose. Selecting on the intent's content drops a candidate whose
+    intent cannot be read, and an unreadable store must never be reported as an absent one: the
+    reader would skip the current assignment, select an older one and hold against stale state.
+    A claim that hashes elsewhere still selects nothing, which is what stops an uncorrelated claim
+    shadowing an older assignment that owes a hold.
+    """
+    for claim in marker.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if not _same_identity(_claimant(claim), session_id):
+            continue
+        presented = claim.get("dispatchRequestId")
+        if not _named(presented):
+            continue
+        digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+        if _same_identity(digest, assignment):
+            return claim
+    return None
+
+
 def _selected_assignment(observation):
     """The assignment id the selected marker was read under, or None when none was supplied.
 
@@ -366,6 +395,9 @@ def _selected_assignment(observation):
     pre-resolved marker has no directory to read, so a fixture states the assignment or leaves the
     third correlation link unasked; the relay's own reader always supplies it, because it walked to
     the directory to get there.
+
+    A workspace entry written without an assignmentId therefore leaves that link unasked rather
+    than failing, and tests less than it looks like it does.
     """
     workspace = observation.get("workspace")
     if workspace is None:
@@ -582,11 +614,13 @@ def resolve_assignment(workspace, session_id):
     A session stays with the assignment it claimed. Taking the newest intent unconditionally would
     release a still-running earlier child the moment a later assignment is declared for the path.
 
-    The claim has to CORRELATE, not merely name this session. Read on the claimant alone, an
+    The claim has to name THIS assignment, not merely this session. Read on the claimant alone, an
     uncorrelated claim written into a newer assignment shadows an older one the session is
     legitimately bound to: selection prefers the newer directory, the decision path refuses the
     uncorrelated claim and releases, and the older assignment's undeclared turn never gets looked
-    at. One file would switch holding off for a session correlated and bound somewhere else.
+    at. One file would switch holding off for a session correlated and bound somewhere else. The
+    test is the claim against the directory and never against the intent, so a candidate whose
+    intent cannot be read is still selected and still reported rather than skipped.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -595,7 +629,8 @@ def resolve_assignment(workspace, session_id):
         # the reader on a valid earlier state, which is what the create-once layout already gives.
         if declared is not None:
             published.append((declared, str(assignment.get("assignmentId") or ""), assignment))
-    claimed = [row for row in published if _correlated(row[2], session_id, row[1])]
+    claimed = [row for row in published
+               if _selecting_claim(row[2], session_id, row[1]) is not None]
     pool = claimed or published
     if not pool:
         return None
@@ -685,8 +720,9 @@ def observe_state(observation):
         return "claim_uncorrelated", (
             "This session is bound but its claim does not correlate with this assignment ("
             + problem + "). Released and recorded; every fact this reads is create-once, so it "
-            "does not clear itself - settle the assignment outside the marker by adjudicating it "
-            "or superseding the relationship.")
+            "does not clear itself and no resolution consumed here will: correlation reads the "
+            "claim and the intent, never the adjudications. Recovery is a new assignment, "
+            "declared for a fresh dispatch request id.")
     if not marker.get("relationship"):
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "

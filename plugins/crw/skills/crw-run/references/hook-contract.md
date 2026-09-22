@@ -183,16 +183,25 @@ and still reads `marker_unclaimed`; a preimage that is not a string is `marker_m
 shape is answered before correlation. A declared releasing outcome is read first, so this check only
 ever turns a would-be hold into a release.
 
-**Selection reads the same rule.** A workspace outlives the assignment that used it, so several
-assignments can sit under one path and the reader consults this session's claim before recency to
-keep a running child with the assignment it claimed. That claim has to correlate too. Read on the
-claimant alone, one uncorrelated file written into a NEWER assignment selected that assignment, the
-decision path refused it, the turn released, and an older assignment the session was correlated,
-bound and registered under never had its omission looked for - so a check that only ever releases
-within one assignment removed a hold across two. Shape is still read before correlation, because
-correlation reads the intent: a candidate whose intent is not a record stays in the fall-through
-pool so it is selected and reported as malformed rather than ending the walk in a traceback. When
-nothing correlates, recency decides exactly as before.
+**Selection asks which assignment, not whether it holds together.** A workspace outlives the
+assignment that used it, so several assignments can sit under one path and the reader consults this
+session's claim before recency to keep a running child with the assignment it claimed. That claim
+has to name the assignment it sits in. Read on the claimant alone, one uncorrelated file written
+into a NEWER assignment selected that assignment, the decision path refused it, the turn released,
+and an older assignment the session was correlated, bound and registered under never had its
+omission looked for - so a check that only releases within one assignment removed a hold across two.
+
+The selection test is the claim against the DIRECTORY and never against the intent: the path
+authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
+assignment the claim belongs to. Selecting on the intent's content instead drops a candidate whose
+intent cannot be read, and since an unreadable declaration sorts below every real one, the reader
+lands on an older sibling and holds a turn against it while nobody is told the assignment this
+session actually claimed could not be read. Among the assignments a session's own claim selects,
+unreadable or malformed facts therefore outrank readable ones, and the turn reports
+`state_unreadable` or `marker_malformed` on the assignment that carries them. That preference is
+scoped to the claimed set: applied across the workspace, one stale corrupt directory nobody is
+using would outrank the current assignment and switch detection off. When no claim selects
+anything, recency decides exactly as before.
 
 The pre-bind window is not blind. A correlated session whose bind has not landed reads as
 `correlated_unbound`: released, never held, but its hook still records the turn's observation. When
@@ -749,4 +758,4 @@ relay handoff. No host is assumed to support automatic wake.
 
 This contract does not modify CXC, does not change any other skill's reference, and does not
 authorise a hook to write Linear.
-| T29 | Two assignments under one workspace: the older correlated, bound, registered and owing a hold, the newer carrying a claim by the same session that names a foreign dispatch | The older one is selected and held. Selection consults this session's claim before recency, and consulting the claimant alone let one uncorrelated file select the newer assignment: the decision path refused it, released, and the older assignment's omission was never looked for, so one file switched holding off for a session correlated and bound elsewhere. Selection reads the same correlation rule the decision does, so the refusal stays scoped to the assignment that produced it. The control is the same shape with a correlating newer claim, where recency still moves the child on |
+| T29 | Two assignments under one workspace: the older correlated, bound, registered and owing a hold, the newer carrying a claim by the same session that names a foreign dispatch | The older one is selected and held. Selection consults this session's claim before recency, and consulting the claimant alone let one uncorrelated file select the newer assignment: the decision path refused it, released, and the older assignment's omission was never looked for, so one file switched holding off for a session correlated and bound elsewhere. Selection tests the claim against the directory, so the refusal stays scoped to the assignment that produced it. Two controls: the same shape with a correlating newer claim, where recency still moves the child on; and a newer claim that DOES name its assignment while that assignment's intent cannot be read, which is selected and reported rather than skipped, since selecting on the intent's content would hold the older turn with the unreadable store unmentioned |
