@@ -1404,6 +1404,16 @@ malformed. The adapter's budget is checked against the registered timeout at the
 because that is the one value whose meaning needs both files: a budget the host's timeout does
 not exceed lets the host kill the adapter before it records why it did not answer.
 
+`--socket` is recorded into those settings as `socketPath` when the install names one, and both
+adapter copies pass it back as the global `--socket` option. It is what lets the guard tell that
+the state directory it resolved holds another App Server's store: a store records the socket it
+serves, and a Stop hook that inherits `CODEX_SESSION_RELAY_STATE` from a second installation would
+otherwise read that store, find no relationship for its assignment, and hold a child that has
+finished. The field is optional, so a document written before it existed stays byte-identical and
+an ordinary reinstall is still unchanged rather than refused; a host with no socket configured
+compares no provenance, which is what every host did before. Configure it wherever more than one
+installation shares a machine.
+
 
 ### The fallback launcher, and why this command places it
 

@@ -1729,5 +1729,129 @@ class AReceiptThatNamesNoRevisionVerifiesNothing(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.BLOCK)
 
 
+class TheLastStoreSourceIsAskedForOnlyWhenNothingElseAnswered(GuardTestCase):
+    """default_db_path may be a resolver, and when it is, WHEN it runs is the whole point.
+
+    The caller's own resolution is a guess about somebody else's choice, so the command line has to
+    be able to refuse it. It cannot refuse before this Stop is read - the workspace the marker
+    belongs to arrives inside the payload - so it hands the guard a resolver instead of a path. A
+    resolver consulted eagerly would refuse Stops that never needed a store at all, which is the
+    regression these cases stand against.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.asked = 0
+
+    def resolver(self, answer=None):
+        """Counts, and either answers or refuses the way the command line's does."""
+
+        def resolve():
+            self.asked += 1
+            if answer is None:
+                raise guard.StoreNotSelected({"error": "refused", "reason": "nothing_selected"})
+            return answer
+
+        return resolve
+
+    def unrecorded(self):
+        """Declared, claimed, bound and registered, with no receipt store in the intent."""
+        relationship = self.register()
+        self.declare(db_path=None)
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        return relationship
+
+    def decide(self, **kw):
+        return guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.OBSERVE, **kw
+        )
+
+    def test_a_turn_released_on_its_own_declaration_never_asks(self):
+        self.unrecorded()
+        self.dispose("interrupted")
+        verdict = self.decide(default_db_path=self.resolver())
+        self.assertEqual(verdict["observation"], "declared_interrupted")
+        self.assertEqual(self.asked, 0)
+
+    def test_an_explicit_store_outranks_it_and_it_is_never_asked(self):
+        self.unrecorded()
+        self.dispose("ready_for_review")
+        verdict = self.decide(db_path=str(self.store.path), default_db_path=self.resolver())
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(self.asked, 0)
+
+    def test_the_recorded_store_outranks_it_and_it_is_never_asked(self):
+        relationship = self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.decide(default_db_path=self.resolver())
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(self.asked, 0)
+
+    def test_it_is_asked_once_when_it_is_all_that_is_left_and_its_answer_is_used(self):
+        self.unrecorded()
+        self.dispose("ready_for_review")
+        verdict = self.decide(default_db_path=self.resolver(str(self.store.path)))
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(self.asked, 1)
+
+    def test_a_relationship_that_names_nobody_is_answered_without_asking(self):
+        """A readiness can declare itself with nothing to look a receipt up BY.
+
+        A relationship fact that exists but names no relationshipId has registered nothing, and
+        lookup_receipt's identity gate answers that without a store. Resolving the last source
+        before reaching that gate refused this marker over a database nobody was going to open,
+        which turned a repairable registration into a store-selection question. Reported by review
+        on PR #129 at the shape rather than at the case, which is why it is pinned here.
+
+        register_relationship refuses this shape at the writer, so it is published directly: the
+        file is what gets judged, and the marker subtree is writable by whoever publishes into it.
+        """
+        self.register()
+        self.declare(db_path=None)
+        self.claim()
+        self.bind()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "relationship.json",
+            {"relationshipId": "", "dispatchRequestId": DISPATCH, "at": NOW},
+        )
+        self.dispose("ready_for_review")
+        verdict = self.decide(default_db_path=self.resolver())
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(self.asked, 0)
+
+    def test_its_refusal_reaches_the_caller_instead_of_becoming_a_guard_fault(self):
+        """The envelope turns everything into guard_faulted, and this must not be everything.
+
+        guard_faulted says the defect is in this code. A store nobody selected is a question for
+        whoever runs the command, and folding the two would send the repair to the wrong place -
+        and would publish an observation claiming the guard had decided something.
+        """
+        self.unrecorded()
+        self.dispose("ready_for_review")
+        with self.assertRaises(guard.StoreNotSelected) as raised:
+            self.decide(default_db_path=self.resolver())
+        self.assertEqual(self.asked, 1)
+        self.assertEqual(raised.exception.detail["reason"], "nothing_selected")
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        self.assertFalse(
+            (directory / "hook").exists(),
+            "a Stop nothing decided published an observation anyway",
+        )
+
+    def test_a_plain_path_still_works_because_every_existing_caller_passes_one(self):
+        self.unrecorded()
+        self.dispose("ready_for_review")
+        verdict = self.decide(default_db_path=str(self.store.path))
+        self.assertEqual(verdict["observation"], "receipt_missing")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2816,6 +2816,44 @@ def cmd_intent_show(services, args) -> dict:
     return payload
 
 
+def _guard_fallback(services, args):
+    """The store this run resolved for itself, or the refusal that stands in its place.
+
+    Returned as a resolver rather than a path because the guard asks for it only when the two
+    sources that outrank it said nothing: the caller's --db-path, then the dbPath the coordinator
+    recorded in the intent. Those two are selections somebody made - one explicit, one durable -
+    and neither depends on discovery, so an ambiguity in discovery is genuinely unrelated to them
+    and the hook goes on classifying and recording. What is left is not a selection at all.
+
+    Two answers this refuses, and they are not worth the same. A store that records a different
+    App Server socket EXISTS and opens: the guard reads an unrelated installation's rows, finds no
+    relationship, and receipt_missing holds a child that has finished. An ambiguous or
+    unidentified selection is returned only when no canonical database is there yet, so today that
+    fallback names a file nothing can open and the guard already answers state_unreadable and
+    releases; refusing instead trades that recorded release for the candidates and the commands
+    that tell them apart. Both are refused, because a selection nobody made is not one this
+    decision may rest on, and an operator who has to settle it should be told which stores.
+
+    The Stop is then neither classified nor recorded, which is the cost and is said in the payload.
+    Nothing is held: the adapter reads an exit of 2 carrying an error record as the relay refusing
+    a request it understood, prints nothing, and lets the turn end.
+    """
+    del args  # the selection is the subject here; the arguments only chose it
+
+    def resolve():
+        refusal = _selection_refusal(services)
+        if refusal is None:
+            return str(services.selection.db_path)
+        refusal["stopNotJudged"] = (
+            "this Stop was neither classified nor recorded: no --db-path named a receipt store"
+            " and the coordinator recorded none in the intent, so the only candidate left was"
+            " this selection"
+        )
+        raise guard.StoreNotSelected(refusal)
+
+    return resolve
+
+
 def cmd_guard_evaluate(services, args) -> dict:
     """Decide one Stop and record the observation.
 
@@ -2850,18 +2888,24 @@ def cmd_guard_evaluate(services, args) -> dict:
             "cannot be released, counted against the bounds, or audited",
             EXIT_USAGE,
         )
-    return guard.evaluate(
-        _marker_root(args),
-        stop_input,
-        now=args.now or services.clock.iso(),
-        mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
-        # NOT "or the default": passing the resolved default here would make it always present and
-        # the intent's recorded dbPath unreachable, so a hook invoked without the coordinator's
-        # --state would silently read its own store. evaluate() owns the precedence.
-        db_path=args.db_path,
-        default_db_path=str(services.selection.db_path),
-        record=not args.no_record,
-    )
+    try:
+        return guard.evaluate(
+            _marker_root(args),
+            stop_input,
+            now=args.now or services.clock.iso(),
+            mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
+            # NOT "or the default": passing the resolved default here would make it always present
+            # and the intent's recorded dbPath unreachable, so a hook invoked without the
+            # coordinator's --state would silently read its own store. evaluate() owns the
+            # precedence, and the third source is a resolver it calls only if it gets that far.
+            db_path=args.db_path,
+            default_db_path=_guard_fallback(services, args),
+            record=not args.no_record,
+        )
+    except guard.StoreNotSelected as error:
+        # The store-selection refusal every other command answers before its handler runs, answered
+        # here instead because this is where the question could finally be settled.
+        raise PayloadExit(error.detail, EXIT_REFUSED) from error
 
 
 
@@ -4082,6 +4126,15 @@ def _reads_no_selected_store(args) -> bool:
     intent-declare is the one exception, because it RECORDS services.selection.db_path into the
     intent for the hook to use later. Recording a path chosen by a guess is exactly what the
     refusal prevents, so it stays guarded unless --no-db-path says not to record one.
+
+    guard-evaluate answers True here and is asked again later, which is not the same as never being
+    asked. It reads receipts from the first of three sources that answers, and only the third is
+    discovery's: with no --db-path and no dbPath in the intent it falls back to the selection, so
+    the blanket exemption used to suppress a refusal about a store the guard then opened. The
+    question cannot be settled on this line, because whether the coordinator recorded a path is a
+    fact in a marker this command has not read yet: the workspace it belongs to arrives inside the
+    Stop payload, on stdin. So cmd_guard_evaluate carries the question to the moment that third
+    source would be used, and refuses there. See _guard_fallback.
     """
     handler = getattr(args, "handler", None)
     if handler is cmd_intent_declare:
@@ -4098,8 +4151,14 @@ def _reads_no_selected_store(args) -> bool:
     return handler in MARKER_COMMANDS
 
 
-def _refuse_ambiguous_state(services, args) -> None:
-    """Two stores already record this socket, so opening one of them would be a guess.
+def _selection_refusal(services):
+    """What is wrong with the store this run resolved for itself, as a payload, or None.
+
+    Separated from the refusal so one question can be asked at two moments. Every other command
+    asks it before its handler runs, where the answer is a refusal. guard-evaluate cannot: whether
+    the coordinator recorded a receipt store is a fact in a marker whose workspace arrives inside
+    the Stop payload, so it asks the same question again at the point that would consume this
+    selection, and only if it gets there. Deciding nothing here is what makes that possible.
 
     Falling through to the canonical directory is not the neutral outcome it looks like. The
     first command that writes there creates a THIRD empty database, and once that exists it
@@ -4111,17 +4170,9 @@ def _refuse_ambiguous_state(services, args) -> None:
     creating a canonical database beside it hides it just as permanently. That case fires only
     when a store would be created; an existing canonical store has already settled it.
 
-    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
-    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
-    a derivation over its own two arguments that opens no store at all.
-
     An explicit --state or environment override never arrives here: both return from
     resolve_state_dir before any discovery runs, because a caller who named a directory has
     already decided which participants share it.
-
-    This guard is on the command line rather than on Services.store. A library caller that
-    builds Services itself bypasses it; every in-process caller in this package passes an
-    explicit directory, and raising from a property would turn a diagnostic into a crash.
     """
     selection = services.selection
     # A store records the socket it serves, and the first recording wins so nothing rewrites
@@ -4134,11 +4185,8 @@ def _refuse_ambiguous_state(services, args) -> None:
     if services.socket_path and selection.db_path.exists():
         recorded = store_socket(selection.db_path)
         wanted = canonical_socket(services.socket_path)
-        if recorded is not None and recorded != wanted and (
-            getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
-            and not _reads_no_selected_store(args)
-        ):
-            raise PayloadExit({
+        if recorded is not None and recorded != wanted:
+            return {
                 "error": "refused",
                 "reason": "state_directory_serves_another_socket",
                 "detail": (
@@ -4154,15 +4202,11 @@ def _refuse_ambiguous_state(services, args) -> None:
                 "recover": _wrong_socket_recovery(selection, recorded, wanted),
                 "note": "using a store does not rewrite the socket it recorded, so neither"
                         " command here adopts anything; choose the matching pair",
-            }, EXIT_REFUSED)
+            }
     if not (selection.ambiguous or selection.unidentified):
-        return
-    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
-        args
-    ):
-        return
+        return None
     contested = bool(selection.ambiguous)
-    raise PayloadExit({
+    return {
         "error": "refused",
         "reason": ("ambiguous_state_directory" if contested
                    else "unidentified_state_directory"),
@@ -4181,7 +4225,33 @@ def _refuse_ambiguous_state(services, args) -> None:
         # safe to repeat: provenance is written by opening a store, which is what the
         # refusal prevented.
         "recover": _recovery_commands(services, selection, contested),
-    }, EXIT_REFUSED)
+    }
+
+
+def _refuse_ambiguous_state(services, args) -> None:
+    """Refuse before the handler runs, unless this command can answer without that store.
+
+    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
+    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
+    a derivation over its own two arguments that opens no store at all. The marker commands are
+    exempt because a legacy store nobody is using must not be able to switch a Stop hook off;
+    _reads_no_selected_store owns which of them that is unconditional for.
+
+    The exemption is settled before the selection is examined, not after. An exempt command used
+    to pay for a read of the resolved store's recorded socket only to have the answer discarded,
+    and one of them runs inside a five-second hook budget.
+
+    This guard is on the command line rather than on Services.store. A library caller that
+    builds Services itself bypasses it; every in-process caller in this package passes an
+    explicit directory, and raising from a property would turn a diagnostic into a crash.
+    """
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
+        args
+    ):
+        return
+    refusal = _selection_refusal(services)
+    if refusal is not None:
+        raise PayloadExit(refusal, EXIT_REFUSED)
 
 
 def main(argv=None) -> int:

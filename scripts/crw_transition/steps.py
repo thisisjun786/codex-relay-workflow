@@ -1443,6 +1443,10 @@ def settings_install(host, options, *, apply=False, previous=None):
             timeout=timeout, journal_root=source.get("journalRoot"),
             codex_home=host["codexHome"], issue=source.get("installedBy"),
             isolation=source.get("isolationAssertedBy"), owner=completion.OWNER_PLUGIN,
+            # Carried like dbPath is: the user-owned document decided which App Server this
+            # installation serves, and dropping it here would take the guard's provenance check
+            # away from a host that already had it.
+            socket=source.get("socketPath"),
             adapter_interpreter=interpreter, adapter_entry_point=adapter)
     except ValueError as error:
         return _answer("settings install", REFUSED, str(error))
