@@ -729,21 +729,53 @@ class AReadingIsPlacedThenInterpreted(ReportingTestCase):
                 self.assertEqual([one["kind"] for one in absent["standing"]],
                                  [one["kind"] for one in null["standing"]])
 
+    def test_the_states_this_grid_crosses_are_exactly_the_ones_the_module_accepts(self):
+        """The grid's completeness is worth exactly what this assertion is worth.
+
+        Its parameters are written here, so a state quietly added to OBSERVED_SETTLED - which
+        would make the module absorb a reading nobody here can interpret, the opposite of what
+        this unit is for - would leave every other case green. Compared against the module's
+        own tuples rather than trusted alongside them.
+        """
+        self.assertEqual(set(supervision.OBSERVED_SETTLED), set(self.SETTLED))
+        self.assertEqual(
+            set(supervision.OBSERVED_STATES),
+            set(self.SETTLED) | {supervision.OBSERVED_OMISSION, supervision.OBSERVED_UNMEASURED})
+        self.assertEqual(len(supervision.OBSERVED_STATES), 5)
+        self.assertEqual((supervision.OBSERVED_OMISSION, supervision.OBSERVED_UNMEASURED),
+                         ("unreported", "unmeasured"))
+
     def test_each_unusable_reason_names_the_thing_that_was_actually_wrong(self):
+        """And never names a field the reading supplied perfectly well.
+
+        The reason is the sentence a person reads in the warning, so blaming the relationship
+        for a bad turn - or blaming either for a record under another schema - is the same
+        defect this unit removed, one layer down.
+        """
         _linkage, rid = self.project()
-        turn = self.reading("unreported", rid, selectors={"turn": ["turn-7"]})
-        self.assertIn("turn", supervision.unusable_reading(turn)["reason"])
-        self.assertNotIn("relationship", supervision.unusable_reading(turn)["reason"],
-                         "a reading that named its relationship is not described as missing it")
-        self.assertIn("relationship",
-                      supervision.unusable_reading(self.reading("unreported", [rid]))["reason"])
-        self.assertIn("something-else/1",
-                      supervision.unusable_reading(self.reading("foreign_schema", rid))["reason"])
-        self.assertIn("something",
-                      supervision.unusable_reading(self.reading("something", rid))["reason"])
+        cases = [
+            (self.reading("unreported", rid, selectors={"turn": ["turn-7"]}),
+             ("turn",), ("relationship",)),
+            (self.reading("unreported", [rid]), ("relationship",), ("turn",)),
+            (self.reading("unreported", ABSENT), ("relationship",), ("turn",)),
+            (self.reading("foreign_schema", rid), ("something-else/1",),
+             ("relationship", "turn")),
+            (self.reading("something", rid), ("something",), ("relationship", "turn")),
+        ]
+        for reading, wanted, unwanted in cases:
+            with self.subTest(reading=repr(reading)[:60]):
+                reason = supervision.unusable_reading(reading)["reason"]
+                for word in wanted:
+                    self.assertIn(word, reason)
+                for word in unwanted:
+                    self.assertNotIn(word, reason, "a field the reading supplied is not named"
+                                                   " as the thing that was wrong with it")
         for reading in ("not an object at all", [], None):
-            self.assertIn(type(reading).__name__,
-                          supervision.unusable_reading(reading)["reason"])
+            with self.subTest(reading=repr(reading)):
+                reason = supervision.unusable_reading(reading)["reason"]
+                self.assertIn(type(reading).__name__, reason)
+                self.assertNotIn("relationship", reason)
+                self.assertNotIn("turn", reason)
 
     def test_a_reading_that_is_not_an_object_is_named_rather_than_raised(self):
         linkage, _rid = self.project()
