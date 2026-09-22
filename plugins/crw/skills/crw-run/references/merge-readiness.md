@@ -282,3 +282,38 @@ In the existing coordination record, retain the candidate and landed revisions,
 CI attempt links/results, review sources and coverage, finding dispositions, and
 any permitted fallback or remaining limitation. Keep implementation verification,
 integration, and deployment as separate claims.
+
+## Hold the turn only while you can use it
+
+Parents under one supervision land on the same base ref, so the turn on that target
+is serialized in the coordination record and claimed before integrating, not after
+deciding to merge. Claim with the exact candidate head; a claim with no head cannot
+be checked against one later.
+
+Waiting for your own CI is not the same as merging. While required CI, review, or a
+base update is still outstanding and the merge has not started, a ready peer candidate
+may proceed instead, so return the turn explicitly rather than holding it while you
+re-poll. Record what invalidated the readiness — a new head, a base that moved, a
+finding that arrived — because only the head is visible from the record itself, and a
+peer reading it otherwise cannot tell a candidate that was never ready from one that
+stopped being ready.
+
+Asking for the turn, a transport accepting that request, and the holder actually
+returning it are three separate facts, and only the third moves the turn. A peer's
+report that it handed you the window is that peer's account, not the record; read the
+record. Once a merge is in flight or its outcome cannot be established, nothing
+releases the target except an observation of the pull request — elapsed time never
+becomes one, and cancelling is refused in that state on purpose.
+
+On entry — woken, resumed after a compaction, or restarted — read your own outstanding
+claims before acting on whatever prompted you, and re-check current ownership, head and
+base before acting on a grant you find. A grant read earlier can have been returned
+while you were away; acknowledge it against the record rather than against what you
+remember. A parent whose binding is paused keeps its claim and its place in the queue
+and cannot acquire or merge under it, so resume the binding, then declare readiness
+again to take a target that is free. Nothing hands the turn over on your behalf, and
+neither the supervisor nor Jun reassigns the window as a matter of course.
+
+When a target is not moving, report the actual candidate, its revision and the waiting
+cause from the record, together with the ready peers behind it. Do not resolve this with
+a fixed sleep, a retry cap, or an assumption about how long a particular CI takes.
