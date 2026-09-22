@@ -415,7 +415,15 @@ class MergeTurn:
             cause = "merge_in_flight"
         elif holder["state"] == UNKNOWN:
             cause = "outcome_unknown"
-        elif self._owner_status(holder["projectKey"]) != ACTIVE:
+        elif self._withheld(holder) == "not_the_project_owner":
+            # The project changed hands under this holder. Asking _owner_status directly here
+            # answered about the REPLACEMENT, which is active, so a stale holder that can
+            # neither restate nor merge was reported as merely not having restated - and the
+            # remedy a reader took from that was the wrong one. Every other path on this
+            # surface establishes that its subject is the owner before asking whether that
+            # owner can act; this one now asks the same predicate about the same subject.
+            cause = "holder_no_longer_owns_the_project"
+        elif self._withheld(holder) == "owner_paused":
             # The holder itself is not running. Every other answer would send a peer to wait
             # on a candidate nobody is advancing.
             cause = "holder_paused"

@@ -291,6 +291,20 @@ class WhatTheTargetIsWaitingOn(MergeTurnTestCase):
         self.set_status(PROJECT_A, "paused")
         self.assertEqual(self.turns.target(REPO, BASE)["blocked"]["cause"], "holder_paused")
 
+    def test_a_holder_whose_project_changed_hands_is_not_reported_as_merely_unrestated(self):
+        """Asking whether the OWNER can act, without first asking whether the holder IS the
+        owner, answered about the replacement - so a stale holder that can neither restate nor
+        merge read as one that simply had not restated yet."""
+        self.claim(self.alpha, PROJECT_A, "head-a")
+        self.claim(self.beta, PROJECT_B, "head-b")
+        successor = Endpoint("task-alpha-2", "host-a2", cwd="/alpha2")
+        self.store.db.execute(
+            "UPDATE scope_bindings SET task_id = ? WHERE scope_key = ? AND role = ?",
+            (successor.task_id, PROJECT_A, "parent"))
+        blocked = self.turns.target(REPO, BASE)["blocked"]
+        self.assertEqual(blocked["cause"], "holder_no_longer_owns_the_project")
+        self.assertEqual(blocked["holderTaskId"], self.alpha.task_id)
+
     def test_two_restatements_in_one_instant_that_disagree_decide_nothing(self):
         """recorded_at is a second and check_id is a digest, so ordering by it is a coin that
         lands the same way every time - which looks like an answer and is not one."""
