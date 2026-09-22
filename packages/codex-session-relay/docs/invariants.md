@@ -366,3 +366,14 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-220 | Suppression is the only thing that opens a record: a remediation on a fault that was never published queues nothing | `FaultLedger._enqueue` | implemented |
 | I-221 | A fault that owns no record is withdrawn when it clears, whatever state a local fix left it in; a published one is closed only by the loop | `faults._transition` taking `published` | implemented |
 | I-222 | A clear carries the fault's own recorded scope, so recovery cannot re-file it under a scope nobody configured a tracker for | `faultsweep.recovered` reading `fault_ledger.scope` | implemented |
+| I-223 | An anchor bound a moment ago is not a stalled one: an attempt has to exist before the scheduler's silence is read as a fault | `faultsweep.observation_faults` and `still_present` requiring `last_attempt_at` | implemented |
+| I-224 | Retargeting a scope moves every pending write for it, so a queued record is never filed where nobody is looking any more | `FaultLedger.set_target` | implemented |
+| I-225 | A reading that establishes something clears the unmeasured notice that said nobody had | `faultsweep.reading_faults` | implemented |
+| I-226 | A fault whose scope moved has its pending writes re-pointed at the new scope's tracker | `FaultLedger.record` | implemented |
+| I-227 | A fault that reaches its threshold after a fix was recorded early still opens its record | `faults._transition` | implemented |
+| I-228 | Recovery is an existence query for the fault's own signature, so it stays exact when a source outgrows one page, and both the source and the ledger scan rotate | `faultsweep.still_present`, `recovered` | implemented |
+| I-229 | A clearing observation for a fault that was never recorded records nothing, and `cleared` must be an actual boolean | `FaultLedger.record`, `faults._flag` | implemented |
+| I-230 | A reading the sweep cannot use is named in its gaps and reaches the tick report, never silently dropped | `faultsweep.reading_faults`, `RelayDaemon._sweep_faults` | implemented |
+| I-231 | Cursors advance after the rows are recorded, so a recording failure does not skip that page | `faultsweep.record_all` | implemented |
+| I-232 | Re-registering a fault class with different terms is refused; identical terms stay idempotent | `faults.register_class` | implemented |
+| I-233 | The fault tables reach a database that predates them, proven by dropping them from a live store and reopening it | `store.DDL` applied on every open; asserted in `tests/test_faults.py` | implemented |

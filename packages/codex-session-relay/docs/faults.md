@@ -88,10 +88,16 @@ The hold reason alone was not enough for a delivery. `attempt_cap` covers every 
 there is, so a settings rejection and a transport error would have merged into one record that
 named neither; the last attempt's classified state is in the signature to keep them apart.
 
-A never-polled anchor is `broken` rather than degraded, and that is not severity inflation. Its
-occurrence key cannot change while nothing succeeds and no new attempt is recorded, so it
-produces exactly one occurrence — and at degraded, which needs three, permanent scheduler
-starvation would be the one failure that could never reach the threshold.
+An anchor whose attempts have never succeeded is `broken` rather than degraded, and that
+is not severity inflation. Its occurrence key cannot change while nothing succeeds and no new
+attempt is recorded, so it produces exactly one occurrence, and at degraded, which needs
+three, permanent scheduler starvation would be the one failure that could never reach the
+threshold.
+
+An ATTEMPT has to exist first. A generation bound a moment ago has no poll row yet and is not
+stalled, because it has not been due, and raising on that absence filed a broken fault for
+every healthy new assignment. The cost is stated rather than hidden: a scheduler that never
+attempts at all leaves nothing to see here.
 
 Every class declares what clears it, and that column is not documentation: `CLASS_POLICY`
 carries it and `register_class` refuses a class without one. `refusal_recurring` is the absence
