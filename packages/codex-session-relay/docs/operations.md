@@ -116,17 +116,17 @@ candidates and the recovery commands, and the payload says in `stopNotJudged` th
 neither classified nor recorded.
 
 The two halves of that refusal are not worth the same. The different-socket half removes a wrong
-answer where it can speak at all: that store exists and opens, its rows belong to another
-installation, and a relationship missing from it reads as `receipt_missing`, which holds a child
-that has finished. Where it cannot speak is the installed Stop hook, and that is a limit rather
-than a detail. A store's provenance is a socket, so the comparison needs one to compare against,
-and `stopadapter.guard_argv` passes `--marker-root`, an optional `--db-path` and an optional
-`--mode` and no socket at all; the packaged copy mirrors it. On that path `services.socket_path`
-is `None`, nothing is compared, and an inherited `CODEX_SESSION_RELAY_STATE` reaching another
-installation's store is classified against it exactly as before. Closing that means carrying the
-expected socket through the hook configuration and both adapter copies, which changes the
-installed configuration's own contract, so it is tracked on its own. An operator or coordinator
-invocation that passes `--socket` is refused today.
+answer: that store exists and opens, its rows belong to another installation, and a relationship
+missing from it reads as `receipt_missing`, which holds a child that has finished.
+
+It speaks only when the caller names a socket, because a store's provenance IS a socket and the
+comparison needs one to compare against. So the Stop hook's settings carry `socketPath`, and both
+adapter copies pass it as the global `--socket` option ahead of the subcommand. The field is
+optional: requiring it would make every document written before it existed malformed, and a Stop
+whose settings cannot be acted on releases in silence, which is a worse failure than the one this
+closes. A host that configures no socket therefore keeps exactly what it had — nothing is compared,
+and an inherited `CODEX_SESSION_RELAY_STATE` reaching another installation's store is read as
+though it were this one's. Configure it on any host where more than one installation exists.
 
 The ambiguous and unidentified halves do not remove a wrong answer either, today. Those selections
 are returned only when no canonical database is there yet, so the fallback names a file nothing can

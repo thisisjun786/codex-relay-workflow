@@ -2321,6 +2321,11 @@ def cmd_hook(args):
                     codex_home=codex_home, issue=args.issue,
                     isolation=getattr(args, "isolation_asserted_by", None),
                     owner=owner,
+                    # The socket this installation expects, when the caller named one. It is what
+                    # lets the guard refuse a state directory whose store records another App
+                    # Server rather than judging a Stop against it; with none there is nothing to
+                    # compare and the document stays byte-identical to one written before this key.
+                    socket=args.socket,
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )

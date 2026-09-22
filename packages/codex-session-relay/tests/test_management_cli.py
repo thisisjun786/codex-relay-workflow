@@ -386,6 +386,42 @@ class GuardStoreSelection(MarkerCli):
         """Where record_observation publishes, which is the evidence a Stop was judged at all."""
         return marker.assignment_dir(self.markers, self.root, assignment) / "hook"
 
+    def relay_shim(self):
+        """An executable that IS the relay CLI, so the adapter's own command can be run as built."""
+        path = os.path.join(self.tmp, "relay-shim")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexec " + sys.executable
+                         + " -m codex_session_relay.cli \"$@\"\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def adapter_command(self, **settings):
+        """The argv the installed Stop adapter builds from its settings, and nothing else.
+
+        Built by the adapter rather than restated here. A hand-written command can carry an option
+        the real one never passes, which is exactly how the gap below went unnoticed.
+        """
+        from codex_session_relay import stopadapter
+
+        config = {"relayExecutable": self.relay_shim(), "markerRoot": self.markers}
+        config.update(settings)
+        return stopadapter.guard_argv(config)
+
+    def run_adapter_command(self, argv, *, state, expect=0):
+        """Run it the way a Stop hook does: the payload on stdin and the state inherited."""
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=self.home,
+                           CODEX_SESSION_RELAY_STATE=state)
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, env=environment, timeout=60,
+            input=self.stop_payload(),
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
     # --------------------------------------------------------- a selection nobody made
 
     def test_an_implicit_selection_is_refused_rather_than_guessed_at(self):
@@ -425,24 +461,44 @@ class GuardStoreSelection(MarkerCli):
         self.assertEqual(refused["stateDirectory"], pinned)
         self.assertIn("stopNotJudged", refused)
 
-    def test_the_mismatch_half_needs_a_socket_and_the_installed_hook_passes_none(self):
-        """The limitation, pinned as a fact rather than described in prose.
+    def test_the_command_the_installed_adapter_builds_refuses_a_mismatched_store(self):
+        """The reported case, driven through the adapter's own argv rather than a hand-built one.
 
-        A store's provenance is a socket, so the comparison needs one to compare against.
-        stopadapter.guard_argv builds --marker-root, an optional --db-path and an optional --mode,
-        and no --socket; the packaged copy in scripts/crw_runtime/completion.py mirrors it. So on
-        the installed hook path Services.socket_path is None, nothing can be compared, and a state
-        override reaching another installation's store is classified against that store exactly as
-        it was before this change.
+        A Stop hook that inherits CODEX_SESSION_RELAY_STATE from another installation had the guard
+        read that installation's store, find no relationship for this assignment, and report
+        receipt_missing - which holds a child that has finished. The comparison that catches it
+        needs the socket this installation expects, so the settings carry one and guard_argv passes
+        it as the global option, before the subcommand.
 
-        Reported on PR #129. Closing it means carrying the expected socket through the hook
-        configuration and both adapter copies, which changes the installed configuration's own
-        contract and belongs to its own issue. This case exists so the gap cannot be mistaken for
-        coverage, and it is the case that issue has to change.
+        Built by guard_argv on purpose. The first version of this case passed --socket by hand,
+        which is a real caller but not the installed hook, and review found the difference.
         """
         assignment = self.declared_turn(record_db_path=False)
         pinned = self.store_recording_another_socket()
-        verdict = self.guard_cli("--state", pinned)
+        argv = self.adapter_command(socketPath=self.another_socket)
+        self.assertLess(argv.index("--socket"), argv.index("guard-evaluate"))
+        refused = self.run_adapter_command(argv, state=pinned, expect=2)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        self.assertEqual(refused["stateDirectory"], pinned)
+        self.assertNotEqual(refused["recordedSocket"], refused["requestedSocket"])
+        self.assertFalse(
+            self.observations(assignment).exists(),
+            "a refused Stop published an observation, so the refusal was not the whole answer",
+        )
+
+    def test_settings_that_configure_no_socket_still_classify_rather_than_refusing(self):
+        """A host that installed before the settings carried a socket keeps what it had.
+
+        The field is optional deliberately. Requiring it would turn every existing
+        crw-completion-hook.json into a malformed document, and a Stop whose settings cannot be
+        acted on releases in silence - a worse failure than the one being closed. With no socket
+        configured there is nothing to compare, and that is the limit this records.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        pinned = self.store_recording_another_socket()
+        argv = self.adapter_command()
+        self.assertNotIn("--socket", argv)
+        verdict = self.run_adapter_command(argv, state=pinned)
         self.assertEqual(verdict["observation"], "receipt_missing")
         self.assertTrue(verdict["recordedAs"])
         self.assertTrue(self.observations(assignment).exists())
