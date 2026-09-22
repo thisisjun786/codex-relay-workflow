@@ -361,6 +361,47 @@ class APausedSupervisorIsNotAFailure(ReportingTestCase):
         self.assertTrue(decided["report"])
         self.assertEqual(decided["reason"], supervision.REPORTABLE)
 
+    def test_an_observation_dated_in_the_future_is_not_evidence_about_now(self):
+        """A clock that went backwards must not authorize a wake.
+
+        A negative age passed the freshness window by arithmetic, so lifecycle evidence
+        nobody currently holds read as current.
+        """
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        past = self.clock.now() - supervision.CONTACT_FUTURE_TOLERANCE - 600
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR, now=past)
+        self.assertFalse(decided["report"])
+        self.assertEqual(decided["reason"], supervision.CONTACT_UNMEASURED)
+        self.assertIn("in the future", decided["recipient"]["reason"])
+
+    def test_a_small_disagreement_between_two_clocks_is_tolerated(self):
+        event_id = self.reported()
+        self.lifecycle(SUPERVISOR, "yes")
+        decided = supervision.select(self.store, self.obligation_for(event_id),
+                                     recipient=SUPERVISOR, now=self.clock.now() - 5)
+        self.assertTrue(decided["report"])
+
+    def test_asking_without_a_recipient_is_not_the_same_as_finding_none(self):
+        """The recipient-less mode is documented, and it used to suppress everything.
+
+        A project enumeration reads without a recipient by design, so answering that as
+        unmeasured deliverability reported that nothing in any project was worth telling
+        anybody.
+        """
+        event_id = self.reported()
+        decided = supervision.select(self.store, self.obligation_for(event_id))
+        self.assertTrue(decided["report"])
+        self.assertEqual(decided["reason"], supervision.NOT_ASKED)
+        self.assertIs(decided["recipient"]["asked"], False)
+        self.assertIsNone(decided["recipient"]["contactable"],
+                          "and it still does not claim anybody is reachable")
+        named = supervision.select(self.store, self.obligation_for(event_id),
+                                   recipient="01never-observed")
+        self.assertFalse(named["report"], "a recipient that WAS named still has to be current")
+        self.assertEqual(named["reason"], supervision.CONTACT_UNMEASURED)
+
     def test_an_observation_nobody_dated_against_a_clock_is_unmeasured(self):
         """A stored yes is a fact about the moment somebody looked."""
         event_id = self.reported()
@@ -699,7 +740,72 @@ class TheCommandsAParentActuallyRuns(ReportingTestCase):
         self.accept(payload)
         with self.assertRaises(cli.SystemExit2):
             cli.cmd_supervisor_report_recorded(
-                self.services(), Namespace(event=payload["eventId"], message=None, note=None))
+                self.services(), Namespace(event=payload["eventId"], observation=None,
+                                           message=None, note=None))
+
+    def test_an_omission_can_be_recorded_by_its_observation(self):
+        """The one kind of news nobody sent used to be the one that could not be recorded.
+
+        A turn that ended without reporting has no event, so an event-only surface left that
+        obligation unrecordable - and the next reading of the same omission would have
+        produced another report, indefinitely.
+        """
+        import json as json_module
+        import os
+        from argparse import Namespace
+        from codex_session_relay import cli
+        from codex_session_relay.models import Endpoint
+
+        services = self.services()
+        services.linkage.bind_scope(
+            role="parent", scope_key="CRW",
+            endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"))
+        relationship = self.register(project_key="CRW")
+        self._rid = relationship["relationshipId"]
+        path = os.path.join(self.tmp, "omission.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json_module.dump({"schema": "reporting-observation/1",
+                              "reportingState": "unreported",
+                              "reason": "terminal_without_report",
+                              "relationshipId": self._rid, "executionGeneration": 1,
+                              "selectors": {"turn": "turn-7"}}, handle)
+
+        standing = cli.cmd_supervisor_standing(
+            services, Namespace(project="CRW", observation=[path]))
+        owed = standing["standing"][0]
+        self.assertEqual(owed["kind"], supervision.UNREPORTED)
+
+        first = cli.cmd_supervisor_report_recorded(
+            services, Namespace(event=None, observation=path, message="m-1", note=None))
+        second = cli.cmd_supervisor_report_recorded(
+            services, Namespace(event=None, observation=path, message="m-1", note=None))
+        self.assertTrue(first["recorded"])
+        self.assertFalse(second["recorded"], "the same omission converges on the first report")
+        self.assertEqual(first["obligation"]["obligationId"], owed["obligationId"],
+                         "and it is the obligation the project answer named")
+
+        again = cli.cmd_supervisor_standing(
+            services, Namespace(project="CRW", observation=[path]))
+        self.assertEqual(
+            again["standing"][0]["decision"]["reason"], supervision.ALREADY_REPORTED,
+            "so a later reading of the same omission suppresses another report")
+
+    def test_an_observation_that_owes_nothing_is_refused(self):
+        import json as json_module
+        import os
+        from argparse import Namespace
+        from codex_session_relay import cli
+
+        path = os.path.join(self.tmp, "reported.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json_module.dump({"schema": "reporting-observation/1",
+                              "reportingState": "reported", "relationshipId": "rel-1",
+                              "selectors": {"turn": "turn-7"}}, handle)
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_supervisor_report_recorded(
+                self.services(), Namespace(event=None, observation=path, message=None,
+                                           note=None))
+        self.assertIn("state unreported", str(caught.exception))
 
     def test_standing_reads_a_passed_in_observation_from_disk(self):
         import json as json_module

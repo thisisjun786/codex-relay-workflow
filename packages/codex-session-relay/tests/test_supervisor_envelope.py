@@ -316,6 +316,28 @@ class TheDirectiveCommand(LinkageTestCase):
         with self.assertRaises(cli.SystemExit2):
             self.record(purpose="scope_correction", reference="see Tuesday")
 
+    def test_one_digest_cannot_answer_two_messages(self):
+        """Same purpose, different correlation, and the replay handed back the old answer.
+
+        The stored id carries neither, so without comparing the correlation the caller got a
+        directive that answers the message theirs replaced.
+        """
+        self.record(purpose="scope_correction", correlation="msg-1")
+        refusal = self.assertRefused(
+            RefusalReason.LINK_CONFLICT,
+            lambda: self.record(purpose="scope_correction", correlation="msg-2"))
+        self.assertIn("cannot answer two messages", refusal.detail)
+        stored = self.store.one(
+            "SELECT reference FROM scope_directives WHERE digest = ?", ("d-one",))["reference"]
+        self.assertEqual(envelope.parse_reference(stored)["correlationId"], "msg-1",
+                         "the instruction already recorded is preserved")
+
+    def test_replaying_the_same_correlation_still_converges(self):
+        first = self.record(purpose="scope_correction", correlation="msg-1")
+        self.assertEqual(
+            self.record(purpose="scope_correction", correlation="msg-1")["directiveId"],
+            first["directiveId"])
+
 
 class TheRenderedMessage(DeliveryTestCase):
     def recorded(self, **overrides):
