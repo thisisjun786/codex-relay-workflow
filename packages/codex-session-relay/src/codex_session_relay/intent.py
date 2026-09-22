@@ -540,78 +540,24 @@ def select_assignment(root, workspace, session_id):
         if selecting_claim(candidate[1], session_id, candidate[0].name) is not None
     ]
     if claimed:
-        # The claim says WHICH assignments are this session's; the coordinator says which of them is
-        # current. Three failures were found one at a time and this is the ordering that answers all
-        # three. Reading the declaration alone drops a candidate whose intent cannot be read below
-        # every readable sibling, so the current assignment is silently passed over. Preferring
-        # every unreadable candidate instead lets a stale corrupt assignment outrank a newer healthy
-        # claim and release a turn the current one would have held. Ordering on the CLAIM fixes both
-        # and hands the child the answer: forward-date a stale claim, publish a releasing
-        # disposition there, and nothing is ever detected on the current assignment again.
+        # The claim says WHICH assignments are this session's. Which of them is CURRENT is the
+        # declaration, and only the declaration: an assignment comes into existence by being
+        # declared, so a successor's declaration necessarily follows its predecessor's and cannot
+        # be made to precede it. Three other orderings were tried on the way here and each failed
+        # on a fact that can move after a successor is already current - the claim is written by
+        # the child, an attempt is append-only and arrives on reconciliation, and a bind arrives
+        # whenever thread creation happens to finish. Currency taken from any of them lets a stale
+        # assignment be revived and a Stop judged against its dispositions and hold budget.
         #
-        # _authority_moment reads only coordinator records, and reads three of them, so an
-        # unreadable declaration still leaves the bind and the attempts to say when the coordinator
-        # last acted here.
-        directory, facts, problems = max(claimed, key=_claimed_recency)
+        # The known cost is recorded rather than papered over: a candidate whose intent cannot be
+        # read carries no declaration, so it sorts below every readable sibling and an older
+        # assignment is judged instead. That is the behaviour this walk has always had, and no
+        # ordering fact available here fixes it - every one of them is either inside the record
+        # that is unreadable, or able to arrive late.
+        directory, facts, problems = max(claimed, key=_recency)
     else:
         directory, facts, problems = max(candidates, key=_recency)
     return directory, facts, problems
-
-
-def _authority_moment(facts):
-    """The newest instant the COORDINATOR recorded for this assignment, or None.
-
-    Currency decides which assignment a Stop is judged under, so it is read only from coordinator
-    records that CANNOT ADVANCE once the assignment has moved on: the declaration and the bind,
-    both create-once. Never from the claim, and never from the attempts.
-
-    That restriction is the whole point. Ordering on the claim reads a timestamp the child itself
-    wrote, and a child that can move currency can pin every turn to a stale assignment - publish a
-    releasing disposition there, forward-date that claim, and the current assignment's omissions
-    are never looked at again. Detection would then depend on a number the party being detected
-    supplies.
-
-    The attempts are coordinator records and are still excluded, because append-only is the wrong
-    shape for this: a reconciliation can record an accepted attempt for January's assignment in
-    March, and taking the newest would revive it over the one declared and bound in February. The
-    contract already says a late attempt is identity evidence and nothing more (T3). Currency has
-    to come from a fact that stops moving, and create-once is exactly that guarantee.
-
-    Two sources rather than the declaration alone, because the declaration is the record that goes
-    unreadable in the case this exists for. The bind is a coordinator fact in its own file, so an
-    assignment whose intent cannot be read still says when the coordinator bound it. One carrying
-    neither has no coordinator evidence of being current at all, and does not outrank one that has:
-    it also cannot be held, because a hold needs the bind.
-    """
-    moments = []
-    intent_fact = facts.get("intent")
-    if isinstance(intent_fact, dict):
-        moments.append(_moment(intent_fact.get("declaredAt")))
-    bound_fact = facts.get("bound")
-    if isinstance(bound_fact, dict):
-        moments.append(_moment(bound_fact.get("at")))
-    found = [moment for moment in moments if moment is not None]
-    return max(found) if found else None
-
-
-def _claimed_recency(candidate):
-    """Newest coordinator record first, ties broken on the assignment id.
-
-    The ordering used among the assignments a session's own claim selects. Compared as instants for
-    the reason _recency is: ISO 8601 sorts chronologically only when the offsets match. An
-    assignment carrying no readable coordinator record sorts below every one that does, rather than
-    raising, and the assignment id still breaks the tie, so every reader of the same listing
-    selects the same entry.
-    """
-    from datetime import datetime, timezone
-
-    directory, facts, _problems = candidate
-    at = _authority_moment(facts)
-    return (
-        at is not None,
-        at or datetime.min.replace(tzinfo=timezone.utc),
-        directory.name,
-    )
 
 
 def _recency(candidate):

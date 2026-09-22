@@ -362,27 +362,6 @@ def _correlated(marker, session_id, assignment=None):
     return True
 
 
-def _authority_moment(marker):
-    """The newest instant the COORDINATOR recorded for this assignment, or None.
-
-    The declaration and the bind, both create-once: never the claim, and never the attempts.
-    Currency decides which assignment a Stop is judged under, so a child able to move it could pin
-    every turn to a stale assignment and stop being detected on the current one. The attempts are
-    the coordinator's and are still excluded, because they are append-only: a late reconciliation
-    can record an accepted attempt for an assignment the coordinator has already moved on from,
-    and T3 says such an attempt is identity evidence and nothing more.
-    """
-    moments = []
-    intent_fact = marker.get("intent")
-    if isinstance(intent_fact, dict):
-        moments.append(_moment(intent_fact.get("declaredAt")))
-    bound_fact = marker.get("bound")
-    if isinstance(bound_fact, dict):
-        moments.append(_moment(bound_fact.get("at")))
-    found = [moment for moment in moments if moment is not None]
-    return max(found) if found else None
-
-
 def _hashed(preimage):
     """The assignment a preimage names, or None when it does not name one at all.
 
@@ -662,14 +641,12 @@ def resolve_assignment(workspace, session_id):
     test is the claim against the directory and never against the intent, so a candidate whose
     intent cannot be read is still selected and still reported rather than skipped.
 
-    The claim says WHICH assignments are this session's; the coordinator says which of them is
-    current. Currency is read only from coordinator records - the declaration, the bind and the
-    attempts - and never from the claim, because a child that can move currency can pin every turn
-    to a stale assignment where it has already published a releasing disposition and never be
-    detected on the current one. Reading three records rather than the declaration alone is what
-    keeps that answer available when the declaration is the record that went unreadable. The
-    relay's reader keeps a candidate whose intent could not be READ; this listing has no way to say
-    that, so only the ordering is mirrored here.
+    The claim says WHICH assignments are this session's. Which of them is CURRENT is the
+    declaration and only the declaration: an assignment comes into existence by being declared, so
+    a successor's declaration necessarily follows its predecessor's. The claim cannot serve, because
+    the child writes it; nor an attempt, which is append-only and arrives on reconciliation; nor a
+    bind, which arrives whenever thread creation finishes. Any of those lets a stale assignment be
+    revived and a Stop judged against its dispositions and hold budget.
     """
     published = []
     for assignment in workspace.get("assignments") or []:
@@ -682,12 +659,11 @@ def resolve_assignment(workspace, session_id):
     for row in published:
         claim = _selecting_claim(row[2], session_id, row[1])
         if claim is not None:
-            claimed.append((_authority_moment(row[2]), row[1], row[2]))
+            claimed.append(row)
     pool = claimed or published
     if not pool:
         return None
-    # An assignment carrying no readable coordinator record sorts below every one that does, and
-    # ties break on the assignment id, so every reader of the same listing picks the same one.
+    # Ties break on the assignment id, so every reader of the same listing picks the same one.
     return max(pool, key=lambda row: (row[0] is not None, row[0] or _EPOCH, row[1]))[2]
 
 

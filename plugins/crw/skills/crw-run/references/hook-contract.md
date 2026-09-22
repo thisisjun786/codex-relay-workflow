@@ -195,6 +195,68 @@ The selection test is the claim against the DIRECTORY and never against the inte
 authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
 assignment the claim belongs to.
 
+The claim says WHICH assignments are this session's. Which of them is CURRENT is the declaration,
+and only the declaration: an assignment comes into existence by being declared, so a successor's
+declaration necessarily follows its predecessor's and cannot be made to precede it. Nothing else
+available here has that property. The claim's timestamp is written by the child, so a forward-dated
+stale claim would pin every later turn to an assignment where a releasing disposition is already
+published. An attempt is append-only and arrives on reconciliation, so a lost January response
+settled in March would revive January's assignment - which T3 already says is identity evidence and
+nothing more. A bind arrives whenever thread creation finishes, so a delayed one carries a later
+instant than a successor that was declared, claimed and bound while it was still outstanding. Each
+of those lets a stale assignment be revived and a Stop judged against its dispositions and its hold
+budget.
+
+The cost of that choice is a real one and is recorded rather than papered over: an assignment whose
+intent cannot be read carries no declaration, so it sorts below every readable sibling and an older
+assignment is judged instead. Its unreadable store is not reported, because read problems stay with
+the candidate they came from. No ordering fact this reader has closes that - every one of them is
+either inside the record that is unreadable, or able to arrive after a successor is already current
+- so closing it needs coordinator lineage the marker does not carry today. When no claim selects
+anything, recency over the declarations decides exactly as before.
+
+**Both writes are required before a turn can be held**, and the unconditional release on an unclaimed
+marker means exactly this: the coordinator's bind alone does not make a session holdable, because the
+coordinator can publish the bind and the relationship before the child publishes its claim. Until the
+session's own claim is there, its turns read `marker_unclaimed` and are released and recorded. The bind
+says who the coordinator believes the child is; the claim is the session saying so itself, and a turn
+is only ever held against a session that has said it.
+
+**The claim has to be this assignment's claim, on both sides of the bind.** Correlation is a chain
+of three links and all three are required: the claim's `dispatchRequestId` preimage hashes to the
+intent's `dispatchRequestIdHash`, and that hash is the assignment the intent was published under.
+The third link is what makes the first two mean anything. Both facts inside the marker are writable
+by the parties publishing there, so an intent naming a foreign dispatch and a claim agreeing with it
+correlate with each other perfectly while correlating with nothing the coordinator dispatched. The
+assignment is the directory name and the directory name IS the hash, so it is the one link no writer
+inside the marker chooses.
+
+Before the bind a broken chain reads `dispatch_uncorrelated`; after it, `claim_uncorrelated`.
+Both are released and recorded, and the second is answered apart from `marker_unclaimed` because
+the two clear differently: an unclaimed marker is the bind-before-claim race and ends the moment the
+child publishes, while every fact in this chain is create-once, so a claim already standing at
+`claims/<session>/claim.json` with the wrong dispatch request id can never be replaced by the
+correct one. Recovery is therefore adjudication or superseding the relationship, not repair in
+place. The record carries which link broke - `claim_dispatch_unnamed`, `claim_dispatch_mismatch`,
+`intent_dispatch_unnamed` or `intent_assignment_mismatch` - because they are settled differently,
+and it carries `pendingObservation` as well, since this answer replaces a classification the
+coordinator still needs. A claim whose body contradicts its path is not this session's claim at all
+and still reads `marker_unclaimed`; a preimage that is not a string is `marker_malformed`, because
+shape is answered before correlation. A declared releasing outcome is read first, so this check only
+ever turns a would-be hold into a release.
+
+**Selection asks which assignment, not whether it holds together.** A workspace outlives the
+assignment that used it, so several assignments can sit under one path and the reader consults this
+session's claim before recency to keep a running child with the assignment it claimed. That claim
+has to name the assignment it sits in. Read on the claimant alone, one uncorrelated file written
+into a NEWER assignment selected that assignment, the decision path refused it, the turn released,
+and an older assignment the session was correlated, bound and registered under never had its
+omission looked for - so a check that only releases within one assignment removed a hold across two.
+
+The selection test is the claim against the DIRECTORY and never against the intent: the path
+authorises the owner, the body confirms the writer meant it, and hashing the preimage says which
+assignment the claim belongs to.
+
 The claim says WHICH assignments are this session's; the coordinator says which of them is
 current. Those candidates are ordered by the newest coordinator record that CANNOT ADVANCE once
 the assignment has moved on - the declaration and the bind, both create-once - and by nothing
