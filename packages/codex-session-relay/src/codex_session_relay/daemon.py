@@ -166,7 +166,10 @@ class RelayDaemon:
 
             batch = faultsweep.sweep(self.store, scope=self.fault_scope,
                                      policy=self.policy)
-            report.faultsRecorded += faultsweep.record_all(self.faults, batch)["recorded"]
+            answer = faultsweep.record_all(self.faults, batch, store=self.store)
+            report.faultsRecorded += answer["recorded"]
+            for gap in answer["gaps"]:
+                report.notes.append(f"fault reading unusable: {gap['reason']}")
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"fault sweep failed: {error}")
 

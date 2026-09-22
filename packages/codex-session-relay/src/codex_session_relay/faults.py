@@ -144,6 +144,14 @@ def register_class(fault_class, *, component, clears, threshold=None, window=Non
         )
     policy = {"component": component, "clears": clears, "threshold": threshold,
               "window": DEFAULT_WINDOW if window is None else float(window)}
+    existing = CLASS_POLICY.get(fault_class)
+    if existing is not None and existing != policy:
+        # Re-registering the same terms is idempotent; changing them is not. A silent
+        # replacement would let one extension redefine a built-in class for every ledger in
+        # the process, including the threshold that decides what reaches Linear.
+        raise ValueError(
+            f"{fault_class!r} is already registered with different terms; pick another name"
+        )
     CLASS_POLICY[fault_class] = policy
     return {"faultClass": fault_class, **policy}
 
@@ -266,8 +274,11 @@ def _bounded_evidence(evidence):
             RefusalReason.FAULT_OBSERVATION_MALFORMED, "evidence is a list of objects",
         )
     entries = [entry for entry in evidence if isinstance(entry, dict)]
+    # An entry this cannot record is a shortening like any other, and the record says so.
+    # Dropping it quietly made a snapshot that had lost something look complete.
+    truncated = len(entries) < len(evidence)
     kept = entries[:MAX_EVIDENCE]
-    truncated = len(kept) < len(entries)
+    truncated = truncated or len(kept) < len(entries)
     while kept and len(json.dumps(kept, ensure_ascii=False).encode("utf-8")) > MAX_EVIDENCE_BYTES:
         kept.pop()
         truncated = True
@@ -321,9 +332,22 @@ def read_observation(observation_record) -> dict:
         "evidence": evidence,
         "evidenceDigest": evidence_digest(evidence),
         "truncated": truncated,
-        "cleared": bool(observation_record.get("cleared")),
+        "cleared": _flag(observation_record.get("cleared")),
         "policy": policy,
     }
+
+
+def _flag(value):
+    """An actual boolean. JSON carries the string "false", and bool("false") is True - which
+    would have let a malformed clear withdraw a fault that is still happening."""
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise FaultRefused(
+            RefusalReason.FAULT_OBSERVATION_MALFORMED,
+            f"cleared is a boolean, not {type(value).__name__}",
+        )
+    return value
 
 
 def observation(*, product, fault_class, severity, signature, occurrence_key, scope=None,
@@ -636,6 +660,13 @@ class FaultLedger:
         with self.store.transaction() as db:
             row = db.execute(
                 "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
+            if row is None and fact["cleared"]:
+                # Nothing was ever wrong here. A healthy reading is not a fault that has
+                # recovered, and recording one would fill the ledger with withdrawn rows for
+                # turns that never had a problem.
+                return {"faultId": identifier, "recorded": False, "state": None,
+                        "occurrenceCount": 0, "publication": None,
+                        "reason": "a clearing observation for a fault that was never recorded"}
             if row is None:
                 db.execute(
                     "INSERT INTO fault_ledger (fault_id, product, fault_class, component,"
@@ -709,6 +740,17 @@ class FaultLedger:
                  json.dumps(fact["scope"], ensure_ascii=False, sort_keys=True),
                  fact["scopeKey"], identifier),
             )
+            if fact["scopeKey"] != row["scope_key"]:
+                # The fault moved. A write queued against the old scope's tracker would be
+                # filed in a project this fault no longer belongs to, and one queued while no
+                # tracker was configured would never become eligible.
+                moved = db.execute(
+                    "SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
+                    (fact["scopeKey"],)).fetchone()
+                db.execute(
+                    "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
+                    " WHERE fault_id = ? AND state = ?",
+                    (moved["tracker_ref"] if moved else None, now_iso, identifier, PENDING))
             publication = None
             if trigger_key is not None:
                 publication = self._enqueue(db, identifier, trigger_key, now_iso,
@@ -1368,8 +1410,17 @@ def _transition(state, cycle, *, cleared, publishable, escalated, severity, publ
     if state == RESOLVED:
         return OPEN, cycle + 1, True, f"{TRIGGER_REOPEN}:{cycle + 1}"
     if state == FIX_PENDING:
+        if not published:
+            # Never filed, so there is no record to tell that the fix did not hold. It goes
+            # back to open and the threshold decides, exactly as it would have.
+            return OPEN, cycle, False, (TRIGGER_OPEN if publishable else None)
         return OPEN, cycle, False, f"{TRIGGER_RECUR}:{cycle}"
     if state == OPEN:
+        if not published and publishable:
+            # Open but never filed: a fix recorded before the threshold moved it here, and
+            # the OPEN branch alone would have left it forever open with no record. Reaching
+            # the threshold is what opens the record, whenever that happens.
+            return OPEN, cycle, False, TRIGGER_OPEN
         return OPEN, cycle, False, (f"{TRIGGER_ESCALATE}:{severity}" if escalated else None)
     if publishable:
         return OPEN, cycle, False, TRIGGER_OPEN

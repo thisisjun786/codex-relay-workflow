@@ -240,7 +240,7 @@ class TheSweepRotatesRatherThanReReadingOnePage(RelayTestCase):
         seen = set()
         for _round in range(4):
             batch = faultsweep.sweep(self.store)
-            faultsweep.record_all(self.ledger, batch)
+            faultsweep.record_all(self.ledger, batch, store=self.store)
             seen.update(entry["signature"]["recipient"] for entry in batch["observations"]
                         if entry["faultClass"] == "delivery_stalled")
         self.assertEqual(total, len(seen))
@@ -256,7 +256,6 @@ class TheSweepRotatesRatherThanReReadingOnePage(RelayTestCase):
         second = faultsweep.sweep(self.store)
         self.assertEqual(1, len([entry for entry in second["observations"]
                                  if entry["faultClass"] == "delivery_stalled"]))
-
 
     def test_clearing_before_the_threshold_withdraws_without_touching_linear(self):
         self.ledger.record(stall("delivery:1"))
@@ -277,6 +276,147 @@ class TheSweepRotatesRatherThanReReadingOnePage(RelayTestCase):
         answer = self.ledger.record(stall("delivery:3"))
         self.assertEqual(3, answer["suppression"]["counted"])
         self.assertEqual(faults.OPEN, answer["state"])
+
+
+class FourthReviewFindings(RelayTestCase):
+    """Round four. Two reds, and the quiet ones that would have been worse."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.register()
+        self.relationship = self.store.one(
+            "SELECT relationship_id FROM relationships")["relationship_id"]
+
+    def stall(self, event_id="event-a", recipient="01parent-task"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                "  recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                "  updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event_id, self.relationship, "completion_event", recipient, recipient,
+                 "queued", 1, "channel_closed", self.clock.iso(), self.clock.iso()))
+
+    def drain(self):
+        with self.store.transaction() as db:
+            db.execute("UPDATE deliveries SET hold_reason = NULL, state = 'dispatched'")
+
+    def test_a_fault_whose_scope_moved_is_repointed_at_the_new_project(self):
+        self.ledger.set_target("crw:NEW", "team-new")
+        first = self.ledger.record(omission("a"))
+        self.assertTrue(first["publication"]["awaitingTarget"])
+        moved = dict(omission("b"), scope={"projectKey": "NEW", "issueKey": "NEW-1"})
+        self.ledger.record(moved)
+        row = self.store.one(
+            "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
+            (first["publication"]["publicationId"],))
+        self.assertEqual("team-new", row["tracker_ref"])
+        self.assertIn(first["faultId"], [job["fault_id"] for job in self.ledger.next()])
+
+    def test_a_fix_recorded_before_the_threshold_does_not_suppress_the_record_forever(self):
+        self.ledger.set_target("crw:CRW", TRACKER)
+        first = self.ledger.record(stall("delivery:1"))
+        self.assertEqual(faults.OBSERVED, first["state"])
+        self.ledger.record_fix(first["faultId"], ref="PR #1")
+        self.ledger.record(stall("delivery:2"))
+        third = self.ledger.record(stall("delivery:3"))
+        self.assertEqual(faults.OPEN, third["state"])
+        self.assertTrue(third["publication"]["queued"])
+        self.assertEqual(faults.OPEN_RECORD, third["publication"]["kind"])
+        self.assertEqual([third["publication"]["publicationId"]],
+                         [job["publication_id"] for job in self.ledger.next()])
+
+    def test_a_source_larger_than_one_page_still_clears_what_recovered(self):
+        """Differencing against a page stopped clearing exactly when a store got busy."""
+        for index in range(faultsweep.SWEEP_LIMIT + 5):
+            self.stall(f"event-{index:03d}", f"task-{index:03d}")
+        for _round in range(3):
+            batch = faultsweep.sweep(self.store)
+            faultsweep.record_all(self.ledger, batch, store=self.store)
+        self.drain()
+        cleared = 0
+        for _round in range(4):
+            batch = faultsweep.sweep(self.store)
+            faultsweep.record_all(self.ledger, batch, store=self.store)
+            cleared += len(batch["clears"])
+        self.assertGreater(cleared, 0)
+        self.assertEqual(0, self.store.one(
+            "SELECT COUNT(*) AS n FROM fault_ledger"
+            " WHERE fault_class = ? AND cleared_at IS NULL",
+            ("delivery_stalled",))["n"])
+
+    def test_evidence_this_cannot_record_is_reported_as_truncation(self):
+        self.ledger.record(omission("a", evidence=[
+            {"kind": "row", "ref": "events", "observed": {}}, "not an object"]))
+        stored = self.ledger.occurrences(
+            faults.fault_id(PRODUCT, "report_omitted",
+                            {"relationship": "rel-1", "turn": "turn-7"}))[0]
+        self.assertEqual(1, len(stored["evidence"]))
+        self.assertTrue(stored["truncated"])
+
+    def test_generation_ten_is_not_skipped_by_a_cursor_that_stopped_at_nine(self):
+        page = faultsweep._page([], [{"relationship_id": "rel-x",
+                                      "execution_generation": 9}], "anchor", None, 1)
+        self.assertEqual("rel-x:" + "9".rjust(20, "0"), page["cursor"])
+        self.assertLess(page["cursor"], "rel-x:" + "10".rjust(20, "0"))
+
+    def test_a_cleared_flag_that_is_not_a_boolean_is_refused(self):
+        bad = dict(omission("a"), cleared="false")
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.record(bad)
+        self.assertEqual("fault_observation_malformed", refusal.exception.reason.value)
+
+    def test_a_healthy_reading_records_no_fault_at_all(self):
+        answer = self.ledger.record(omission("a:reported", cleared=True))
+        self.assertFalse(answer["recorded"])
+        self.assertEqual(0, self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"])
+
+    def test_registering_a_class_again_with_different_terms_is_refused(self):
+        faults.register_class("report_omitted", component="reporting",
+                              clears=faults.CLASS_POLICY["report_omitted"]["clears"])
+        with self.assertRaises(ValueError):
+            faults.register_class("report_omitted", component="reporting",
+                                  clears="something else entirely")
+
+    def test_a_reading_this_cannot_read_is_named_rather_than_dropped(self):
+        batch = faultsweep.sweep(self.store, readings=[
+            {"schema": "something/else"}, {"schema": faultsweep.OBSERVATION_SCHEMA},
+        ])
+        self.assertEqual(2, len(batch["gaps"]))
+        answer = faultsweep.record_all(self.ledger, batch, store=self.store)
+        self.assertEqual(2, len(answer["gaps"]))
+
+    def test_a_cursor_advances_only_after_the_rows_were_recorded(self):
+        self.stall()
+        batch = faultsweep.sweep(self.store)
+        self.assertEqual([], self.store.all("SELECT source FROM fault_cursors"))
+        faultsweep.record_all(self.ledger, batch, store=self.store)
+        self.assertTrue(self.store.all("SELECT source FROM fault_cursors"))
+
+
+class AnExistingStoreGainsTheFaultTables(RelayTestCase):
+    """CREATE TABLE IF NOT EXISTS reaches a database that predates this work."""
+
+    def test_a_database_without_the_fault_tables_gains_them_on_open_and_works(self):
+        from codex_session_relay.store import Store
+
+        with self.store.transaction() as db:
+            for table in ("fault_ledger", "fault_occurrences", "fault_timeline",
+                          "fault_remediations", "fault_publications", "fault_targets",
+                          "fault_cursors"):
+                db.execute(f"DROP TABLE {table}")
+        path = str(self.store.path)
+        self.store.close()
+        reopened = Store(path)
+        self.addCleanup(reopened.close)
+        names = {row[0] for row in reopened.all(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fault%'")}
+        self.assertEqual(7, len(names))
+        ledger = faults.FaultLedger(reopened, self.clock)
+        ledger.set_target("crw:CRW", TRACKER)
+        answer = ledger.record(omission("upgrade"))
+        self.assertEqual(faults.OPEN, answer["state"])
+        self.assertTrue(ledger.next())
 
 
 class Lifecycle(LedgerCase):
@@ -493,7 +633,7 @@ class Sweep(RelayTestCase):
 
     def sweep(self, readings=()):
         batch = faultsweep.sweep(self.store, scope={"projectKey": "CRW"}, readings=readings)
-        return batch, faultsweep.record_all(self.ledger, batch)
+        return batch, faultsweep.record_all(self.ledger, batch, store=self.store)
 
     def test_two_stranded_deliveries_produce_one_fault_with_two_occurrences(self):
         self.stall_a_delivery("event-a")
@@ -755,7 +895,7 @@ class ReviewFindings(RelayTestCase):
         self.stall("event-a", relationship=relationship)
         batch = faultsweep.sweep(self.store)
         self.assertEqual("CRW", batch["observations"][0]["scope"]["projectKey"])
-        faultsweep.record_all(self.ledger, batch)
+        faultsweep.record_all(self.ledger, batch, store=self.store)
         row = self.store.all("SELECT scope_key FROM fault_ledger")[0]
         self.assertEqual("crw:CRW", row["scope_key"])
 

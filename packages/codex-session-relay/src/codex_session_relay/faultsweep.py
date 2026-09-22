@@ -52,7 +52,7 @@ def _page(observations, rows, key, cursor, limit) -> dict:
     from a cursor, has seen part of the source and can clear nothing.
     """
     if key == "anchor":
-        position = (f"{rows[-1]['relationship_id']}:{rows[-1]['execution_generation']}"
+        position = (f"{rows[-1]['relationship_id']}:{rows[-1]['execution_generation']:020d}"
                     if rows else None)
     else:
         position = rows[-1][key] if rows else None
@@ -205,7 +205,9 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
         "                    WHERE s.relationship_id = g.relationship_id"
         "                      AND s.turn_id = COALESCE(p.turn_id, g.dispatch_turn_id))"
         "   AND (p.turn_id IS NULL OR p.last_polled_at IS NULL OR p.last_error IS NOT NULL)"
-        "   AND (g.relationship_id || ':' || g.execution_generation) > ?"
+        # Zero-padded, because the cursor is compared as TEXT and the rows are ordered
+        # numerically: without it a cursor ending at generation 9 hid generation 10.
+        "   AND (g.relationship_id || ':' || printf('%020d', g.execution_generation)) > ?"
         " ORDER BY g.relationship_id, g.execution_generation LIMIT ?",
         (cursor or "", limit),
     )
@@ -233,7 +235,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
     return _page(observations, rows, "anchor", cursor, limit)
 
 
-def reading_faults(readings, *, product, scope, store=None) -> list:
+def reading_faults(readings, *, product, scope, store=None) -> dict:
     """What CRW-180's reporting readings owe, including the ones that clear.
 
     Only a reading that says REPORTED clears an omission. unmeasured does not: a failed
@@ -241,15 +243,24 @@ def reading_faults(readings, *, product, scope, store=None) -> list:
     on the strength of a file nobody could read.
     """
     observations = []
+    gaps = []
     cache = {}
     for reading in readings or ():
+        # Named rather than dropped. A sweep that reported success while silently discarding
+        # the readings it was handed would be the quiet failure this whole module exists to
+        # stop somebody having to notice.
         if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
+            gaps.append({"gap": "reading_unusable",
+                         "reason": f"not an object under {OBSERVATION_SCHEMA}"})
             continue
         state = reading.get("reportingState")
         relationship = reading.get("relationshipId")
         selectors = reading.get("selectors")
         turn = selectors.get("turn") if isinstance(selectors, dict) else None
         if not (_named(relationship) and _named(turn)):
+            gaps.append({"gap": "reading_unusable", "relationId": relationship
+                         if isinstance(relationship, str) else None,
+                         "reason": "the reading names no usable relationship or turn"})
             continue
         signature = {"relationship": relationship, "turn": turn}
         placed = scope_of(store, relationship, scope, cache) if store is not None else scope
@@ -283,7 +294,7 @@ def reading_faults(readings, *, product, scope, store=None) -> list:
                 evidence=[_evidence("reading", OBSERVATION_SCHEMA, {
                     "reportingState": state, "reason": reading.get("reason")})],
             ))
-    return observations
+    return {"observations": observations, "gaps": gaps}
 
 
 def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
@@ -307,17 +318,20 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
             store, product=product, scope=scope, limit=limit,
             cursor=cursors.get("observation_stalled")),
     }
-    write_cursors(store, {name: page["cursor"] for name, page in by_class.items()})
     complete = tuple(name for name, page in by_class.items() if page["complete"])
     derived = [entry for page in by_class.values() for entry in page["observations"]]
-    observations = derived + reading_faults(readings, product=product, scope=scope,
-                                            store=store)
+    read = reading_faults(readings, product=product, scope=scope, store=store)
+    observations = derived + read["observations"]
+    recovery = recovered(store, derived, product=product, scope=scope, limit=limit,
+                         complete=complete, cursor=cursors.get("recovered"))
+    positions = {name: page["cursor"] for name, page in by_class.items()}
+    positions["recovered"] = recovery["cursor"]
     return {
         "observations": observations,
-        "clears": recovered(store, derived, product=product, scope=scope, limit=limit,
-                            complete=complete),
+        "clears": recovery["clears"],
+        "gaps": read["gaps"],
         "completeSources": list(complete),
-        "cursors": {name: page["cursor"] for name, page in by_class.items()},
+        "cursors": positions,
         "limits": f"each source is read at most {limit} rows, resuming where the last sweep"
                   f" stopped and wrapping at the end, so nothing past one page is starved."
                   f" A source that did not read the whole thing from the start clears"
@@ -326,28 +340,31 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     }
 
 
-def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DERIVED) -> list:
-    """Open faults this sweep read the source for, to the end, and no longer produces.
+def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DERIVED,
+              cursor=None) -> dict:
+    """Open faults whose own source no longer produces them.
 
-    The absence is POSITIVE: these are the classes whose rows this pass actually read in full.
-    A class the pass does not derive, or whose read stopped at its bound, is not in this answer
-    at all - which is the difference between having looked and not having looked.
+    Asked of each fault DIRECTLY rather than by differencing against a page. A page is a
+    bounded prefix, so with more rows than one page no page is ever the whole source, and a
+    rule that required one would have stopped clearing anything at all the moment a store got
+    busy - which is exactly when it matters. An existence query for one signature is exact
+    however large the source is.
+
+    The ledger side rotates too: always reading the first page of open faults left later ones
+    open forever behind a persistent prefix.
     """
-    complete = tuple(name for name in complete if name in DERIVED)
-    if not complete:
-        return []
-    present = {entry["faultClass"] + "|" + faults.canonical_signature(entry["signature"])
-               for entry in derived}
     rows = store.all(
         "SELECT fault_id, fault_class, signature, cycle, scope FROM fault_ledger"
         " WHERE product = ? AND state IN (?,?,?) AND cleared_at IS NULL"
-        "   AND fault_class IN (" + ",".join("?" * len(complete)) + ")"
-        " ORDER BY rowid LIMIT ?",
-        (product, faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, *complete, limit),
+        "   AND fault_class IN (" + ",".join("?" * len(DERIVED)) + ")"
+        "   AND fault_id > ?"
+        " ORDER BY fault_id LIMIT ?",
+        (product, faults.OBSERVED, faults.OPEN, faults.FIX_PENDING, *DERIVED, cursor or "",
+         limit),
     )
     clears = []
     for row in rows:
-        if row["fault_class"] + "|" + row["signature"] in present:
+        if still_present(store, row["fault_class"], json.loads(row["signature"])):
             continue
         last = store.one(
             "SELECT occurrence_id FROM fault_occurrences"
@@ -367,7 +384,48 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
             detail="this sweep read the source and no longer derives this fault",
             evidence=[_evidence("sweep", row["fault_class"], {"derived": False})],
         ))
-    return clears
+    return {"clears": clears,
+            "cursor": rows[-1]["fault_id"] if len(rows) >= limit else None}
+
+
+def still_present(store, fault_class, signature) -> dict:
+    """Does this fault's own source still produce it? Asked as an existence query.
+
+    Returns the row when it does and None when it does not, so a caller can tell an absence
+    from a class this cannot ask about - which is never cleared by absence at all.
+    """
+    if fault_class == "delivery_stalled":
+        return store.one(
+            "SELECT 1 FROM deliveries d WHERE d.recipient_task_id = ? AND d.hold_reason = ?"
+            "  AND d.state NOT IN (?,?,?)"
+            "  AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
+            "                 ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
+            " LIMIT 1",
+            (signature.get("recipient"), signature.get("cause"), *SETTLED_DELIVERY,
+             signature.get("attemptState")))
+    if fault_class == "record_sync_failed":
+        return store.one(
+            "SELECT 1 FROM sync_outbox WHERE state = ? AND target = ? AND target_ref = ?"
+            " LIMIT 1",
+            (faults.FAILED, signature.get("target"), signature.get("targetRef")))
+    if fault_class == "observation_stalled":
+        return store.one(
+            "SELECT 1 FROM generations g"
+            "  LEFT JOIN poll_observations p"
+            "    ON p.relationship_id = g.relationship_id"
+            "   AND p.execution_generation = g.execution_generation"
+            "   AND p.turn_id = g.dispatch_turn_id"
+            " WHERE g.relationship_id = ? AND g.execution_generation = ?"
+            "   AND g.anchor_state = 'bound' AND g.dispatch_turn_id IS NOT NULL"
+            "   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s"
+            "                    WHERE s.relationship_id = g.relationship_id"
+            "                      AND s.turn_id = COALESCE(p.turn_id, g.dispatch_turn_id))"
+            "   AND (p.turn_id IS NULL OR p.last_polled_at IS NULL"
+            "        OR p.last_error IS NOT NULL)"
+            " LIMIT 1",
+            (signature.get("relationship"), signature.get("generation")))
+    # A class this cannot ask about is never cleared by absence.
+    return {"unaskable": True}
 
 
 def read_cursors(store) -> dict:
@@ -394,13 +452,19 @@ def _now(store) -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
-def record_all(ledger, batch) -> dict:
-    """Record a sweep's answer. Returns what actually changed, which is usually nothing."""
+def record_all(ledger, batch, *, store=None) -> dict:
+    """Record a sweep's answer, THEN advance its cursors.
+
+    In that order on purpose: advancing before the rows are recorded means a failure here
+    skips that page until the rotation comes round again.
+    """
     results = []
     for entry in list(batch.get("observations", ())) + list(batch.get("clears", ())):
         results.append(ledger.record(entry))
+    if store is not None and batch.get("cursors") is not None:
+        write_cursors(store, batch["cursors"])
     recorded = [entry for entry in results if entry.get("recorded")]
     queued = [entry["publication"] for entry in recorded
               if entry.get("publication") and entry["publication"].get("queued")]
     return {"read": len(results), "recorded": len(recorded), "queued": len(queued),
-            "results": results}
+            "gaps": list(batch.get("gaps", ())), "results": results}

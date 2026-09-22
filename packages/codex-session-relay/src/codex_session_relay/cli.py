@@ -1503,9 +1503,10 @@ def cmd_fault_sweep(services, args) -> dict:
         services.store, product=args.product,
         scope={"projectKey": args.project} if args.project else {}, readings=readings,
     )
-    recorded = faultsweep.record_all(services.faults, batch)
+    recorded = faultsweep.record_all(services.faults, batch, store=services.store)
     return {"read": recorded["read"], "recorded": recorded["recorded"],
-            "queued": recorded["queued"], "limits": batch["limits"]}
+            "queued": recorded["queued"], "gaps": recorded["gaps"],
+            "limits": batch["limits"]}
 
 
 def cmd_fault_show(services, args) -> dict:
