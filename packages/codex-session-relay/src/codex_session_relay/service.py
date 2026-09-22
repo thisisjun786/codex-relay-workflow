@@ -18,6 +18,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 import pwd
 import signal
@@ -37,6 +38,13 @@ WORKER_POLICY_LIMIT = 65536
 SERVICE_INTENT = "service.json"
 DAEMON_LOG = "daemon.log"
 STOP_REQUEST = "stop.request"
+
+# A worker that reached its own clock AFTER the instant its supervisor gave it. It took no
+# tick and served nothing, so the supervisor must read it as neither a clean segment nor a
+# crash: the first would report healthy work that never happened, the second would back off
+# from a process that did not fail. It is defined here rather than beside the CLI's other exit
+# codes because the supervisor in this module is the only thing that interprets it.
+EXIT_BOUND_SPENT = 5
 
 OURS, FOREIGN, UNVERIFIABLE, NONE = "ours", "foreign", "unverifiable", "none"
 
@@ -1308,7 +1316,13 @@ class RelayService:
         if max_segments is not None:
             argv += ["--max-segments", str(max_segments)]
         if deadline is not None:
-            argv += ["--deadline", str(deadline)]
+            # Handed down as the INSTANT this launch must stop at, not as the duration this
+            # caller was given. The supervisor being launched reads its own clock only after
+            # fork, interpreter start, imports and its own gate checks, so a duration would
+            # begin counting there and the bound would end that much later than asked for.
+            # Same host, same boot, and the child is exec'd now, so CLOCK_MONOTONIC is one
+            # clock at both ends; repr keeps the float exact across the argument.
+            argv += ["--deadline-monotonic", repr(time.monotonic() + deadline)]
         environment = dict(os.environ)
         if self.scope.authority == ISOLATED:
             # The ALREADY RESOLVED absolute root, so a relative override cannot resolve
@@ -1351,8 +1365,16 @@ class RelayService:
     def stop_requested(self) -> bool:
         return self.stop_request_path.exists()
 
-    def spawn_worker(self, *, lock_fd, scope_fd, token, segment_seconds, allow_isolated):
-        """One bounded worker, sharing the descriptors this supervisor already holds."""
+    def spawn_worker(self, *, lock_fd, scope_fd, token, segment_seconds, allow_isolated,
+                     deadline_monotonic=None):
+        """One bounded worker, sharing the descriptors this supervisor already holds.
+
+        The worker's bound goes down in whichever form is true of it. With a supervisor bound
+        to protect, `deadline_monotonic` is the INSTANT this worker must stop at, so what it
+        spends starting up comes out of the segment instead of landing after it. With no
+        supervisor bound there is nothing to protect and `segment_seconds` is a segment
+        LENGTH, which is what a duration means.
+        """
         import subprocess
         import sys
 
@@ -1360,8 +1382,12 @@ class RelayService:
                 "--state", str(self.selection.path)]
         if self.socket_path:
             argv += ["--socket", str(self.socket_path)]
-        argv += ["daemon", "--deadline", str(segment_seconds),
-                 "--supervised-token", token,
+        argv += ["daemon"]
+        if deadline_monotonic is None:
+            argv += ["--deadline", str(segment_seconds)]
+        else:
+            argv += ["--deadline-monotonic", repr(deadline_monotonic)]
+        argv += ["--supervised-token", token,
                  "--supervised-lock-fd", str(lock_fd),
                  "--supervised-scope-fd", str(scope_fd if scope_fd is not None else -1)]
         if allow_isolated:
@@ -1378,8 +1404,8 @@ class RelayService:
             )
 
     def supervise(self, *, allow_isolated=False, segment_seconds=None, max_segments=None,
-                  deadline=None, spawn=None, policy=None, sleeper=None, on_start=None,
-                  monotonic=None) -> dict:
+                  deadline=None, deadline_monotonic=None, spawn=None, policy=None,
+                  sleeper=None, on_start=None, monotonic=None) -> dict:
         """Replace bounded workers for as long as the owner wants this service running.
 
         RelayDaemon.run stays bounded by construction; continuation is a supervisor OVER
@@ -1396,10 +1422,34 @@ class RelayService:
         crossing deterministically. What that proves is the loop's own arithmetic and its
         intent re-reads; what it does not prove is anything about hours of real elapsed time.
         The distinction is written out in tests/test_service.py rather than implied.
+        An injected clock has to be paired with an injected `spawn`: the instant this loop
+        hands a worker is expressed in whatever clock it was given, and a real worker reads it
+        against the real one.
+
+        The bound arrives in one of two forms and they are not interchangeable. `deadline` is
+        a DURATION, and it starts counting at this process. `deadline_monotonic` is the
+        INSTANT a launching process already decided, read from the same CLOCK_MONOTONIC on the
+        same host and boot; converting it here spends this process's own startup out of the
+        bound instead of adding it on top. Passing both is a caller bug, not a preference.
         """
         from .daemon import SingleInstance
         from .policy import RetryPolicy
 
+        if deadline is not None and deadline_monotonic is not None:
+            raise ValueError(
+                "deadline and deadline_monotonic are two different bounds; pass one. A "
+                "duration starts at this process's clock; an instant was decided before it "
+                "existed, and silently preferring either would end the run at a time the "
+                "caller did not ask for"
+            )
+        for name, value in (("deadline", deadline), ("deadline_monotonic", deadline_monotonic)):
+            # Checked here and not only at the CLI, because every comparison against nan is
+            # False: a supervisor given one would never reach its bound, which is the
+            # unbounded run this loop is built not to have. inf says the same thing plainly.
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number of seconds")
+        if deadline is not None and deadline < 0:
+            raise ValueError("deadline cannot be negative; it is a length, not a direction")
         policy = policy or RetryPolicy()
         sleeper = sleeper or time.sleep
         monotonic = monotonic or time.monotonic
@@ -1446,6 +1496,18 @@ class RelayService:
                 # only the loop let --deadline N spend an arbitrary startup interval first and
                 # then run for another N - even spawning a worker past the requested bound.
                 started = monotonic()
+                if deadline_monotonic is not None:
+                    # The last moment before the loop begins, so everything this process spent
+                    # reaching it - fork, interpreter start, imports, the gate checks and the
+                    # claim above - comes OUT of the bound rather than being added to it. A
+                    # value left over from an earlier boot reads as already spent, because
+                    # CLOCK_MONOTONIC restarts near zero: this stops, rather than running
+                    # unbounded on a number it cannot interpret.
+                    deadline = max(0.0, deadline_monotonic - started)
+                # This supervisor's own end, in its own clock. Every worker's instant is capped
+                # at it below, so the 0.1 floor on a segment cannot hand a worker a bound that
+                # outlives the one being enforced.
+                ends_at = None if deadline is None else started + deadline
                 if on_start is not None:
                     on_start()
                 # Only now is this service serving. Recovery runs before any worker can send,
@@ -1469,14 +1531,22 @@ class RelayService:
                     # was running gets no replacement, and the supervisor never writes intent.
                     if not self.intent.read()["enabled"]:
                         break
+                    granted = (
+                        segment_seconds if deadline is None else
+                        max(0.1, min(segment_seconds, deadline - (monotonic() - started)))
+                    )
                     child = spawn(
                         lock_fd=lock.fileno(), scope_fd=scope_fd, token=token,
                         # Clamped to what remains of the supervisor's own bound, or a worker
                         # started just before the deadline outlives it by a whole segment.
-                        segment_seconds=(
-                            segment_seconds if deadline is None else
-                            max(0.1, min(segment_seconds,
-                                         deadline - (monotonic() - started)))
+                        segment_seconds=granted,
+                        # The same clamp as an INSTANT, so the startup the worker has not
+                        # spent yet comes out of this segment instead of landing after it -
+                        # and capped at this supervisor's own end, because the floor above
+                        # rounds a remainder under a tenth of a second back up to one.
+                        deadline_monotonic=(
+                            None if ends_at is None
+                            else min(monotonic() + granted, ends_at)
                         ),
                         allow_isolated=allow_isolated,
                     )
@@ -1491,6 +1561,20 @@ class RelayService:
                     self._note(workerPid=None, workerStartTicks=None, lastExit=code,
                                restarts=len(segments) + 1)
                     segments.append(code)
+                    if code == EXIT_BOUND_SPENT:
+                        # This worker reached its own clock after the instant it was given, so
+                        # it took no tick and served nothing. At the end of a bounded run that
+                        # is the ordinary tail and the checks below would end the loop anyway.
+                        # Anywhere else it means a worker costs more to start than the segment
+                        # it was granted, and replacing it would churn processes that never
+                        # serve while reporting clean segments - so it is named and this
+                        # supervisor stops instead of spinning.
+                        if not (deadline is not None and monotonic() - started >= deadline):
+                            degraded = ("a worker costs more to start than the segment it was"
+                                        f" granted ({granted:.3f}s); it served nothing")
+                            self.store_journal_note(degraded)
+                            self._note(consecutiveFailures=failures, degraded=degraded)
+                        break
                     failures = failures + 1 if code != 0 else 0
                     if failures >= policy.repeat_failure_threshold:
                         degraded = (f"{failures} consecutive worker failures, last exit {code}")

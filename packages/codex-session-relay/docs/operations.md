@@ -139,6 +139,16 @@ or until a deadline and then exits, and cannot be constructed unbounded (I-64). 
 **supervisor** owns the locks and launches successive workers, which is what carries an
 assignment past any single process bound.
 
+A bound only means something in the clock of the process enforcing it, so it crosses the
+boundary between those two roles as an instant and not as a duration (I-185). The supervisor
+passes `--deadline-monotonic`, the worker converts it against its own `CLOCK_MONOTONIC` as soon
+as it has one, and the startup the worker has not paid yet comes out of its segment instead of
+landing after it; `service start --deadline N` does the same for the supervisor it launches. A
+process that reaches its own clock past that instant serves nothing and exits `5`, which its
+supervisor reads as neither a clean segment nor a crash: it stops replacing workers, and reports
+`degraded` when its own bound still had room, because a segment shorter than a worker costs to
+start would otherwise churn processes that never serve.
+
 | Command | Effect |
 |---|---|
 | `service status` | intent, liveness, ownership, store, conflicts, projects, observation health |

@@ -10,7 +10,9 @@ id, which is a different act entirely.
 
 import argparse
 import json
+import math
 import sys
+import time
 from pathlib import Path
 
 from .ack import AckService
@@ -2117,7 +2119,57 @@ def _refuse_unless_ok(payload: dict) -> dict:
     raise PayloadExit(payload, EXIT_REFUSED)
 
 
-def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
+def _finite(value, flag):
+    """A bound has to be a number a comparison can ever be true against.
+
+    `type=float` accepts `nan` and `inf`. `nan` is truthy and every `>=` against it is False
+    forever, so a run given one would never reach its bound - the unbounded mode this daemon
+    is built not to have. `inf` is the same thing spelled honestly. Refused at the surface
+    rather than discovered hours later by a process nobody can explain.
+    """
+    if value is None:
+        return None
+    if not math.isfinite(value):
+        raise SystemExit2(f"{flag} must be a finite number of seconds", EXIT_USAGE)
+    return value
+
+
+def _declared_bound(args):
+    """The one bound this invocation was given, in whichever of the two forms it arrived.
+
+    `--deadline` is a DURATION somebody typed, and it starts counting at this process.
+    `--deadline-monotonic` is the INSTANT a launching process already decided, in this host's
+    and boot's CLOCK_MONOTONIC. Both together is a caller bug: they are two different end
+    times, and silently preferring one would end the run when nobody asked.
+    """
+    duration = _finite(getattr(args, "deadline", None), "--deadline")
+    instant = _finite(getattr(args, "deadline_monotonic", None), "--deadline-monotonic")
+    if duration is not None and instant is not None:
+        raise SystemExit2(
+            "--deadline and --deadline-monotonic are two different bounds; pass one",
+            EXIT_USAGE,
+        )
+    if duration is not None and duration < 0:
+        raise SystemExit2("--deadline cannot be negative", EXIT_USAGE)
+    return duration, instant
+
+
+def _bound_already_spent(service, detail):
+    """The ending for a bounded run that took no tick because its bound was already gone.
+
+    A plain success would be counted by the supervisor as a clean segment and reset the failure
+    streak; a plain failure would back it off from a process that did not fail. Neither is what
+    happened, so this has its own exit code and its own line in the journal.
+    """
+    from .service import EXIT_BOUND_SPENT
+
+    service.store_journal_note(f"this run served nothing: {detail}")
+    return PayloadExit(
+        {"ok": False, "reason": "bound_already_spent", "detail": detail}, EXIT_BOUND_SPENT,
+    )
+
+
+def _run_bounded(services, service, args, *, require_intent: bool, monotonic=None) -> dict:
     """Hold ownership for exactly as long as this process serves, then let it go.
 
     The daemon is constructed INSIDE the claim so a run that loses the race never opens a
@@ -2126,7 +2178,26 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
     from .daemon import RelayDaemon
     from .service import ServiceRefused, owned_service
 
-    deadline = services.clock.now() + args.deadline if args.deadline else None
+    monotonic = monotonic or time.monotonic
+    duration, instant = _declared_bound(args)
+    if instant is None:
+        # `is not None` rather than truthiness: `--deadline 0` is a bound that is already
+        # spent, and reading it as "no bound given" turned an explicit zero into a run with
+        # no bound at all.
+        deadline = None if duration is None else services.clock.now() + duration
+    else:
+        # Converted against THIS process's monotonic clock, which is the whole point: fork,
+        # interpreter start, imports and argument parsing are already behind us, and they come
+        # out of the bound here instead of being spent before a duration started counting. The
+        # comparison itself stays on the injected wall clock, exactly as a duration's does.
+        remaining = instant - monotonic()
+        if remaining <= 0:
+            raise _bound_already_spent(
+                service,
+                "the instant this run was given had passed by the time it reached its own"
+                " clock, so it took no tick",
+            )
+        deadline = services.clock.now() + remaining
     allow_isolated = getattr(args, "allow_isolated_scope", False)
     # Before the claim, for the same reason _supervise does it: the probe that built this
     # service answers from a file that may not exist yet, and a scope registration recorded
@@ -2152,6 +2223,18 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
                 max_ticks=args.max_ticks, deadline=deadline,
                 sleep=_scheduler_wait(services.clock, deadline),
             )
+            if not reports and deadline is not None and services.clock.now() >= deadline:
+                # The same ending as the check before the locks, reached one step later. The
+                # bound was still there when this process read its own clock and was gone by
+                # the time the run began - spent adopting the descriptors, taking the claim and
+                # building the adapter - so the loop broke before its first tick. Returning
+                # success here is what let a supervisor count a worker that served nothing as a
+                # clean segment.
+                raise _bound_already_spent(
+                    service,
+                    "the bound was spent while this run was taking its locks and building its"
+                    " adapter, so it began with nothing left and took no tick",
+                )
     except ServiceRefused as refusal:
         raise PayloadExit(
             {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
@@ -2248,9 +2331,12 @@ def cmd_service(services, args) -> dict:
         return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
     if action in ("start", "restart"):
         _require_adapter(services)
+        # Validated where a person typed it, rather than reaching the launched supervisor as
+        # an instant built out of nan.
+        duration, _instant = _declared_bound(args)
         call = service.start if action == "start" else service.restart
         return _refuse_unless_ok(call(
-            allow_isolated=args.allow_isolated_scope, deadline=args.deadline,
+            allow_isolated=args.allow_isolated_scope, deadline=duration,
             segment_seconds=args.segment_seconds, max_segments=args.max_segments,
             actor=args.actor or "cli", takeover=getattr(args, "takeover_scope", False),
         ))
@@ -2283,9 +2369,11 @@ def _supervise(services, service, args) -> dict:
         _release_expired_leases(services)
 
     try:
+        duration, instant = _declared_bound(args)
         return service.supervise(
             allow_isolated=args.allow_isolated_scope, segment_seconds=args.segment_seconds,
-            max_segments=args.max_segments, deadline=args.deadline, on_start=recover,
+            max_segments=args.max_segments, deadline=duration, deadline_monotonic=instant,
+            on_start=recover,
         )
     except ServiceRefused as refusal:
         raise PayloadExit(
@@ -3106,6 +3194,12 @@ def build_parser() -> argparse.ArgumentParser:
     daemon = subparsers.add_parser("daemon")
     daemon.add_argument("--max-ticks", type=int)
     daemon.add_argument("--deadline", type=float)
+    # The INSTANT a launching process already decided this run must stop at, read from
+    # CLOCK_MONOTONIC on this host and this boot. A supervisor writes it when it spawns a
+    # worker, so the worker's own startup is spent from the segment rather than added after
+    # it; a person types --deadline instead. It is not a wall clock and it does not survive a
+    # reboot - a stale value reads as already spent, which stops rather than runs unbounded.
+    daemon.add_argument("--deadline-monotonic", type=float)
     daemon.add_argument("--allow-isolated-scope", action="store_true")
     daemon.add_argument("--supervised-token")
     daemon.add_argument("--supervised-lock-fd", type=int)
@@ -3127,6 +3221,11 @@ def build_parser() -> argparse.ArgumentParser:
         # The supervisor's own optional bounds, for a test or a deliberately finite run.
         hosted.add_argument("--max-segments", type=int)
         hosted.add_argument("--deadline", type=float)
+        if name == "run":
+            # Only the supervisor takes the instant form, because only the supervisor is ever
+            # launched by another process that had already decided when it must stop. start
+            # and restart are where a person says how long, and they convert it themselves.
+            hosted.add_argument("--deadline-monotonic", type=float)
         hosted.add_argument("--launch-id")
         # For a registration whose store no longer exists - deleted, lost or deliberately
         # replaced. Refused while anything is live on the scope, so this can only ever
