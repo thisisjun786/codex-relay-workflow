@@ -69,6 +69,13 @@ reported ChatGPT.app 26.901.51231 build 8109, the app was running, and the accou
 layer showed two remote-control enrollments pointing at this Linux host, one of them
 named `Codex Desktop`. Record which layers YOUR access actually reached.
 
+Record the shape, not the secrets. Those enrollment rows also carry an account
+identifier, a server identifier and a websocket endpoint, and none of them is reproduced
+here or belongs in a repository document: the count and the product label carry the whole
+finding, which is that this client drives this host. The same restraint applies to every
+store you read during a probe. Publish the aggregate that supports the claim and keep the
+identifiers in the private receipt.
+
 Two traps this round hit, both worth repeating:
 
 - The profile domain is not named after the app. The bundle is `ChatGPT.app` but its
@@ -272,9 +279,13 @@ This round observed exactly that trap: 31 seconds before the real transition, th
 child's session file already read a populated slug with `loopArmSeen` true while the
 phase was still `IDLE` and orchestration was inactive. A predicate built on those
 fields alone would have recorded activation for a child that had not yet started.
-Take the accepted transition row plus the exit-zero orchestrate call as the evidence,
-and treat a child's own written claim of activation as a lead to check rather than
-proof.
+All four stay required. The last two carry the weight, because an accepted transition
+row and an exit-zero orchestrate call are the only ones of the four the three cheap
+signals cannot produce; check those first, then confirm the active goal row and the
+bound goalplan are genuinely there rather than assuming they followed. Dropping either
+of that last pair is how a verifier ends up certifying a child that registered a plan and
+never ran it. Treat a child's own written claim of activation as a lead to check rather
+than proof.
 
 ## Evidence to capture
 
@@ -370,11 +381,17 @@ Keep raw receipts outside the repository and record only the shape here.
 
 Record four verdicts separately. A single summary verdict hides the one that fails.
 
-Write each verdict as a cell that is either measured or blocked, and never as a bare
-"unverified". Unverified collapses three different situations that need different
-answers: a thing nobody attempted, a thing attempted and inconclusive, and a thing that
-cannot be reached from here at all. Only the third is a property of the environment, and
-it is the only one where stopping is the correct outcome.
+Write each verdict as a cell that is either measured or blocked, and never as a BARE
+"unverified". The word itself stays in use and the rest of this file relies on it; what
+is refused is the form that stops at the word. Unverified alone collapses three different
+situations that need different answers: a thing nobody attempted, a thing attempted and
+inconclusive, and a thing that cannot be reached from here at all. Only the third is a
+property of the environment, and it is the only one where stopping is the correct outcome.
+
+So "unverified" is a complete answer exactly when the missing capability travels with it,
+which is what every other instruction in this file already asks for when it tells you to
+record something unverified and name the access that would settle it. Read those as
+unchanged.
 
 Cite bytes, not files. A verdict that points at an evidence file has only shown the file
 exists; it has not shown the file says anything. Name a literal string from that file
@@ -642,6 +659,13 @@ a keep count of one and thirteen checkouts present, an applied policy had every
 opportunity to trim and trimmed nothing.
 
 For the command-line surface, then, the recent-count condition is no longer merely
+unobserved. Those `desktop.` keys are accepted and validated but never applied on this
+path, and `archive` is a thread-record operation whatever the feature flag says. Record
+that as unreachable from this surface rather than unverified, and read that as superseding
+the paragraph above for THIS surface only: unverified was the right answer while the
+trigger had not been exercised, and unreachable is the right answer now that it has. The
+desktop surface owns the documented policy, is still unverified, and none of this
+transfers to it.
 
 The recovery half was exercised too, on a fixture created for the purpose, because step 12
 treats an unexercised recovery as leaving the lifecycle verdict unverified. Two commands,
@@ -660,10 +684,6 @@ and none should be run — on a shared repository it reaches every worktree, not
 One residue: the Codex-side container directory above the checkout stays behind, empty. A
 count of the worktrees root therefore keeps counting a checkout that no longer exists, which
 matters if anyone builds a retention check on that count.
-unobserved. Those `desktop.` keys are accepted and validated but never applied on this
-path, and `archive` is a thread-record operation whatever the feature flag says. Record
-that as unreachable from this surface rather than unverified. The desktop surface owns
-the documented policy, is still unverified, and none of this transfers to it.
 those settings, and record the effective limit and any exemption state next to the
 result, as the table above requires.
 
