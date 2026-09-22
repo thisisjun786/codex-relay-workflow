@@ -622,9 +622,12 @@ def cmd_settings_show(services, args) -> dict:
     # restatement of part of it. Until the recorded string fields were typed, `not missing()`
     # and require_usable() agreed on every row this could be asked about; they no longer do,
     # and a row this command called deliverable would be withheld by delivery and reported
-    # refused by doctor. Running it here also answers the case that was already wrong before
-    # that: a sandbox type with no resume mode. "recordFinding" then says WHICH rule refused,
-    # because a false deliverable beside an empty missing list and no roleFinding names nothing.
+    # refused by doctor. They diverge twice now: a mistyped string field, and an approvalPolicy
+    # this transport cannot carry, which is PRESENT on such a row and therefore invisible to
+    # missing(). Running the predicate here also answers the case that was already wrong before
+    # either of them: a sandbox type with no resume mode. "recordFinding" then says WHICH rule
+    # refused, because a false deliverable beside an empty missing list and no roleFinding
+    # names nothing.
     return {"task": args.task, "settings": settings.data,
             "usable": not settings.missing(), "missing": settings.missing(),
             "deliverable": unusable is None and finding is None,
@@ -1721,25 +1724,28 @@ def _sandbox_summary(row) -> dict:
     here rather than described: `TaskSettings.require_usable()` in
     `DeliveryService._settings_for` (delivery.py), the resume-params construction in
     `_guarded_send` (bridge_adapter.py), and `normalise_environments`, which is the one the
-    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising: it exists only
-    as a comparison against a fixed value in the resume verification, so the recorded value is
-    compared against that same value instead.
+    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising on its own: it is
+    a comparison against a fixed value. It reaches `deliverable` anyway, because
+    `require_usable()` now makes that comparison against the recorded row and refuses it, so
+    running the validator answers both kinds.
 
-    The two are reported in different fields because they decide different things. A failing
-    transformation settles the send on the row alone - no host can consume
-    `runtimeWorkspaceRoots: 7` - so it makes `deliverable` false. A violated value constraint
-    settles only what a host that reports the setting BACK will do, and a host that replaces
-    it proceeds, so it lands in `refusedIfPreserved` and leaves `deliverable` describing the
-    preparation. Collapsing them cost a round in the other direction: the receipt denied a
-    send that today's delivery completes when the host normalises the value.
+    This field used to report the two kinds separately, and `refusedIfPreserved` is gone with
+    the reason it existed. It said a row recording another approval policy completed a send
+    against a host that REPLACED the value and was refused only by one that reported it back -
+    which was true, and was the defect: whether the message was delivered depended on what the
+    host did with a fact the record already settled. Now the row is refused before any host is
+    asked, so the field could never again carry a value, and leaving it would describe a send
+    that is no longer attempted.
 
-    Five versions of this field were wrong the same way before those two sentences could be
-    written: each named the answer after the members it had been shown - the sandbox type,
-    then `require_usable()`, then the params construction, then the post-response half, then
-    the constraint that raises nothing at all. The set is not kept by hand here.
+    Six versions of this field were wrong the same way before that could be written: each named
+    the answer after the members it had been shown - the sandbox type, then `require_usable()`,
+    then the params construction, then the post-response half, then the constraint that raises
+    nothing at all, then that constraint reported beside the answer instead of in it. The set is
+    not kept by hand here.
     `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
-    derives both kinds from those two modules and fails if a member of either is added that
-    this does not reach.
+    derives both kinds from those two modules, in both directions - what the response
+    verification refuses and what the record validator refuses, asserted equal - and fails if a
+    member of either is added that this does not reach.
 
     What it does NOT answer is whether the host accepts the parameters. The App Server's own
     schema is not in this repository, so nothing here can say what it does with a value this
@@ -1753,10 +1759,8 @@ def _sandbox_summary(row) -> dict:
     """
     import json
 
-    from .errors import DeliveryRefused, RefusalReason
-    from .settings import (
-        AUTHORIZED_APPROVAL_POLICY, TaskSettings, normalise_environments, normalise_policy,
-    )
+    from .errors import DeliveryRefused
+    from .settings import TaskSettings, normalise_environments, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -1797,36 +1801,10 @@ def _sandbox_summary(row) -> dict:
         # die on one. An unexpected failure is still a refusal, reported as what it was.
         refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
 
-    # The constraint kind, reported BESIDE deliverable rather than folded into it, because it
-    # decides something different. A transformation that fails decides the send on the row
-    # alone: no host can rescue `runtimeWorkspaceRoots: 7`. This one does not. Measured: a
-    # resume that reports "on-request" back produces unsupported_approval_policy and no turn,
-    # while a host that answers "never" regardless returns no findings and the send proceeds.
-    # So a row recording another policy cannot be carried AS RECORDED, and folding that into
-    # `deliverable` would have the receipt deny a send that today's delivery would complete
-    # against a host that replaces the value.
-    recorded_policy = settings.get("approvalPolicy")
-    preserved = None
-    if recorded_policy != AUTHORIZED_APPROVAL_POLICY:
-        preserved = {
-            "field": "approvalPolicy",
-            # The finding code the resume verification reports for this, so a receipt and a
-            # delivery journal name it alike.
-            "refusedBy": RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value,
-            "detail": (
-                f"the recorded approvalPolicy is {recorded_policy!r}; a resume that reports it"
-                f" back is refused, so only {AUTHORIZED_APPROVAL_POLICY!r} can be carried as"
-                " recorded and this row completes a send only against a host that replaces it"
-            ),
-        }
     cwd = settings.get("cwd")
     return {
         "readable": True,
         "deliverable": refused is None,
-        # The other kind of constraint: null when nothing in the row would be refused after a
-        # host reports it back, and otherwise the field, the code and why. Separate from
-        # `deliverable` on purpose - see the comment above the check.
-        "refusedIfPreserved": preserved,
         # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
         # journal name the same thing.
         "refusedBy": None if refused is None else (
@@ -1850,10 +1828,14 @@ def _sandbox_summary(row) -> dict:
 def _access_receipt(services, report) -> dict:
     """One participant's observed answer to: which store is this, and may I use it?
 
-    Every field is measured rather than declared. The identity and the device/inode pair come
-    from the probe's own stat; the read and write answers come from a real read-only
-    connection and a real rolled-back write transaction, not from a permission bit; and the
-    sandbox comes from the settings the adapter would carry rather than from configuration.
+    Every field is measured rather than declared. The identity and the device/inode pair are
+    fstat-ed from the descriptor the probe holds open, so they describe the file this command
+    actually reached rather than whatever the name reaches now; the read and write answers
+    come from a real read-only connection and a real rolled-back write transaction opened
+    through that same descriptor, not from a permission bit; and the sandbox comes from the
+    settings the adapter would carry rather than from configuration. SQLite reopens the name
+    it resolves the descriptor to, so store._hold_database is where the remaining window is
+    stated; what this receipt rules out is a move that had already happened when it asked.
 
     It exists to be COMPARED. Two participants put their receipts side by side to find out
     whether they are on one database or two, and a matching path does not settle that: two
@@ -1958,10 +1940,11 @@ def _contents(services, report) -> dict:
     if not report["access"]["dbReadable"]:
         return {"available": False, "relationships": None, "openAttempts": None,
                 "detail": "the database is not readable from this process"}
-    # Read through the probe's own read-only connection. services.store would construct a
-    # Store, and Store.__init__ opens O_RDWR, switches on WAL and runs the whole schema
-    # script - so asking doctor to COUNT rows in an empty, legacy or unrelated readable
-    # relay.sqlite3 quietly turned it into a relay database. Diagnosis writes nothing.
+    # Read through a descriptor held on the database, the same door the probe used.
+    # services.store would construct a Store, and Store.__init__ opens O_RDWR, switches on WAL
+    # and runs the whole schema script - so asking doctor to COUNT rows in an empty, legacy or
+    # unrelated readable relay.sqlite3 quietly turned it into a relay database. Diagnosis
+    # writes nothing.
     counted = read_only_rows(
         services.selection,
         "SELECT (SELECT COUNT(*) FROM relationships) AS relationships,"
@@ -1991,9 +1974,11 @@ def _issue_reading(services, report, issue_key: str) -> dict:
     halves here is what removes the gap, because one read cannot disagree with itself about
     which file it read.
 
-    Constructs no Store, like the rest of doctor: read_only_rows opens the database read-only
-    and stats the path before and after, so a rename during the read returns no rows at all
-    rather than rows a caller would attribute to the wrong file.
+    Constructs no Store, like the rest of doctor: read_only_rows holds the database open and
+    identifies it by that descriptor, refusing outright when the file it holds is no longer the
+    one at this store's pathname. So a rename this read can observe returns no rows at all
+    rather than rows a caller would attribute to the wrong file; store._hold_database states
+    the in-call window that leaves.
 
     Deliberately narrow. It reports what ONE read-only connection can support - whether a live
     relationship exists here and which child owns it - and leaves the scoped/unscoped/
@@ -2203,9 +2188,16 @@ def _service_for(services):
     """Built from the probe, so status stays an offline command that constructs no Store."""
     from .service import RelayService
 
+    measured = probe(services.selection)["store"]
     return RelayService(
         services.selection, socket_path=services.socket_path,
-        store_id=probe(services.selection)["store"]["storeId"],
+        store_id=measured["storeId"],
+        # A store that is HERE but would not state its identity is not the same as no store.
+        # read_only_rows and the probe now refuse a read they cannot bind to this file, so the
+        # identity comes back None in exactly the case a comparison matters most - the store
+        # being moved under the command, for every move the read can observe. Passing the
+        # distinction keeps ownership from reading that silence as nothing to compare.
+        store_unidentified=measured["exists"] and measured["storeId"] is None,
     )
 
 

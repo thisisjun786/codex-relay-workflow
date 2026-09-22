@@ -23,7 +23,7 @@ from codex_session_relay.service import (
     EXIT_BOUND_SPENT, ISOLATED, PRODUCTION, ProcessHandle, RelayService, ScopeRegistry,
     ServiceRefused, installation_id, owned_service, production_scope_root, resolve_scope_root,
 )
-from codex_session_relay.store import Store, resolve_state_dir
+from codex_session_relay.store import Store, probe as store_probe, resolve_state_dir
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOCKET = "/nonexistent-app-server.sock"
@@ -2112,6 +2112,134 @@ class FourHourBoundary(ServiceTestCase):
         # The bound is what it is measured against, and it lands on it exactly.
         self.assertAlmostEqual(clock.elapsed, bound, places=6)
         self.assertEqual(outcome["segments"], [0] * len(granted))
+
+
+class UnidentifiableStore(ServiceTestCase):
+    """A store that is here and would not say which one it is.
+
+    The diagnostic reads refuse anything they cannot bind to the file it came from, so the
+    identity comes back absent in exactly the case a comparison matters most: something moving
+    the store under the command - every such move the read can observe; store._hold_database
+    states the in-call window it cannot. Absent is not agreement. The question that separates
+    two stores of one installation simply did not get an answer, and a lifecycle command must
+    not signal on that.
+    """
+
+    def unidentified(self, service):
+        """The same state directory, seen by a process whose probe could not read the identity."""
+        return RelayService(
+            service.selection, socket_path=service.socket_path, scope=service.scope,
+            store_id=None, store_unidentified=True,
+        )
+
+    def test_a_live_supervisor_we_cannot_compare_stores_with_is_not_signalled(self):
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        blind = self.unidentified(service)
+
+        self.assertEqual(blind.ownership()[0], service_module.UNVERIFIABLE)
+        refused = blind.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable", refused)
+        self.assertIn("could not be read", refused["detail"])
+        self.assertEqual(refused["supervisor"], "untouched")
+        self.assertIsNone(child.poll(), "a service we could not attribute was signalled")
+
+    def test_a_worker_left_by_a_dead_supervisor_is_not_signalled_either(self):
+        """The orphan path stop() deliberately reaches, which is the other way to mutate."""
+        service = self.service("a")
+        child, worker_pid = self.holder(service)
+        record = service.record()
+        service.write_record(dict(
+            record, workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+        blind = self.unidentified(service)
+        real = os.pidfd_open
+
+        def supervisor_is_gone(pid, *args, **kwargs):
+            if pid == record["pid"]:
+                raise ProcessLookupError(f"supervisor {pid} is gone")
+            return real(pid, *args, **kwargs)
+
+        with mock.patch.object(os, "pidfd_open", supervisor_is_gone):
+            refused = blind.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable", refused)
+        self.assertEqual(refused["worker"], "untouched")
+        self.assertIsNone(child.poll(), "a worker we could not attribute was signalled")
+
+    def test_a_record_that_names_no_store_is_untouched(self):
+        """Nothing to compare is not the same as a comparison that could not be made.
+
+        A record written before any store existed names none, and there is no question to fail
+        to answer. Refusing there would stop an owner from reaching their own service for a
+        reason that has nothing to do with them.
+        """
+        service = self.service("a")
+        self.holder(service)
+        service.write_record(dict(service.record(), storeId=None))
+        blind = self.unidentified(service)
+
+        self.assertEqual(blind.ownership()[0], service_module.OURS)
+
+    def test_holding_an_identity_settles_it_however_the_flag_was_set(self):
+        """The flag cannot go stale, because holding an identity is what is asked.
+
+        _await_launch adopts the child's store id after a first launch, so a process that
+        probed before the store existed ends up holding an identity while the flag it was built
+        with is still set. Asking whether we hold one - rather than clearing the flag at each
+        place an identity can arrive - is what keeps that from reporting our own new service as
+        unverifiable the moment it comes up.
+        """
+        service = self.service("a")
+        self.holder(service)
+        blind = self.unidentified(service)
+        self.assertEqual(blind.ownership()[0], service_module.UNVERIFIABLE)
+
+        blind.store_id = service.store_id
+        self.assertEqual(blind.ownership()[0], service_module.OURS)
+
+    def test_a_definite_mismatch_still_outranks_what_could_not_be_established(self):
+        """Precedence: what is proven first, then what could not be answered."""
+        service = self.service("a")
+        self.holder(service)
+        service.write_record(dict(service.record(), installationId="someone-else"))
+        blind = self.unidentified(service)
+
+        owner, _handle, detail = blind.ownership()
+        self.assertEqual(owner, service_module.FOREIGN)
+        self.assertIn("another installation", detail)
+
+    def test_the_command_surface_carries_the_distinction_the_probe_measured(self):
+        """cli._service_for is where the probe's answer becomes ownership's question.
+
+        A file that is present and says nothing about itself is the shape that matters: it
+        exists, so this is not "there is no relay here", and it has no identity to compare.
+        """
+        from codex_session_relay import cli
+
+        blank = os.path.join(self.tmp, "blank")
+        os.makedirs(blank)
+        with open(os.path.join(blank, "relay.sqlite3"), "wb"):
+            pass
+        selection = resolve_state_dir(blank)
+        measured = store_probe(selection)["store"]
+        self.assertTrue(measured["exists"])
+        self.assertIsNone(measured["storeId"])
+
+        class Services:
+            pass
+
+        services = Services()
+        services.selection = selection
+        services.socket_path = SOCKET
+        built = cli._service_for(services)
+
+        self.assertIsNone(built.store_id)
+        self.assertTrue(built.store_unidentified)
 
 
 class BoundsAcrossAProcessBoundary(ServiceTestCase):
