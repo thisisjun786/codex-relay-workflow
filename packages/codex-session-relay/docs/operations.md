@@ -172,7 +172,7 @@ or until a deadline and then exits, and cannot be constructed unbounded (I-64). 
 assignment past any single process bound.
 
 A bound only means something in the clock of the process enforcing it, so it crosses the
-boundary between those two roles as an instant and not as a duration (I-185). The supervisor
+boundary between those two roles as an instant and not as a duration (I-197). The supervisor
 passes `--deadline-monotonic`, the worker converts it against its own `CLOCK_MONOTONIC` as soon
 as it has one, and the startup the worker has not paid yet comes out of its segment instead of
 landing after it; `service start --deadline N` does the same for the supervisor it launches. A
