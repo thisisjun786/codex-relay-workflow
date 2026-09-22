@@ -572,6 +572,30 @@ SUMMARY_SITES = (
     ("test_settings_preservation.py", "test_every_settings_refusal_is_a_pre_send_refusal",
      "retry_safe", True, "self.assertTrue(facts.retry_safe)",
      "inside a loop over a written list of refusals, with the pre-send state asserted beside it"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_read_is_a_completed_non_delivery",
+     "retry_safe", True, "self.assertTrue(facts.retry_safe)",
+     "paired: the delivery state, the send-attempted value and the failed operation are all"
+     " asserted beside it, and the record is then put through assert_attempt_invariants, which"
+     " pins retry_safe to exactly this combination rather than letting true stand alone"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_resume_is_also_a_completed_non_delivery",
+     "retry_safe", True, "self.assertTrue(facts.retry_safe)",
+     "the same shape one request later, and the absent resumed block is asserted beside it -"
+     " which is the fact that separates this from a refusal decided FROM a resume response"),
+    ("test_transfer_phases.py",
+     "test_an_establishment_expiry_before_the_turn_stays_pessimistic",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "false is the summary agreeing with the frozen schema rather than with the receipt: no"
+     " turn/start frame was written either, and the held_uncertain state asserted beside it is"
+     " what makes this a deliberate over-reading rather than an unread value"),
+    ("test_transfer_phases.py", "test_a_transmit_expiry_stays_uncertain",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "paired with the outcome_unknown receipt status and held_uncertain state; the frame had"
+     " already been handed to the socket, so false is the only reading available"),
+    ("test_transfer_phases.py", "test_an_acknowledgement_expiry_stays_uncertain",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "the pre-existing response-wait behaviour, asserted unchanged beside its receipt status"),
     ("test_wp1_regressions.py", "test_a_claim_from_a_live_turn_is_accepted_but_staged",
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
      "paired: the stage is asserted staged on the line above and the turn status below, so an"
