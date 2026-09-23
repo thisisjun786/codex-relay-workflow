@@ -327,6 +327,14 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
     discharge(router, fault_id)
     if decision["stage"] == products.STAGE_HELD:
         _held(router, fault_id, decision, incident, product)
+    if existing is not None and existing["stage"] == products.STAGE_HELD and (
+            existing["target"]["hold"] == products.NO_PROJECT) and (
+            decision["hold"] != products.NO_PROJECT):
+        # It was one of a goal's members, and is not any more: the goal's create is evaluated
+        # again with the members that are left.
+        from . import projects
+
+        projects.evaluate(router, product)
     if unverified_cause is not None and incident["severity"] == "broken":
         port.notify(fault_id, reason=routes.CAUSE_UNVERIFIED, ref=incident["occurrenceKey"])
     return {"faultId": fault_id, "product": product, "workspace": workspace,

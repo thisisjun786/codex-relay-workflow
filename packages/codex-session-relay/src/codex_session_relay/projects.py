@@ -281,11 +281,6 @@ def evaluate(router, product) -> dict:
             skipped.append({"goal": goal, "reasons": ["a project create for this goal is"
                                                       " already queued or done"]})
             continue
-        for row in live:
-            # Not issued yet, and the goal's members, components or criteria have changed since
-            # it was queued: cancelled, and the same create is queued again with them below.
-            port.cancel(row["publication_id"],
-                        reason="the goal's members changed; queued again with them")
         # A create kind has one row per fault: a goal that qualifies again after a cancelled
         # create revives that row under its id with this payload, and the pre-issue check runs
         # again before it is issued. The trigger names the reason; it does not make a new write.
@@ -293,6 +288,12 @@ def evaluate(router, product) -> dict:
         # The family label belongs on the project, never on an issue.
         target = routes.plain_target(team=registry["team"], labels=[registry["familyLabel"]])
         with router.store.composing() as db:
+            for row in live:
+                # Not issued yet, and the goal's members, components or criteria have changed
+                # since it was queued: cancelled, and queued again with them, in this one
+                # transaction, so a failure to queue it again leaves the old one as it was.
+                port.cancel(row["publication_id"],
+                            reason="the goal's members changed; queued again with them")
             port.ensure_target(product=product, workspace=group["workspace"],
                                project=PROJECTS_SCOPE, team=registry["team"], project_ref=None)
             port.record(port.observation(
@@ -342,7 +343,9 @@ def revise(router, product) -> dict:
         after = page["next"]
         if after is None:
             break
-    evaluated = evaluate(router, product) if cancelled else {"queued": [], "skipped": []}
+    # Evaluated whether or not anything was cancelled: a registry change can also decide held
+    # routes again, which changes who shares a goal.
+    evaluated = evaluate(router, product)
     return {"cancelled": cancelled, "queued": evaluated["queued"]}
 
 

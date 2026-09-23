@@ -192,8 +192,9 @@ gets two projects. Its members count only as routes of that product and workspac
 routing's rows, and the components it names must be exactly those of the members that count, so a
 member that left the goal takes its component with it. A create not yet issued whose goal's
 members, components or criteria have changed is cancelled and queued again with them, under the
-same id, whenever the goal is evaluated. A change of registry runs the same checks on the creates
-it revises. Issue, file or error counts
+same id and in one transaction, whenever the goal is evaluated. That happens wherever membership
+can change: a defect held for want of a project, one that stops being held that way, a binding,
+and a change of registry, which also runs the same checks on the creates it revises. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope

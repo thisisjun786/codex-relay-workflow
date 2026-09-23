@@ -552,6 +552,58 @@ class Projects(ProductRoutingCase):
         search = routes.get(self.store, moved["faultId"])
         self.assertEqual(("held", "fast_search"), (search["stage"], search["goal"]))
 
+    def three_members_queued(self):
+        for component, symptom, key in (("cache", "stale", "g1"), ("queue", "lost", "g2"),
+                                         ("search", "slow", "g3")):
+            self.gamma(component, symptom, key)
+        self.router.set_policy(POLICY)
+        (queued,) = self.router.evaluate_projects("gamma-kit")["queued"]
+        return queued["faultId"]
+
+    def test_a_binding_that_moves_a_member_re_cuts_the_goals_create(self):
+        proposal = self.three_members_queued()
+        self.router.bind(binding("gamma-kit", "project", "proj-gmk-search",
+                                 components=["search"]))
+        (row,) = [r for r in self.router.port.publications(proposal, kind=projects.KIND)
+                  if r["state"] != "cancelled"]
+        self.assertEqual((2, ["cache", "queue"]), (len(row["payload"]["members"]),
+                                                   row["payload"]["components"]))
+        self.holder.run()
+        self.router.digest()
+        made = [b for b in self.router.bindings("gamma-kit")
+                if b["kind"] == "project" and b["ref"] != "proj-gmk-search"]
+        self.assertEqual([["cache", "queue"]], [b["components"] for b in made])
+
+    def test_a_re_cut_that_cannot_be_queued_again_leaves_everything_as_it_was(self):
+        from unittest import mock
+
+        proposal = self.three_members_queued()
+        (before,) = self.router.port.publications(proposal, kind=projects.KIND)
+        with mock.patch.object(self.router.port, "queue", side_effect=RuntimeError("queue")):
+            with self.assertRaises(RuntimeError):
+                self.router.bind(binding("gamma-kit", "project", "proj-gmk-search",
+                                         components=["search"]))
+        (after,) = self.router.port.publications(proposal, kind=projects.KIND)
+        self.assertEqual((before["state"], before["payload"]), (after["state"], after["payload"]))
+        self.assertEqual([], [b for b in self.router.bindings("gamma-kit")
+                              if b["kind"] == "project"])
+        # The same through route-projects, which runs outside any caller's transaction: the
+        # search defect now declares another goal, and queuing the re-cut create fails.
+        (search,) = [r for r in routes.listing(self.store, product="gamma-kit")["routes"]
+                     if r["disposition"] != products.PROJECT_PROPOSAL
+                     and routes.incidents(self.store, r["fault_id"])[-1]["component"] == "search"]
+        latest = dict(routes.incidents(self.store, search["fault_id"])[-1],
+                      occurrenceKey="g3b", goal={"key": "fast_search", "criteria": "fast"})
+        with self.store.transaction() as db:
+            routes.store_incident(db, self.clock, search["fault_id"], latest, replace=True)
+            db.execute("UPDATE incident_routes SET goal = ? WHERE fault_id = ?",
+                       ("fast_search", search["fault_id"]))
+        with mock.patch.object(self.router.port, "queue", side_effect=RuntimeError("queue")):
+            with self.assertRaises(RuntimeError):
+                self.router.evaluate_projects("gamma-kit")
+        (again,) = self.router.port.publications(proposal, kind=projects.KIND)
+        self.assertEqual((before["state"], before["payload"]), (again["state"], again["payload"]))
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

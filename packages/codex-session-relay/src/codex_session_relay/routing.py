@@ -77,8 +77,9 @@ class ProductRouter:
                 "   recorded_at = excluded.recorded_at",
                 (registry["product"], products.canonical(registry), now))
             redecided = intake.redecide(self, registry["product"]) if before else []
-            revised = (projects.revise(self, registry["product"]) if before and any(
-                before[key] != registry[key] for key in ("team", "familyLabel")) else None)
+            # Creates queued for what the registry said before, and goals whose members the
+            # redecision just moved, are settled with the new record in the same transaction.
+            revised = projects.revise(self, registry["product"]) if before else None
         return {**registry, "redecided": redecided,
                 "projectsRevised": revised or {"cancelled": [], "queued": []}}
 
@@ -126,7 +127,10 @@ class ProductRouter:
                 (binding["product"], binding["kind"], binding["ref"],
                  products.canonical(binding), binding["observedAt"], now))
             redecided = intake.redecide(self, binding["product"])
-        return {**binding, "redecided": redecided}
+            # A binding that moved a member out of a goal changes that goal's create: it is
+            # evaluated again with the members that are left, in the same transaction.
+            evaluated = projects.evaluate(self, binding["product"])
+        return {**binding, "redecided": redecided, "projectsQueued": evaluated["queued"]}
 
     def bindings(self, product) -> list:
         rows = self.store.all(
