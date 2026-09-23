@@ -258,7 +258,10 @@ class Services:
             from .supervisorchannel import SupervisorChannel
 
             self._supervisor_channel = SupervisorChannel(
-                self.store, self.registry, self.linkage, self.clock)
+                self.store, self.registry, self.linkage, self.clock,
+                # What every line the channel writes for a later step selects: this
+                # invocation's store, and the host this invocation reaches.
+                state_directory=self.state_directory, socket_path=self.socket_path)
         return self._supervisor_channel
 
     @property

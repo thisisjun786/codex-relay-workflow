@@ -934,13 +934,16 @@ codex-session-relay supervisor-stage --observation <file>
 # without it the command exits 4 and writes nothing.
 codex-session-relay --socket <path> supervisor-send --message <id>
 
-# The recipient answering. The message asks for a turn id of its own; nothing enforces it.
-# --as names the asserting task and is required; it is checked against the message's recipient.
-codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> \
-  --proof <p> --as <your task id>
+# The recipient answering, with the line the message carries: it names the store the report
+# was staged in (--state) and the socket it was sent through, and a bare --socket would open
+# another store. The message asks for a turn id of its own; nothing enforces it. --as names
+# the asserting task and is required; it is checked against the message's recipient.
+codex-session-relay --state <dir> --socket <path> supervisor-read --message <id> \
+  --turn <turn> --proof <p> --as <your task id>
 
-# What was staged, every attempt, and what came back.
-codex-session-relay supervisor-show --message <id>
+# What was staged, every attempt, and what came back. An omission's report points here: it
+# prints the observation the report was staged from, frozen, beside a line that re-reads it now.
+codex-session-relay --state <dir> supervisor-show --message <id>
 ```
 
 The proof is `sha256(messageId|<your own turn id>)`, which the delivered bytes cannot contain,

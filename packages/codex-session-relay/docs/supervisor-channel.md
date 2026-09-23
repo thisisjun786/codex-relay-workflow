@@ -56,7 +56,28 @@ has been told half of it.
 
 A report is a pointer with a kind rather than a copy of the record. What the child actually said
 is read through the evidence line, which is `show --event` for anything with an event and
-`reporting-show --turn` for an omission, which has none.
+`supervisor-show --message` for an omission, which has none. Each points at a version that
+cannot change under the packet: an event's work report stops changing once a message names it,
+and an omission's reading is frozen on the message row when it is staged. The command that
+produced that reading, `reporting-show`, re-reads the turn NOW, so a report that reached the
+turn afterwards made it answer `reported` under a packet saying `unreported`; `supervisor-show`
+prints it as `stagedFrom.recheck` beside the frozen `stagedFrom.reading`, and the two are
+allowed to disagree. A second, different reading of an omission that is already staged is
+refused as `contradictory_observation`, because one message keeps one reading.
+
+### Every line it writes selects the store it was written from
+
+Every command line the channel writes for a later step - the evidence pointer in the packet,
+the readback line and the `supervisor-show` line in the bytes - reproduces the store selection
+of the invocation that wrote it: `--state` with the directory that invocation's store is in,
+whether it got there by `--state`, `CODEX_SESSION_RELAY_STATE` or the socket-scoped default.
+A bare `--socket` selects the socket-scoped default, which is not the store at all whenever it
+was chosen by `--state` or the environment, so the recipient's readback opened another database
+and found no such message. The readback line also carries the socket the send went through,
+canonicalised - that is the host the recipient's thread is on - and keeps
+`YOUR_RELAY_SOCKET` only when the writer had no socket, which a CLI send never lacks. The one
+line whose selection is not this store's is the `reporting-show` recheck, which uses the
+reading's own `--state`, because that is the selection that produced the reading.
 
 **status_response is deliberately absent, and that is the one named gap in this contract.**
 `BODY` is a dispatch instruction checked against DISPATCH-TASK-01, so requiring it of an answer
@@ -237,6 +258,14 @@ Every answer to one readback has one shape - the first, a later one answered fro
 row, and one that lost the race to settle it - built from the stored row, with `recorded` and
 `raced` saying which it was.
 
+Wherever the channel says a message was read, the turn's origin stands beside it, because the
+state's name is shorter than what it proves. The readback answer carries `turnOrigin` and
+`establishes`; `supervisor-show` carries `turnOrigin` and `readEstablishes` next to a `read`
+state and the same two on the readback; the reach ladder's `received` detail names the origin.
+For `relay_opened` what is established is arrival only. A `recipient_opened` readback is the
+only one that involves a turn the recipient's thread opened after the send, and even that does
+not say who wrote the answer.
+
 It does not say who wrote the answer, that the turn answered anything, or that the supervisor
 acted. The turn a send opens is one the sender already knows the id of, so a readback from that
 turn rests on nothing the sender could not have produced alone - and that is the ORDINARY case,
@@ -310,17 +339,18 @@ codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>
 codex-session-relay supervisor-stage --project <key> [--observation <file>]...
 codex-session-relay supervisor-stage --observation <file>
 
-# One attempt, through the same host rules a delivery obeys. --socket is global, so it comes
-# before the subcommand; after it argparse refuses.
-codex-session-relay --socket <path> supervisor-send --message <id>
+# One attempt, through the same host rules a delivery obeys. --socket and --state are global,
+# so they come before the subcommand; after it argparse refuses.
+codex-session-relay [--state <dir>] --socket <path> supervisor-send --message <id>
 
-# The recipient answering. The message ASKS for a turn id of its own; nothing enforces that.
-# --as names the asserting task and is required; it is checked against the message's recipient.
-codex-session-relay --socket <path> supervisor-read --message <id> --turn <turn> \
-  --proof <p> --as <your task id>
+# The recipient answering, with the line the message carries: it names the store the report
+# was staged in and the socket it was sent through. The message ASKS for a turn id of the
+# recipient's own; nothing enforces that. --as is required and checked against the recipient.
+codex-session-relay --state <dir> --socket <path> supervisor-read --message <id> \
+  --turn <turn> --proof <p> --as <your task id>
 
 # What was staged, every attempt, and what came back.
-codex-session-relay supervisor-show --message <id>
+codex-session-relay --state <dir> supervisor-show --message <id>
 ```
 
 `supervisor-stage` and `supervisor-show` reach no host. The other two are host-required and
@@ -330,12 +360,16 @@ is its own check. Supplying the option proves an argument was supplied, not that
 reachable.
 
 The line the message itself renders is this one with everything the relay already knows filled
-in, leaving three placeholders: `YOUR_RELAY_SOCKET`, `YOUR_TURN_ID` and `YOUR_PROOF`. Every
-command a report carries - that line, the evidence pointer and the `supervisor-show` line - is
-built from its arguments with `shlex.quote` rather than by concatenation, because the evidence
-selectors are paths and names a caller chose and a workspace such as `/tmp/My Project` was two
-arguments. `tests/test_supervisor_channel.py` splits each one with `shlex.split` and hands it
-to the real parser rather than checking that it looks like a command.
+in - the store directory and the socket included - leaving two placeholders, `YOUR_TURN_ID`
+and `YOUR_PROOF`, and a third, `YOUR_RELAY_SOCKET`, only when it was rendered without a socket.
+It asks the recipient to record that the report reached its thread, and says that a readback
+never records that anybody read, agreed to or acted on anything. Every command a report
+carries - that line, the evidence pointer and the `supervisor-show` line - is built from its
+arguments with `shlex.quote` rather than by concatenation, because the evidence selectors are
+paths and names a caller chose and a workspace such as `/tmp/My Project` was two arguments.
+`tests/test_supervisor_channel.py` splits each one with `shlex.split`, parses it with the real
+parser, selects with the real `Services` under a default that points somewhere else, and runs
+it against the row it names.
 
 Neither reaches the host unconditionally. `supervisor-send` returns `sent: false` without
 touching the adapter when the message is held, inside its backoff, or already sent, and only
@@ -359,8 +393,9 @@ rather than ignoring the one it cannot use.
 
 It also refuses an omission staged without the reading that found it. The obligation names a
 relationship and a turn; `reporting-show` needs a state directory, a marker root, a workspace,
-an assignment and a session too, so an evidence line built from the obligation alone looked
-like a command and could not be run. With the reading the pointer is rendered whole.
+an assignment and a session too, so a line built from the obligation alone looked like a
+command and could not be run. With the reading, the reading is frozen on the row and the
+recheck line in `supervisor-show` is rendered whole.
 
 ## What a readback is not
 

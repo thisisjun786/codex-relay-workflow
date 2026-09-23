@@ -1013,7 +1013,12 @@ CREATE TABLE IF NOT EXISTS supervisor_messages (
     -- omission, which has neither. report.record refuses to change a report once a message
     -- names its event, so the packet and the evidence it points at stay one fact.
     event_id          TEXT,
-    submission_no     INTEGER
+    submission_no     INTEGER,
+    -- The reporting-observation/1 reading an omission was staged from, exactly as staged, NULL
+    -- for an event. The observer's own answer can change afterwards - a late report reaches
+    -- the turn - so an omission's packet points at supervisor-show, which prints this frozen
+    -- reading, rather than at a command that re-reads the turn now.
+    reading           TEXT
 );
 
 -- One transport attempt at one of those messages, with the bytes that attempt froze. The bytes

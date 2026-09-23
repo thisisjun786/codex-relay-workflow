@@ -1024,7 +1024,10 @@ class WhatTheThirdReviewRoundFound(ChannelTestCase):
         staged = self.channel.stage(one, reading=reading)
         packet = json.loads(
             self.channel.get(staged["messageId"])["packet"])
-        pointer = packet[packets.EVIDENCE][0]
+        # The packet points at the frozen record; the command that re-reads the turn lives
+        # there, whole, as the recheck.
+        self.assertIn("supervisor-show", packet[packets.EVIDENCE][0])
+        pointer = self.channel.show(staged["messageId"])["stagedFrom"]["recheck"]
         for flag in ("--state", "--marker-root", "--workspace", "--assignment", "--session",
                      "--turn"):
             self.assertIn(flag, pointer)
@@ -1170,7 +1173,8 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
     def _rendered_readback(message):
         """The invocation as it stands in the bytes, split the way a POSIX shell splits it."""
         for line in message.splitlines():
-            if line.strip().startswith("codex-session-relay --socket"):
+            if (line.strip().startswith("codex-session-relay ")
+                    and " supervisor-read " in line):
                 return shlex.split(line)
         raise AssertionError("the message carries no readback line")
 
@@ -1373,7 +1377,7 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
                    "relationshipId": self.rid, "reason": "the turn settled without a report",
                    "selectors": selectors}
         staged = self.channel.stage(supervision.from_observation(reading), reading=reading)
-        pointer = json.loads(self.channel.get(staged["messageId"])["packet"])[packets.EVIDENCE][0]
+        pointer = self.channel.show(staged["messageId"])["stagedFrom"]["recheck"]
         argv = shlex.split(pointer)
         args = cli.build_parser().parse_args(argv[1:])
         self.assertEqual(
@@ -1394,7 +1398,7 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         lines += [line.split("Full record: ", 1)[1]
                   for line in self.bytes_of(message_id).splitlines()
                   if line.startswith("Full record: ")]
-        lines += SupervisorChannel._evidence({}, {"projectKey": "a project, spaced"})
+        lines += self.channel._evidence({}, {"projectKey": "a project, spaced"})
         commands = set()
         for line in lines:
             argv = shlex.split(line)
@@ -2214,3 +2218,164 @@ class AParentThatNeverReports(ChannelTestCase):
         self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
         self.assertEqual(self.store.all(
             "SELECT seq FROM journal WHERE kind = ?", (supervision.JOURNAL_KIND,)), [])
+
+
+class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
+    """Every command the channel writes for a later step reproduces the store selection it was
+    written from; an omission's evidence is the reading it froze; and the request asks for no
+    more than a readback records."""
+
+    observation = WhatTheThirdReviewRoundFound.observation
+    report_naming = WhatTheEighthReviewRoundFound.report_naming
+    completion_naming = WhatTheEighthReviewRoundFound.completion_naming
+    packet_pr = WhatTheEighthReviewRoundFound.packet_pr
+
+    SOCKET = "app-server.sock"
+
+    @contextmanager
+    def elsewhere_by_default(self):
+        """The default selection is somewhere else, as it is for every store chosen by --state."""
+        environment = {name: value for name, value in os.environ.items()
+                       if name != "CODEX_SESSION_RELAY_STATE"}
+        environment["XDG_STATE_HOME"] = os.path.join(self.tmp, "xdg-default")
+        with mock.patch.dict(os.environ, environment, clear=True):
+            yield
+
+    def run_line(self, line, *, turn=None, proof=None):
+        """Split, parse with the real parser, select with the real Services, then execute.
+
+        The store is compared BEFORE anything runs, so a line that selects another store fails
+        on the comparison and never creates one.
+        """
+        from codex_session_relay import cli
+
+        argv = shlex.split(line)
+        self.assertEqual(argv[0], "codex-session-relay", line)
+        filled = {channel_module.SOCKET_PLACEHOLDER: os.path.join(self.tmp, self.SOCKET),
+                  channel_module.TURN_PLACEHOLDER: turn,
+                  channel_module.PROOF_PLACEHOLDER: proof}
+        args = cli.build_parser().parse_args([filled.get(one) or one for one in argv[1:]])
+        services = cli.Services(args)
+        try:
+            self.assertEqual(os.path.realpath(services.selection.db_path),
+                             os.path.realpath(self.store.path),
+                             "this line selects another store than the one it was written"
+                             " from: " + line)
+            if args.command == "supervisor-read":
+                services._adapter = self.adapter
+            return args.command, args.handler(services, args)
+        finally:
+            services.close()
+
+    # ---------------------------------------------------------------- the store selection
+
+    def test_every_line_a_report_writes_reaches_the_row_it_was_staged_in(self):
+        """RED: a bare --socket selects the socket-scoped default, not a store chosen by --state."""
+        one, message_id, record = self.delivered()
+        written = self.bytes_of(message_id)
+        lines = list(json.loads(self.channel.get(message_id)["packet"])[packets.EVIDENCE])
+        lines += [line.strip() for line in written.splitlines()
+                  if line.strip().startswith("codex-session-relay ")]
+        lines += [line.split("Full record: ", 1)[1] for line in written.splitlines()
+                  if line.startswith("Full record: ")]
+        turn = record["turnId"]
+        reached = {}
+        with self.elsewhere_by_default():
+            for line in lines:
+                command, payload = self.run_line(
+                    line, turn=turn, proof=supervisor_read_proof(message_id, turn))
+                reached[command] = payload
+        self.assertEqual(set(reached), {"show", "supervisor-read", "supervisor-show"})
+        self.assertEqual(reached["show"]["event"], one["basis"]["eventId"])
+        self.assertEqual(reached["supervisor-show"]["messageId"], message_id)
+        self.assertEqual(reached["supervisor-read"]["messageId"], message_id)
+        self.assertEqual(reached["supervisor-read"]["verified"], channel_module.HOST_READ)
+
+    def test_the_readback_line_names_the_store_and_the_socket_the_send_went_through(self):
+        """RED: the CLI built the channel without either, so the line carried a placeholder."""
+        from argparse import Namespace
+
+        from codex_session_relay import cli
+        from codex_session_relay.store import canonical_socket
+
+        _one, message_id = self.staged()
+        socket = os.path.join(self.tmp, self.SOCKET)
+        services = cli.Services(Namespace(state=os.path.dirname(self.store.path), socket=socket))
+        try:
+            written = services.supervisor_channel.render(
+                json.loads(self.channel.get(message_id)["packet"]), "sup-000000000000-a1")
+        finally:
+            services.close()
+        argv = WhatTheFourthReviewRoundFound._rendered_readback(written)
+        args = cli.build_parser().parse_args(argv[1:])
+        self.assertEqual(args.socket, canonical_socket(socket))
+        self.assertEqual(os.path.realpath(args.state),
+                         os.path.realpath(os.path.dirname(self.store.path)))
+        self.assertEqual([token for token in argv if token.startswith("YOUR_")],
+                         [channel_module.TURN_PLACEHOLDER, channel_module.PROOF_PLACEHOLDER])
+
+    # ------------------------------------------------------------ the omission's evidence
+
+    def test_an_omission_points_at_the_reading_it_froze_not_at_a_reread(self):
+        """RED: the pointer re-read the turn now, so a report reaching it later contradicted the
+        packet - and it selected the observer's store rather than this one."""
+        reading = self.observation()
+        message_id = self.channel.stage(
+            supervision.from_observation(reading), reading=reading)["messageId"]
+        evidence = json.loads(self.channel.get(message_id)["packet"])[packets.EVIDENCE]
+        self.assertEqual(len(evidence), 1)
+        with self.elsewhere_by_default():
+            command, shown = self.run_line(evidence[0])
+        self.assertEqual(command, "supervisor-show", "the evidence is the frozen record")
+        self.assertEqual(shown["stagedFrom"]["reading"], reading)
+        self.assertIn("reporting-show", shown["stagedFrom"]["recheck"])
+
+        again = self.channel.stage(supervision.from_observation(reading), reading=dict(reading))
+        self.assertFalse(again["staged"], "the same reading converges on the frozen one")
+        other = dict(reading, selectors=dict(reading["selectors"], session="01another-session"))
+        refusal = self.assertRefused(
+            RefusalReason.CONTRADICTORY_OBSERVATION, self.channel.stage,
+            supervision.from_observation(other), reading=other)
+        self.assertIn("keeps the reading it froze", refusal.detail)
+
+    # ------------------------------------------------------------- what is asked for
+
+    def test_the_request_asks_only_for_what_a_readback_records(self):
+        """RED: the message asked the recipient to confirm it had read the report."""
+        _one, message_id, record = self.delivered()
+        written = self.bytes_of(message_id)
+        self.assertNotIn("confirm you read", written.lower())
+        self.assertIn("It never records that you read", written)
+
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["turnOrigin"], channel_module.RELAY_OPENED)
+        self.assertTrue(answer["establishes"].startswith("arrival only"))
+        shown = self.channel.show(message_id)
+        self.assertEqual((shown["state"], shown["turnOrigin"]),
+                         (channel_module.READ, channel_module.RELAY_OPENED))
+        self.assertTrue(shown["readEstablishes"].startswith("arrival only"))
+        self.assertEqual(shown["readback"]["turnOrigin"], channel_module.RELAY_OPENED)
+        self.assertIn(channel_module.RELAY_OPENED,
+                      self.channel.reach(message_id)[envelope.RECEIVED]["detail"])
+
+    # ------------------------------------------------ corrections once a report is staged
+
+    def test_a_correction_after_staging_goes_up_as_the_next_event(self):
+        """Once staged, the report no longer changes - in place or as a new submission. The
+        child's next final receipt is a new event, keyed as its own completion, and goes up as
+        its own message; the first stays about the report it froze."""
+        from codex_session_relay.errors import ReceiptRefused
+
+        first = self.completion_naming(10)
+        staged = self.channel.stage(self.obligation(first))["messageId"]
+        for submission in (1, 2):
+            with self.subTest(submission=submission):
+                with self.assertRaises(ReceiptRefused):
+                    self.report_naming(first, 11, submission_no=submission)
+        second = self.completion_naming(11)
+        self.assertNotEqual(second, first)
+        corrected = self.channel.stage(self.obligation(second))
+        self.assertTrue(corrected["staged"])
+        self.assertNotEqual(corrected["messageId"], staged)
+        self.assertEqual(self.packet_pr(corrected["messageId"]), 11)
+        self.assertEqual(self.packet_pr(staged), 10)

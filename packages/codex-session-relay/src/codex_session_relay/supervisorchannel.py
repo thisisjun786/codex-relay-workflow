@@ -30,6 +30,7 @@ record the supervisor reads for itself, confirmed, exactly as supervision.discha
 
 import json
 import math
+import os
 import shlex
 from datetime import datetime
 
@@ -40,6 +41,7 @@ from .errors import DeliveryRefused, RefusalReason
 from .identity import supervisor_read_proof, supervisor_request_id
 from .lifecycle import observe, record as record_lifecycle
 from .policy import RetryPolicy
+from .store import canonical_socket
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -110,6 +112,23 @@ READDRESSED = "supervisor_message_readdressed"
 SOCKET_PLACEHOLDER = "YOUR_RELAY_SOCKET"
 TURN_PLACEHOLDER = "YOUR_TURN_ID"
 PROOF_PLACEHOLDER = "YOUR_PROOF"
+# What a readback establishes, by the origin of the turn it names. Printed beside every "read"
+# this channel reports, because the state's name is shorter than what it proves: a readback of
+# the turn the send opened needs nothing the recipient did.
+ESTABLISHES = {
+    RELAY_OPENED: "arrival only: the turn this send opened holds this attempt's request id,"
+                  " and no act of the recipient's was needed",
+    RECIPIENT_OPENED: "a turn the recipient's thread opened after the send, and this attempt's"
+                      " request id in its transcript - not who wrote the answer or that"
+                      " anybody read or acted",
+}
+NOT_ESTABLISHED = "nothing: this readback did not verify"
+
+
+def _establishes(verified, origin):
+    if verified != HOST_READ:
+        return NOT_ESTABLISHED
+    return ESTABLISHES.get(origin, "a verified turn whose origin the host did not establish")
 
 
 def _command(*argv) -> str:
@@ -238,6 +257,29 @@ def _reading_key(reading):
                        "selectors": _selectors(reading)}, sort_keys=True, default=str)
 
 
+def _frozen_reading_key(row):
+    """_reading_key of the reading a staged row froze, or None when it froze none."""
+    frozen = row["reading"]
+    return _reading_key(json.loads(frozen)) if frozen else None
+
+
+def _recheck_line(reading):
+    """The reporting-show line that re-reads an omission's turn NOW, from its own selectors.
+
+    Its store selection is the reading's own, which is the one that produced it. Rendered whole
+    because reporting-show refuses without every selector, and quoted because the selectors
+    are paths and names a caller chose.
+    """
+    selectors = _selectors(reading)
+    if selectors is None:
+        return None
+    return _command("codex-session-relay", "--state", selectors["state"],
+                    "reporting-show", "--marker-root", selectors["markerRoot"],
+                    "--workspace", selectors["workspace"],
+                    "--assignment", selectors["assignment"],
+                    "--session", selectors["session"], "--turn", selectors["turn"])
+
+
 def _submission_of(report):
     return report["submissionNo"] if report else None
 
@@ -275,7 +317,8 @@ class SupervisorChannel:
     """Staging, sending and reading back what a parent owes the level above."""
 
     def __init__(self, store, registry, linkage, clock, *, policy=None, settings=None,
-                 require_lifecycle_evidence: bool = True):
+                 require_lifecycle_evidence: bool = True, state_directory=None,
+                 socket_path=None):
         self.store = store
         self.registry = registry
         # Required rather than optional. delivery keeps a frozen relationship row it can fall
@@ -285,6 +328,25 @@ class SupervisorChannel:
         self.policy = policy or RetryPolicy()
         self.require_lifecycle_evidence = require_lifecycle_evidence
         self._settings = settings
+        # The store selection every line this channel writes for a later step reproduces. A
+        # later command reaches this store only if it selects it the same way, and a bare
+        # --socket selects the socket-scoped default - which is not this store whenever it was
+        # chosen with --state or the environment override. So each rendered line names the
+        # directory itself, and the readback line names the socket the send went through,
+        # which is the host the recipient's thread is on. Without a socket - a library caller,
+        # a test - that one word stays a placeholder the reader has to fill.
+        self.state_directory = (str(state_directory) if state_directory
+                                else os.path.dirname(os.path.abspath(str(store.path))))
+        # Canonical, as the store records it: a relative spelling would resolve against the
+        # reader's working directory rather than the sender's.
+        self.socket_path = canonical_socket(socket_path) if socket_path else None
+
+    def _command_line(self, *argv, socket=False) -> str:
+        """A codex-session-relay line that selects THIS store, and this host when asked to."""
+        head = ["codex-session-relay", "--state", self.state_directory]
+        if socket:
+            head += ["--socket", self.socket_path or SOCKET_PLACEHOLDER]
+        return _command(*head, *argv)
 
     # ------------------------------------------------------- who may send, and to whom
 
@@ -532,6 +594,18 @@ class SupervisorChannel:
                     " was written; stage it again")
             existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                                   (message_id,)).fetchone()
+            if (existing is not None and obligation["kind"] == supervision.UNREPORTED
+                    and _frozen_reading_key(existing) != _reading_key(reading)):
+                # One omission, one reading. The row froze the reading its packet was composed
+                # from and its evidence prints; returning it as this caller's, or re-addressing
+                # it with a packet composed from another reading, would put two observations
+                # behind one message.
+                raise DeliveryRefused(
+                    RefusalReason.CONTRADICTORY_OBSERVATION,
+                    "this omission is already staged as " + repr(message_id) + " from another"
+                    " reading of it, which disagrees with this one about what it is or where"
+                    " it can be read. The staged message keeps the reading it froze; nothing"
+                    " was written")
             if existing is None:
                 decided = supervision.select(self.store, obligation, recipient=None)
                 if not decided["report"]:
@@ -541,13 +615,15 @@ class SupervisorChannel:
                     " obligation_kind, relationship_id, project_key, purpose, kind,"
                     " sender_task_id, recipient_task_id, subject, packet, state,"
                     " attempt_count, next_eligible_at, staged_at, updated_at, event_id,"
-                    " submission_no) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?,?)",
+                    " submission_no, reading) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?,?,?)",
                     (message_id, obligation["obligationId"], obligation["kind"],
                      obligation["relationId"], resolution["projectKey"],
                      packet["envelope"]["purpose"], packet["envelope"]["kind"],
                      resolution["sender"], resolution["recipient"], obligation["subject"],
                      json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at,
-                     event_id, _submission_of(report)),
+                     event_id, _submission_of(report),
+                     json.dumps(reading, ensure_ascii=False, sort_keys=True)
+                     if obligation["kind"] == supervision.UNREPORTED else None),
                 )
                 staged = cursor.rowcount == 1
                 if staged:
@@ -729,7 +805,12 @@ class SupervisorChannel:
         decision = None
         if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
             decision = self._decision(obligation)
-        return packets.compose(
+        # The id the envelope will derive, known before composing: an omission's evidence is
+        # this message's own record, so the pointer has to name it.
+        message_id = envelope.message_id(
+            direction=envelope.PARENT_TO_SUPERVISOR, relation_id=obligation["relationId"],
+            purpose=purpose, subject=obligation["subject"])
+        packet = packets.compose(
             direction=envelope.PARENT_TO_SUPERVISOR,
             purpose=purpose,
             relation_id=obligation["relationId"],
@@ -739,12 +820,18 @@ class SupervisorChannel:
             issue=issue,
             generation=obligation.get("executionGeneration"),
             artifact=_artifact(report),
-            evidence=self._evidence(obligation, resolution, reading),
+            evidence=self._evidence(obligation, resolution, reading, message_id),
             decision=decision,
             scope=self._scope(resolution, issue),
             basis=self._basis(obligation),
             observed_at=observed_at,
         )
+        if packet["envelope"]["messageId"] != message_id:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the envelope derived message id " + repr(packet["envelope"]["messageId"])
+                + " and the evidence was written for " + repr(message_id))
+        return packet
 
     @staticmethod
     def _decision(obligation) -> str:
@@ -758,27 +845,26 @@ class SupervisorChannel:
         return detail or ("the child stopped for a judgment the parent is not allowed to make"
                           " for the user, and recorded nothing further about it")
 
-    @staticmethod
-    def _evidence(obligation, resolution, reading=None) -> list:
-        """Where the fact is readable. Never the report itself, which is this message."""
+    def _evidence(self, obligation, resolution, reading=None, message_id=None) -> list:
+        """Where the fact is readable, in a version that cannot change under the packet.
+
+        An event's evidence is its work report, which report.record refuses to change once a
+        message names the event. An omission's is the reading it was staged from, frozen on
+        the message row and printed by supervisor-show: the command that produced the reading
+        re-reads the turn NOW, and a report that reached the turn afterwards made it answer
+        reported under a packet that says unreported. supervisor-show prints that command
+        too, as a recheck, beside the frozen reading.
+
+        Every line selects this store explicitly (see _command_line).
+        """
         basis = obligation.get("basis") or {}
         event_id = basis.get("eventId")
         if event_id:
-            return [_command("codex-session-relay", "show", "--event", event_id)]
-        selectors = _selectors(reading)
-        if selectors is not None:
-            # An omission has no event, so there is no row to point at and the command that
-            # found it is the pointer. It is rendered WHOLE - reporting-show requires every
-            # one of these and refuses without them - so the line can be run rather than
-            # merely read. The selectors are paths and names a caller chose, so each one is
-            # quoted: a workspace with a space in it was two arguments.
-            return [_command("codex-session-relay", "--state", selectors["state"],
-                             "reporting-show", "--marker-root", selectors["markerRoot"],
-                             "--workspace", selectors["workspace"],
-                             "--assignment", selectors["assignment"],
-                             "--session", selectors["session"], "--turn", selectors["turn"])]
-        return [_command("codex-session-relay", "supervisor-standing", "--project",
-                         resolution.get("projectKey"))]
+            return [self._command_line("show", "--event", event_id)]
+        if _selectors(reading) is not None and message_id:
+            return [self._command_line("supervisor-show", "--message", message_id)]
+        return [self._command_line("supervisor-standing", "--project",
+                                   resolution.get("projectKey"))]
 
     @staticmethod
     def _scope(resolution, issue):
@@ -807,30 +893,40 @@ class SupervisorChannel:
         region = packet["envelope"]
         lines = ["[codex-session-relay] supervisor report", "requestId: " + request_id]
         lines += packets.packet_lines(packet)
+        # What the recipient is asked for is what the readback can record: that this attempt
+        # reached its thread, answered from a turn of its own. Asking it to "confirm you read
+        # this" asked for an acknowledgement the check cannot establish - where the named turn
+        # is the one this message opened, it needs nothing the recipient did at all.
+        placeholders = ([SOCKET_PLACEHOLDER] if self.socket_path is None else []) + [
+            TURN_PLACEHOLDER, PROOF_PLACEHOLDER]
+        words = {SOCKET_PLACEHOLDER: SOCKET_PLACEHOLDER + " with your relay socket path,"
+                                     " which these bytes do not know,",
+                 TURN_PLACEHOLDER: TURN_PLACEHOLDER + " with your own turn id,",
+                 PROOF_PLACEHOLDER: PROOF_PLACEHOLDER + " with the proof over it."}
         lines += [
             "",
-            "To confirm you read this, from inside your own turn:",
-            "  " + _command("codex-session-relay", "--socket", SOCKET_PLACEHOLDER,
-                            "supervisor-read", "--message", region["messageId"],
-                            "--turn", TURN_PLACEHOLDER, "--proof", PROOF_PLACEHOLDER,
-                            "--as", envelope.shown(region["recipient"]["taskId"])),
+            "To record that this reached your thread, run from inside a turn of your own:",
+            "  " + self._command_line("supervisor-read", "--message", region["messageId"],
+                                      "--turn", TURN_PLACEHOLDER, "--proof", PROOF_PLACEHOLDER,
+                                      "--as", envelope.shown(region["recipient"]["taskId"]),
+                                      socket=True),
             "",
-            "Three words on that line are yours to replace: " + SOCKET_PLACEHOLDER + " with",
-            "your relay socket path, which these bytes cannot know, " + TURN_PLACEHOLDER,
-            "with your own turn id, and " + PROOF_PLACEHOLDER + " with the proof over it. Every",
-            "other argument is filled in and quoted for a POSIX shell, so quote a socket path",
-            "that has a space in it too. --socket is global and goes BEFORE the subcommand,",
-            "and --as is required, so the line is refused without either.",
+            str(len(placeholders)) + " words on that line are yours to replace: "
+            + " ".join(words[one] for one in placeholders),
+            "Every other argument is filled in and quoted for a POSIX shell, including the",
+            "--state that selects the store this report was staged in; --socket and --state",
+            "are global and go BEFORE the subcommand, and --as is required.",
             "",
             "The proof is sha256(messageId|<your own turn id>). This message cannot contain",
             "that turn id, so quoting it back does not produce the proof - and that is all the",
-            "proof rules out. Anyone holding the relay's store can compute it as well, so a",
+            "proof rules out. Anyone holding the relay's store can compute it as well. A",
             "readback records that this attempt's request id is in your thread and that the",
-            "turn you name is real there, not that you read it. Confirming is not an answer",
-            "and agrees to nothing.",
+            "turn you name is real there. Where that turn is the one this message opened, it",
+            "records arrival and nothing you did. It never records that you read, agreed to",
+            "or acted on anything.",
             "",
-            "Full record: " + _command("codex-session-relay", "supervisor-show", "--message",
-                                       region["messageId"]),
+            "Full record: " + self._command_line("supervisor-show", "--message",
+                                                 region["messageId"]),
         ]
         return NEWLINE.join(lines)
 
@@ -1612,6 +1708,7 @@ class SupervisorChannel:
                 "turnOrigin": stored.get("turnOrigin"), "detail": stored.get("detail"),
                 "delivered": stored.get("delivered"), "readAt": readback["read_at"],
                 "assertedBy": stored.get("assertedBy"), "reconciled": stored.get("reconciled"),
+                "establishes": _establishes(readback["verified"], stored.get("turnOrigin")),
                 "limits": READBACK_LIMITS}
 
 
@@ -1746,9 +1843,12 @@ class SupervisorChannel:
             "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
         if readback is not None:
             if readback["verified"] == HOST_READ:
+                origin = (json.loads(readback["detail"]) if readback["detail"]
+                          else {}).get("turnOrigin")
                 ladder[envelope.RECEIVED] = envelope.stage(
                     envelope.YES, source="supervisor_readbacks",
-                    detail="read back from turn " + readback["read_turn_id"])
+                    detail="read back from turn " + readback["read_turn_id"] + " ("
+                           + str(origin) + "): " + _establishes(HOST_READ, origin))
             else:
                 ladder[envelope.RECEIVED] = envelope.stage(
                     envelope.UNMEASURED,
@@ -1773,6 +1873,10 @@ class SupervisorChannel:
         ]
         readback = self.store.one(
             "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,))
+        stored = (json.loads(readback["detail"]) if readback is not None and readback["detail"]
+                  else {})
+        origin = stored.get("turnOrigin") if readback is not None else None
+        frozen = json.loads(row["reading"]) if row["reading"] else None
         return {
             "schema": VERSION,
             "messageId": message_id,
@@ -1784,14 +1888,29 @@ class SupervisorChannel:
             "sender": row["sender_task_id"],
             "recipient": row["recipient_task_id"],
             "state": row["state"],
+            # Beside the state, because "read" is shorter than what it proves.
+            "turnOrigin": origin if row["state"] == READ else None,
+            "readEstablishes": (_establishes(readback["verified"], origin)
+                                if row["state"] == READ and readback is not None else None),
             "holdReason": row["hold_reason"],
             "stagedAt": row["staged_at"],
             "packet": json.loads(row["packet"]),
+            # An omission's evidence: the reading it was staged from, frozen, and the command
+            # that re-reads the turn now. The two can disagree, and the packet is about the first.
+            "stagedFrom": None if frozen is None else {
+                "reading": frozen,
+                "recheck": _recheck_line(frozen),
+                "note": "the reading this report was composed from, frozen when it was staged."
+                        " recheck re-reads the turn now and can answer differently - a report"
+                        " that reached the turn afterwards is news about the turn, and does not"
+                        " change what this message said"},
             "attempts": attempts,
             "readback": None if readback is None else {
                 "readTurnId": readback["read_turn_id"], "verified": readback["verified"],
+                "turnOrigin": stored.get("turnOrigin"),
+                "establishes": _establishes(readback["verified"], stored.get("turnOrigin")),
                 "requestId": readback["request_id"], "readAt": readback["read_at"],
-                "detail": json.loads(readback["detail"]) if readback["detail"] else None},
+                "detail": stored or None},
             "reach": self.reach(message_id),
             "limits": "this is what the relay staged, sent and was told. Whether the supervisor"
                       " acted on it is not here, and what discharges the obligation is still"
