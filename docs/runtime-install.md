@@ -1655,48 +1655,68 @@ false on a turn's first Stop and true on every later one, and `last_assistant_me
 word for word. An isolated run on Codex 0.154.0 produced three Stops in one turn whose second and
 third payloads were byte-identical. What differs is the transcript. Every sampling that ends in a
 Stop leaves one final answer, and before running Stop hooks the host records it in the file named
-by `transcript_path` as an `item_completed` `AgentMessage` carrying the turn id and an item id of
-its own. So an event is
+by `transcript_path` as an `item_completed` `AgentMessage` carrying the turn id, the thread id
+and an item id of its own. So an event is
 
     (session_id, turn_id, stop_hook_active, answer item id)
 
 where the answer item is the newest `AgentMessage` recorded for that turn when the hook runs. It
-counts only when its text equals `last_assistant_message`, its thread is the delivered session,
-and no newer continuation or user message for the turn is recorded after it: an input with no
-answer yet means the transcript does not show this Stop's answer, and borrowing the previous one
-would merge two events. The key is a SHA-256 over those four values, so no host value becomes a
-path component and nothing is minted per invocation.
+counts only when
 
-The transcript is read backwards from its end, in bounded chunks, for at most 8 MiB and 0.75
-seconds, inside the margin the launcher keeps over the guard budget. A path that is missing,
-relative, not a regular file or unreadable, a scan that hits either bound, and a transcript that
-shows no answer, an answer without an id, a different text, a different thread or a newer input
-all leave the identity unestablished, with that reason on the row. An unestablished invocation is
-asked about exactly as before and is never deduplicated: the adapter does not know which event it
-is, so it cannot know that the event was already answered.
+- no newer continuation or user message for the turn is recorded after it: an input with no
+  answer yet means the transcript does not show this Stop's answer, and borrowing the previous
+  one would merge two events;
+- its thread is the delivered session, recorded on the item rather than assumed;
+- its text equals `last_assistant_message`;
+- no earlier Stop of the same turn, with the same `stop_hook_active`, reported the same text.
+  A late delivery of that earlier Stop would carry exactly this payload and see exactly this
+  transcript, so the two cannot be told apart; claiming would let the late delivery take this
+  event and answer the real one as a duplicate. The isolated run above is such a turn: its third
+  Stop is left unestablished.
+
+The key is a SHA-256 over the four values, so no host value becomes a path component and nothing
+is minted per invocation.
+
+The transcript is read backwards from its end to the turn's `task_started`, because the last
+condition needs every earlier answer of the turn. The read is bounded at 64 MiB and 0.75 seconds,
+inside the margin the launcher keeps over the guard budget; the largest turn on the host this was
+built on was 62 MB, and reading that far took about a third of a second. Nothing that could be
+the turn's newest item is read past: a last line without its newline is one the host is still
+writing, and a line naming the turn that does not parse could be an input. A path that is
+missing, relative, not a regular file or unreadable, a scan that hits either bound, an unfinished
+last line, an unreadable line about the turn, and any failed condition above leave the identity
+unestablished, with the reason on the row. An unestablished invocation is asked about exactly as
+before and is never deduplicated: the adapter does not know which event it is, so it cannot know
+that the event was already answered.
 
 ### Accepted records and attempt rows
 
 The accepted record is a create-once file, `<journalRoot>/accepted/<key>.json`. Whichever
 invocation creates it owns the event; it asks the guard, writes its row, and then writes
-`accepted/<key>.outcome.json` naming the outcome and the row. An invocation that finds the file
-already there asks nothing, prints nothing and writes a row whose `adapterOutcome` is
-`duplicate_invocation`. Creating a file that must not exist is atomic on a local filesystem, so
-two registrations firing in the same instant produce one owner and one duplicate. The accepted
-records are state rather than invocation records: they are written under every `journalPolicy`,
-and a settings document with no `journalRoot` cannot claim (`unclaimable`) and asks the guard
-as before.
+`accepted/<key>.outcome.json` naming the session, the turn, the outcome, the row and the
+`journalPolicy`. An invocation that finds the claim already there asks nothing, prints nothing and
+writes a row whose `adapterOutcome` is `duplicate_invocation`. Creating a file that must not exist
+is atomic on a local filesystem, so two registrations firing in the same instant produce one
+owner and one duplicate. The accepted records are state rather than invocation records: they are
+written under every `journalPolicy`, and a settings document with no `journalRoot` cannot claim
+(`unclaimable`) and asks the guard as before.
 
 Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
 existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
-(whether it was established, and why not), `acceptance` (`accepted`, `duplicate`,
-`unestablished`, `unclaimable` or `claim_failed`), `acceptedAs` and `guardInvoked`.
-`faults_only` suppresses a duplicate's row the way it suppresses an answered one.
+(whether it was established, and why not), `identityScanMs`, `acceptance` (`accepted`,
+`duplicate`, `unestablished`, `unclaimable` or `claim_failed`), `acceptedAs` and `guardInvoked`.
+`faults_only` leaves out the rows of answered and duplicate invocations of identified events, and
+keeps every invocation answered without an identity: no accepted record covers those, so the row
+is the only trace. `no_journal` keeps no rows at all, so those invocations leave nothing, and a
+reading of such a ledger says it cannot vouch for them.
 
-A claimant that dies between creating the accepted record and writing its outcome leaves a claim
-with no outcome. The event stays accepted once; a later delivery of it is a duplicate and is not
-answered again. That is the adapter's ordinary failure direction, a release with the reason on
-record, and a reading of the journal names such events rather than passing them.
+The outcome record says what the adapter answered, not what the host received: it is written
+before the answer is printed, exactly as the row is. A claimant killed after its outcome and
+before printing a hold leaves a complete record of a hold the host never saw; one killed after
+claiming and before its outcome leaves a claim with no outcome. In both the event stays accepted
+once, a later delivery of it is a duplicate and is not answered again, and the Stop was released
+-- the adapter's ordinary failure direction. A reading of the journal names the second case; the
+first is indistinguishable from success on disk.
 
 ### Reading it back
 
@@ -1704,13 +1724,16 @@ record, and a reading of the journal names such events rather than passing them.
 one verdict. `FALSE` (exit 1) means an event was accepted more than once: claims for one key in
 two roots, two accepted rows for one key, an accepted row whose claim is missing, or a duplicate
 that asked the guard. `UNREADABLE` (exit 3) means the reading cannot vouch for what it read: a
-listing that failed, a record that does not parse or names another key, an outcome without its
-claim, a claim without its outcome, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations
-whose identity was not established, and rows written by a runtime older than event identity, are
-counted beside the verdict and never judged. The superseded count of rows per (session, turn) is
-printed too, labelled as superseded, so the two readings can be compared. `--since`, `--until`,
-`--session` and `--turn` narrow the window, and `--journal-root` repeats for every root the
-host's registrations write to. The same reading is `completion.stop_events()`.
+listing that failed, a row or record that does not parse or lacks the fields its kind requires,
+an outcome without its claim or a claim without its outcome in the same root, a ledger written
+under `no_journal`, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations whose identity was
+not established, and rows written by a runtime older than event identity, are counted beside the
+verdict and never judged. The superseded count of rows per (session, turn) is printed too,
+labelled as superseded, so the two readings can be compared. `--since`, `--until`, `--session`
+and `--turn` narrow the window over claims, outcomes and rows alike, and a claim and its outcome
+are matched in their own root whichever side of the window the other falls on. `--journal-root`
+repeats for every root the host's registrations write to. The same reading is
+`completion.stop_events()`.
 
 ### Limits
 
@@ -1719,7 +1742,8 @@ host reads one settings file and so one root; two registrations pointed at diffe
 each accept the same event, and only a reading that is given both roots can see it. That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
 with every record in the live journal, but it is not a documented host contract. A sampling that
-ends with no answer at all was not observed.
+ends with no answer at all was not observed. A turn whose Stops repeat the same text trades
+deduplication for safety: those Stops are asked about by every registration.
 
 ## Registration is not firing
 

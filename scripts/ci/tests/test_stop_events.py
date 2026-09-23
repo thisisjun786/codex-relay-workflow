@@ -123,6 +123,18 @@ def fixture():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def distinct_third_answer(document):
+    """A copy of the fixture whose third Stop reported "DONE." rather than "DONE"."""
+    changed = json.loads(json.dumps(document))
+    last = changed["stops"][4]["linesAtStop"] - 1
+    line = json.loads(changed["transcriptLines"][last])
+    line["payload"]["item"]["content"][0]["text"] = "DONE."
+    changed["transcriptLines"][last] = json.dumps(line)
+    for index in (4, 5):
+        changed["stops"][index]["payload"]["last_assistant_message"] = "DONE."
+    return changed
+
+
 def at_stop(host, document, index):
     stop = document["stops"][index]
     lines = document["transcriptLines"][:stop["linesAtStop"]]
@@ -215,18 +227,38 @@ class RealPathControls(unittest.TestCase):
                 self.assert_answered_once(host, answers)
 
     def test_every_stop_of_one_turn_is_accepted_and_its_hold_reaches_the_host(self):
-        """The positive control, through both registrations. The guard holds on every call."""
+        """The positive control, through both registrations. The guard holds on every call.
+
+        The fixture's Stops 1 and 2 are two events of one turn and each is accepted once. Its
+        Stop 3 reported the same text as Stop 2 under the same stop_hook_active, so a late
+        delivery of Stop 2 would look exactly like it: that one is left unestablished and both
+        registrations ask about it. Either way no continuation is suppressed."""
         host = self.fresh("positive", decision="block")
         stops = self.document["stops"]
         self.assertEqual(stops[2]["rawSha256"], stops[4]["rawSha256"])
-        for index in (0, 2, 4):
+        for index, answering in ((0, 1), (2, 1), (4, 2)):
             payload = at_stop(host, self.document, index)
             answers = run_together([host.declared(), host.checkout()], payload)
             held = [json.loads(out) for _code, out, _err in answers if out]
-            self.assertEqual([h["decision"] for h in held], ["block"],
-                             "each event is answered by exactly one registration")
+            self.assertEqual([h["decision"] for h in held], ["block"] * answering)
+        self.assertEqual(host.calls_made(), 4)
+        self.assertEqual(tuple(len(part) for part in host.ledger()), (2, 2))
+        self.assertEqual(host.acceptances(),
+                         ["accepted"] * 2 + ["duplicate"] * 2 + ["unestablished"] * 2)
+        reasons = {(row.get("eventIdentity") or {}).get("reason") for row in host.rows()
+                   if row.get("acceptance") == "unestablished"}
+        self.assertEqual(reasons, {"answer_text_ambiguous"})
+
+    def test_three_stops_that_report_different_answers_are_three_events(self):
+        """The same fixture with Stop 3's answer (and the payload reporting it) changed to a text of
+        its own: every Stop is told apart and each is accepted exactly once."""
+        host = self.fresh("distinct", decision="block")
+        document = distinct_third_answer(self.document)
+        for index in (0, 2, 4):
+            answers = run_together([host.declared(), host.checkout()],
+                                   at_stop(host, document, index))
+            self.assertEqual(len([out for _c, out, _e in answers if out]), 1)
         self.assertEqual(host.calls_made(), 3)
-        self.assertEqual(tuple(len(part) for part in host.ledger()), (3, 3))
         self.assertEqual(host.acceptances(), ["accepted"] * 3 + ["duplicate"] * 3)
 
 
@@ -256,8 +288,9 @@ class VerifierTests(unittest.TestCase):
         return Host(root, **kwargs)
 
     def turn_of_three(self, host):
+        document = distinct_third_answer(self.document)
         for index in (0, 2, 4):
-            run_together([host.declared(), host.checkout()], at_stop(host, self.document, index))
+            run_together([host.declared(), host.checkout()], at_stop(host, document, index))
 
     def test_a_turn_of_three_stops_reads_true_where_the_old_count_read_duplicates(self):
         host = self.fresh("positive")
@@ -342,7 +375,8 @@ class VerifierTests(unittest.TestCase):
         self.turn_of_three(host)
         key = "f" * 64
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(
-            json.dumps({"ledgerVersion": 1, "eventKey": key}), encoding="utf-8")
+            json.dumps({"ledgerVersion": 1, "eventKey": key, "sessionId": "s", "turnId": "t",
+                        "at": "2026-09-23T00:00:00Z"}), encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["outcomesWithoutClaim"], [key])
@@ -355,3 +389,136 @@ class VerifierTests(unittest.TestCase):
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (1, "FALSE"))
         self.assertEqual(len(answer["acceptedRowsWithoutLedger"]), 1)
+
+
+class ReviewRoundOneControls(unittest.TestCase):
+    """Red-first controls for the classes the first review round found (CRW-212, PR #144).
+
+    Each one is a way a REAL Stop event could be swallowed -- answered as a duplicate of another
+    event -- or a way the verifier could vouch for a journal it did not understand. The oracle is
+    always the guard's call log or the verifier's exit status, never a field name.
+    """
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def test_a_late_retry_of_an_earlier_stop_does_not_take_the_next_stops_event(self):
+        """Stop 2 and Stop 3 of the fixture report the same text. A retry of Stop 2 that arrives
+        after Stop 3's answer is recorded cannot be told apart from Stop 3, so it must not claim
+        Stop 3's event; if it did, Stop 3's own invocation would be answered as a duplicate."""
+        host = self.fresh("late")
+        stop_two = at_stop(host, self.document, 2)
+        run_one(host.checkout(), stop_two)
+        stop_three = at_stop(host, self.document, 4)
+        run_one(host.checkout(), stop_two)
+        before = host.calls_made()
+        run_one(host.checkout(), stop_three)
+        self.assertEqual(host.calls_made(), before + 1,
+                         "Stop 3's own invocation was not asked about")
+
+    def test_an_unfinished_last_line_is_not_read_past(self):
+        """The host may be writing a line when the hook reads. A newer input cut off mid-write must
+        not let the scan fall back to the previous answer and call a new Stop a duplicate."""
+        host = self.fresh("tail")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.checkout(), payload)
+        prompt = self.document["transcriptLines"][self.document["stops"][0]["linesAtStop"]]
+        self.assertIn("HookPrompt", prompt)
+        with host.transcript.open("a", encoding="utf-8") as handle:
+            handle.write(prompt[:len(prompt) // 2])
+        run_one(host.checkout(), payload)
+        self.assertEqual(host.calls_made(), 2, "a Stop behind an unfinished line was swallowed")
+
+    def test_a_line_about_this_turn_that_does_not_parse_is_not_read_past(self):
+        host = self.fresh("garbled")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.checkout(), payload)
+        turn = self.document["stops"][0]["payload"]["turn_id"]
+        with host.transcript.open("a", encoding="utf-8") as handle:
+            handle.write('{"type":"event_msg","payload":{"type":"item_completed","turn_id":"'
+                         + turn + '","item":{"type":"UserMessage",\n')
+        run_one(host.checkout(), payload)
+        self.assertEqual(host.calls_made(), 2, "a Stop behind a garbled input line was swallowed")
+
+    def test_an_answer_whose_thread_is_not_recorded_does_not_establish_an_event(self):
+        host = self.fresh("threadless")
+        stop = self.document["stops"][0]
+        lines = list(self.document["transcriptLines"][:stop["linesAtStop"]])
+        answer = json.loads(lines[-1])
+        answer["payload"].pop("thread_id", None)
+        lines[-1] = json.dumps(answer)
+        host.transcript.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        payload = dict(stop["payload"], transcript_path=str(host.transcript), cwd=str(host.root))
+        run_one(host.checkout(), json.dumps(payload).encode())
+        run_one(host.checkout(), json.dumps(payload).encode())
+        self.assertEqual(host.calls_made(), 2, "an unverified answer suppressed a Stop")
+
+    def test_a_filter_does_not_hide_an_outcome_whose_claim_is_gone(self):
+        """One complete event beside an outcome with no claim: unreadable with or without a window
+        that covers the orphan."""
+        host = self.fresh("orphan-filtered")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        stop = self.document["stops"][0]["payload"]
+        key = "e" * 64
+        (host.journal / "accepted" / (key + ".outcome.json")).write_text(json.dumps(
+            {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
+             "turnId": stop["turn_id"], "at": "2026-09-23T00:00:00Z", "attemptRow": None,
+             "adapterOutcome": "guard_answered"}), encoding="utf-8")
+        for window in ({}, {"turn": stop["turn_id"]}, {"since": "2000-01-01T00:00:00Z"}):
+            with self.subTest(window=window):
+                code, answer = verify(host.journal, **window)
+                self.assertNotEqual(code, 0, "a filtered reading vouched for an orphaned outcome")
+
+    def test_an_outcome_in_another_root_does_not_complete_a_claim(self):
+        first, second = self.fresh("claim-root"), self.fresh("outcome-root")
+        run_one(first.checkout(), at_stop(first, self.document, 0))
+        claims, outcomes = first.ledger()
+        (second.journal / "accepted").mkdir(parents=True)
+        moved = first.journal / "accepted" / outcomes[0]
+        (second.journal / "accepted" / outcomes[0]).write_bytes(moved.read_bytes())
+        moved.unlink()
+        code, answer = verify(first.journal, second.journal)
+        self.assertNotEqual(code, 0, "an outcome in one root completed a claim in another")
+
+    def test_a_version_two_row_the_verifier_cannot_classify_is_not_passed(self):
+        host = self.fresh("malformed-row")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        day = next(p for p in host.journal.iterdir() if p.name.isdigit())
+        (day / ("f" * 32 + ".json")).write_text(json.dumps(
+            {"recordVersion": 2, "acceptance": "accepted", "sessionId": "s", "turnId": "t",
+             "at": "2026-09-23T00:00:00Z"}), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertNotEqual(code, 0, "the verifier vouched for a row it did not understand")
+
+    def test_invocations_without_an_identity_stay_visible_under_faults_only(self):
+        host = self.fresh("faults-only")
+        document = json.loads(host.settings.read_text(encoding="utf-8"))
+        document["journalPolicy"] = completion.FAULTS_ONLY
+        host.settings.write_text(json.dumps(document), encoding="utf-8")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        loose = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
+                            "last_assistant_message": "done"}).encode("utf-8")
+        run_one(host.checkout(), loose)
+        code, answer = verify(host.journal)
+        self.assertEqual(sum(answer["unjudgedInvocations"].values()), 1,
+                         "an invocation answered without an identity left no trace")
+
+    def test_a_ledger_written_under_no_journal_is_not_vouched_for(self):
+        host = self.fresh("no-journal")
+        document = json.loads(host.settings.read_text(encoding="utf-8"))
+        document["journalPolicy"] = completion.NO_JOURNAL
+        host.settings.write_text(json.dumps(document), encoding="utf-8")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        loose = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
+                            "last_assistant_message": "done"}).encode("utf-8")
+        run_one(host.checkout(), loose)
+        code, answer = verify(host.journal)
+        self.assertNotEqual(code, 0, "no rows were kept, so unidentified invocations are unseen")

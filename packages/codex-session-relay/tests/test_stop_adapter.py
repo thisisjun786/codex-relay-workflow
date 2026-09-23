@@ -304,25 +304,39 @@ class StopEventAcceptanceTests(unittest.TestCase):
 
     def test_distinct_stops_of_one_turn_are_each_accepted_and_answered(self):
         """The positive control. The guard holds on every call, so each event's hold must reach
-        the host from exactly one of its two registrations: a continuation is never suppressed."""
+        the host: a continuation is never suppressed. Stops 1 and 2 of the fixture are two events,
+        each accepted once. Stop 3 reported Stop 2's text under the same stop_hook_active, so a
+        late delivery of Stop 2 would look exactly like it; it is left unestablished and asked
+        about by both registrations rather than guessed at."""
         path = self.arrange(decision="block")
         stops = self.fixture["stops"]
         self.assertEqual(stops[2]["rawSha256"], stops[4]["rawSha256"],
                          "the fixture's Stops 2 and 3 arrived with byte-identical payloads")
-        for index in range(0, 6, 2):
-            payload = self.at_stop(index)
-            answers = fire_together(path, payload)
+        for index, answering in ((0, 1), (2, 1), (4, 2)):
+            answers = fire_together(path, self.at_stop(index))
             held = [json.loads(out) for _code, out, _err in answers if out]
-            self.assertEqual(len(held), 1, "exactly one registration answers each event")
-            self.assertEqual(held[0]["decision"], "block")
-        self.assertEqual(len(guard_calls(self.home)), 3)
+            self.assertEqual([h["decision"] for h in held], ["block"] * answering)
+        self.assertEqual(len(guard_calls(self.home)), 4)
         claims, outcomes = ledger(self.home)
-        self.assertEqual((len(claims), len(outcomes)), (3, 3))
+        self.assertEqual((len(claims), len(outcomes)), (2, 2))
         written = rows(self.home)
         self.assertEqual(sorted(str(r.get("acceptance")) for r in written),
-                         ["accepted"] * 3 + ["duplicate"] * 3)
-        self.assertEqual(len({r.get("eventKey") for r in written}), 3)
+                         ["accepted"] * 2 + ["duplicate"] * 2 + ["unestablished"] * 2)
+        self.assertEqual({(r.get("eventIdentity") or {}).get("reason") for r in written
+                          if r.get("acceptance") == "unestablished"}, {"answer_text_ambiguous"})
         self.assertEqual({r.get("turnId") for r in written}, {stops[0]["payload"]["turn_id"]})
+
+    def test_a_late_retry_of_an_earlier_stop_does_not_take_the_next_stops_event(self):
+        """A retry of Stop 2 arriving after Stop 3's answer was recorded must not claim Stop 3's
+        event, or Stop 3's own invocation would be answered as a duplicate."""
+        path = self.arrange()
+        stop_two = self.at_stop(2)
+        fire(path, stop_two)
+        stop_three = self.at_stop(4)
+        fire(path, stop_two)
+        before = len(guard_calls(self.home))
+        fire(path, stop_three)
+        self.assertEqual(len(guard_calls(self.home)), before + 1)
 
     def test_an_identity_it_cannot_establish_is_asked_about_every_time(self):
         path = self.arrange()

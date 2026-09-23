@@ -322,9 +322,11 @@ OUTCOME_SUFFIX = ".outcome.json"
 LEDGER_VERSION = 1
 EVENT_KEY_TAG = "crw-stop-event/1"
 # Bounded so the scan stays inside the margin the packaged launcher keeps over the guard budget:
-# the launcher waits the budget plus two seconds, and this is at most three quarters of one.
+# the launcher waits the budget plus two seconds, and this is at most three quarters of one. The
+# byte bound covers the largest turn measured on the host this was built on (62 MB, 2026-09-23);
+# reading that far back took 0.11-0.31 s.
 SCAN_CHUNK_BYTES = 1 << 16
-SCAN_MAX_BYTES = 8 << 20
+SCAN_MAX_BYTES = 64 << 20
 SCAN_MAX_SECONDS = 0.75
 
 ACCEPTED = "accepted"
@@ -347,10 +349,13 @@ TRANSCRIPT_UNREACHABLE = "transcript_unreachable"
 TRANSCRIPT_NOT_REGULAR = "transcript_not_regular"
 SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
 SCAN_TIMED_OUT = "scan_timed_out"
+TRANSCRIPT_TAIL_INCOMPLETE = "transcript_tail_incomplete"
+TRANSCRIPT_LINE_UNREADABLE = "transcript_line_unreadable"
 NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
 ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
 ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
 ANSWER_TEXT_MISMATCH = "answer_text_mismatch"
+ANSWER_TEXT_AMBIGUOUS = "answer_text_ambiguous"
 SESSION_MISMATCH = "session_mismatch"
 
 # The items that start a sampling. Met before any answer when reading newest-first, one of these
@@ -1137,56 +1142,96 @@ def _answer_text(item):
                    and isinstance(part.get("text"), str))
 
 
-def _newest_answer(handle, turn, identity, started):
-    """The newest answer item recorded for this turn, read backwards from the end, or a reason.
+def _classify(row, turn):
+    """What one transcript record says about this turn: an answer, an input, the turn's start, or
+    nothing (None)."""
+    if not isinstance(row, dict) or row.get("type") != "event_msg":
+        return None
+    body = row.get("payload")
+    if not isinstance(body, dict) or body.get("turn_id") != turn:
+        return None
+    if body.get("type") == "task_started":
+        return ("start",)
+    item = body.get("item")
+    if body.get("type") != "item_completed" or not isinstance(item, dict):
+        return None
+    if item.get("type") in INPUT_ITEMS:
+        return ("input", item.get("type"))
+    if item.get("type") == "AgentMessage":
+        return ("answer", item.get("id"), _answer_text(item), body.get("thread_id"))
+    return None
 
-    Only whole lines count. The first piece of each chunk is carried into the next read, and a last
-    line without its newline is one the host is still writing: it does not parse and is skipped.
+
+def _turn_items(handle, turn, identity, started):
+    """This turn's answers and inputs, newest first, read backwards to the turn's start, or a reason.
+
+    Everything back to the start is needed, not just the newest answer: whether an earlier Stop of
+    the same turn reported the same text decides whether this invocation can be told apart from a
+    late delivery of that earlier Stop. Lines are assembled from pieces, so a line longer than a
+    chunk costs its own length once rather than once per chunk.
+
+    Nothing that could be this turn's newest item is read past. A last line without its newline is
+    one the host is still writing, and a line naming this turn that does not parse could be an
+    input; either leaves the identity unestablished rather than falling back to an older answer.
     """
     token = turn.encode("utf-8", "surrogatepass")
-    position = os.fstat(handle).st_size
-    carry = b""
+    size = os.fstat(handle).st_size
+    if size == 0:
+        return None, NO_ANSWER_ITEM_FOR_TURN
+    os.lseek(handle, size - 1, os.SEEK_SET)
+    unfinished = os.read(handle, 1) != b"\n"
+    items = []
+    position = size
+    pieces = []
+    newest = True
     while position > 0:
         if identity["scannedBytes"] >= SCAN_MAX_BYTES:
             return None, SCAN_BOUND_EXCEEDED
         if time.monotonic() - started > SCAN_MAX_SECONDS:
             return None, SCAN_TIMED_OUT
-        size = min(SCAN_CHUNK_BYTES, position)
-        position -= size
+        width = min(SCAN_CHUNK_BYTES, position)
+        position -= width
         os.lseek(handle, position, os.SEEK_SET)
         chunk = b""
-        while len(chunk) < size:
-            piece = os.read(handle, size - len(chunk))
+        while len(chunk) < width:
+            piece = os.read(handle, width - len(chunk))
             if not piece:
                 break
             chunk += piece
         identity["scannedBytes"] += len(chunk)
-        lines = (chunk + carry).split(b"\n")
-        carry = lines.pop(0) if position > 0 else b""
-        for line in reversed(lines):
+        segments = chunk.split(b"\n")
+        if len(segments) == 1:
+            # No line ends in this chunk: it is the front of the line the pieces carry.
+            pieces.insert(0, chunk)
+            if position > 0:
+                continue
+            lines, pieces = [b"".join(pieces)], []
+        else:
+            lines = [segments[-1] + b"".join(pieces)] + segments[-2:0:-1]
+            if position == 0:
+                lines.append(segments[0])
+                pieces = []
+            else:
+                pieces = [segments[0]]
+        for line in lines:
             identity["scannedLines"] += 1
+            if newest:
+                newest = False
+                if unfinished:
+                    return None, TRANSCRIPT_TAIL_INCOMPLETE
+                continue
             if token not in line or not any(mark in line for mark in SCAN_TOKENS):
                 continue
             try:
-                row = json.loads(line.decode("utf-8"))
+                found = _classify(json.loads(line.decode("utf-8")), turn)
             except ValueError:
-                identity["skippedLines"] += 1
+                return None, TRANSCRIPT_LINE_UNREADABLE
+            if found is None:
                 continue
-            if not isinstance(row, dict) or row.get("type") != "event_msg":
-                continue
-            body = row.get("payload")
-            if not isinstance(body, dict) or body.get("turn_id") != turn:
-                continue
-            if body.get("type") == "task_started":
-                return None, NO_ANSWER_ITEM_FOR_TURN
-            item = body.get("item")
-            if body.get("type") != "item_completed" or not isinstance(item, dict):
-                continue
-            if item.get("type") in INPUT_ITEMS:
-                return None, ANSWER_PRECEDES_LATEST_INPUT
-            if item.get("type") == "AgentMessage":
-                return (item, body.get("thread_id")), None
-    return None, NO_ANSWER_ITEM_FOR_TURN
+            if found[0] == "start":
+                return items, None
+            items.append(found)
+    return items, None
 
 
 def event_identity(stop, started=None):
@@ -1194,13 +1239,16 @@ def event_identity(stop, started=None):
 
     The key is None when the identity could not be established, and identity["reason"] says why.
     An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
-    answer the host recorded for the turn, provided its text is the one the payload reports, its
-    thread is the delivered session, and no newer input for the turn follows it. The key is a
-    SHA-256 over those four values, so no host value becomes a path and nothing is minted here.
+    answer the host recorded for the turn, provided no newer input for the turn follows it, its
+    thread is the delivered session, its text is the one the payload reports, and no earlier Stop
+    of the same turn -- one with the same stop_hook_active -- reported that same text. That last
+    condition is what a late delivery of an earlier Stop needs to be told apart from this one; when
+    it fails, the two cannot be told apart and nothing is claimed. The key is a SHA-256 over the
+    four values, so no host value becomes a path and nothing is minted here.
     """
     started = time.monotonic() if started is None else started
     identity = {"established": False, "reason": None, "answerItem": None,
-                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0, "skippedLines": 0}
+                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0}
     session, turn = stop.get("session_id"), stop.get("turn_id")
     active, said = stop.get("stop_hook_active"), stop.get("last_assistant_message")
     if not (isinstance(session, str) and session and isinstance(turn, str) and turn
@@ -1230,28 +1278,45 @@ def event_identity(stop, started=None):
         return None, identity
     try:
         if not stat.S_ISREG(os.fstat(handle).st_mode):
-            answer, reason = None, TRANSCRIPT_NOT_REGULAR
+            items, reason = None, TRANSCRIPT_NOT_REGULAR
         else:
-            answer, reason = _newest_answer(handle, turn, identity, started)
+            items, reason = _turn_items(handle, turn, identity, started)
     except OSError:
-        answer, reason = None, TRANSCRIPT_UNREACHABLE
+        items, reason = None, TRANSCRIPT_UNREACHABLE
     finally:
         os.close(handle)
-    if answer is None:
+    if items is None:
         identity["reason"] = reason
         return None, identity
-    item, thread = answer
-    item_id = item.get("id")
+    if not items or not any(entry[0] == "answer" for entry in items):
+        identity["reason"] = NO_ANSWER_ITEM_FOR_TURN
+        return None, identity
+    if items[0][0] != "answer":
+        identity["reason"] = ANSWER_PRECEDES_LATEST_INPUT
+        return None, identity
+    _kind, item_id, text, thread = items[0]
     if not isinstance(item_id, str) or not item_id:
         identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
         return None, identity
     identity["answerItem"] = item_id
-    if thread is not None and thread != session:
+    if thread != session:
         identity["reason"] = SESSION_MISMATCH
         return None, identity
-    if _answer_text(item) != said:
+    if text != said:
         identity["reason"] = ANSWER_TEXT_MISMATCH
         return None, identity
+    # Earlier Stops of this turn: the last answer before each input that came after it. A Stop's
+    # stop_hook_active is true once a hook continuation has happened in the turn, so an earlier
+    # answer's flag is whether any continuation prompt precedes it.
+    chronological = list(reversed(items))
+    for index, entry in enumerate(chronological[:-1]):
+        if entry[0] != "answer" or chronological[index + 1][0] != "input":
+            continue
+        earlier_active = any(prior[0] == "input" and prior[1] == "HookPrompt"
+                             for prior in chronological[:index])
+        if entry[2] == said and earlier_active == active:
+            identity["reason"] = ANSWER_TEXT_AMBIGUOUS
+            return None, identity
     identity["established"] = True
     key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
                                     separators=(",", ":")).encode("ascii")).hexdigest()
@@ -1332,6 +1397,9 @@ def record_outcome(config, key, record, row):
         return None
     try:
         _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "sessionId": record.get("sessionId"),
+                              "turnId": record.get("turnId"),
+                              "journalPolicy": config.get("journalPolicy") or EVERY_INVOCATION,
                               "adapterOutcome": record.get("adapterOutcome"),
                               "guardDecision": record.get("guardDecision"),
                               "guardState": record.get("guardState"),
@@ -1364,7 +1432,10 @@ def journal(config, record, slot=None):
     policy = config.get("journalPolicy") or EVERY_INVOCATION
     if policy == NO_JOURNAL:
         return None
-    if policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET:
+    if (policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET
+            and record.get("acceptance") in (ACCEPTED, DUPLICATE)):
+        # An answer to an event this hook could identify is not a fault. An answer given without
+        # an identity is reported even here: it is the one invocation no accepted record covers.
         return None
     root = config.get("journalRoot")
     if not root:
@@ -1540,30 +1611,39 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
     root a replay never reads FALSE: the claim is create-once.
 
     UNREADABLE when the reading cannot vouch for what it read -- a listing that failed, a row or
-    an accepted record that does not parse or names another key, an outcome with no claim, a claim
-    with no outcome (its owner died before answering), or nothing to judge at all.
+    an accepted record that does not parse or does not have the shape its kind requires, an
+    outcome with no claim in its own root, a claim with no outcome in its own root (its owner died
+    before answering), a ledger written under journalPolicy no_journal (no rows exist, so an
+    invocation answered without an identity cannot be seen at all), or nothing to judge.
 
+    The window (since/until/session/turn) selects claims by claimedAt, sessionId and turnId,
+    outcomes by at, sessionId and turnId, and rows by at, sessionId and turnId; a claim and its
+    outcome are matched within the same root whichever side of the window the other falls on.
     Invocations whose identity was never established (and those that could not claim) are counted
-    beside the verdict and never judged: nothing says which event they were. Rows written before
-    event identity existed (recordVersion 1) are counted as legacy for the same reason. The old
-    per-(session, turn) reading is reported too, labelled as superseded, so the two can be put
-    side by side.
-
-    Roots are deduplicated by the (device, inode) they reach, so one root spelled twice is read
-    once and cannot read FALSE against itself.
+    beside the verdict and never judged. Rows written before event identity existed (recordVersion
+    1) are counted as legacy for the same reason. The old per-(session, turn) reading is reported
+    too, labelled as superseded. Roots are deduplicated by the (device, inode) they reach.
     """
     answer = {"predicate": PER_EVENT_PREDICATE, "verdict": None, "roots": [],
               "window": {"since": since, "until": until, "session": session, "turn": turn},
               "events": 0, "eventsWithMoreThanOneAcceptance": [], "duplicateInvocations": 0,
               "unjudgedInvocations": {}, "legacyRows": 0, "acceptedWithoutOutcome": [],
               "outcomesWithoutClaim": [], "acceptedRowsWithoutLedger": [],
-              "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": 0,
-              "foreignLedgerEntries": [], "turnsWithMoreThanOneEvent": 0,
+              "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": [],
+              "foreignLedgerEntries": [], "invocationsUnrecorded": [],
+              "turnsWithMoreThanOneEvent": 0,
               "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
                                     "pairsWithMoreThanOneRow": 0}}
+
+    def in_window(stamp, owner, of_turn):
+        return (_within(stamp, since, until)
+                and (session is None or owner == session)
+                and (turn is None or of_turn == turn))
+
     listing_failed = False
     reached = set()
-    claims, outcomes, accepted_rows, pairs = {}, {}, {}, {}
+    claims_in_window = {}
+    accepted_rows, pairs, events_per_turn = {}, {}, {}
     for spelled in roots:
         root = Path(os.path.abspath(str(Path(spelled).expanduser())))
         entry = {"root": str(root), "state": None}
@@ -1592,6 +1672,43 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
             entry["state"], entry["detail"] = "unreadable", str(error)
             listing_failed = True
             continue
+        # The ledger first, whole and unwindowed, because a claim and its outcome are matched in
+        # their own root whichever side of the window the other one falls on.
+        claims, outcomes = {}, {}
+        # Every claim file present, readable or not: a torn claim is still a claim, so an accepted
+        # row naming it is unreadable evidence rather than acceptance outside the ledger.
+        claim_files = {name[:-len(".json")] for name in ledger if LEDGER_NAME.match(name)}
+        for name in ledger:
+            path = root / LEDGER_DIRECTORY / name
+            if OUTCOME_NAME.match(name):
+                key, table = name[:-len(OUTCOME_SUFFIX)], outcomes
+            elif LEDGER_NAME.match(name):
+                key, table = name[:-len(".json")], claims
+            else:
+                answer["foreignLedgerEntries"].append(str(path))
+                continue
+            body, readable = _read_json(path)
+            if (not readable or not isinstance(body, dict) or body.get("eventKey") != key
+                    or not isinstance(body.get("sessionId"), str) or not body.get("sessionId")
+                    or not isinstance(body.get("turnId"), str) or not body.get("turnId")):
+                answer["ledgerUnreadable"].append(str(path))
+                continue
+            table[key] = body
+        for key, body in claims.items():
+            if not in_window(body.get("claimedAt"), body["sessionId"], body["turnId"]):
+                continue
+            claims_in_window.setdefault(key, []).append(str(root))
+            if key not in outcomes:
+                answer["acceptedWithoutOutcome"].append(key)
+            pair = (body["sessionId"], body["turnId"])
+            events_per_turn.setdefault(pair, set()).add(key)
+        for key, body in outcomes.items():
+            if not in_window(body.get("at"), body["sessionId"], body["turnId"]):
+                continue
+            if key not in claims:
+                answer["outcomesWithoutClaim"].append(key)
+            if body.get("journalPolicy") == NO_JOURNAL:
+                answer["invocationsUnrecorded"].append(key)
         for day in days:
             try:
                 names = sorted(e.name for e in os.scandir(str(root / day))
@@ -1601,17 +1718,13 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                 listing_failed = True
                 break
             for name in names:
+                where = str(root / day / name)
                 row, readable = _read_json(root / day / name)
                 if not readable or not isinstance(row, dict):
-                    answer["rowsUnreadable"] += 1
+                    answer["rowsUnreadable"].append(where)
                     continue
-                if not _within(row.get("at"), since, until):
+                if not in_window(row.get("at"), row.get("sessionId"), row.get("turnId")):
                     continue
-                if session is not None and row.get("sessionId") != session:
-                    continue
-                if turn is not None and row.get("turnId") != turn:
-                    continue
-                where = str(root / day / name)
                 if row.get("sessionId") and row.get("turnId"):
                     pair = (row["sessionId"], row["turnId"])
                     pairs[pair] = pairs.get(pair, 0) + 1
@@ -1619,75 +1732,50 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                     answer["legacyRows"] += 1
                     continue
                 acceptance, key = row.get("acceptance"), row.get("eventKey")
-                if acceptance == ACCEPTED and isinstance(key, str):
+                keyed = isinstance(key, str) and LEDGER_NAME.match(key + ".json") is not None
+                reason = (row.get("eventIdentity") or {}).get("reason") \
+                    if isinstance(row.get("eventIdentity"), dict) else None
+                counts = answer["unjudgedInvocations"]
+                if acceptance == ACCEPTED and keyed:
                     accepted_rows.setdefault(key, []).append(where)
-                    if not (root / LEDGER_DIRECTORY / (key + ".json")).is_file():
+                    if key not in claim_files:
                         answer["acceptedRowsWithoutLedger"].append(where)
-                elif acceptance == DUPLICATE:
+                elif acceptance == DUPLICATE and keyed:
                     answer["duplicateInvocations"] += 1
-                    if row.get("guardInvoked"):
+                    if row.get("guardInvoked") is not False:
                         answer["guardAskedOnDuplicate"].append(where)
-                elif acceptance in (UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED):
-                    reason = ((row.get("eventIdentity") or {}).get("reason")
-                              if acceptance == UNESTABLISHED else None)
-                    label = acceptance + (":" + reason if reason else "")
-                    counts = answer["unjudgedInvocations"]
+                elif acceptance == UNESTABLISHED and key is None and isinstance(reason, str):
+                    label = UNESTABLISHED + ":" + reason
                     counts[label] = counts.get(label, 0) + 1
-        for name in ledger:
-            path = root / LEDGER_DIRECTORY / name
-            if OUTCOME_NAME.match(name):
-                body, readable = _read_json(path)
-                key = name[:-len(OUTCOME_SUFFIX)]
-                if not readable or not isinstance(body, dict) or body.get("eventKey") != key:
-                    answer["ledgerUnreadable"].append(str(path))
-                    continue
-                outcomes.setdefault(key, []).append(str(root))
-            elif LEDGER_NAME.match(name):
-                body, readable = _read_json(path)
-                key = name[:-len(".json")]
-                if (not readable or not isinstance(body, dict) or body.get("eventKey") != key
-                        or not body.get("sessionId") or not body.get("turnId")):
-                    answer["ledgerUnreadable"].append(str(path))
-                    continue
-                if not _within(body.get("claimedAt"), since, until):
-                    continue
-                if session is not None and body.get("sessionId") != session:
-                    continue
-                if turn is not None and body.get("turnId") != turn:
-                    continue
-                claims.setdefault(key, []).append((str(root), body.get("sessionId"),
-                                                   body.get("turnId")))
-            else:
-                answer["foreignLedgerEntries"].append(str(path))
-    events_per_turn = {}
-    for key, held in claims.items():
+                elif acceptance in (UNCLAIMABLE, CLAIM_FAILED) and keyed:
+                    counts[acceptance] = counts.get(acceptance, 0) + 1
+                elif acceptance is None and key is None and row.get("eventIdentity") is None:
+                    # The settings or the payload failed before any event was reached.
+                    label = "no_event:" + str(row.get("adapterOutcome"))
+                    counts[label] = counts.get(label, 0) + 1
+                else:
+                    answer["rowsUnreadable"].append(where)
+    for key, held in claims_in_window.items():
         if len(held) > 1 or len(accepted_rows.get(key, [])) > 1:
             answer["eventsWithMoreThanOneAcceptance"].append(key)
-        if not outcomes.get(key):
-            answer["acceptedWithoutOutcome"].append(key)
-        pair = (held[0][1], held[0][2])
-        events_per_turn[pair] = events_per_turn.get(pair, 0) + 1
     for key, rows in accepted_rows.items():
-        if key not in claims and len(rows) > 1:
+        if key not in claims_in_window and len(rows) > 1:
             answer["eventsWithMoreThanOneAcceptance"].append(key)
-    windowed = since is not None or until is not None or session is not None or turn is not None
-    for key in outcomes:
-        if key not in claims and not windowed:
-            answer["outcomesWithoutClaim"].append(key)
-    answer["events"] = len(claims)
-    answer["turnsWithMoreThanOneEvent"] = sum(1 for n in events_per_turn.values() if n > 1)
+    answer["events"] = len(claims_in_window)
+    answer["turnsWithMoreThanOneEvent"] = sum(1 for keys in events_per_turn.values()
+                                              if len(keys) > 1)
     answer["supersededPerTurn"]["pairs"] = len(pairs)
     answer["supersededPerTurn"]["pairsWithMoreThanOneRow"] = sum(1 for n in pairs.values()
                                                                 if n > 1)
     for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
-                  "outcomesWithoutClaim"):
+                  "outcomesWithoutClaim", "invocationsUnrecorded"):
         answer[field] = sorted(set(answer[field]))
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
         answer["verdict"] = FALSE
     elif (listing_failed or answer["ledgerUnreadable"] or answer["rowsUnreadable"]
           or answer["outcomesWithoutClaim"] or answer["acceptedWithoutOutcome"]
-          or not claims):
+          or answer["invocationsUnrecorded"] or not claims_in_window):
         answer["verdict"] = UNREADABLE_VERDICT
     else:
         answer["verdict"] = TRUE

@@ -152,9 +152,11 @@ OUTCOME_SUFFIX = ".outcome.json"
 LEDGER_VERSION = 1
 EVENT_KEY_TAG = "crw-stop-event/1"
 # Bounded so the scan stays inside the margin the packaged launcher keeps over the guard budget:
-# the launcher waits the budget plus two seconds, and this is at most three quarters of one.
+# the launcher waits the budget plus two seconds, and this is at most three quarters of one. The
+# byte bound covers the largest turn measured on the host this was built on (62 MB, 2026-09-23);
+# reading that far back took 0.11-0.31 s.
 SCAN_CHUNK_BYTES = 1 << 16
-SCAN_MAX_BYTES = 8 << 20
+SCAN_MAX_BYTES = 64 << 20
 SCAN_MAX_SECONDS = 0.75
 
 ACCEPTED = "accepted"
@@ -177,10 +179,13 @@ TRANSCRIPT_UNREACHABLE = "transcript_unreachable"
 TRANSCRIPT_NOT_REGULAR = "transcript_not_regular"
 SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
 SCAN_TIMED_OUT = "scan_timed_out"
+TRANSCRIPT_TAIL_INCOMPLETE = "transcript_tail_incomplete"
+TRANSCRIPT_LINE_UNREADABLE = "transcript_line_unreadable"
 NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
 ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
 ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
 ANSWER_TEXT_MISMATCH = "answer_text_mismatch"
+ANSWER_TEXT_AMBIGUOUS = "answer_text_ambiguous"
 SESSION_MISMATCH = "session_mismatch"
 
 # The items that start a sampling. Met before any answer when reading newest-first, one of these
@@ -640,56 +645,96 @@ def _answer_text(item):
                    and isinstance(part.get("text"), str))
 
 
-def _newest_answer(handle, turn, identity, started):
-    """The newest answer item recorded for this turn, read backwards from the end, or a reason.
+def _classify(row, turn):
+    """What one transcript record says about this turn: an answer, an input, the turn's start, or
+    nothing (None)."""
+    if not isinstance(row, dict) or row.get("type") != "event_msg":
+        return None
+    body = row.get("payload")
+    if not isinstance(body, dict) or body.get("turn_id") != turn:
+        return None
+    if body.get("type") == "task_started":
+        return ("start",)
+    item = body.get("item")
+    if body.get("type") != "item_completed" or not isinstance(item, dict):
+        return None
+    if item.get("type") in INPUT_ITEMS:
+        return ("input", item.get("type"))
+    if item.get("type") == "AgentMessage":
+        return ("answer", item.get("id"), _answer_text(item), body.get("thread_id"))
+    return None
 
-    Only whole lines count. The first piece of each chunk is carried into the next read, and a last
-    line without its newline is one the host is still writing: it does not parse and is skipped.
+
+def _turn_items(handle, turn, identity, started):
+    """This turn's answers and inputs, newest first, read backwards to the turn's start, or a reason.
+
+    Everything back to the start is needed, not just the newest answer: whether an earlier Stop of
+    the same turn reported the same text decides whether this invocation can be told apart from a
+    late delivery of that earlier Stop. Lines are assembled from pieces, so a line longer than a
+    chunk costs its own length once rather than once per chunk.
+
+    Nothing that could be this turn's newest item is read past. A last line without its newline is
+    one the host is still writing, and a line naming this turn that does not parse could be an
+    input; either leaves the identity unestablished rather than falling back to an older answer.
     """
     token = turn.encode("utf-8", "surrogatepass")
-    position = os.fstat(handle).st_size
-    carry = b""
+    size = os.fstat(handle).st_size
+    if size == 0:
+        return None, NO_ANSWER_ITEM_FOR_TURN
+    os.lseek(handle, size - 1, os.SEEK_SET)
+    unfinished = os.read(handle, 1) != b"\n"
+    items = []
+    position = size
+    pieces = []
+    newest = True
     while position > 0:
         if identity["scannedBytes"] >= SCAN_MAX_BYTES:
             return None, SCAN_BOUND_EXCEEDED
         if time.monotonic() - started > SCAN_MAX_SECONDS:
             return None, SCAN_TIMED_OUT
-        size = min(SCAN_CHUNK_BYTES, position)
-        position -= size
+        width = min(SCAN_CHUNK_BYTES, position)
+        position -= width
         os.lseek(handle, position, os.SEEK_SET)
         chunk = b""
-        while len(chunk) < size:
-            piece = os.read(handle, size - len(chunk))
+        while len(chunk) < width:
+            piece = os.read(handle, width - len(chunk))
             if not piece:
                 break
             chunk += piece
         identity["scannedBytes"] += len(chunk)
-        lines = (chunk + carry).split(b"\n")
-        carry = lines.pop(0) if position > 0 else b""
-        for line in reversed(lines):
+        segments = chunk.split(b"\n")
+        if len(segments) == 1:
+            # No line ends in this chunk: it is the front of the line the pieces carry.
+            pieces.insert(0, chunk)
+            if position > 0:
+                continue
+            lines, pieces = [b"".join(pieces)], []
+        else:
+            lines = [segments[-1] + b"".join(pieces)] + segments[-2:0:-1]
+            if position == 0:
+                lines.append(segments[0])
+                pieces = []
+            else:
+                pieces = [segments[0]]
+        for line in lines:
             identity["scannedLines"] += 1
+            if newest:
+                newest = False
+                if unfinished:
+                    return None, TRANSCRIPT_TAIL_INCOMPLETE
+                continue
             if token not in line or not any(mark in line for mark in SCAN_TOKENS):
                 continue
             try:
-                row = json.loads(line.decode("utf-8"))
+                found = _classify(json.loads(line.decode("utf-8")), turn)
             except ValueError:
-                identity["skippedLines"] += 1
+                return None, TRANSCRIPT_LINE_UNREADABLE
+            if found is None:
                 continue
-            if not isinstance(row, dict) or row.get("type") != "event_msg":
-                continue
-            body = row.get("payload")
-            if not isinstance(body, dict) or body.get("turn_id") != turn:
-                continue
-            if body.get("type") == "task_started":
-                return None, NO_ANSWER_ITEM_FOR_TURN
-            item = body.get("item")
-            if body.get("type") != "item_completed" or not isinstance(item, dict):
-                continue
-            if item.get("type") in INPUT_ITEMS:
-                return None, ANSWER_PRECEDES_LATEST_INPUT
-            if item.get("type") == "AgentMessage":
-                return (item, body.get("thread_id")), None
-    return None, NO_ANSWER_ITEM_FOR_TURN
+            if found[0] == "start":
+                return items, None
+            items.append(found)
+    return items, None
 
 
 def event_identity(stop, started=None):
@@ -697,13 +742,16 @@ def event_identity(stop, started=None):
 
     The key is None when the identity could not be established, and identity["reason"] says why.
     An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
-    answer the host recorded for the turn, provided its text is the one the payload reports, its
-    thread is the delivered session, and no newer input for the turn follows it. The key is a
-    SHA-256 over those four values, so no host value becomes a path and nothing is minted here.
+    answer the host recorded for the turn, provided no newer input for the turn follows it, its
+    thread is the delivered session, its text is the one the payload reports, and no earlier Stop
+    of the same turn -- one with the same stop_hook_active -- reported that same text. That last
+    condition is what a late delivery of an earlier Stop needs to be told apart from this one; when
+    it fails, the two cannot be told apart and nothing is claimed. The key is a SHA-256 over the
+    four values, so no host value becomes a path and nothing is minted here.
     """
     started = time.monotonic() if started is None else started
     identity = {"established": False, "reason": None, "answerItem": None,
-                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0, "skippedLines": 0}
+                "transcriptPath": None, "scannedBytes": 0, "scannedLines": 0}
     session, turn = stop.get("session_id"), stop.get("turn_id")
     active, said = stop.get("stop_hook_active"), stop.get("last_assistant_message")
     if not (isinstance(session, str) and session and isinstance(turn, str) and turn
@@ -733,28 +781,45 @@ def event_identity(stop, started=None):
         return None, identity
     try:
         if not stat_module.S_ISREG(os.fstat(handle).st_mode):
-            answer, reason = None, TRANSCRIPT_NOT_REGULAR
+            items, reason = None, TRANSCRIPT_NOT_REGULAR
         else:
-            answer, reason = _newest_answer(handle, turn, identity, started)
+            items, reason = _turn_items(handle, turn, identity, started)
     except OSError:
-        answer, reason = None, TRANSCRIPT_UNREACHABLE
+        items, reason = None, TRANSCRIPT_UNREACHABLE
     finally:
         os.close(handle)
-    if answer is None:
+    if items is None:
         identity["reason"] = reason
         return None, identity
-    item, thread = answer
-    item_id = item.get("id")
+    if not items or not any(entry[0] == "answer" for entry in items):
+        identity["reason"] = NO_ANSWER_ITEM_FOR_TURN
+        return None, identity
+    if items[0][0] != "answer":
+        identity["reason"] = ANSWER_PRECEDES_LATEST_INPUT
+        return None, identity
+    _kind, item_id, text, thread = items[0]
     if not isinstance(item_id, str) or not item_id:
         identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
         return None, identity
     identity["answerItem"] = item_id
-    if thread is not None and thread != session:
+    if thread != session:
         identity["reason"] = SESSION_MISMATCH
         return None, identity
-    if _answer_text(item) != said:
+    if text != said:
         identity["reason"] = ANSWER_TEXT_MISMATCH
         return None, identity
+    # Earlier Stops of this turn: the last answer before each input that came after it. A Stop's
+    # stop_hook_active is true once a hook continuation has happened in the turn, so an earlier
+    # answer's flag is whether any continuation prompt precedes it.
+    chronological = list(reversed(items))
+    for index, entry in enumerate(chronological[:-1]):
+        if entry[0] != "answer" or chronological[index + 1][0] != "input":
+            continue
+        earlier_active = any(prior[0] == "input" and prior[1] == "HookPrompt"
+                             for prior in chronological[:index])
+        if entry[2] == said and earlier_active == active:
+            identity["reason"] = ANSWER_TEXT_AMBIGUOUS
+            return None, identity
     identity["established"] = True
     key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
                                     separators=(",", ":")).encode("ascii")).hexdigest()
@@ -835,6 +900,9 @@ def record_outcome(config, key, record, row):
         return None
     try:
         _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "sessionId": record.get("sessionId"),
+                              "turnId": record.get("turnId"),
+                              "journalPolicy": config.get("journalPolicy") or EVERY_INVOCATION,
                               "adapterOutcome": record.get("adapterOutcome"),
                               "guardDecision": record.get("guardDecision"),
                               "guardState": record.get("guardState"),
@@ -862,7 +930,10 @@ def journal(config, record, slot=None):
     policy = config.get("journalPolicy") or EVERY_INVOCATION
     if policy == NO_JOURNAL:
         return None
-    if policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET:
+    if (policy == FAULTS_ONLY and record.get("adapterOutcome") in QUIET
+            and record.get("acceptance") in (ACCEPTED, DUPLICATE)):
+        # An answer to an event this hook could identify is not a fault. An answer given without
+        # an identity is reported even here: it is the one invocation no accepted record covers.
         return None
     root = config.get("journalRoot")
     if not root:

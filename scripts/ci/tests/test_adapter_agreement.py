@@ -354,10 +354,14 @@ class AgreementTests(unittest.TestCase):
                 answer = self.assert_agrees(behaviour="verdict_release", payload=payload)
                 self.assertEqual(answer["written"][0]["record"]["adapterOutcome"], expected)
 
-    def test_a_faults_only_policy_records_nothing_for_an_answer_in_both(self):
+    def test_a_faults_only_policy_still_records_an_answer_given_without_an_identity_in_both(self):
+        """faults_only leaves out answers to events this hook identified (see EventAcceptanceAgrees).
+        This payload names no transcript, so the answer was given without an identity, and that is
+        reported under every policy that keeps rows: no accepted record covers it."""
         left, right = self.run_case(behaviour="verdict_release", policy=completion.FAULTS_ONLY)
         self.assertEqual(differences(left, right), [])
-        self.assertEqual(left["written"], [])
+        self.assertEqual([entry["record"]["acceptance"] for entry in left["written"]],
+                         [completion.UNESTABLISHED])
 
     def test_a_no_journal_policy_records_nothing_at_all_in_both(self):
         left, right = self.run_case(behaviour="garbage", policy=completion.NO_JOURNAL)
@@ -544,6 +548,18 @@ def r1():
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def distinct_third_answer(document):
+    """A copy of the fixture whose third Stop reported "DONE." rather than "DONE"."""
+    changed = json.loads(json.dumps(document))
+    last = changed["stops"][4]["linesAtStop"] - 1
+    line = json.loads(changed["transcriptLines"][last])
+    line["payload"]["item"]["content"][0]["text"] = "DONE."
+    changed["transcriptLines"][last] = json.dumps(line)
+    for index in (4, 5):
+        changed["stops"][index]["payload"]["last_assistant_message"] = "DONE."
+    return changed
+
+
 def stop_bytes(stop, transcript, **changes):
     payload = dict(stop["payload"])
     payload["transcript_path"] = str(transcript)
@@ -691,7 +707,7 @@ class EventAcceptanceAgrees(unittest.TestCase):
         self.assertIsNone(duplicate["guardDecision"])
 
     def test_three_stops_of_one_turn_are_three_events_in_both(self):
-        document = r1()
+        document = distinct_third_answer(r1())
 
         def steps(home):
             return [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
@@ -701,6 +717,23 @@ class EventAcceptanceAgrees(unittest.TestCase):
         answer = self.assert_agrees(steps, behaviour="verdict_block")
         self.assertEqual(answer["calls"], 3)
         self.assertEqual(self.acceptances(answer), ["accepted"] * 3)
+        self.assertEqual(len([r for r in answer["returned"] if r]), 3)
+
+    def test_a_stop_that_repeats_an_earlier_stops_text_is_unestablished_in_both(self):
+        """The fixture's Stop 3 reported what Stop 2 reported, under the same stop_hook_active; a
+        late delivery of Stop 2 would be indistinguishable from it, so neither claims."""
+        document = r1()
+
+        def steps(home):
+            return [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                     document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                    for i in (0, 2, 4)]
+
+        answer = self.assert_agrees(steps, behaviour="verdict_block")
+        self.assertEqual(self.acceptances(answer), ["accepted", "accepted", "unestablished"])
+        self.assertEqual({e["record"]["eventIdentity"]["reason"] for e in answer["written"]
+                          if e["record"]["acceptance"] == "unestablished"},
+                         {"answer_text_ambiguous"})
         self.assertEqual(len([r for r in answer["returned"] if r]), 3)
 
     def test_every_reason_an_identity_is_unestablished_is_the_same_in_both(self):
@@ -714,7 +747,18 @@ class EventAcceptanceAgrees(unittest.TestCase):
 
         def filler():
             return prefix + ['{"type":"response_item","payload":{"filler":"' + "x" * 1000 + '"}}'
-                             ] * 9000
+                             ] * 200
+
+        threadless = json.loads(prefix[-1])
+        threadless["payload"].pop("thread_id")
+        prompt = document["transcriptLines"][first["linesAtStop"]]
+        turn = first["payload"]["turn_id"]
+        garbled = ('{"type":"event_msg","payload":{"type":"item_completed","turn_id":"' + turn
+                   + '","item":{"type":"UserMessage",')
+
+        def write_raw(home, text):
+            (home / "rollout.jsonl").write_text(text, encoding="utf-8")
+            return None
 
         cases = {
             "identity_fields_incomplete": lambda h: (
@@ -744,14 +788,28 @@ class EventAcceptanceAgrees(unittest.TestCase):
             "session_mismatch": lambda h: (
                 stop_bytes(first, h / "rollout.jsonl", session_id="another-session"), prefix),
             "scan_bound_exceeded": lambda h: (stop_bytes(first, h / "rollout.jsonl"), filler()),
+            "session_mismatch (no thread recorded)": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), prefix[:-1] + [json.dumps(threadless)]),
+            "transcript_tail_incomplete": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"),
+                write_raw(h, "".join(line + "\n" for line in prefix) + prompt[:len(prompt) // 2])),
+            "transcript_line_unreadable": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), prefix + [garbled]),
         }
         self.assertIn("AgentMessage", json.dumps(answer_line))
+        saved = (completion.SCAN_MAX_BYTES, PACKAGED.SCAN_MAX_BYTES)
         for reason, step in cases.items():
             with self.subTest(reason=reason):
-                answer = self.assert_agrees(lambda home, step=step: [step(home)] * 2)
+                if reason == "scan_bound_exceeded":
+                    # Scaled down with the bound so the case needs a small transcript.
+                    completion.SCAN_MAX_BYTES = PACKAGED.SCAN_MAX_BYTES = 1 << 16
+                try:
+                    answer = self.assert_agrees(lambda home, step=step: [step(home)] * 2)
+                finally:
+                    completion.SCAN_MAX_BYTES, PACKAGED.SCAN_MAX_BYTES = saved
                 self.assertEqual(self.acceptances(answer), ["unestablished"] * 2)
                 self.assertEqual({e["record"]["eventIdentity"]["reason"]
-                                  for e in answer["written"]}, {reason})
+                                  for e in answer["written"]}, {reason.split(" ")[0]})
                 self.assertEqual(answer["calls"], 2, "an unestablished identity is asked every time")
                 self.assertEqual(answer["ledger"], [])
 
