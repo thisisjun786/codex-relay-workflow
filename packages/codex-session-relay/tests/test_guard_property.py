@@ -374,7 +374,10 @@ SWALLOWING_ALLOWED = {
 
 # manifest.py joined this list when verify_frozen came into this issue's lane. Taking a module
 # means taking its inventory, not only the line that was reported.
-OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py", "manifest.py")
+OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py", "manifest.py",
+                 # Records a child's declarations beside the marker. A store path it could not
+                 # look at, read as an absent one, dropped a declaration without failing.
+                 "declarations.py")
 
 # Inventory C: sentinel returns whose PROVENANCE is a failure. Extension A's inventory is a set of
 # stdlib predicate NAMES, and a name set structurally cannot see this shape - a function that turns

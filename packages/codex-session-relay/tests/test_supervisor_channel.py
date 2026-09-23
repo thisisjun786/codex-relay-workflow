@@ -2227,9 +2227,9 @@ class AParentThatNeverReports(ChannelTestCase):
 
     The obligation is derived from the event row the child's final receipt wrote, so nothing
     the parent does is needed for it to exist, and nothing the parent fails to do makes it go
-    away. What this does NOT show is that anything sends the report: nothing in the relay
-    stages or sends on its own, and an omitting parent is visible here only to whoever reads
-    the project's standing.
+    away. This is the reading side. The sending side - the daemon staging and sending what an
+    omitting parent owes, and an omitting child's report derived from the store - is
+    test_supervisor_autosend and test_supervisor_omission_store.
     """
 
     def standing(self):
@@ -2241,6 +2241,10 @@ class AParentThatNeverReports(ChannelTestCase):
         linkage = Linkage(self.store, self.clock)
         services = type("Services", (), {
             "store": self.store, "linkage": linkage,
+            # supervisor-standing adds the omissions this store derives, through the channel,
+            # which is built over the store as it is now - the case may have reopened it.
+            "supervisor_channel": SupervisorChannel(self.store, self.registry, linkage,
+                                                    self.clock),
             "assignments": AssignmentView(self.store, self.registry, self.clock,
                                           linkage=linkage)})()
         return cli.cmd_supervisor_standing(services, Namespace(project=PROJECT, observation=[]))

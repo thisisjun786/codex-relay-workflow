@@ -881,14 +881,17 @@ reporting obligation is the Linear record the supervisor reads, confirmed, rathe
 having been written, sent or even read.
 
 Three commands make that readable rather than remembered. None of them sends anything and none
-wakes anybody; four more below do the sending, and there is no daemon behind any of them.
+wakes anybody; four more below do the sending, and the relay daemon runs the same staging and
+sending on its own tick.
 
 ```bash
 # Is this event news for the level above? A read: it sends, queues and records nothing.
 codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
 
 # What does this project still owe upward? An explicit question, never suppressed.
-# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+# A turn that ended without reporting writes no event. The store derives it where the child's
+# relay recorded its claim here; for a child that claimed without that, pass its reporting-show
+# reading.
 codex-session-relay supervisor-standing --project <key> [--observation <file>]...
 
 # Record that a report was produced for this event's obligation, once.
@@ -918,10 +921,21 @@ ran, and whether the supervisor acted are three further facts, and no row here c
 them. Recording it is what makes the next reading of the same fact converge instead of waking
 the level above again, so record it when the report actually goes out.
 
-Four more are the channel CRW-215 added. Only `supervisor-send` attempts a transport, and it
-answers `sent: false` without touching the host when the message is held, inside its backoff
-or already sent. `supervisor-stage` records the report itself, so a run that stages does not
-also call `supervisor-report-recorded`.
+Four more are the channel CRW-215 added. A running relay daemon stages and sends what each
+project owes on its own tick, so a parent does not have to remember to; the commands are for an
+answer now, and they converge on the same messages. Only `supervisor-send` attempts a transport
+from the command line, and it answers `sent: false` without touching the host when the message
+is held, inside its backoff or already sent - including one the daemon sent first.
+`supervisor-stage` records the report itself, so a run that stages does not also call
+`supervisor-report-recorded`. A turn that ended without a receipt is staged by the daemon too,
+once `omission_grace_seconds` have passed since the relay settled it, from what the child's own
+relay recorded in the store: `intent-claim` records there that the session writes its
+declarations into it, and `intent-disposition` records each turn's declaration beside the
+marker file. Both answer a `storeRecord`, and `failed` exits 2 with the marker answer beside
+it; run the same command again, which retries only the store record. `reporting-derive
+--relationship <id>` prints the reading the daemon acts on. A child that claimed without that
+record - through an older relay - is never staged automatically; stage its omission with its
+`reporting-show` reading.
 
 After a supervisor handover, stage the project again. A report staged for the former
 supervisor and never sent is re-addressed to the live one under the same message; one that was
@@ -978,9 +992,9 @@ landed. It does not say the turn answered, who computed the proof, or that anybo
 it discharges nothing: the obligation stands until Linear confirms. For the turn the send
 opened (`turnOrigin: relay_opened`, the ordinary case) a readback needs nothing from the
 supervisor, since that turn's id is already in the store, so it shows the report arrived
-rather than that it was read. Nothing here is automatic - there is no daemon behind these
-commands, so a report is expected to go out inside the parent's own turn, which is an
-instruction to the parent rather than something the relay enforces.
+rather than that it was read. Staging and sending are automatic - the relay daemon stages and
+sends what each project owes on its own tick - but the readback is not: only the supervisor,
+from a turn of its own, runs `supervisor-read`, and nothing reads back on its behalf.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another

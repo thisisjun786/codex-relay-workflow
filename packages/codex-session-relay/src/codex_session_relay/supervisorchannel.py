@@ -23,9 +23,12 @@ already knows - so for that turn, which is the ordinary case, a verified readbac
 of the supervisor's at all and shows arrival rather than reading. Which turn was named is
 recorded rather than averaged into one word.
 
-Nothing here wakes anybody on a timer. There is no daemon pass behind these methods: a report
-goes out inside the parent's own turn, and what discharges the obligation is still the Linear
-record the supervisor reads for itself, confirmed, exactly as supervision.discharge_of decides.
+Nothing here wakes anybody on a timer. The relay daemon's supervisor pass calls these methods on
+its own tick (RelayDaemon._report_upward): it stages what each project owes, omissions derived
+from this store included, and attempts the claimable messages, under exactly the rules a parent
+calling them by hand is held to, and a message goes out once, for an owed fact. What discharges
+the obligation is still the Linear record the supervisor reads for itself, confirmed, exactly as
+supervision.discharge_of decides.
 """
 
 import dataclasses
@@ -36,7 +39,7 @@ import secrets
 import shlex
 from datetime import datetime
 
-from . import envelope, packets, supervision
+from . import envelope, omitted, packets, supervision
 from .ack import TURN_START_PRECISION_SECONDS
 from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
@@ -116,6 +119,13 @@ READDRESSED = "supervisor_message_readdressed"
 RESTATED = "supervisor_message_restated"
 # The hold on a message whose event no longer raises the obligation it is for.
 SUPERSEDED_HOLD = "superseded_by_report"
+# The hold on a message nobody can be addressed with now: resolve() refuses its relationship
+# (an archived assignment releases the edge it walks) or names other endpoints than the row
+# does and the row may have been sent, so it cannot be re-addressed. Derived like the hold
+# above, and released on the same message when staging or an attempt finds the hierarchy it
+# names again. Without it the row stayed claimable and, as the oldest message to its
+# recipient, blocked every later report to that task under the per-recipient order.
+UNADDRESSED_HOLD = "hierarchy_unresolved"
 # How many times one attempt() call restates a message at its transport start and tries again
 # before it answers, rather than looping on an obligation that keeps moving.
 RESTATE_RETRIES = 2
@@ -285,6 +295,11 @@ def _recheck_line(reading):
     selectors = _selectors(reading)
     if selectors is None:
         return None
+    if reading.get("source") == omitted.STORE_SOURCE:
+        # Derived from the store, so rechecked from the store: the command that derived it.
+        return _command("codex-session-relay", "--state", selectors["state"],
+                        "reporting-derive", "--relationship", reading.get("relationshipId"),
+                        "--turn", selectors["turn"])
     return _command("codex-session-relay", "--state", selectors["state"],
                     "reporting-show", "--marker-root", selectors["markerRoot"],
                     "--workspace", selectors["workspace"],
@@ -570,6 +585,9 @@ class SupervisorChannel:
             if obligation is None or obligation["obligationId"] != row["obligation_id"]:
                 return obsolete("the reading frozen on this message no longer raises its"
                                 " obligation")
+            withdrawn = self._omission_withdrawn(obligation, reading)
+            if withdrawn is not None:
+                return obsolete(withdrawn)
             answered = db.execute(
                 "SELECT event_id FROM events WHERE relationship_id = ? AND turn_id = ?"
                 "   AND stage = 'final' ORDER BY rowid DESC LIMIT 1",
@@ -626,6 +644,91 @@ class SupervisorChannel:
                 {"proposal": current["kind"] or "current",
                  "reason": "what this message is for is owed through it again, so the"
                            " superseded_by_report hold is released"}, at=at)
+            return True
+
+    def _omission_withdrawn(self, obligation, reading):
+        """Why this store says an omission owes nothing through its message now, or None.
+
+        Asked of EVERY omission, whatever reading it was staged from: where the turn's session
+        records its declarations here, this store sees what the child declared, and what it
+        derives now decides - a caller's reporting-show reading taken before the child declared
+        the turn in progress is a proposal like any other, and sending it would wake the level
+        above about a turn that is not an omission. Where the session records nothing here (a
+        legacy admission) the store cannot see the declaration at all, and the frozen reading
+        stands as it always has; a reading this store derived must still be derivable.
+
+        No grace: whoever staged it had decided to report it, and the automatic pass had
+        already waited the grace out. Called with a write open (staging's lock, the claim, the
+        transport start); derive reads through the same connection.
+        """
+        derived = omitted.derive(self.store, obligation["relationId"],
+                                 state_directory=self.state_directory, now=self.clock.iso(),
+                                 grace=0, turn=obligation["subject"])
+        from_store = reading.get("source") == omitted.STORE_SOURCE
+        if derived["reason"] == omitted.DECLARATIONS_NOT_RECORDED:
+            if from_store:
+                return ("this store no longer holds the claim record this omission was derived"
+                        " under, so it cannot derive it again")
+            return None
+        if not (derived["reportingState"] == supervision.OBSERVED_OMISSION and derived["owed"]):
+            return ("this store, which records this session's declarations, derives turn "
+                    + repr(obligation["subject"]) + " as " + repr(derived["reportingState"])
+                    + " (" + str(derived["reason"]) + ") and owed answers "
+                    + repr(derived["owedReason"]) + ", so nothing is owed through this message")
+        if from_store and _reading_key(derived) != _reading_key(reading):
+            return ("this store derives turn " + repr(obligation["subject"]) + "'s omission"
+                    " differently from the reading frozen on this message")
+        return None
+
+    def _hold_unaddressed(self, message_id, refusal) -> None:
+        """Hold a message the hierarchy gives no addressee now, so it stops holding the queue.
+
+        Only a message nothing is sending: the same claimable states the claim takes, in the
+        predicate of the write. The refusal is journalled; the hold is re-derived by staging and
+        by the next attempt, which release it on this message once resolve() names its endpoints
+        again - or, where nothing was sent, re-address it.
+        """
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET hold_reason = ?, updated_at = ?"
+                " WHERE message_id = ? AND hold_reason IS NULL AND state IN (?,?,?)",
+                (UNADDRESSED_HOLD, at, message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND))
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "supervisor_message_unaddressed", message_id,
+                    {"refusal": refusal.reason.value if refusal.reason else None,
+                     "detail": refusal.detail}, at=at)
+
+    def _reopen_if_addressed(self, message_id) -> bool:
+        """Release a hierarchy_unresolved hold once the hierarchy names this message's endpoints.
+
+        Asked inside a write through _hierarchy_in, which asks resolve() itself. A hierarchy
+        that names OTHER endpoints leaves the hold for staging, which re-addresses a message
+        nothing was sent through and refuses one that may have been. Returns whether it
+        released it.
+        """
+        with self.store.transaction() as db:
+            row = db.execute(
+                "SELECT hold_reason FROM supervisor_messages WHERE message_id = ?",
+                (message_id,)).fetchone()
+            if row is None or row["hold_reason"] != UNADDRESSED_HOLD:
+                return False
+            _live, moved = self._hierarchy_in(db, message_id)
+            if moved is not None:
+                return False
+            at = self.clock.iso()
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET hold_reason = NULL, updated_at = ?"
+                " WHERE message_id = ? AND hold_reason = ? AND state IN (?,?,?)",
+                (at, message_id, UNADDRESSED_HOLD, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND))
+            if cursor.rowcount != 1:
+                return False
+            self.store.journal(
+                "supervisor_message_reopened", message_id,
+                {"proposal": "addressed",
+                 "reason": "the hierarchy names this message's endpoints again, so the"
+                           " hierarchy_unresolved hold is released"}, at=at)
             return True
 
     def _restate_in(self, db, message_id, current, *, claim=None) -> bool:
@@ -871,6 +974,24 @@ class SupervisorChannel:
                 # again now; released inside this lock, so what follows sees the row as it is.
                 existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                                       (message_id,)).fetchone()
+            if (existing is not None and existing["hold_reason"] == UNADDRESSED_HOLD
+                    and self._reopen_if_addressed(message_id)):
+                # Held because nobody could be addressed with it, and the hierarchy names its
+                # endpoints again. One that names others is re-addressed below where nothing
+                # was sent, which releases the hold in the same write.
+                existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
+                                      (message_id,)).fetchone()
+            if obligation["kind"] == supervision.UNREPORTED:
+                # Whatever reading this omission arrives with, the store decides where it can
+                # see the session's declarations, asked here under the lock: a child that
+                # declared the turn since the reading was taken owes no report of it.
+                withdrawn = self._omission_withdrawn(obligation, reading)
+                if withdrawn is not None:
+                    raise DeliveryRefused(
+                        RefusalReason.NOT_CLAIMABLE,
+                        "nothing is owed upward for omission " + repr(obligation["obligationId"])
+                        + ": " + withdrawn + ". Decided under the staging write lock; nothing"
+                        " was written")
             if (existing is not None and obligation["kind"] == supervision.UNREPORTED
                     and _frozen_reading_key(existing) != _reading_key(reading)):
                 # One omission, one reading. The row froze the reading its packet was composed
@@ -1058,6 +1179,67 @@ class SupervisorChannel:
             " this channel, and the obligation stands until the Linear record confirms it",
         )
 
+    def stage_unsent(self, project_key) -> dict:
+        """stage_standing for an automatic caller: only what staging can still change.
+
+        A standing obligation with no message yet is staged. One whose message is still unsent
+        - claimable, or held superseded_by_report - is staged again, because that is how a
+        handover re-addresses it and a derived hold is re-derived. One whose message is on its
+        way, sent, read or held uncertain is left alone: staging it again could only answer that
+        it went, and asking that under the write lock on every tick is what a pass that runs
+        with nobody watching must not do. stage_standing, by hand, stages everything standing.
+
+        An omission is staged with the reading this store derives for it (store_readings), the
+        only reading a pass with no marker access can take. A caller's own reading, staged by
+        hand first, keeps the message: stage() refuses a second reading of one omission.
+        """
+        derived = self.store_readings(project_key)
+        standing = supervision.standing_for(self.store, self.linkage, project_key,
+                                            observations=derived)
+        readings = {supervision.from_observation(one)["obligationId"]: one for one in derived}
+        staged, refused, skipped = [], [], 0
+        for obligation in standing["standing"]:
+            row = self.store.one(
+                "SELECT state, hold_reason FROM supervisor_messages WHERE obligation_id = ?"
+                " ORDER BY staged_at DESC LIMIT 1", (obligation["obligationId"],))
+            if row is not None and not (
+                    row["state"] in CLAIMABLE
+                    and row["hold_reason"] in (None, SUPERSEDED_HOLD, UNADDRESSED_HOLD)):
+                skipped += 1
+                continue
+            try:
+                staged.append(self.stage(obligation,
+                                         reading=readings.get(obligation["obligationId"])))
+            except DeliveryRefused as refusal:
+                refused.append({
+                    "obligationId": obligation["obligationId"],
+                    "kind": obligation["kind"],
+                    "reason": refusal.reason.value if refusal.reason else None,
+                    "detail": refusal.detail,
+                })
+        return {"schema": VERSION, "projectKey": project_key, "staged": staged,
+                "refused": refused, "skipped": skipped, "gaps": standing["gaps"]}
+
+    def store_readings(self, project_key, observations=()) -> list:
+        """The owed omissions this store derives for a project, beside a caller's readings.
+
+        omitted.derive reads the same turn a caller's reporting-show would, from this store
+        alone, through the same predicate; only turns whose child's relay records its
+        declarations here are derived at all, and only once the grace has passed. Where a
+        caller passed a reading of the same obligation, the caller's is kept and this store's
+        left out: one omission travels with one reading.
+        """
+        covered = set()
+        for one in observations:
+            raised = supervision.from_observation(one)
+            if raised is not None:
+                covered.add(raised["obligationId"])
+        derived = omitted.owed_in_project(
+            self.store, project_key, state_directory=self.state_directory,
+            now=self.clock.iso(), grace=self.policy.omission_grace_seconds)
+        return [one for one in derived
+                if supervision.from_observation(one)["obligationId"] not in covered]
+
     def stage_standing(self, project_key, *, observations=()) -> dict:
         """Everything a project still owes upward, staged in one call.
 
@@ -1065,7 +1247,11 @@ class SupervisorChannel:
         obligation something a parent discharges rather than something it has to remember. What
         is refused is reported beside what was staged: a project where one relationship has no
         supervisor is not a project where nothing can be reported.
+
+        The omissions this store derives are staged beside the caller's readings
+        (store_readings), so a parent who passes none still stages what the daemon would.
         """
+        observations = list(observations) + self.store_readings(project_key, observations)
         standing = supervision.standing_for(
             self.store, self.linkage, project_key, observations=observations)
         staged, refused = [], []
@@ -1291,6 +1477,8 @@ class SupervisorChannel:
         row = self._recover_if_stranded(row, now)
         if row["hold_reason"] == SUPERSEDED_HOLD and self._reopen_if_owed(message_id):
             row = self.get(message_id)
+        if row["hold_reason"] == UNADDRESSED_HOLD and self._reopen_if_addressed(message_id):
+            row = self.get(message_id)
         if row["hold_reason"]:
             return None
         if row["state"] not in CLAIMABLE:
@@ -1309,7 +1497,13 @@ class SupervisorChannel:
             )
         # Re-read immediately before the send, the way delivery re-checks authorization inside
         # attempt(): a handover committed since staging must not be delivered through.
-        resolution = self.resolve(row["relationship_id"])
+        try:
+            resolution = self.resolve(row["relationship_id"])
+        except DeliveryRefused as refusal:
+            # Nobody to address it to now. Held, so it stops being the oldest claimable message
+            # to its recipient and every later report to that task waiting behind it.
+            self._hold_unaddressed(message_id, refusal)
+            raise
         if not _addressed_as(row, resolution):
             # Sending never re-addresses: which task a report is FOR is decided where it is
             # staged, so this refuses and says how the report recovers.
@@ -1317,13 +1511,15 @@ class SupervisorChannel:
                         " live supervisor" if self._nothing_sent(message_id) else
                         " Its bytes may have reached that task, so it stays addressed to it and"
                         " is not re-addressed")
-            raise DeliveryRefused(
+            drift = DeliveryRefused(
                 RefusalReason.RELATION_OWNER_DRIFT,
                 "this message was staged from " + repr(row["sender_task_id"]) + " to "
                 + repr(recipient) + " and the linkage now says " + repr(resolution["sender"])
                 + " reports to " + repr(resolution["recipient"]) + "; the hierarchy moved"
                 " under a staged report, so it is held rather than sent to either." + recovery,
             )
+            self._hold_unaddressed(message_id, drift)
+            raise drift
         if self._rate_limited(recipient, now):
             self._reschedule(row, now + self.policy.min_send_interval_seconds)
             return None
@@ -1945,6 +2141,27 @@ class SupervisorChannel:
              QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, row["state"], row["hold_reason"],
              row["next_eligible_at"], row["recipient_task_id"], row["attempt_count"]))
         return cursor.rowcount == 1
+
+    def defer_after_fault(self, message_id, now, error) -> None:
+        """Take a message whose attempt raised out of the head of its queue for a recheck.
+
+        An attempt that fails in a way nothing classified - a host answer this could not read,
+        say - used to leave the message exactly as eligible as it was, so the automatic pass read
+        it first again on the next tick, spent its budget on it again, and never reached the
+        reports queued behind it. Rescheduled by the same compare-and-set every other deferral
+        uses, and only while nothing holds it and nothing is sending it: a hold an attempt set
+        on the way out is its own answer, and a claim in flight is its lease's to recover.
+        """
+        row = self.find(message_id)
+        if row is None or row["state"] not in CLAIMABLE or row["hold_reason"]:
+            return
+        when = now + self.policy.lifecycle_recheck_seconds
+        with self.store.transaction() as db:
+            if self._reschedule_in(db, row, when):
+                self.store.journal(
+                    "supervisor_attempt_faulted", message_id,
+                    {"error": type(error).__name__ + ": " + str(error), "retryAt": when},
+                    at=self.clock.iso())
 
     def _defer_busy(self, row, now) -> None:
         """A recipient mid-turn is left strictly alone: no resume, no attempt, no record.

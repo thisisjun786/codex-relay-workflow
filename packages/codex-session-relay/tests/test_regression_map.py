@@ -298,6 +298,9 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    # Whether a message held because nobody could be addressed with it is addressed again:
+    # false on every path that finds the hierarchy still naming nobody, or somebody else.
+    ("supervisorchannel.py", None, "_reopen_if_addressed", "function"),
     # And whether a held message is owed again: false on every path that finds it is not.
     ("supervisorchannel.py", None, "_reopen_if_owed", "function"),
     # A compare-and-set's rowcount: true only when every observed field still matched.
