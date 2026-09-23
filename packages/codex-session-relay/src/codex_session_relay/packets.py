@@ -28,6 +28,7 @@ import json
 from . import cxc, envelope
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
+from .registry import LIVE as LIVE_RELATION
 
 VERSION = "relay-packet/1"
 
@@ -689,7 +690,23 @@ STALE_GENERATION = "stale_generation"
 STALE_CRITERIA = "stale_criteria_digest"
 STALE_HEAD = "stale_head"
 REFUSED_SETTINGS = "refused_settings"
+WRONG_CALLBACK = "wrong_callback"
+STALE_CALLBACK = "stale_callback"
+STALE_POLICY = "stale_policy"
+WRONG_MODE = "wrong_mode"
 UNREADABLE = "unreadable"
+
+# The record keys this module reads beyond the task ids. relationStatus is the relationship
+# row's own status; dispatchRequestId the dispatch that opened the current generation, which
+# is what a first assignment names.
+RELATION_STATUS = "relationStatus"
+DISPATCH_REQUEST = "dispatchRequestId"
+
+# The one record key whose PRESENT nothing is an answer rather than a gap. A relationship
+# registered without a project has no link and therefore no revision, and the store says so
+# as a fact ("unscoped", not "missing"). Everywhere else nothing read is nothing read, which
+# keeps "absence withholds" for settings and criteria.
+DEFINITE_ABSENCE = ("relationRevision",)
 
 
 def mismatch(kind, field, *, expected, found, reason) -> dict:
@@ -728,9 +745,19 @@ def reception(one, record) -> dict:
             RefusalReason.MALFORMED_RECEIPT,
             "the receiver's own reading is an object of named values, not a "
             + type(record).__name__)
-    _compare(problems, gaps, WRONG_RELATION, "relationId",
-             region.get("relationId"), record.get("relationId"),
-             "a packet naming another relationship belongs to another assignment")
+    first = _first_assignment(region)
+    if first:
+        # Written before the child existed, so the relation it names is the dispatch request
+        # registration bound to the relationship, and the relationship's own id - derived
+        # from the child's task id - is not something it could have known.
+        _compare(problems, gaps, WRONG_RELATION, "relationId",
+                 region.get("relationId"), record.get(DISPATCH_REQUEST),
+                 "a first assignment names the dispatch it was sent under, and this is not"
+                 " the dispatch that opened the receiver's current generation")
+    else:
+        _compare(problems, gaps, WRONG_RELATION, "relationId",
+                 region.get("relationId"), record.get("relationId"),
+                 "a packet naming another relationship belongs to another assignment")
     sender_role, recipient_role = envelope.ENDPOINT_ROLES[region["direction"]]
     expected_sender = record.get(RECORD_TASK_KEY[sender_role])
     expected_recipient = record.get(RECORD_TASK_KEY[recipient_role])
@@ -738,16 +765,27 @@ def reception(one, record) -> dict:
              (region.get("sender") or {}).get("taskId"), expected_sender,
              "the registered pair is what says who may send this, not the message's own"
              " account of itself")
-    _compare(problems, gaps, WRONG_RECIPIENT, "recipient.taskId",
-             (region.get("recipient") or {}).get("taskId"), expected_recipient,
-             "a packet addressed to another task is not this task's instruction")
+    if first:
+        # Its recipient is a stated absence, legal because registration is what binds it; so
+        # the receiver's reading has to answer who was registered, and it is not compared.
+        if _present(expected_recipient) is None:
+            gaps.append(mismatch(UNREADABLE, "recipient.taskId", expected=None,
+                                 found=(region.get("recipient") or {}).get("taskId"),
+                                 reason="no registration answers who this first assignment"
+                                        " created, so it cannot be taken up yet"))
+    else:
+        _compare(problems, gaps, WRONG_RECIPIENT, "recipient.taskId",
+                 (region.get("recipient") or {}).get("taskId"), expected_recipient,
+                 "a packet addressed to another task is not this task's instruction")
     _compare(problems, gaps, WRONG_ISSUE, ISSUE, one.get(ISSUE), record.get(ISSUE),
              "the issue binding is what makes this the assignment it claims to be")
-    if _present(record.get("relationRevision")) is not None:
-        _compare(problems, gaps, SUPERSEDED_RELATION, "relationRevision",
-                 region.get("relationRevision"), record.get("relationRevision"),
-                 "a superseded link is preserved and not rewritten, so a message quoting the"
-                 " old revision is about a relationship that has been replaced")
+    _liveness(problems, gaps, record)
+    if not first:
+        # Always compared, and a record that cannot answer is a gap: skipping the comparison
+        # when the revision was unread is what let an unchecked link come back accepted. The
+        # first assignment is the exception because it was written before any link existed;
+        # the dispatch binding and the relationship's liveness answer for its currency.
+        _revision(problems, gaps, region, record)
     required = required_for(region["direction"], region["purpose"])
     if GENERATION in required:
         _compare(problems, gaps, STALE_GENERATION, GENERATION,
@@ -760,6 +798,9 @@ def reception(one, record) -> dict:
                  "criteria judged against a digest nobody registered are judged against"
                  " somebody's memory of them")
     _artifact_agreement(one, record, problems, gaps)
+    _callback_agreement(one, record, problems, gaps)
+    _policy_agreement(one, record, problems, gaps)
+    instructed = _mode_agreement(one, record, problems, gaps)
     problems.extend(_settings_problems(one, record))
     gaps.extend(_settings_gaps(one, record))
     if problems:
@@ -770,7 +811,134 @@ def reception(one, record) -> dict:
         disposition = ACCEPTED
     return {"version": VERSION, "disposition": disposition,
             "messageId": region.get("messageId"), "purpose": region.get("purpose"),
-            "mismatches": problems, "gaps": gaps}
+            "mismatches": problems, "gaps": gaps, "instructed": instructed}
+
+
+def _first_assignment(region) -> bool:
+    """An assignment sent before its child existed: the recipient is a stated absence."""
+    return (region.get("direction") == envelope.PARENT_TO_CHILD
+            and region.get("purpose") == "assignment"
+            and envelope.is_absent((region.get("recipient") or {}).get("taskId")))
+
+
+def _liveness(problems, gaps, record) -> None:
+    """The relationship this packet belongs to has to still be one.
+
+    A packet about an archived or cancelled assignment is about work that has ended or been
+    replaced, however well every other field agrees. A paused one is current; acting on it
+    still waits for the relationship to be resumed, which is the relationship's business.
+    """
+    status = record.get(RELATION_STATUS)
+    if _present(status) is None:
+        gaps.append(mismatch(UNREADABLE, RELATION_STATUS, expected=None, found=None,
+                             reason="the record the receiver read does not say whether the"
+                                    " relationship is still live, so that is unchecked"))
+    elif status not in LIVE_RELATION:
+        problems.append(mismatch(
+            SUPERSEDED_RELATION, RELATION_STATUS, expected=" or ".join(LIVE_RELATION),
+            found=status,
+            reason="the relationship this packet belongs to is " + str(status) + "; a packet"
+                   " for it is about an assignment that has ended or been replaced"))
+
+
+def _revision(problems, gaps, region, record) -> None:
+    found = region.get("relationRevision")
+    if "relationRevision" not in record or (
+            record["relationRevision"] is not None
+            and _present(record["relationRevision"]) is None):
+        gaps.append(mismatch(UNREADABLE, "relationRevision", expected=None, found=found,
+                             reason="the record the receiver read says nothing about the"
+                                    " link revision, so whether this relationship has been"
+                                    " replaced is unchecked"))
+        return
+    if record["relationRevision"] is None:
+        # Definite: unscoped, so there is no link and no revision to agree with.
+        if _present(found) is not None and not envelope.is_absent(found):
+            problems.append(mismatch(
+                SUPERSEDED_RELATION, "relationRevision", expected=None, found=found,
+                reason="the receiver's store holds no link for this relationship, so a"
+                       " packet quoting a revision is about some other linkage"))
+        return
+    _compare(problems, gaps, SUPERSEDED_RELATION, "relationRevision",
+             found, record["relationRevision"],
+             "a superseded link is preserved and not rewritten, so a message quoting the"
+             " old revision is about a relationship that has been replaced")
+
+
+def _callback_agreement(one, record, problems, gaps) -> None:
+    """Where to answer, and under which pair, against what the receiver holds for them."""
+    stated = one.get(CALLBACK)
+    if _present(stated) is None:
+        return
+    held = record.get(CALLBACK)
+    if not isinstance(held, dict) or not held:
+        gaps.append(mismatch(UNREADABLE, CALLBACK, expected=None, found=stated,
+                             reason="the receiver read no record of the task it answers or"
+                                    " the pair that task runs now, so the callback is"
+                                    " unchecked"))
+        return
+    _compare(problems, gaps, WRONG_CALLBACK, "callback.taskId",
+             stated.get("taskId"), held.get("taskId"),
+             "the answer would go to a task that is not the one this assignment reports to")
+    for part in ("model", "effort"):
+        _compare(problems, gaps, STALE_CALLBACK, "callback." + part,
+                 stated.get(part), held.get(part),
+                 "the task being answered is authorised to run another pair now; a callback"
+                 " naming the old one is refused for its settings, not retried as a provider"
+                 " failure or worked around with another child")
+
+
+def _policy_agreement(one, record, problems, gaps) -> None:
+    """The settings a packet states against the ones the task was actually created with."""
+    stated = one.get(POLICY)
+    if _present(stated) is None:
+        return
+    held = record.get(POLICY)
+    if not isinstance(held, dict) or not held:
+        gaps.append(mismatch(UNREADABLE, POLICY, expected=None, found=stated,
+                             reason="the receiver read no recorded settings for this task,"
+                                    " so the stated pair is unchecked"))
+        return
+    for part in ("model", "effort"):
+        _compare(problems, gaps, STALE_POLICY, "policy." + part,
+                 stated.get(part), held.get(part),
+                 "the task was created with another pair; a packet stating this one is"
+                 " about settings the receiver does not hold")
+
+
+def _mode_agreement(one, record, problems, gaps) -> list:
+    """The execution mode a packet states against the receiver's own reading of it.
+
+    No store holds the workflow or its mode: only the message carries it. So the reading is
+    the receiver's own - the mode of the assignment it already accepted - and an assignment
+    DEFINES the mode only where the receiver holds no reading yet. Everything else is
+    compared, so no packet can redefine a mode the receiver already holds, and a packet
+    carrying a mode to a receiver with no reading of it is unchecked rather than believed.
+    Returns what was taken as instructed rather than checked.
+    """
+    stated = []
+    if _present(one.get(POLICY)) is not None:
+        stated.append(("policy.mode", one[POLICY].get(MODE)))
+    if one.get("activation") is not None:
+        stated.append(("activation.mode", one["activation"].get(MODE)))
+    if not stated:
+        return []
+    held = record.get(MODE)
+    region = one["envelope"]
+    if _present(held) is None:
+        if (region.get("direction") == envelope.PARENT_TO_CHILD
+                and region.get("purpose") == "assignment"):
+            return [{"field": MODE, "value": stated[0][1],
+                     "source": "packet: the assignment defines the mode where none is held"}]
+        gaps.append(mismatch(UNREADABLE, MODE, expected=None, found=stated[0][1],
+                             reason="the receiver holds no reading of the mode its assignment"
+                                    " gave, so a mode this packet states is unchecked"))
+        return []
+    for field, value in stated:
+        _compare(problems, gaps, WRONG_MODE, field, value, held,
+                 "the assignment this receiver accepted runs under another mode, and no"
+                 " later packet redefines it")
+    return []
 
 
 def _compare(problems, gaps, kind, field, found, expected, reason) -> None:

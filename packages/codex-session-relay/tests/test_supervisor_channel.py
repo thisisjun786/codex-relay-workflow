@@ -303,11 +303,13 @@ class WhatTheMessageCarries(ChannelTestCase):
             one, resolution=self.channel.resolve(self.rid), observed_at=self.clock.iso())
         agreeing = packets.reception(packet, {
             "relationId": self.rid, "parentTaskId": PARENT, "supervisorTaskId": SUPERVISOR,
-            "issue": ISSUE, "generation": 1})
+            "issue": ISSUE, "generation": 1, "relationRevision": None,
+            "relationStatus": "active"})
         self.assertEqual(agreeing["disposition"], packets.ACCEPTED)
         wrong = packets.reception(packet, {
             "relationId": self.rid, "parentTaskId": PARENT,
-            "supervisorTaskId": "01another-supervisor", "issue": ISSUE, "generation": 1})
+            "supervisorTaskId": "01another-supervisor", "issue": ISSUE, "generation": 1,
+            "relationRevision": None, "relationStatus": "active"})
         self.assertEqual(wrong["disposition"], packets.REFUSAL)
         self.assertIn("recipient.taskId", [m["field"] for m in wrong["mismatches"]])
 

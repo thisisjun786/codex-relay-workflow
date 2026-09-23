@@ -27,6 +27,10 @@ CHILD = "01child-task"
 ISSUE = "CRW-149"
 DIGEST = "d" * 64
 HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+# The link revision the receiver reads for this relationship, and the dispatch request that
+# opened its current generation, which is what a first assignment names.
+REVISION = 3
+DISPATCH = "dispatch-crw149-first"
 
 BODY = chr(10).join((
     "TASK: land the typed packet contract",
@@ -65,17 +69,30 @@ def an_assignment(**overrides):
         direction=envelope.PARENT_TO_CHILD, purpose="assignment", relation_id=RELATION,
         sender=PARENT, recipient=CHILD, subject=ISSUE, issue=ISSUE,
         criteria_digest=DIGEST, policy_record=a_policy(), callback=a_callback(),
-        body=BODY,
+        body=BODY, relation_revision=REVISION,
     )
     base.update(overrides)
     return packets.compose(**base)
+
+
+def a_first_assignment(**overrides):
+    """The assignment as it is really sent: before the child exists.
+
+    It cannot name the relationship, whose id is derived from the child's task id, or the
+    recipient. It names the dispatch request registration binds, and states the recipient as
+    an absence. The earlier round trip pre-filled a future child id here, which no parent can.
+    """
+    base = dict(relation_id=DISPATCH, relation_revision=None, recipient=envelope.absent(
+        envelope.UNKNOWN, "creation has not returned the child's task id"))
+    base.update(overrides)
+    return an_assignment(**base)
 
 
 def a_review_ready(**overrides):
     base = dict(
         direction=envelope.CHILD_TO_PARENT, purpose="review_ready", relation_id=RELATION,
         sender=CHILD, recipient=PARENT, subject="evt-1", issue=ISSUE, generation=1,
-        criteria_digest=DIGEST,
+        criteria_digest=DIGEST, relation_revision=REVISION,
         artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                       number=107, head_sha=HEAD),
         evidence=["/state/crw/crw-149/evidence/suite.txt"],
@@ -88,7 +105,10 @@ def a_record(**overrides):
     base = {"relationId": RELATION, "parentTaskId": PARENT, "childTaskId": CHILD,
             "issue": ISSUE, "generation": 1, "criteriaDigest": DIGEST, "headSha": HEAD,
             "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
-            "refusedPolicies": []}
+            "refusedPolicies": [], "relationRevision": REVISION, "relationStatus": "active",
+            "dispatchRequestId": DISPATCH, "mode": packets.LOOP,
+            "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh"},
+            "callback": a_callback()}
     base.update(overrides)
     return base
 
@@ -473,7 +493,9 @@ class TheWholeRoundTrip(unittest.TestCase):
         record = a_record()
         callback = a_callback()
 
-        assignment = an_assignment(callback=callback)
+        # The first message is written before the child exists, and is taken up once
+        # registration has bound its dispatch to this relationship.
+        assignment = a_first_assignment(callback=callback)
         self.accepted(assignment, record)
 
         candidate = packets.pull_request(
@@ -489,7 +511,7 @@ class TheWholeRoundTrip(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST, callback=callback,
-            artifact=candidate)
+            artifact=candidate, relation_revision=REVISION)
         self.accepted(correction, record)
 
         # The same child, the same pull request, a new head. Nothing here creates a second
@@ -501,7 +523,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         self.accepted(again, record)
         self.assertEqual(again["envelope"]["recipient"]["taskId"],
                          assignment["envelope"]["sender"]["taskId"])
-        self.assertEqual(again["envelope"]["relationId"], assignment["envelope"]["relationId"])
+        self.assertEqual(again["envelope"]["relationId"], correction["envelope"]["relationId"])
 
         # And the report from before the correction is not reusable at the new head, which is
         # the reading that would otherwise hand the parent a readiness claim about a commit
@@ -514,7 +536,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         acceptance = packets.compose(
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
             sender=PARENT, recipient=CHILD, subject="evt-1", issue=ISSUE,
-            criteria_digest=DIGEST, artifact=packets.pull_request(
+            criteria_digest=DIGEST, relation_revision=REVISION, artifact=packets.pull_request(
                 repository="thisisjun786/codex-relay-workflow", number=107, head_sha=moved))
         self.accepted(acceptance, record)
         self.assertEqual(acceptance["envelope"]["kind"], envelope.NOTIFICATION)
@@ -557,7 +579,7 @@ class TheWholeRoundTrip(unittest.TestCase):
         self.accepted(packets.compose(
             direction=envelope.PARENT_TO_CHILD, purpose="acceptance", relation_id=RELATION,
             sender=PARENT, recipient=CHILD, subject="evt-1", issue=ISSUE,
-            criteria_digest=DIGEST, artifact=artifact), record)
+            criteria_digest=DIGEST, artifact=artifact, relation_revision=REVISION), record)
 
 
 class APacketNobodyConstructed(unittest.TestCase):
