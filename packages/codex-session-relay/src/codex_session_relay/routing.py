@@ -7,10 +7,15 @@ an incident says about itself - the incident's claim that a run belongs to an is
 instance, is checked against the relationship the relay registered for that run.
 
 Writes to the ledger go through ledger_port and nothing else. See docs/product-routing.md.
+
+Importing this module imports projects, which registers routing's fault classes and its
+project_create kind with the ledger in this process; on a checkout without CRW-205's corrected
+contract it registers nothing and every ledger-backed path refuses with route_ledger_pending.
 """
 
 import json
 
+from . import completion, digest, intake, projects, routes
 from . import products
 from .errors import RefusalReason
 from .ledger_port import LedgerPort
@@ -55,6 +60,10 @@ class ProductRouter:
         The registry is required first: a binding for a product routing does not know cannot be
         checked against a test target, and a test binding that sat on a real project is exactly
         how a simulated incident would end up commenting on a real issue.
+
+        A binding can settle what routing held for want of it: every held route of the product,
+        and every filed one whose fault owns no issue yet, is decided again from its latest
+        stored incident. A product nothing was routed for yet touches no ledger at all.
         """
         product = record.get("product") if isinstance(record, dict) else None
         registry = self.registry(product) if isinstance(product, str) else None
@@ -71,7 +80,7 @@ class ProductRouter:
                 "   observed_at = excluded.observed_at, recorded_at = excluded.recorded_at",
                 (binding["product"], binding["kind"], binding["ref"],
                  products.canonical(binding), binding["observedAt"], now))
-        return binding
+        return {**binding, "redecided": intake.redecide(self, binding["product"])}
 
     def bindings(self, product) -> list:
         rows = self.store.all(
@@ -124,3 +133,64 @@ class ProductRouter:
         row = self.store.one(
             "SELECT issue_key FROM relationships WHERE relationship_id = ?", (run,))
         return row["issue_key"] if row else None
+
+    # ------------------------------------------------------------------ ledger-backed paths
+
+    def intake(self, record) -> dict:
+        """Route one incident. An unwatched surface is refused before the ledger is asked."""
+        return intake.intake(self, record)
+
+    def classify(self, fault_id, record) -> dict:
+        self.port.ready("route-classify")
+        return intake.classify(self, fault_id, record)
+
+    def reconcile(self, *, product=None, limit=50) -> dict:
+        self.port.ready("route-reconcile")
+        return intake.reconcile(self, product=product, limit=limit)
+
+    def evaluate_projects(self, product) -> dict:
+        self.port.ready("route-projects")
+        if self.registry(product) is None:
+            products.refuse(RefusalReason.ROUTE_PRODUCT_UNKNOWN,
+                            f"{product!r} is not a registered product")
+        return projects.evaluate(self, product)
+
+    def check_completion(self, record) -> dict:
+        self.port.ready("completion-check")
+        return completion.check(self, record)
+
+    def digest(self, *, limit=500, after=None) -> dict:
+        return digest.digest(self, limit=limit, after=after)
+
+    def show(self, product=None, *, attention=False, limit=20, after=None) -> dict:
+        """Routes with their faults' ledger state. With attention, only those waiting on a
+        decision. Project proposals are listed apart: they are plans, not defects."""
+        self.port.ready("route-show")
+        page = routes.listing(self.store, product=product, limit=limit, after=after)
+        shown, proposals = [], []
+        for route in page["routes"]:
+            row = self.port.get(route["fault_id"]) or {}
+            now = routes.snapshot(route, row)
+            waiting = routes.attention(now)
+            target = route["target"]
+            entry = {"faultId": route["fault_id"], "product": route["product_key"],
+                     "workspace": route["workspace"], "disposition": route["disposition"],
+                     "stage": route["stage"], "hold": target["hold"],
+                     "project": target["project"], "owner": target["owner"],
+                     "team": target["team"], "origin": route["origin"],
+                     "classification": route["classification"],
+                     "supersededBy": route["superseded_by"], "detail": route["detail"],
+                     "attention": waiting,
+                     "ledger": {"state": now["state"], "severity": now["severity"],
+                                "occurrences": now["occurrenceCount"],
+                                "issue": now["externalRef"], "linkState": now["linkState"],
+                                "linkedProject": row.get("linkedProject")}}
+            if route["disposition"] == products.PROJECT_PROPOSAL:
+                proposals.append(entry)
+            elif not attention or waiting is not None:
+                shown.append(entry)
+        return {"routes": shown, "projects": proposals, "attention": bool(attention),
+                "next": page["next"],
+                "limits": "routing's rows and the ledger's state in this store only; a queued"
+                          " write is not an issue anybody has written, and a confirmed one is"
+                          " not an issue anybody read."}

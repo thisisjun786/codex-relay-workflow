@@ -14,16 +14,24 @@ and an unknown requirement is unverified rather than guessed either way.
 Unobservable is not absent. A result nobody could read is unverified; only a result that was
 looked for and not found is a mismatch.
 
-An exception counts only when read back. A follow-up is an exception for one check of one
-subject: a different, open issue of the product that lists this subject and this check among
-what it took over. An approved scope reduction needs its approval and its reference. Anything
-else is exception_unverified, and the check stays a mismatch.
+An exception counts only when read back, and only for a check that would otherwise stay open or
+unverified. A follow-up is an exception for one check of one subject: a different, open issue of
+the product that lists this subject and this check among what it took over. An approved scope
+reduction needs its approval and its reference. Anything else is exception_unverified, and the
+check stays a mismatch. A check that passed is consistent whatever exception is claimed on it.
 
-This module is pure. The bindings, the open mismatches and the recurrences a verdict depends on
-are passed in, so the same reading and context always give the same verdict.
+evaluate() is pure: the bindings, the open mismatches and the recurrences a verdict depends on
+are passed in, so the same reading and context always give the same verdict. check() gathers
+that context from this store and the ledger and records the verdicts through ledger_port: a
+mismatch as a re-verification demand adopted by the subject issue itself, an unverified check
+under its own notice identity that never files, and a closure only on the evidence D21 names.
+It queues no update of any kind for the subject; the ledger's own rules decide its comments.
 """
 
-from . import products
+import hashlib
+
+from . import ledger_port, products, routes
+from .errors import RefusalReason
 
 READING_SCHEMA = "completion-reading/1"
 CLAIMS = ("linearDone", "prMerged", "sessionEnded")
@@ -137,9 +145,21 @@ def _exception(reading, check, bindings):
 def _check(reading, check, context):
     if not reading["claims"][CLAIM_FOR[check]]:
         return NOT_APPLICABLE, f"nothing claims {CLAIM_FOR[check]}"
+    verdict, reason = _observed(reading, check, context)
+    if verdict not in (MISMATCH, REQUIREMENT_CHANGED, UNVERIFIED):
+        return verdict, reason
     excepted = _exception(reading, check, context["bindings"])
-    if excepted is not None:
-        return excepted
+    if excepted is None:
+        return verdict, reason
+    if excepted[0] == EXCEPTION_UNVERIFIED and verdict == UNVERIFIED:
+        # Nothing was found wrong, so an exception nobody could verify turns nothing into a
+        # mismatch; the check stays as unestablished as it was.
+        return UNVERIFIED, f"{reason}; the claimed exception is unverified: {excepted[1]}"
+    return excepted
+
+
+def _observed(reading, check, context):
+    """The verdict from the requirement and the observation alone, before any exception."""
     required = reading["requires"][check]
     if required is False:
         if check in context["openMismatches"]:
@@ -158,7 +178,9 @@ def _check(reading, check, context):
 
 def evaluate(reading, context) -> dict:
     """Verdicts for one reading. context: {bindings: {ref: binding}, openMismatches: [check],
-    recurrences: [{faultId, reason}]} - the only other facts a verdict may depend on."""
+    recurrences: [{faultId, reason}], recurrenceUnknown?: reason} - the only other facts a
+    verdict may depend on. recurrenceUnknown says the subject's records could not all be read,
+    so no recurrence can be ruled out."""
     checks = []
     for check in products.CHECKS:
         verdict, reason = _check(reading, check, context)
@@ -174,6 +196,9 @@ def evaluate(reading, context) -> dict:
         checks.append(entry)
     recurrences = [{"check": "recurrence", "verdict": MISMATCH, "faultId": item["faultId"],
                     "reason": item["reason"]} for item in context["recurrences"]]
+    if context.get("recurrenceUnknown"):
+        recurrences.append({"check": "recurrence", "verdict": UNVERIFIED, "faultId": None,
+                            "reason": context["recurrenceUnknown"]})
     verdicts = {entry["verdict"] for entry in checks + recurrences}
     if verdicts & set(OPEN_VERDICTS):
         overall = MISMATCH
@@ -184,3 +209,213 @@ def evaluate(reading, context) -> dict:
     return {"subject": reading["subject"], "product": reading["product"],
             "origin": reading["origin"], "verdict": overall, "checks": checks,
             "recurrences": recurrences}
+
+
+# ---------------------------------------------------------------------- recording, via the port
+
+# How many of a product's defect records a check reads looking for the subject's recurrences.
+# Past it no recurrence can be ruled out, and the recurrence check reads unverified.
+RECURRENCE_SCAN = 1000
+RECURRENCE_PAGE = 100
+# How many resolved mismatch rounds of one subject and check a reading looks past. Each round is
+# its own record so the ledger's reopen-on-recurrence never reaches the subject; past this many,
+# the next round is somebody's decision.
+MAX_ROUNDS = 20
+
+
+def _signature(reading, check, round_=1):
+    signature = {"subject": reading["subject"], "check": check}
+    if round_ > 1:
+        signature["round"] = round_
+    if reading["origin"] == products.SIMULATED:
+        # Part of identity, so a simulated reading never lands on a real subject's record.
+        signature["simulated"] = True
+    return signature
+
+
+def _mismatch_round(port, product, workspace, reading, check):
+    """(fault id, row, signature) of the mismatch record this reading belongs to.
+
+    The newest round, unless that one was resolved: a mismatch found again after its closure
+    starts the next round. Were it the same record coming back, the ledger's rule for a resolved
+    fault that recurs would queue a reopen of the subject, and a completion check changes no
+    state of the subject, ever; the new round's first write is a comment, as the first was.
+    """
+    for round_ in range(1, MAX_ROUNDS + 1):
+        signature = _signature(reading, check, round_)
+        fault_id = port.fault_id(product, workspace, products.MISMATCH, signature)
+        row = port.get(fault_id)
+        if row is None or row.get("state") != ledger_port.RESOLVED:
+            return fault_id, row, signature
+    products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                    f"{check} of {reading['subject']} was closed {MAX_ROUNDS} times and found"
+                    f" wrong again; that is a decision for somebody, not another round")
+
+
+def reading_key(reading) -> str:
+    """One reading's occurrence key: the same reading handed in twice is one occurrence."""
+    digest = hashlib.sha256(products.canonical(reading).encode("utf-8")).hexdigest()
+    return f"reading:{digest[:24]}"
+
+
+def _recurrences(port, product, subject):
+    """(recurrences, unknown): the subject's own defects that came back after their newest fix.
+
+    A defect the subject owns is recurring when the ledger has it open again after a fix in its
+    current cycle, or open in a cycle after a resolution. The ledger already commented and, for
+    a resolved one, reopened; this only reports it on the subject, and never files it again.
+    """
+    recurring, after, read = [], None, 0
+    while read < RECURRENCE_SCAN:
+        page = port.list(product=product, fault_class=products.DEFECT, limit=RECURRENCE_PAGE,
+                         after=after)
+        for row in page.get("faults") or []:
+            read += 1
+            if row.get("external_ref") != subject or row.get("state") != ledger_port.OPEN:
+                continue
+            if row.get("reopen_count"):
+                recurring.append({"faultId": row["fault_id"],
+                              "reason": f"came back after it was resolved (cycle"
+                                        f" {row.get('cycle')})"})
+                continue
+            fixes = [r for r in port.remediations(row["fault_id"], limit=20)
+                     if r.get("kind") == ledger_port.FIX and r.get("cycle") == row.get("cycle")]
+            if fixes:
+                recurring.append({"faultId": row["fault_id"],
+                              "reason": f"occurred again after the fix {fixes[-1]['ref']}"})
+        after = page.get("next")
+        if after is None:
+            return recurring, None
+    return recurring, (f"{product} has more than {RECURRENCE_SCAN} defect records; a recurrence"
+                   f" beyond them cannot be ruled out")
+
+
+def _detail(reading, entry):
+    check = entry["check"]
+    return "\n".join([
+        f"completion check {check} of {reading['subject']}: {entry['verdict']}",
+        f"reason: {entry['reason']}",
+        f"claims: {', '.join(c for c in CLAIMS if reading['claims'][c]) or 'none'}",
+        f"required: {reading['requires'][check]}  observed: {reading['observed'][check]}"
+        f"  origin: {reading['origin']}",
+        f"next action: re-verify {check} for {reading['subject']} and record the fix and the"
+        f" verification, or an approved exception",
+        "This asks the owner to re-verify. It changes no state of the subject: a Done stays"
+        " Done until somebody who owns it decides otherwise.",
+    ])
+
+
+def _evidence(reading, check, key):
+    entries = [{"kind": "completion-reading", "ref": key,
+                "observed": {"check": check, "result": reading["observed"][check],
+                             "required": reading["requires"][check]}}]
+    for role, ref in sorted(reading["evidence"][check].items()):
+        entries.append({"kind": role, "ref": ref["ref"], "source": ref["source"]})
+    return entries
+
+
+def check(router, record) -> dict:
+    """Evaluate one reading and record what it shows, in one transaction.
+
+    The subject must be an issue bound to the product as read back, because a mismatch is filed
+    as a re-verification demand on the subject issue itself: the ledger adopts it, so its first
+    write is a comment there, never a new issue and never a state change.
+    """
+    reading = read_reading(record)
+    product = reading["product"]
+    registry = router.registry(product)
+    if registry is None:
+        products.refuse(RefusalReason.ROUTE_PRODUCT_UNKNOWN,
+                        f"{product!r} is not a registered product")
+    simulated = reading["origin"] == products.SIMULATED
+    if simulated and registry["testTarget"] is None:
+        products.malformed(f"a simulated reading needs {product}'s test target")
+    bindings = {b["ref"]: b for b in router.bindings(product) if b["test"] == simulated}
+    subject = bindings.get(reading["subject"])
+    if subject is None or subject["kind"] != "issue":
+        products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                        f"{reading['subject']} is not a bound {'test ' if simulated else ''}issue"
+                        f" of {product}; a re-verification demand goes to the subject issue"
+                        f" itself, so bind it as read back first")
+    port = router.port
+    workspace = registry["workspace"]
+    records = {}
+    for name in products.CHECKS:
+        mismatch, mismatch_row, mismatch_signature = _mismatch_round(port, product, workspace,
+                                                                     reading, name)
+        unverified = port.fault_id(product, workspace, products.UNVERIFIED,
+                                   _signature(reading, name))
+        records[name] = {"mismatch": mismatch, "mismatchRow": mismatch_row,
+                         "mismatchSignature": mismatch_signature,
+                         "unverified": unverified, "unverifiedRow": port.get(unverified)}
+    open_ = [name for name, entry in records.items()
+             if (entry["mismatchRow"] or {}).get("state") in ledger_port.ACTIVE]
+    recurrences, unknown = _recurrences(port, product, reading["subject"])
+    answer = evaluate(reading, {"bindings": bindings, "openMismatches": open_,
+                                "recurrences": recurrences, "recurrenceUnknown": unknown})
+    if simulated:
+        team, project = registry["testTarget"]["team"], registry["testTarget"]["project"]
+    else:
+        team, project = registry["team"], subject["project"] or registry["triageProject"]
+    scope = {"workspace": workspace, **({"projectKey": project} if project else {})}
+    key = reading_key(reading)
+    written = []
+    with router.store.composing() as db:
+        for entry in answer["checks"]:
+            name, verdict = entry["check"], entry["verdict"]
+            ids = records[name]
+            observed = dict(product=product, workspace=workspace, occurrence_key=key,
+                            project=project, observed_at=reading["observedAt"],
+                            detail=_detail(reading, entry),
+                            evidence=_evidence(reading, name, key))
+            owner = routes.plain_target(team=team, project=project, owner=reading["subject"])
+            if verdict in OPEN_VERDICTS:
+                adopt = None
+                if ids["mismatchRow"] is None:
+                    adopt = {"externalRef": reading["subject"], "scope": scope}
+                port.record(port.observation(fault_class=products.MISMATCH, severity="degraded",
+                                             signature=ids["mismatchSignature"], **observed),
+                            adopt=adopt)
+                routes.upsert(db, router.clock, fault_id=ids["mismatch"], product=product,
+                              workspace=workspace, disposition=products.COMPLETION_MISMATCH,
+                              stage=products.STAGE_FILED, target=owner,
+                              origin=reading["origin"], claimed_severity="degraded",
+                              detail=entry["reason"])
+                written.append({"check": name, "faultId": ids["mismatch"], "recorded": verdict})
+            if verdict == UNVERIFIED:
+                port.record(port.observation(fault_class=products.UNVERIFIED, severity="notice",
+                                             signature=_signature(reading, name), **observed))
+                routes.upsert(db, router.clock, fault_id=ids["unverified"], product=product,
+                              workspace=workspace, disposition=products.COMPLETION_UNVERIFIED,
+                              stage=products.STAGE_OBSERVED, target=owner,
+                              origin=reading["origin"], claimed_severity="notice",
+                              detail=entry["reason"])
+                written.append({"check": name, "faultId": ids["unverified"],
+                                "recorded": UNVERIFIED})
+            elif (ids["unverifiedRow"] or {}).get("state") in ledger_port.ACTIVE:
+                # Established either way now, so the unverified notice has nothing left to say.
+                port.record(port.observation(fault_class=products.UNVERIFIED, severity="notice",
+                                             signature=_signature(reading, name), cleared=True,
+                                             **observed))
+                written.append({"check": name, "faultId": ids["unverified"],
+                                "recorded": "unverified_cleared"})
+            closure = entry.get("closure")
+            if closure and closure["ready"] and name in open_:
+                _close(port, ids["mismatch"], ids["mismatchRow"], closure, key)
+                written.append({"check": name, "faultId": ids["mismatch"], "recorded": "closed"})
+    return {**answer, "recorded": written}
+
+
+def _close(port, fault_id, row, closure, key):
+    """D21: a fix and a verification somebody can point to, or an approved exception."""
+    if "exception" in closure:
+        fix = f"exception: {closure['exception']}"
+        verification = {"method": "observation", "ref": key, "outcome": "absent"}
+    else:
+        fix = closure["fix"]["ref"]
+        verification = {"method": "observation", "ref": closure["verification"]["ref"],
+                        "outcome": "passed"}
+    if row["state"] != ledger_port.FIX_PENDING:
+        port.record_fix(fault_id, ref=fix, detail="closure of a completion mismatch")
+    port.record_reverification(fault_id, detail="completion reading", **verification)
+    port.resolve(fault_id)

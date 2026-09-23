@@ -567,7 +567,8 @@ class LedgerPortBeforeBinding(RelayTestCase):
         import pathlib
 
         source = pathlib.Path(ledger_port.__file__).parent
-        for name in ("products.py", "placement.py", "routing.py", "completion.py"):
+        for name in ("products.py", "placement.py", "routing.py", "completion.py", "intake.py",
+                     "projects.py", "routes.py", "digest.py"):
             tree = ast.parse((source / name).read_text(encoding="utf-8"))
             imported = {node.module for node in ast.walk(tree)
                         if isinstance(node, ast.ImportFrom) and node.module}
@@ -658,6 +659,250 @@ class CommandLine(RelayTestCase):
         self.assertEqual(0, code)
         self.assertEqual("CRW-206, Jun 2026-09-22", stored["basis"])
 
+
+
+class ExceptionsOnlyForOpenChecks(Completion):
+    def test_an_exception_claimed_on_a_check_that_passed_does_not_flag_a_legitimate_done(self):
+        for exception in ({"check": "acceptance", "kind": "follow_up", "ref": "ALN-77"},
+                          {"check": "acceptance", "kind": "scope_reduction", "ref": "d:1"}):
+            with self.subTest(kind=exception["kind"]):
+                answer = self.evaluate(self.reading(exceptions=[exception]))
+                self.assertEqual(completion.CONSISTENT, self.verdicts(answer)["acceptance"])
+                self.assertEqual(completion.CONSISTENT, answer["verdict"])
+
+    def test_an_unverified_exception_on_an_unobservable_check_leaves_it_unverified(self):
+        reading = self.reading(observed={"acceptance": "unobservable", "handoff": "present"},
+                               exceptions=[{"check": "acceptance", "kind": "follow_up",
+                                            "ref": "ALN-77"}])
+        answer = self.evaluate(reading)
+        self.assertEqual(completion.UNVERIFIED, self.verdicts(answer)["acceptance"])
+        self.assertEqual(completion.UNVERIFIED, answer["verdict"])
+
+    def test_an_unreadable_record_set_leaves_recurrence_unverified(self):
+        answer = completion.evaluate(self.reading(), {
+            "bindings": self.bindings, "openMismatches": [], "recurrences": [],
+            "recurrenceUnknown": "more records than one check reads"})
+        self.assertEqual(completion.UNVERIFIED, answer["verdict"])
+
+
+class RoutingBeforeBinding(RelayTestCase):
+    """Every ledger-backed routing path refuses on this checkout, and refuses before writing."""
+
+    TABLES = ("incident_routes", "route_incidents", "fault_ledger", "fault_publications",
+              "product_bindings", "product_registry", "routing_policy")
+
+    def setUp(self):
+        super().setUp()
+        self.router = ProductRouter(self.store, self.clock)
+        self.router.register_product(ALPHA)
+        self.router.register_product(BETA)
+        for record in ALPHA_BINDINGS:
+            self.router.bind(record)
+
+    def counts(self):
+        return {table: self.store.one(f"SELECT COUNT(*) AS n FROM {table}")["n"]
+                for table in self.TABLES}
+
+    def raw(self, **fields):
+        record = {"schema": "product-incident/1", "product": "alpha-notes",
+                  "surface": "dev_run", "phase": "development", "component": "editor",
+                  "symptom": "cursor_jump", "severity": "broken", "occurrenceKey": "run-1"}
+        record.update(fields)
+        return record
+
+    def test_every_ledger_backed_path_refuses_before_writing(self):
+        before = self.counts()
+        reading = {"schema": "completion-reading/1", "product": "alpha-notes",
+                   "subject": "ALN-3", "claims": {"linearDone": True},
+                   "requires": {"acceptance": True}, "observed": {"acceptance": "absent"}}
+        paths = {
+            "intake": lambda: self.router.intake(self.raw()),
+            "pending intake": lambda: self.router.intake(self.raw(
+                product=None, repository="example-org/nobody")),
+            "classify": lambda: self.router.classify("f" * 32, {"product": "alpha-notes",
+                                                               "by": "operator"}),
+            "reconcile": lambda: self.router.reconcile(),
+            "show": lambda: self.router.show(attention=True),
+            "digest": lambda: self.router.digest(),
+            "projects": lambda: self.router.evaluate_projects("alpha-notes"),
+            "completion": lambda: self.router.check_completion(reading),
+        }
+        for name, path in paths.items():
+            with self.subTest(path=name), self.assertRaises(products.RouteRefused) as caught:
+                path()
+            self.assertEqual(RefusalReason.ROUTE_LEDGER_PENDING, caught.exception.reason)
+        self.assertEqual(before, self.counts())
+
+    def test_an_unwatched_surface_is_refused_before_the_ledger_is_asked(self):
+        before = self.counts()
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.intake(self.raw(product="beta-meter", surface="user_report",
+                                        phase="in_use"))
+        self.assertEqual(RefusalReason.ROUTE_SURFACE_UNWATCHED, caught.exception.reason)
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.intake(self.raw(product="beta-meter", surface="real_use",
+                                        phase="in_use", origin="simulated"))
+        self.assertEqual(RefusalReason.ROUTE_INPUT_MALFORMED, caught.exception.reason)
+        self.assertEqual(before, self.counts())
+
+    def test_a_binding_touches_no_ledger_while_nothing_was_routed(self):
+        bound = self.router.bind(binding("alpha-notes", "project", "proj-aln-sync",
+                                         components=["sync"]))
+        self.assertEqual([], bound["redecided"])
+
+    def test_the_route_commands_answer_the_refusal(self):
+        import contextlib
+        import io
+
+        from codex_session_relay import cli
+
+        for argv in (("route-intake", "--incident", json.dumps(self.raw())),
+                     ("route-show", "--attention"), ("route-digest",),
+                     ("route-projects", "--product", "alpha-notes")):
+            buffer = io.StringIO()
+            with self.subTest(command=argv[0]), contextlib.redirect_stdout(buffer):
+                code = cli.main(["--state", str(self.store.path.parent), *argv])
+            self.assertEqual(2, code)
+            self.assertEqual("route_ledger_pending", json.loads(buffer.getvalue())["reason"])
+
+
+class Classification(unittest.TestCase):
+    def test_a_classification_names_a_product_and_who_made_it(self):
+        from codex_session_relay import intake
+
+        read = intake.read_classification({"product": "beta-meter", "by": "llm:model-x",
+                                           "goal": {"key": "billing_ok"}})
+        self.assertEqual("beta-meter", read["product"])
+        self.assertEqual({"key": "billing_ok", "criteria": None}, read["goal"])
+        for record in ({"product": "beta-meter", "by": "somebody"},
+                       {"product": "beta:meter", "by": "operator"},
+                       {"product": "beta-meter", "by": "operator", "severity": "broken"}):
+            with self.subTest(record=record), self.assertRaises(products.RouteRefused):
+                intake.read_classification(record)
+
+
+class RouteRows(RelayTestCase):
+    def upsert(self, fault_id, **fields):
+        from codex_session_relay import routes
+
+        values = {"product": "alpha-notes", "workspace": "example-ws",
+                  "disposition": products.HELD, "stage": products.STAGE_HELD,
+                  "target": routes.plain_target(team="ALN", hold=products.NO_PROJECT),
+                  "origin": products.OBSERVED, "claimed_severity": "degraded",
+                  "goal": "offline_sync"}
+        values.update(fields)
+        with self.store.transaction() as db:
+            routes.upsert(db, self.clock, fault_id=fault_id, **values)
+
+    def test_a_route_keeps_its_newest_incidents_and_its_highest_claimed_severity(self):
+        from codex_session_relay import routes
+
+        self.upsert("a" * 32, claimed_severity="broken")
+        self.upsert("a" * 32, claimed_severity="notice")
+        self.assertEqual("broken", routes.get(self.store, "a" * 32)["claimed_severity"])
+        with self.store.transaction() as db:
+            for n in range(routes.MAX_STORED_INCIDENTS + 4):
+                routes.store_incident(db, self.clock, "a" * 32,
+                                      incident(occurrenceKey=f"k{n}"))
+        kept = [i["occurrenceKey"] for i in routes.incidents(self.store, "a" * 32)]
+        self.assertEqual([f"k{n}" for n in range(4, routes.MAX_STORED_INCIDENTS + 4)], kept)
+
+    def test_listing_pages_by_a_stable_cursor(self):
+        from codex_session_relay import routes
+
+        for n in range(5):
+            self.upsert(f"{n}" * 32)
+        first = routes.listing(self.store, limit=3)
+        second = routes.listing(self.store, limit=3, after=first["next"])
+        self.assertEqual(5, len(first["routes"]) + len(second["routes"]))
+        self.assertIsNone(second["next"])
+
+    def test_a_target_nobody_wrote_is_refused_rather_than_guessed(self):
+        from codex_session_relay import routes
+
+        self.upsert("b" * 32)
+        with self.store.transaction() as db:
+            db.execute("UPDATE incident_routes SET target = ? WHERE fault_id = ?",
+                       (json.dumps({"team": "ALN", "surprise": 1}), "b" * 32))
+        with self.assertRaises(products.RouteRefused):
+            routes.get(self.store, "b" * 32)
+
+    def test_one_decision_name_per_waiting_state(self):
+        from codex_session_relay import routes
+
+        def snap(**fields):
+            base = {"stage": products.STAGE_FILED, "disposition": products.NEW_ISSUE,
+                    "hold": None, "project": "p", "claimedSeverity": "notice", "state": "open",
+                    "severity": "degraded", "occurrenceCount": 1, "externalRef": "ALN-1",
+                    "linkState": "linked"}
+            base.update(fields)
+            return base
+
+        self.assertEqual(routes.AWAITING_CLASSIFICATION,
+                         routes.attention(snap(stage=products.STAGE_PENDING)))
+        self.assertEqual("held_no_project", routes.attention(snap(
+            stage=products.STAGE_HELD, hold=products.NO_PROJECT)))
+        self.assertEqual(routes.LINK_INCOMPLETE, routes.attention(snap(linkState="unlinked")))
+        self.assertEqual(routes.MISMATCH_OPEN, routes.attention(snap(
+            disposition=products.COMPLETION_MISMATCH)))
+        self.assertIsNone(routes.attention(snap(disposition=products.COMPLETION_MISMATCH,
+                                                state="resolved")))
+        self.assertEqual(routes.PROJECT_PROPOSED, routes.attention(snap(
+            disposition=products.PROJECT_PROPOSAL, project=None, state="observed")))
+        self.assertIsNone(routes.attention(snap(disposition=products.PROJECT_PROPOSAL,
+                                                project="proj-new", state="observed")))
+        self.assertIsNone(routes.attention(snap()))
+
+
+class ProjectEligibility(RouteRows):
+    """The predicate project_create's pre-issue check recomputes, read from store rows alone."""
+
+    def setUp(self):
+        super().setUp()
+        self.router = ProductRouter(self.store, self.clock)
+        self.router.register_product(ALPHA)
+        self.payload = {"product": "alpha-notes", "goal": "offline_sync",
+                        "criteria": "edits made offline survive reconnect",
+                        "members": ["c" * 32, "d" * 32], "components": ["cache", "queue"]}
+
+    def policy(self, enabled=True):
+        self.router.set_policy({"schema": "routing-policy/1", "policy": "project_creation",
+                                "enabled": enabled, "minIndependentFixes": 2,
+                                "requireSharedGoal": True, "requireCompletionCriteria": True,
+                                "basis": "CRW-206, Jun 2026-09-22"})
+
+    def problems(self):
+        from codex_session_relay import projects
+
+        return projects.eligibility(self.store.db, self.payload)
+
+    def test_no_enabled_policy_creates_nothing(self):
+        self.upsert("c" * 32)
+        self.upsert("d" * 32)
+        self.assertTrue(self.problems())
+        self.policy(enabled=False)
+        self.assertTrue(self.problems())
+        self.policy()
+        self.assertEqual([], self.problems())
+
+    def test_a_member_that_left_the_group_cancels_the_create(self):
+        from codex_session_relay import routes
+
+        self.policy()
+        self.upsert("c" * 32)
+        self.upsert("d" * 32, stage=products.STAGE_FILED, disposition=products.NEW_ISSUE,
+                    target=routes.plain_target(team="ALN", project="proj-x"))
+        self.assertIn("1 held defect(s)", " ".join(self.problems()))
+        self.upsert("d" * 32, goal="another_goal")
+        self.assertTrue(self.problems())
+
+    def test_a_project_bound_meanwhile_that_covers_a_member_cancels_the_create(self):
+        self.policy()
+        self.upsert("c" * 32)
+        self.upsert("d" * 32)
+        self.router.bind(binding("alpha-notes", "project", "proj-aln-cache",
+                                 components=["cache"]))
+        self.assertIn("proj-aln-cache", " ".join(self.problems()))
 
 if __name__ == "__main__":
     unittest.main()
