@@ -855,12 +855,8 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
                          "no policy-free record is installed in its place")
 
-    def test_an_archive_stamp_that_is_no_moment_refuses_the_rebuild(self):
-        """Review of e538bfa1: a stamp of the right shape that no clock produces was accepted.
-
-        retire() takes a stamp from the clock or from an archive already there, so a month 99 was
-        never written by it; ranked as the newest, it restored a record with no policy.
-        """
+    def _rebuild_beside_a_policy_free_archive_named(self, name):
+        """A policy-bearing archive, a newer-looking policy-free one under name, and a rebuild."""
         import importlib
         sys.path.insert(0, str(ROOT / "scripts"))
         steps = importlib.import_module("crw_transition.steps")
@@ -880,15 +876,27 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
                                      owner=bridgerecord.OWNER_PLUGIN)
         stem = bridgerecord.RECORD_NAME + ".superseded-"
         (home / (stem + "20210101T000000Z")).write_text(json.dumps(bearing), encoding="utf-8")
-        (home / (stem + "99999999T999999Z")).write_text(json.dumps(free), encoding="utf-8")
+        (home / (stem + name)).write_text(json.dumps(free), encoding="utf-8")
         host = {"codexHome": str(home), "destination": str(self.host.destination),
                 "mcp": {"record": None, "registration": None, "recordOwner": None,
                         "recordPath": str(home / bridgerecord.RECORD_NAME)}}
         answer = steps.mcp_record_install(host, {}, apply=True)
         self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
-        self.assertIn("99999999T999999Z", json.dumps(answer))
+        self.assertIn(name, json.dumps(answer))
         self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
                          "no policy-free record is installed")
+
+    def test_an_archive_stamp_that_is_no_moment_refuses_the_rebuild(self):
+        """Review of e538bfa1: a stamp of the right shape that no clock produces was accepted.
+
+        retire() takes a stamp from the clock or from an archive already there, so a month 99 was
+        never written by it; ranked as the newest, it restored a record with no policy.
+        """
+        self._rebuild_beside_a_policy_free_archive_named("99999999T999999Z")
+
+    def test_an_archive_suffix_retire_never_writes_refuses_the_rebuild(self):
+        """Review of 829bed79: -000 is not a collision suffix retire() writes (it starts at -001)."""
+        self._rebuild_beside_a_policy_free_archive_named("20210101T000000Z-000")
 
     def test_a_newest_archive_that_became_a_directory_refuses(self):
         self._refuses_with_newest_archive_replaced(lambda path: path.mkdir())
@@ -4418,9 +4426,6 @@ class InterruptionAfterEveryStepConverges(TransitionCase):
                                  + " did not converge to the same host")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 POLICY_TABLES = ('\n[mcp_servers.codex-thread-bridge.tools.create_thread]\n'
                  'approval_mode = "approve"\n'
@@ -4902,3 +4907,55 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         found = self.declares(host, no_servers)
         self.assertEqual(found["state"], "ABSENT")
         self.assertIsNone(found["detail"])
+
+
+class CachedPackageReadsDoNotBlock(unittest.TestCase):
+    """The transition's checks read the cached package while it holds the ownership lock.
+
+    A pipe there held an ordinary open, and the lock with it. Each check now reads through a
+    descriptor opened without blocking and judged a regular file. Bounded by a timeout, so a
+    regression fails instead of hanging.
+    """
+
+    def setUp(self):
+        import tempfile
+        base = Path(os.environ.get("CRW_TEST_TMPDIR") or "/var/tmp")
+        directory = tempfile.mkdtemp(dir=str(base), prefix="crw218-pipes-")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        self.root = Path(directory) / "crw" / "0.4.0"
+        shutil.copytree(ROOT / "plugins" / "crw", self.root)
+
+    def pipe_at(self, relative):
+        path = self.root / relative
+        path.unlink()
+        os.mkfifo(path)
+
+    def bounded(self, argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("blocked on a pipe in the cached package: " + " ".join(argv[-3:]))
+
+    def test_the_approval_policy_and_component_checks_refuse_a_pipe(self):
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import steps\n"
+                   "policy, why = steps.declared_policy(sys.argv[2])\n"
+                   "events, servers, unread = steps._declared(sys.argv[2], sys.argv[3])\n"
+                   "print(why is not None, bool(unread))\n")
+        self.pipe_at(".codex-plugin/plugin.json")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"),
+                             str(self.root), str(ROOT)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["True", "True"], done.stdout)
+
+    def test_the_payload_check_refuses_a_pipe(self):
+        self.pipe_at("wiring/mcp.json")
+        done = self.bounded([sys.executable, str(ROOT / "scripts" / "ci" / "plugin.py"),
+                             "--payload", str(self.root)])
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("could not be read as a regular file", done.stdout + done.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

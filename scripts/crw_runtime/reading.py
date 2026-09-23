@@ -364,6 +364,18 @@ def open_regular(path):
     return descriptor
 
 
+def regular_bytes(path):
+    """The bytes of the regular file at path, from one descriptor open_regular judged."""
+    with os.fdopen(open_regular(path), "rb") as stream:
+        return stream.read()
+
+
+def regular_text(path):
+    """regular_bytes read as UTF-8 text with universal newlines, the way Path.read_text reads."""
+    with os.fdopen(open_regular(path), "r", encoding="utf-8") as stream:
+        return stream.read()
+
+
 def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=None):
     """Read one JSON record, returning a Reading rather than a sentinel.
 

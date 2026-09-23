@@ -1099,6 +1099,17 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
                          [], "nothing is moved aside")
 
+    def test_a_refusal_points_at_a_repair_only_when_it_carries_one(self):
+        """Review of 829bed79: every refusal note said "repair says what to do", with or without one."""
+        import runtime_install
+        for outcome, wrote in ((bridgerecord.DIFFERS, False), (bridgerecord.POLICY_CHANGED, True),
+                               (bridgerecord.CHANGED_UNDERNEATH, False)):
+            with self.subTest(outcome):
+                without = runtime_install._register_mcp_plugin_note(outcome, wrote, False)
+                self.assertNotIn("repair", without)
+                self.assertIn("repair says what to do",
+                              runtime_install._register_mcp_plugin_note(outcome, wrote, True))
+
     def test_a_rerun_that_writes_nothing_does_not_say_it_wrote(self):
         """Review of f743d438: every outcome printed "The record was written"."""
         self.assertEqual(self.register("--apply")[0], 0)

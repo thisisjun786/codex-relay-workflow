@@ -750,7 +750,15 @@ def archive_key(path, stem):
         datetime.strptime(matched.group(1), "%Y%m%dT%H%M%SZ")
     except ValueError:
         return None
-    return matched.group(1), int(matched.group(2) or 0)
+    suffix = matched.group(2)
+    if suffix is None:
+        return matched.group(1), 0
+    # retire() names its first collision -001 and pads with "%03d": -000, or a padding it does
+    # not write such as -0001, is a name it never produced.
+    number = int(suffix)
+    if number < 1 or suffix != "%03d" % number:
+        return None
+    return matched.group(1), number
 
 
 def archives(home, stem):

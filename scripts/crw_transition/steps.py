@@ -377,7 +377,7 @@ def declared_policy(root, name=None):
     name = name or inventory.SERVER_NAME
     manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(reading.regular_text(manifest_path))
     except (OSError, ValueError) as error:
         return None, (str(manifest_path) + " could not be read (" + type(error).__name__ + ": "
                       + str(error) + ")")
@@ -398,7 +398,7 @@ def declared_policy(root, name=None):
                       " string, it is " + type(named).__name__)
     path = Path(root) / _relative(named)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(reading.regular_text(path))
     except (OSError, ValueError) as error:
         return None, (str(path) + " is declared and could not be read (" + type(error).__name__
                       + ": " + str(error) + ")")
@@ -684,7 +684,7 @@ def _declared(root, repo_root):
     events, servers, unread = {}, {}, []
     manifest_path = Path(root) / ".codex-plugin" / "plugin.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(reading.regular_text(manifest_path))
     except (OSError, ValueError) as error:
         return events, servers, [str(manifest_path) + " could not be read ("
                                  + type(error).__name__ + ": " + str(error) + ")"]
@@ -696,7 +696,7 @@ def _declared(root, repo_root):
     for relative in hook_paths:
         path = Path(root) / _relative(relative)
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            document = json.loads(reading.regular_text(path))
         except (OSError, ValueError) as error:
             unread.append(str(path) + " is declared and could not be read ("
                           + type(error).__name__ + ": " + str(error) + ")")
@@ -744,7 +744,7 @@ def _declared(root, repo_root):
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            document = json.loads(reading.regular_text(path))
         except (OSError, ValueError) as error:
             unread.append(str(path) + " is declared and could not be read ("
                           + type(error).__name__ + ": " + str(error) + ")")
@@ -874,7 +874,7 @@ def launcher_complaints(repo_root, cache_version):
         cached, mine = Path(cache_version) / script, ours / script
         try:
             same = mine.is_file() and cached.is_file() \
-                and cached.read_bytes() == mine.read_bytes()
+                and reading.regular_bytes(cached) == reading.regular_bytes(mine)
         except OSError as error:
             found.append(str(cached) + " could not be read to compare with the launcher this"
                          " checkout ships (" + type(error).__name__ + ": " + str(error) + ")")

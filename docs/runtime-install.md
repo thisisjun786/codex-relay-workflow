@@ -1236,12 +1236,13 @@ file. Every file `register-mcp` reads while it holds that lock (the record, the 
 configuration, the cached manifests and declarations, and the package the launcher probe copies) is
 read from one descriptor opened without blocking and judged as a regular file, never by a second
 open of the path, so a pipe put in place of any of them cannot hold the lock. The transition reads
-the configuration, the record, its archives and the manifest the same way. A `register-mcp` rerun
-after the file was edited hashes the new bytes and is refused as `record_differs` with the
-move-aside repair. The transition carries the recorded reference, so its preflight refuses a changed
-file, and its record step writes through the same function as `register-mcp`. An edit made after the
-last check is caught where every other one is: the launcher hashes the file at every start and
-refuses the record.
+the same way while it holds the lock: the configuration, the record and its archives, and, in the
+checks it repeats before removing anything, the cached package's manifest, declarations, launchers
+and payload. A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
+`record_differs` with the move-aside repair. The transition carries the recorded reference, so its
+preflight refuses a changed file, and its record step writes through the same function as
+`register-mcp`. An edit made after the last check is caught where every other one is: the launcher
+hashes the file at every start and refuses the record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
