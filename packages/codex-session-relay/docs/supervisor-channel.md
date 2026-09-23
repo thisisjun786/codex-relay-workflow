@@ -533,8 +533,9 @@ obligation is not discharged by it.
 
 ## What this does not do
 
-Nothing here wakes anybody on a timer. There is no daemon pass behind these commands: a report
-goes out inside the parent's own turn. An uncertain send is never retried automatically either,
+Nothing here wakes anybody on a timer. The daemon's supervisor pass runs on the daemon's tick
+and sends a message once, for an owed fact, under the pacing and lifecycle rules above; a tick
+with nothing owed sends nothing and writes nothing. An uncertain send is never retried automatically either,
 because there is no reconciler for this queue and a second send that lands is a second wake for
 one fact; it stays `held_uncertain`, which is not claimable, and says so, until a verified
 readback of that attempt settles it.
@@ -605,21 +606,29 @@ cannot verify, because it needs the host to read the named turn on the recipient
 
 ## Who calls it today
 
-Nothing in the relay calls this channel on its own. Its commands are the whole entry surface -
+The relay daemon does, on every tick, with nobody asking. Its supervisor pass
+(`RelayDaemon._report_upward`) stages what each project owes - the same staging a parent runs
+by hand, restricted to obligations whose message is absent or still unsent - and attempts the
+claimable messages oldest first through `SupervisorChannel.attempt`. So every rule above holds
+for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
+the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
+spent only at the transport start, a paused, archived or unreachable supervisor is withheld
+rather than woken and keeps the obligation, and a message another caller has claimed is left
+alone. It is bounded like the daemon's other passes, by `max_supervisor_projects_per_tick` and
+`max_supervisor_sends_per_tick`, and a project whose messages have all gone out costs reads and
+no write.
+
+The commands stay valid and are what a parent runs when it wants an answer now:
 `supervisor-stage`, `supervisor-send`, `supervisor-read` and `supervisor-show`, beside the
-readings `supervisor-select`, `supervisor-standing` and `supervisor-report-recorded` - and no
-daemon pass, Stop hook, MCP tool or service stages or sends a report. In live
-operation the caller is the project parent, from inside its own turn - `supervisor-stage
---project` for what the project owes, then `supervisor-send` for each staged message - and the
-supervisor answers with `supervisor-read` from a turn of its own. crw-run's relay reference
-states that as an instruction to the parent and the relay does not enforce it, so a parent that
-does not run the commands reports nothing through this channel. The reporting duty is carried
-by that instruction, which is weaker than an automatic one, and making it automatic is not part
-of this change. What IS independent of the parent is the obligation: it is derived from the
-event row the child's final receipt wrote, so a parent that never stages or sends leaves the
-report owed and unreported in `supervisor-standing --project`, across a restart, until somebody
-reports it or the Linear record confirms it. Nothing notices that on its own; it is visible to
-whoever asks.
+readings `supervisor-select`, `supervisor-standing` and `supervisor-report-recorded`. A parent
+that stages or sends by hand converges on the same message ids as the daemon, and whichever
+claims a message first sends it; the other finds nothing to send. The supervisor still answers
+with `supervisor-read` from a turn of its own - nothing reads back on its behalf.
+
+What the pass does not stage on its own is an omission. A turn that ended without a receipt
+writes no event, and the daemon may not read the marker that says whether the child declared it
+still in progress, so an omission is staged only with a `reporting-observation/1` reading, as
+before. It stays owed and visible in `supervisor-standing` meanwhile.
 
 ## Scope of these claims
 

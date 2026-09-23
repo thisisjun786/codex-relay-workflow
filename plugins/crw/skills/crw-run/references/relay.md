@@ -906,10 +906,14 @@ ran, and whether the supervisor acted are three further facts, and no row here c
 them. Recording it is what makes the next reading of the same fact converge instead of waking
 the level above again, so record it when the report actually goes out.
 
-Four more are the channel CRW-215 added. Only `supervisor-send` attempts a transport, and it
-answers `sent: false` without touching the host when the message is held, inside its backoff
-or already sent. `supervisor-stage` records the report itself, so a run that stages does not
-also call `supervisor-report-recorded`.
+Four more are the channel CRW-215 added. A running relay daemon stages and sends what each
+project owes on its own tick, so a parent does not have to remember to; the commands are for an
+answer now, and they converge on the same messages. Only `supervisor-send` attempts a transport
+from the command line, and it answers `sent: false` without touching the host when the message
+is held, inside its backoff or already sent - including one the daemon sent first.
+`supervisor-stage` records the report itself, so a run that stages does not also call
+`supervisor-report-recorded`. A turn that ended without a receipt is not staged by the daemon;
+stage it with its `reporting-show` reading.
 
 After a supervisor handover, stage the project again. A report staged for the former
 supervisor and never sent is re-addressed to the live one under the same message; one that was

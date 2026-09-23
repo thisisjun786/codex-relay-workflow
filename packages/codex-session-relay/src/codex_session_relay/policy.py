@@ -34,6 +34,10 @@ class RetryPolicy:
     max_turn_reads_per_tick: int = 8
     min_relationship_share: int = 2
     max_sends_per_parent_per_tick: int = 2
+    # The automatic supervisor pass (CRW-215). Projects are re-derived per tick, so their count
+    # is capped as well as the sends: a store with many projects must not make one tick long.
+    max_supervisor_projects_per_tick: int = 4
+    max_supervisor_sends_per_tick: int = 2
     # Supervision cadence. A worker is bounded by segment_seconds; the supervisor replaces it,
     # which is what carries an assignment past any single process lifetime.
     segment_seconds: float = 3600.0

@@ -2705,6 +2705,9 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 # pass records and queues; the Linear write itself needs a credential this
                 # process does not hold.
                 faults=services.faults,
+                # So what a project owes the level above goes up without the parent having to
+                # remember it (CRW-215): the same staging and send path a parent runs by hand.
+                supervisor_channel=services.supervisor_channel,
             )
             try:
                 service.publish_worker_policy(rolepolicy.snapshot_record())

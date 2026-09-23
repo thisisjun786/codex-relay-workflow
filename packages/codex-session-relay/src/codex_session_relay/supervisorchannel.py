@@ -1058,6 +1058,39 @@ class SupervisorChannel:
             " this channel, and the obligation stands until the Linear record confirms it",
         )
 
+    def stage_unsent(self, project_key) -> dict:
+        """stage_standing for an automatic caller: only what staging can still change.
+
+        A standing obligation with no message yet is staged. One whose message is still unsent
+        - claimable, or held superseded_by_report - is staged again, because that is how a
+        handover re-addresses it and a derived hold is re-derived. One whose message is on its
+        way, sent, read or held uncertain is left alone: staging it again could only answer that
+        it went, and asking that under the write lock on every tick is what a pass that runs
+        with nobody watching must not do. The manual stage_standing is unchanged.
+        """
+        standing = supervision.standing_for(self.store, self.linkage, project_key)
+        staged, refused, skipped = [], [], 0
+        for obligation in standing["standing"]:
+            row = self.store.one(
+                "SELECT state, hold_reason FROM supervisor_messages WHERE obligation_id = ?"
+                " ORDER BY staged_at DESC LIMIT 1", (obligation["obligationId"],))
+            if row is not None and not (
+                    row["state"] in CLAIMABLE
+                    and row["hold_reason"] in (None, SUPERSEDED_HOLD)):
+                skipped += 1
+                continue
+            try:
+                staged.append(self.stage(obligation))
+            except DeliveryRefused as refusal:
+                refused.append({
+                    "obligationId": obligation["obligationId"],
+                    "kind": obligation["kind"],
+                    "reason": refusal.reason.value if refusal.reason else None,
+                    "detail": refusal.detail,
+                })
+        return {"schema": VERSION, "projectKey": project_key, "staged": staged,
+                "refused": refused, "skipped": skipped, "gaps": standing["gaps"]}
+
     def stage_standing(self, project_key, *, observations=()) -> dict:
         """Everything a project still owes upward, staged in one call.
 
