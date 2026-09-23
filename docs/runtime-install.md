@@ -1910,7 +1910,9 @@ cannot contradict the values the adapter observed once and recorded in one place
 transcript path, the guard's stderr and detail, the configuration path, which of the two modes the
 settings named, and the receipt values an answer carries). It checks the types of those the adapter
 forms itself and the time format, not the values; the receipt values are copied from the guard's
-answer as they came, so any JSON value there is one the adapter writes. That the host
+answer as they came, so any JSON value there is one the adapter writes. A duplicate row records
+one invocation's attempt, so a copy of one under a new slot reads as one more late delivery, which
+it cannot be told apart from; neither is an acceptance or an effect. That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
 with every record in the live journal, but it is not a documented host contract; a host that ran a
 Stop before recording both that sampling's continuation and its answer would show the previous
