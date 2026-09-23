@@ -751,6 +751,133 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                                            observation=self.observed(), ledger=ledger)
         self.assertEqual(self.kinds(refused), [packets.WRONG_WORKFLOW])
 
+    def resume_for(self, relationship, recipient, issue, subject, **overrides):
+        base = dict(direction=P2C, purpose="resume", relation_id=relationship["relationshipId"],
+                    sender=PARENT, recipient=recipient, subject=subject, issue=issue,
+                    relation_revision=self.revision(relationship), callback=self.a_callback(),
+                    policy_record=self.a_policy(),
+                    artifact=packets.pull_request(repository=REPOSITORY, number=107,
+                                                  head_sha=HEAD))
+        base.update(overrides)
+        return packets.compose(**base)
+
+    def test_an_assignment_accepted_in_a_revision_generation_is_held_for_the_tenure(self):
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        self.registry.open_generation(rid, dispatch_request_id="dispatch-rev-2",
+                                      reason="needs_changes_revision")
+        assignment = packets.compose(
+            direction=P2C, purpose="assignment", relation_id=rid, sender=PARENT,
+            recipient=CHILD, subject="assignment-in-2", issue=ISSUE,
+            relation_revision=self.revision(relationship), criteria_digest=self.digest(),
+            policy_record=self.a_policy(), callback=self.a_callback(), body=BODY)
+        _code, answer = self.packet_check(assignment, receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+        with open(ledger, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["assignments"][rid]["dispatchRequestId"],
+                             "dispatch-1")
+        _code, resumed = self.packet_check(
+            self.resume_for(relationship, CHILD, ISSUE, "resume-in-2"),
+            receiver_id=CHILD, observation=self.observed(), ledger=ledger)
+        self.assertEqual(resumed["disposition"], packets.ACCEPTED, resumed)
+        other = packets.compose(
+            direction=P2C, purpose="assignment", relation_id=rid, sender=PARENT,
+            recipient=CHILD, subject="assignment-other", issue=ISSUE,
+            relation_revision=self.revision(relationship), criteria_digest=self.digest(),
+            policy_record=self.a_policy(workflow="CXC Loop under another procedure"),
+            callback=self.a_callback(), body=BODY)
+        _code, refused = self.packet_check(other, receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(self.kinds(refused), [packets.WRONG_WORKFLOW])
+
+    def test_only_a_registration_begins_a_tenure(self):
+        # A generation opened with the initial_assignment reason is still a generation, not a
+        # registration: the tenure and what its assignment gave stand.
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        _code, first = self.packet_check(self.first_assignment(dispatch="dispatch-1",
+                                                               issue=ISSUE),
+                                         receiver_id=CHILD, ledger=ledger)
+        self.assertTrue(first["act"], first)
+        self.registry.open_generation(rid, dispatch_request_id="dispatch-x",
+                                      reason="initial_assignment")
+        _code, resumed = self.packet_check(
+            self.resume_for(relationship, CHILD, ISSUE, "resume-after-x"),
+            receiver_id=CHILD, observation=self.observed(), ledger=ledger)
+        self.assertEqual(resumed["disposition"], packets.ACCEPTED, resumed)
+
+    def returned(self, relationship):
+        """A -> B -> A on one unscoped relationship id; the returned registration."""
+        successor = "01child-b"
+        self.adapter.add_thread(successor)
+        other = self.registry.register(
+            parent=self.parent,
+            child=Endpoint(successor, HOST, cwd=self.root, cxc_session="cxc-b"),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT, successor],
+            dispatch_request_id="dispatch-b", dispatch_turn_id="turn-b",
+            supersedes=relationship["relationshipId"], project_key=None)
+        record_settings(self.store, self.clock, successor,
+                        task_settings(self.root, model=CHILD_MODEL,
+                                      reasoningEffort=CHILD_EFFORT),
+                        source="creation_result")
+        return self.registry.register(
+            parent=self.parent,
+            child=Endpoint(CHILD, HOST, cwd=self.root, cxc_session="cxc-" + CHILD),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT, CHILD],
+            dispatch_request_id="dispatch-return", dispatch_turn_id="turn-return",
+            supersedes=other["relationshipId"], project_key=None)
+
+    def test_a_returned_tenure_whose_opening_row_is_gone_is_unread_not_the_old_one(self):
+        relationship = self.registered(project=None)
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "return-ledger.json")
+        self.packet_check(self.first_assignment(dispatch="dispatch-1", issue=ISSUE),
+                          receiver_id=CHILD, ledger=ledger)
+        back = self.returned(relationship)
+        self.registry.open_generation(rid, dispatch_request_id="dispatch-rev",
+                                      reason="needs_changes_revision")
+        self.store.db.execute(
+            "DELETE FROM generations WHERE relationship_id = ? AND execution_generation = ?",
+            (rid, back["executionGeneration"]))
+        _code, answer = self.packet_check(
+            self.resume_for(relationship, CHILD, ISSUE, "resume-returned",
+                            generation=back["executionGeneration"] + 1),
+            receiver_id=CHILD, observation=self.observed(), ledger=ledger)
+        self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
+        self.assertFalse(answer["act"], answer)
+
+    def test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted(self):
+        relationship = self.registered(project=None)
+        ledger = os.path.join(self.tmp, "return-ledger.json")
+        stale = self.resume_for(relationship, CHILD, ISSUE, "resume-tenure-1")
+        # One tenure: a generation-less packet on an unscoped relationship is not stranded.
+        self.packet_check(self.first_assignment(dispatch="dispatch-1", issue=ISSUE),
+                          receiver_id=CHILD, ledger=ledger)
+        _code, current = self.packet_check(stale, receiver_id=CHILD,
+                                           observation=self.observed(), ledger=ledger)
+        self.assertEqual(current["disposition"], packets.ACCEPTED, current)
+        back = self.returned(relationship)
+        self.packet_check(self.first_assignment(dispatch="dispatch-return", issue=ISSUE,
+                                                subject="REL-RETURN"),
+                          receiver_id=CHILD, ledger=ledger)
+        # Delayed from the first tenure: no revision and no generation tie it to this one.
+        late = self.resume_for(relationship, CHILD, ISSUE, "resume-tenure-1-late")
+        _code, answer = self.packet_check(late, receiver_id=CHILD,
+                                          observation=self.observed(), ledger=ledger)
+        self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
+        self.assertFalse(answer["act"], answer)
+        # One that states the generation it belongs to is compared on it.
+        old = self.resume_for(relationship, CHILD, ISSUE, "resume-gen-1", generation=1)
+        _code, answer = self.packet_check(old, receiver_id=CHILD,
+                                          observation=self.observed(), ledger=ledger)
+        self.assertEqual(self.kinds(answer), [packets.STALE_GENERATION], answer)
+        now = self.resume_for(relationship, CHILD, ISSUE, "resume-now",
+                              generation=back["executionGeneration"])
+        _code, answer = self.packet_check(now, receiver_id=CHILD,
+                                          observation=self.observed(), ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+
     def test_a_policy_of_the_wrong_shape_is_refused_and_leaves_the_ledger_usable(self):
         # Read back from disk, a packet never went through policy(). A workflow that is not
         # text used to be accepted and written into the ledger, which the next check then
