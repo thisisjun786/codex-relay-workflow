@@ -3314,15 +3314,27 @@ def anchor_relationship(db, fault):
     relationship = _json(fault["signature"]).get("relationship")
     row = None
     if _named(relationship):
-        row = db.execute("SELECT relationship_id, status, parent_task_id FROM relationships"
+        row = db.execute("SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
                          " WHERE relationship_id = ?", (relationship,)).fetchone()
     issue = _json(fault["scope"]).get("issueKey")
     if row is None and _named(issue):
         row = db.execute(
-            "SELECT relationship_id, status, parent_task_id FROM relationships"
+            "SELECT relationship_id, issue_key, status, parent_task_id FROM relationships"
             " WHERE issue_key = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
             (issue,)).fetchone()
     return row
+
+
+# What a notice may name an issue by: a tracker identifier (TEAM-123) or a UUID. Both leave no
+# room for free text, so nothing a caller typed - an adoption's reference, an observation's scope
+# - reaches the level above through an issue field.
+ISSUE_REFERENCE = re.compile(r"[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}"
+                             r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def issue_reference(value):
+    """value when it is an issue identifier a notice may carry, else None."""
+    return value if isinstance(value, str) and ISSUE_REFERENCE.fullmatch(value) else None
 
 
 def _notice_reason(raw):
@@ -3369,9 +3381,15 @@ def notice_facts(db, notification):
         "cycle": row["cycle"], "state": row["state"], "leaseUntil": row["lease_until"],
         "attempts": row["attempts"], "product": row["product"],
         "faultClass": row["fault_class"], "severity": row["severity"],
-        "faultState": row["fault_state"], "externalRef": row["external_ref"],
+        "faultState": row["fault_state"],
+        # The issue the fault published or adopted, only as an identifier; anything else is
+        # said to exist and left on the fault (fault-show).
+        "externalRef": issue_reference(row["external_ref"]),
+        "issuePublished": bool(row["external_ref"]),
         "relationshipId": anchor["relationship_id"] if anchor is not None else None,
-        "issueKey": _json(row["scope"]).get("issueKey"),
+        # The issue its relationship was registered for - the field every supervisor report
+        # carries - never the observation's scope, and only as an identifier.
+        "issueKey": issue_reference(anchor["issue_key"]) if anchor is not None else None,
     }
 
 

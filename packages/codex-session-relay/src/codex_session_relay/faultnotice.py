@@ -105,6 +105,9 @@ class NoticeDeliverer:
         if not relation:
             return ("no relationship this store holds places fault " + notification["faultId"]
                     + " under a project, so there is no level above to tell")
+        if faults.issue_reference(anchor["issue_key"]) is None:
+            return ("the issue relationship " + relation + " names is not an issue identifier"
+                    " (TEAM-123 or a UUID), so no notice can name it; fault-show has the fault")
         try:
             resolution = self.channel.resolve(relation)
         except DeliveryRefused as refusal:

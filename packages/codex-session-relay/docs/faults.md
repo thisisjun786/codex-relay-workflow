@@ -954,7 +954,11 @@ resolved) or `fault_decision`, class, severity, state, product, the notification
 reason, the issue once published, the fault id - and points at `fault-show` on this store; the
 fault's recorded detail and evidence never travel, and neither do a caller's own words: a
 decision a caller raised says only that it was raised, and its words stay on the notification
-(`fault-notifications`). It is recomposed where its transport starts, so it states the fault as
+(`fault-notifications`). An issue is named only as an identifier (`TEAM-123` or a UUID,
+`issue_reference`): the notice's issue is the one its relationship was registered for, never the
+observation's scope, and a published or adopted reference that is not an identifier is said to
+exist and left on the fault; a relationship whose issue is not an identifier leaves the
+notification waiting with that reason. It is recomposed where its transport starts, so it states the fault as
 it stands then. Its message id is derived from the fault and the `deliveryKey` alone, and it is
 addressed from the relationship the fault is about at that moment: a fault moved to an issue
 with no relationship is not sent to the hierarchy it left, it waits; moved to another, its

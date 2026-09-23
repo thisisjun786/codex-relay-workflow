@@ -480,3 +480,29 @@ class WhatTheFirstAuditFound(NoticeCase):
         self.assertEqual(self.notification(fault)["state"], faults.RESERVED)
         self.ledger.ack_notification(one["notificationId"], token=one["token"], ref=message_id)
         self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
+
+
+class WhatTheSecondAuditFound(NoticeCase):
+    """Plan audit, round two: no value a caller typed reaches the level above through an issue
+    field - an adoption's reference, or an observation's scope."""
+
+    def test_an_adopted_reference_that_is_not_an_identifier_is_not_sent(self):
+        fault = self.broken(adopt={"externalRef": "REL-9 token=" + SECRET,
+                                   "scope": {"projectKey": PROJECT}})
+        self.tick()
+        sent = self.sent_for(self.notification(fault))
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn(SECRET, sent[0][2])
+        self.assertIn("an issue is published", sent[0][2])
+
+    def test_an_observed_issue_key_is_not_what_the_notice_names(self):
+        answer = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="delivery_stalled", severity=faults.BROKEN,
+            signature={"relationship": self.rid, "cause": "scoped"},
+            occurrence_key="test:scoped",
+            scope={"projectKey": PROJECT, "issueKey": "REL-9 token=" + SECRET}, detail="x"))
+        self.tick()
+        sent = self.sent_for(self.notification(answer["faultId"]))
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn(SECRET, sent[0][2])
+        self.assertIn("issue: " + ISSUE, sent[0][2], "the relationship's registered issue")

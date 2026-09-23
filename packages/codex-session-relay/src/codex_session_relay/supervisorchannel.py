@@ -793,8 +793,7 @@ class SupervisorChannel:
         at = self.clock.iso()
         if "notice" in current:
             packet = self.compose_notice(current["notice"], resolution=current["live"],
-                                         observed_at=at,
-                                         relation_id=row["relationship_id"])
+                                         observed_at=at)
         else:
             packet = self.compose(current["obligation"], resolution=current["live"],
                                   reading=current["reading"], observed_at=at,
@@ -1417,8 +1416,7 @@ class SupervisorChannel:
                 " tell; the notification waits")
         resolution = self.resolve(relation)
         observed_at = self.clock.iso()
-        packet = self.compose_notice(notice, resolution=resolution, observed_at=observed_at,
-                                     relation_id=relation)
+        packet = self.compose_notice(notice, resolution=resolution, observed_at=observed_at)
         message_id = packet["envelope"]["messageId"]
         at = self.clock.iso()
         with self.store.composing() as db:
@@ -1559,8 +1557,7 @@ class SupervisorChannel:
                    else "no relationship") + " now")}
         staged = json.loads(row["packet"])
         packet = self.compose_notice(notice, resolution=live,
-                                     observed_at=staged["envelope"].get("observedAt"),
-                                     relation_id=row["relationship_id"])
+                                     observed_at=staged["envelope"].get("observedAt"))
         if packet == staged:
             return {"kind": None, "live": live}
         return {"kind": "restated", "live": live, "notice": notice, "obligation": None,
@@ -1568,7 +1565,7 @@ class SupervisorChannel:
                 "detail": "what notification " + repr(row["obligation_id"]) + " says about"
                           " its fault moved after it was staged"}
 
-    def compose_notice(self, notice, *, resolution, observed_at=None, relation_id=None) -> dict:
+    def compose_notice(self, notice, *, resolution, observed_at=None) -> dict:
         """The relay-packet/1 a fault notification travels as.
 
         What the fault is - class, severity, state, product, the notification's kind and
@@ -1578,8 +1575,8 @@ class SupervisorChannel:
 
         Its envelope relation is the fault ("fault:<id>") and its subject the deliveryKey, so
         its message id is the notification's own and does not move when the relationship
-        addressing it does (relation_id, which only supplies the issue when the fault's scope
-        names none).
+        addressing it does. Its issue is the one that relationship was registered for, and only
+        as an identifier (faults.issue_reference); without one nothing is composed.
         """
         purpose = NOTICE_PURPOSE.get(notice["kind"])
         if purpose is None:
@@ -1587,8 +1584,13 @@ class SupervisorChannel:
                 RefusalReason.MALFORMED_RECEIPT,
                 repr(notice["kind"]) + " is not a notification kind a notice carries; it"
                 " carries " + ", ".join(sorted(NOTICE_PURPOSE)))
-        relation = relation_id or notice["relationshipId"]
-        issue = notice.get("issueKey") or self._issue_of(relation)
+        issue = notice.get("issueKey")
+        if not issue:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the issue fault " + repr(notice["faultId"]) + "'s relationship names is not an"
+                " issue identifier (TEAM-123 or a UUID), so no notice names it; nothing was"
+                " composed")
         decision = None
         if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
             decision = ("fault " + str(notice["faultClass"]) + " (" + str(notice["product"])
@@ -3078,7 +3080,8 @@ def _notice_basis(notice):
              + (": " + notice["reason"] if notice.get("reason") else "")
              + ", cycle " + str(notice["cycle"]),
              ("issue " + str(notice["externalRef"])) if notice.get("externalRef")
-             else "no issue published yet",
+             else ("an issue is published (its reference is on the fault)"
+                   if notice.get("issuePublished") else "no issue published yet"),
              "fault " + str(notice["faultId"])]
     return "; ".join(parts)
 
