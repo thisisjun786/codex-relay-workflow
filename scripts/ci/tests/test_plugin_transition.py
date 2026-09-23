@@ -623,7 +623,7 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
     rebuild after a disable wrote a record that starts a bridge checking no role.
     """
 
-    def with_policy(self):
+    def with_policy(self, args=()):
         host = self.ready()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
@@ -635,14 +635,30 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         # then register again with the policy.
         record = host.home / "crw-bridge-mcp.json"
         record.rename(record.with_name("crw-bridge-mcp.json.pre-policy"))
+        # "=" form, because an argument that starts with "--" would otherwise read as an option.
+        extra = ["--bridge-arg=" + value for value in args]
         done = run([RUNTIME, "register-mcp", "--owner", "plugin", "--codex-home", host.home,
                     "--bridge-command",
                     host.destination / "current" / "bin" / "codex-thread-bridge",
-                    "--execution-policy", policy, "--apply"])
+                    "--execution-policy", policy, *extra, "--apply"])
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         reference = host.record()["executionPolicy"]
         self.assertEqual(reference["path"], str(policy))
         return host, reference
+
+    def test_a_rerun_keeps_the_arguments_a_live_plugin_record_names(self):
+        """Review of 3c603f93: the rerun took arguments from an archive or none, not the record.
+
+        register-mcp --owner plugin --bridge-arg writes a record the launcher starts; a transition
+        rerun then refused that record as differing on args, and preflight stopped on it.
+        """
+        host, reference = self.with_policy(args=("--socket", "/run/crw218/app-server.sock"))
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        self.assertEqual(host.record()["args"], ["--socket", "/run/crw218/app-server.sock"])
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.outcomes(answer)["mcp record install"], "already_done")
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
 
     def test_a_rerun_on_a_host_whose_record_names_a_policy_changes_nothing(self):
         host, reference = self.with_policy()

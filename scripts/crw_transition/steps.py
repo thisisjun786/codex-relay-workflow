@@ -1793,6 +1793,11 @@ def mcp_record_install(host, options, *, apply=False):
     # restored historical arguments the current registration had deliberately dropped.
     if registration:
         arguments = list(registration.get("args") or [])
+    elif bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
+        # A live plugin record already names what the plugin starts, its arguments included, the
+        # way it supplies the executable and the policy. Taking them from an archive, or none,
+        # made a rerun refuse its own record as differing.
+        arguments = list(live.get("args") or [])
     elif retired is not None:
         arguments = list(retired.get("args") or [])
     else:
