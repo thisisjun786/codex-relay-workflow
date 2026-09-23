@@ -184,6 +184,14 @@ unread.
 | mode | the receiver's reception ledger (below) |
 | repository, prNumber, headSha, artifactPath, artifactDigest | only `--observation` |
 
+The role policy both refusal lists are judged by is the one this store's service declares
+(`service declare --execution-policy`), applied to the check's own process before it reads
+any policy, exactly as a launch applies it; with none declared, the variable in the check's
+environment. A variable naming another file than the declaration, or a declaration that
+cannot be read, refuses the check as `launch_policy_conflict` or `launch_policy_unreadable`
+rather than choosing one. With neither, every role-bound packet is unavailable and the notes
+say what is missing. Nothing is written.
+
 The relationship is chosen among the receiver's own rows: its one live relationship where it
 has exactly one, otherwise the row the packet names if it is one of the receiver's. A first
 assignment names its dispatch rather than a relationship, so for one the row is the single

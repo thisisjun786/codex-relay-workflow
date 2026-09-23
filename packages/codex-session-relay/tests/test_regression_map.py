@@ -225,6 +225,10 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
 #     production SQL into this module and fail it on an unrelated query edit.
 
 SUMMARIES = {
+    # packet-check reading the receiver's own store: the command and --receiver, false from
+    # either alone. main reads it to apply the service's declared role policy before the
+    # snapshot; test_store_reception.py runs the check with and without each.
+    ("cli.py", None, "_receives_against_the_store", "function"): ((False,), (), ()),
     # Replay equality folds entries, digest, source and mode; public tests independently
     # vary each input and assert that a stored set is preserved on refusal.
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),

@@ -493,7 +493,9 @@ def _role_refusals(rows, task_id, settings, key, answer, notes):
         return
     policy = rolepolicy.declared()
     if not policy:
-        notes.append("no role policy resolved in this process, so whether the recorded pair of "
+        notes.append("no role policy resolved for this check (" + str(policy.detail) + "; it"
+                     " reads the one this store's service declares with service declare"
+                     " --execution-policy, else the variable), so whether the recorded pair of "
                      + task_id + " is authorised for " + bound + " is unchecked")
         return
     model, effort = rolepolicy.recorded_pair(settings)

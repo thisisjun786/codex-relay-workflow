@@ -3188,6 +3188,12 @@ def _apply_launch_policy(service, environ) -> dict | None:
     return None
 
 
+def _receives_against_the_store(args) -> bool:
+    """packet-check reading the receiver's own store, which judges pairs by the role policy."""
+    return (getattr(args, "handler", None) is cmd_packet_check
+            and bool(getattr(args, "receiver", None)))
+
+
 def _supervise(services, service, args) -> dict:
     """The supervisor: it holds the locks and replaces bounded workers."""
     from .service import ServiceRefused
@@ -5440,8 +5446,15 @@ def main(argv=None) -> int:
         # A supervisor launched BY that service already carries its decision in this
         # environment, and says so. Re-reading the declaration here would let one written in
         # the meantime refuse a launch whose predecessor has already been stopped.
+        #
+        # The store-backed receive step reads the same declaration. It judges recorded pairs
+        # against the role policy, and it runs in whatever shell the receiver has: read from
+        # that environment alone, a shell without the variable made every role-bound packet
+        # unavailable, and one naming another file judged pairs by a policy the relay does not
+        # enforce. Nothing is written; a conflict or an unreadable declaration is refused.
         if (getattr(args, "service_command", None) == "run"
-                and _launch_already_settled(args, os.environ) is None):
+                and _launch_already_settled(args, os.environ) is None) \
+                or _receives_against_the_store(args):
             refused = _apply_launch_policy(_service_for(services), os.environ)
             if refused is not None:
                 raise PayloadExit(refused, EXIT_REFUSED)
