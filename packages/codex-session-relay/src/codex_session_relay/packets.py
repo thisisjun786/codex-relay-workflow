@@ -71,8 +71,11 @@ REQUIRED_BY_PURPOSE = {
     # The generation here is the one the verdict OPENS, not the one being superseded, and a
     # correction that names the current one names the generation the child has just stopped
     # working in. The artifact is what is being corrected, so it is named too.
+    # And it says what it corrects: the body in the correction form (the violated criterion,
+    # what changed, the fix scope, what to preserve, what to re-verify and when to return)
+    # and the evidence it rests on. Without them a correction is answered from memory.
     (envelope.PARENT_TO_CHILD, "revision_request"): (
-        ISSUE, GENERATION, CRITERIA_DIGEST, CALLBACK, ARTIFACT),
+        ISSUE, GENERATION, CRITERIA_DIGEST, CALLBACK, ARTIFACT, BODY, EVIDENCE),
     # A resume restates what the coordinator holds and the task cannot reconstruct alone.
     # POLICY is required because a transport carries model and effort as settings and has no
     # field for the workflow at all, so a resume that omits it has dropped it in silence.
@@ -119,6 +122,14 @@ REQUIRED_BY_PURPOSE = {
 # task id belonging to somebody else and therefore the worst kind of wrong answer.
 RECORD_TASK_KEY = {"parent": "parentTaskId", "child": "childTaskId",
                    "supervisor": "supervisorTaskId"}
+
+# Which section form a body is read against. A correction has its own form; every other body
+# is an instruction under DISPATCH-TASK-01, which is what assignment bodies always were.
+BODY_SECTIONS = {
+    (envelope.PARENT_TO_CHILD, "revision_request"): (cxc.correction_problems,
+                                                      "the correction form"),
+}
+DEFAULT_BODY_SECTIONS = (cxc.dispatch_problems, "DISPATCH-TASK-01")
 
 
 def required_for(direction, purpose) -> tuple:
@@ -579,6 +590,9 @@ def check(one, *, required=None) -> None:
                 RefusalReason.MALFORMED_RECEIPT,
                 repr(one[POLICY][MODE]) + " is not an execution mode; it is one of "
                 + ", ".join(sorted(MODES)))
+        contradiction = _mode_problem(one[POLICY])
+        if contradiction:
+            raise PacketRefused(RefusalReason.MALFORMED_RECEIPT, contradiction)
     if one.get(CALLBACK) is not None:
         wrong = _callback_problems(one[CALLBACK])
         if wrong:
@@ -589,12 +603,13 @@ def check(one, *, required=None) -> None:
     if _present(one.get(ARTIFACT)) is not None:
         _check_artifact(one[ARTIFACT])
     if _present(one.get(BODY)) is not None:
-        missing = cxc.dispatch_problems(one[BODY])
+        problems_of, form = BODY_SECTIONS.get((direction, purpose), DEFAULT_BODY_SECTIONS)
+        missing = problems_of(one[BODY])
         if missing:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 "the instruction body is missing " + ", ".join(missing)
-                + "; DISPATCH-TASK-01 fixes these sections because an instruction that omits"
+                + "; " + form + " fixes these sections because an instruction that omits"
                 " one is an instruction the recipient has to guess at")
     if one.get("activation") is not None:
         # Presence rather than _present: an empty list is not an absent reading, it is a
@@ -627,6 +642,33 @@ def check(one, *, required=None) -> None:
                 "an activation reading states the mode it was read under, one of "
                 + ", ".join(sorted(MODES)) + ", not " + repr(triple.get(MODE))
                 + "; not_applicable means something only under a mode that arms nothing")
+        # Read under its own mode, so a loop reading cannot answer not_applicable; the class
+        # function already refuses that, and it is the rule rather than a restatement of it.
+        activation_class(triple, mode=triple[MODE])
+        settings = one.get(POLICY)
+        if _present(settings) is not None and settings.get(MODE) != triple[MODE]:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the activation reading was taken under mode " + repr(triple[MODE])
+                + " and the policy this packet states runs under " + repr(settings.get(MODE))
+                + "; one packet cannot say both, and an audit's not_applicable is not a loop"
+                " child's")
+
+
+def _mode_problem(settings):
+    """The one contradiction the workflow's wording can show, or None.
+
+    The mode is never inferred from the workflow: prose is what this module refuses to turn
+    into a fact. But a workflow that names CXC Loop and states another mode says two things at
+    once, and that is refused rather than resolved in favour of either.
+    """
+    words = "".join(ch if ch.isalnum() else " " for ch in str(settings.get("workflow"))
+                    ).casefold().split()
+    names_loop = any(words[i:i + 2] == ["cxc", "loop"] for i in range(len(words) - 1))
+    if names_loop and settings.get(MODE) != LOOP:
+        return ("the workflow names CXC Loop and the policy says " + repr(settings.get(MODE))
+                + "; the Loop arms a goalplan, so its mode is loop")
+    return None
 
 
 # ---------------------------------------------------------------- agreement with the record

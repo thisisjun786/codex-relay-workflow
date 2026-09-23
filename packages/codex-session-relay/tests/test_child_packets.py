@@ -41,6 +41,15 @@ BODY = chr(10).join((
     "RETURN FORMAT: result.json plus a final report naming that head",
     "DECISION BOUNDARY: routine implementation choices are yours; a scope change comes back",
 ))
+# A correction says what it corrects, in its own form, and carries the evidence it rests on.
+CORRECTION_BODY = chr(10).join((
+    "VIOLATED CRITERION: criterion 5, the review on the current head is unresolved",
+    "WHAT CHANGED: a finding arrived on the head the child reported",
+    "FIX SCOPE: the file the finding names",
+    "PRESERVE: the pull request, its branch and every passing check",
+    "REVERIFY AND RETURN: rerun the suite on the new head and report review_ready",
+))
+CORRECTION_EVIDENCE = ["/state/crw/crw-149/evidence/finding.txt"]
 
 
 def a_policy(**overrides):
@@ -266,7 +275,7 @@ class ACorrectionArrivingTwice(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback=a_callback(),
+            callback=a_callback(), body=CORRECTION_BODY, evidence=CORRECTION_EVIDENCE,
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
@@ -511,7 +520,8 @@ class TheWholeRoundTrip(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST, callback=callback,
-            artifact=candidate, relation_revision=REVISION)
+            artifact=candidate, relation_revision=REVISION, body=CORRECTION_BODY,
+            evidence=CORRECTION_EVIDENCE)
         self.accepted(correction, record)
 
         # The same child, the same pull request, a new head. Nothing here creates a second
@@ -769,7 +779,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback=a_callback(),
+            callback=a_callback(), body=CORRECTION_BODY, evidence=CORRECTION_EVIDENCE,
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
