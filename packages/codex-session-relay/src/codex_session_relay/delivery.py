@@ -958,14 +958,11 @@ class DeliveryService:
                     (request_id, event_id, report["submissionNo"], self.clock.iso()),
                 )
             # Capacity is reserved in the SAME transaction as the claim. Counting after the
-            # send let two interleaved callers both pass a cap of one.
-            self._count_send(db, recipient, now)
-            window = int(now // 3600) * 3600
-            used = db.execute(
-                "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
-                (recipient, window),
-            ).fetchone()
-            if used and used["sends"] > self.policy.max_sends_per_recipient_per_hour:
+            # send let two interleaved callers both pass a cap of one. The gap between sends
+            # is decided here too, by the one predicate the supervisor channel's claim also
+            # calls: the two share this recipient's budget, and a bound only one of its
+            # writers re-checks inside its write is a bound the other one does not obey.
+            if reserve_send(db, self.policy, recipient, now) is not None:
                 raise _NotClaimable()
         return attempt_no, request_id, message
 
@@ -1193,28 +1190,12 @@ class DeliveryService:
         return {"findings": json.loads(row["findings"]), "observedAt": row["observed_at"]}
 
     def _rate_limited(self, recipient: str, now: float) -> bool:
-        window = int(now // 3600) * 3600
-        row = self.store.one(
-            "SELECT sends, last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
-            " AND window_start = ?",
-            (recipient, window),
-        )
-        if row is None:
-            return False
-        if row["sends"] >= self.policy.max_sends_per_recipient_per_hour:
-            return True
-        last = row["last_send_at"]
-        return last is not None and (now - last) < self.policy.min_send_interval_seconds
+        """The preflight: the claim's own predicate, read before the host is.
 
-    def _count_send(self, db, recipient: str, now: float) -> None:
-        window = int(now // 3600) * 3600
-        db.execute(
-            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
-            " VALUES (?,?,1,?)"
-            " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
-            " sends = sends + 1, last_send_at = excluded.last_send_at",
-            (recipient, window, now),
-        )
+        An optimisation and nothing more. Two callers can both pass it, so what actually
+        bounds the recipient is reserve_send inside _claim.
+        """
+        return send_refusal(self.store.db, self.policy, recipient, now) is not None
 
     def _reschedule(self, event_id: str, state: str, when: float, *, attempts: int) -> None:
         # Guarded on the state and attempt count we observed. Another caller may have
@@ -1878,6 +1859,58 @@ class DeliveryService:
             )
         ]
         return {"deliveries": items, "pendingIntents": intents}
+
+
+def send_refusal(db, policy, recipient: str, now: float):
+    """Why ``recipient`` may not be woken at ``now``, or None when it may.
+
+    ONE predicate for every sender that resumes a task. Deliveries and supervisor reports
+    share one recipient_rate budget on purpose, because the bound limits how often a TASK is
+    woken, and each sender reads this both as a preflight before the host and inside the claim
+    that spends the budget. A copy that only one claim re-checked was a bound only one sender
+    obeyed: a delivery claimed after a supervisor report never re-read last_send_at, and the
+    two woke one task inside the gap.
+
+    The gap is read across windows. last_send_at lives on the hour's row, so a read of the
+    current hour alone let two sends a second apart straddle the boundary.
+    """
+    last = db.execute(
+        "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?",
+        (recipient,),
+    ).fetchone()
+    if (last is not None and last["last"] is not None
+            and (now - last["last"]) < policy.min_send_interval_seconds):
+        return "min_send_interval"
+    window = int(now // 3600) * 3600
+    used = db.execute(
+        "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
+        (recipient, window),
+    ).fetchone()
+    if used is not None and used["sends"] >= policy.max_sends_per_recipient_per_hour:
+        return "hourly_cap"
+    return None
+
+
+def reserve_send(db, policy, recipient: str, now: float):
+    """Spend one send of ``recipient``'s budget inside the caller's claim, or say why not.
+
+    Both claims call this inside their own BEGIN IMMEDIATE, so the read and the write are one
+    serialised step and the second of two racing claims reads the first one's send. A refusal
+    returns before anything is written; the caller raises, and its transaction takes the rest
+    of the claim back with it.
+    """
+    refused = send_refusal(db, policy, recipient, now)
+    if refused is not None:
+        return refused
+    window = int(now // 3600) * 3600
+    db.execute(
+        "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+        " VALUES (?,?,1,?)"
+        " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
+        " sends = sends + 1, last_send_at = excluded.last_send_at",
+        (recipient, window, now),
+    )
+    return None
 
 
 def authorized_settings(store, task_id: str, runtime_status=None):

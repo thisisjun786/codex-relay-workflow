@@ -83,9 +83,14 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    lock is shared in the same way within one adapter worker, which is where it lives; it is
    not a process-wide or durable lock.
    Both halves of the bound - the hourly count and the minimum gap between two sends - are
-   decided inside the claim's own transaction, where the counter moves. The reading taken
-   before the host reads is a preflight that two callers pass at the same moment, neither
-   having seen the other's send, so on its own it paces nothing.
+   decided inside each claim's own transaction by ONE predicate, `delivery.reserve_send`,
+   which the parent-child claim and this channel's claim both call. A bound that only one of
+   its writers re-checks inside its write is a bound the other does not obey: a delivery
+   claimed straight after a report never re-read the gap, and the two woke one task inside it.
+   The gap is read across hour windows, because `last_send_at` lives on the hour's row and
+   reading one hour let two sends a second apart straddle the boundary. Each sender also reads
+   the same predicate before the host, and that is a preflight: two callers pass it at the
+   same moment, so on its own it paces nothing.
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
    It is still weaker than arrival order, deliberately: an older message that is held, inside
@@ -101,6 +106,29 @@ row. In the same transaction it records the report in the existing `supervisor_r
 which is what makes the next reading of that fact converge instead of waking the level above
 again - and what keeps a report that exists from being invisible to the thing that decides
 whether to produce one.
+
+### When the hierarchy moves under a staged report
+
+The message id is the fact's and the endpoints are the hierarchy's, so a handover moves the
+second from under the first. Returning the frozen row as it stood left a report addressed to a
+supervisor who had stepped down: `attempt()` refused it as drift, and the `supervisor_report`
+entry kept a second report from being produced, so the successor was never told.
+
+Staging again recovers it, under one rule. A message that has never been attempted has not
+been seen by anybody, because its bytes are rendered inside the claim, so it is re-addressed
+in place: the same id and the same journal entry, with the live sender, recipient, project key
+and a recomposed packet, and a `supervisor_message_readdressed` entry naming both
+hierarchies. The no-attempt condition is a predicate inside the write, so a claim that commits
+first wins and the re-address becomes a refusal. What the former recipient's state decided goes
+with it: a lifecycle recheck, a backoff and a busy cap were bounds about that task, and the busy
+count restarts from the re-address.
+
+A message with any attempt stays addressed to the task it was sent to. Its attempts describe
+bytes that went there, and moving the row would have them describe a recipient they were never
+sent to. Staging it again refuses as `relation_owner_drift` and names both hierarchies, which is
+how `supervisor-stage --project` reports it under `refused`: the successor has not been told
+through this channel, and the obligation stands until the Linear record confirms it. Sending
+never re-addresses anything; which task a report is for is decided where it is staged.
 
 ### The readback, and exactly what it establishes
 
@@ -146,6 +174,13 @@ There are six verification answers: `host_read`, `transcript_unconfirmed` for a 
 transcript scan did not confirm the message, `transcript_turn_mismatch` where the readback
 names the turn the send opened and the token is in another, `turn_not_found`,
 `turn_predates_send`, and `unverified_turn` where no host could be read at all.
+
+The four facts are read at different moments. The turn is read first and the transcript
+scanned after it, each through its own paged host calls, and the host offers no snapshot or
+revision that could tie the two to one observation. The join is sound because both facts are
+about append-only history - a turn keeps its id and start time once it has them, and an item
+keeps its text and its turn - and it is blind to a host that rewrites history between the two
+reads, such as a rollback that removes the turn or the item. `host_read` does not claim more.
 
 A readback that does not verify is written down, on the path that inserts or updates a row -
 the one taken when no settled `host_read` row exists yet. Hiding it would lose the fact that
@@ -200,10 +235,12 @@ is its own check. Supplying the option proves an argument was supplied, not that
 reachable.
 
 The line the message itself renders is this one with everything the relay already knows filled
-in, leaving three placeholders: the socket path, the recipient's own turn id, and the proof
-over it. Each is a single word, so the rendered line splits into an argv as it stands -
-`tests/test_supervisor_channel.py` hands it to the real parser rather than checking it looks
-like a command.
+in, leaving three placeholders: `YOUR_RELAY_SOCKET`, `YOUR_TURN_ID` and `YOUR_PROOF`. Every
+command a report carries - that line, the evidence pointer and the `supervisor-show` line - is
+built from its arguments with `shlex.quote` rather than by concatenation, because the evidence
+selectors are paths and names a caller chose and a workspace such as `/tmp/My Project` was two
+arguments. `tests/test_supervisor_channel.py` splits each one with `shlex.split` and hands it
+to the real parser rather than checking that it looks like a command.
 
 Neither reaches the host unconditionally. `supervisor-send` returns `sent: false` without
 touching the adapter when the message is held, inside its backoff, or already sent, and only
@@ -269,9 +306,23 @@ row in `sending` with a lease nobody will settle. An expired lease moves it to
 `stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
 when `attempt()` is called for that message again.
 
+## Who calls it today
+
+Nothing in the relay calls this channel on its own. The four commands are the whole entry
+surface: no daemon pass, Stop hook, MCP tool or service stages or sends a report. In live
+operation the caller is the project parent, from inside its own turn - `supervisor-stage
+--project` for what the project owes, then `supervisor-send` for each staged message - and the
+supervisor answers with `supervisor-read` from a turn of its own. crw-run's relay reference
+states that as an instruction to the parent and the relay does not enforce it, so a parent that
+does not run the commands reports nothing through this channel. The reporting duty is carried
+by that instruction, which is weaker than an automatic one, and making it automatic is not part
+of this change.
+
 ## Scope of these claims
 
 Source-implemented and covered by `tests/test_supervisor_channel.py`, which stages, sends and
 reads back against this package's own fake host. That is evidence about this source and about
 that host. It is not an installed runtime, an activated service, or any report reaching any
-supervisor on any machine.
+supervisor on any machine. Whether a real parent stages and sends a report, a real supervisor
+thread receives it, and a real supervisor reads it back is the live round trip, which is run
+after installation and is not shown by this source or its CI.

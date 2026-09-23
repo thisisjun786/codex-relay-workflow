@@ -28,10 +28,11 @@ record the supervisor reads for itself, confirmed, exactly as supervision.discha
 """
 
 import json
+import shlex
 
 from . import envelope, packets, supervision
 from .ack import certainly_before
-from .delivery import authorized_settings
+from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
 from .identity import supervisor_read_proof, supervisor_request_id
 from .lifecycle import observe, record as record_lifecycle
@@ -88,6 +89,32 @@ INITIATIVE = "initiative"
 # truncated scan is inconclusive and never proof of absence.
 TRANSCRIPT_SCAN = 200
 NEWLINE = chr(10)
+# The journal kind a handover's re-address writes. A busy deferral counts from the latest one,
+# because a busy former supervisor is not a reason to hold the report its successor is owed.
+READDRESSED = "supervisor_message_readdressed"
+# What the reader of a message fills in. Each is one shell word, so the rendered line splits
+# into the argv it looks like, and none of them is a value this relay could know.
+SOCKET_PLACEHOLDER = "YOUR_RELAY_SOCKET"
+TURN_PLACEHOLDER = "YOUR_TURN_ID"
+PROOF_PLACEHOLDER = "YOUR_PROOF"
+
+
+def _command(*argv) -> str:
+    """One command line from its arguments, each quoted for a POSIX shell.
+
+    Every command this channel writes into a message goes through here. Concatenating the
+    arguments rendered a workspace such as /tmp/My Project as two of them, so a pointer that
+    looked runnable ran with the wrong path; shlex.split of the result gives back exactly
+    these arguments, which is the property a reader relies on.
+    """
+    return " ".join(shlex.quote(str(one)) for one in argv)
+
+
+def _addressed_as(row, resolution):
+    """Whether a staged row still names the hierarchy that is live now."""
+    return (row["sender_task_id"] == resolution["sender"]
+            and row["recipient_task_id"] == resolution["recipient"]
+            and row["project_key"] == resolution["projectKey"])
 
 
 class _NotClaimable(Exception):
@@ -243,9 +270,15 @@ class SupervisorChannel:
         message_id = packet["envelope"]["messageId"]
         existing = self.find(message_id)
         if existing is not None:
-            return {"schema": VERSION, "staged": False, "messageId": message_id,
-                    "reason": "this fact is already staged; one obligation is one message",
-                    "message": dict(existing)}
+            if _addressed_as(existing, resolution):
+                return {"schema": VERSION, "staged": False, "messageId": message_id,
+                        "reason": "this fact is already staged; one obligation is one message",
+                        "message": dict(existing)}
+            # The id is the FACT's and the endpoints are the hierarchy's, so a handover moves
+            # the second from under the first. Returning the row as it stands is what left a
+            # report staged for a supervisor who had stepped down: attempt() refuses it as
+            # drift, and the journal keeps a replacement from being produced.
+            return self._readdress(existing, packet, resolution)
         decided = supervision.select(self.store, obligation, recipient=None)
         if not decided["report"]:
             raise DeliveryRefused(
@@ -282,6 +315,79 @@ class SupervisorChannel:
                 "reason": "staged" if staged else "another caller staged this fact first",
                 "message": dict(self.get(message_id)),
                 "recipient": resolution["recipient"], "sender": resolution["sender"]}
+
+    def _readdress(self, row, packet, resolution) -> dict:
+        """A staged message whose hierarchy moved before anything was sent.
+
+        Never attempted is the one state in which moving a message is safe, because nothing
+        outside this store has seen it: the bytes are rendered inside the claim, against the
+        endpoints on the row at that moment. So the row is re-addressed IN PLACE - same id,
+        same supervisor_report entry, one obligation still one message - and the condition is
+        a predicate inside the write rather than a check before it, so a claim that commits
+        first wins and this becomes a refusal instead of a second recipient.
+
+        What the former recipient's state decided goes with it. A backoff, a lifecycle recheck
+        and a busy cap were all bounds about THAT task, and carrying them over would have the
+        new supervisor inherit a wait it never caused; the deferral count restarts for the
+        same reason, from this journal entry.
+
+        Anything with an attempt stays frozen. Those bytes went to somebody, possibly as a
+        wake, and moving the row would leave its attempts describing a recipient they were
+        never sent to. The drift is refused by name, which is how it gets reported.
+        """
+        message_id = row["message_id"]
+        was = {"sender": row["sender_task_id"], "recipient": row["recipient_task_id"],
+               "projectKey": row["project_key"]}
+        now_is = {"sender": resolution["sender"], "recipient": resolution["recipient"],
+                  "projectKey": resolution["projectKey"]}
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET sender_task_id = ?, recipient_task_id = ?,"
+                " project_key = ?, packet = ?, state = ?, next_eligible_at = NULL,"
+                " hold_reason = NULL, updated_at = ?"
+                " WHERE message_id = ? AND sender_task_id = ? AND recipient_task_id = ?"
+                "   AND project_key IS ? AND attempt_count = 0 AND state IN (?,?,?)"
+                "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
+                "                    WHERE a.message_id = supervisor_messages.message_id)",
+                (now_is["sender"], now_is["recipient"], now_is["projectKey"],
+                 json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at,
+                 message_id, was["sender"], was["recipient"], was["projectKey"],
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
+            )
+            moved = cursor.rowcount == 1
+            if moved:
+                self.store.journal(
+                    READDRESSED, message_id,
+                    {"from": was, "to": now_is, "releasedHold": row["hold_reason"],
+                     "releasedState": row["state"],
+                     "reason": "the hierarchy moved before anything was sent"}, at=at)
+        current = self.get(message_id)
+        if moved:
+            return {"schema": VERSION, "staged": False, "readdressed": True,
+                    "messageId": message_id, "from": was, "to": now_is,
+                    "reason": "staged for a hierarchy that has since moved, and never"
+                              " attempted, so it now goes to the live supervisor instead",
+                    "message": dict(current),
+                    "recipient": now_is["recipient"], "sender": now_is["sender"]}
+        if _addressed_as(current, resolution):
+            return {"schema": VERSION, "staged": False, "readdressed": False,
+                    "messageId": message_id,
+                    "reason": "another caller re-addressed this message to the live"
+                              " supervisor first",
+                    "message": dict(current),
+                    "recipient": now_is["recipient"], "sender": now_is["sender"]}
+        raise DeliveryRefused(
+            RefusalReason.RELATION_OWNER_DRIFT,
+            "message " + repr(message_id) + " was staged from " + repr(current["sender_task_id"])
+            + " to " + repr(current["recipient_task_id"]) + " and has "
+            + str(current["attempt_count"]) + " attempt(s), state "
+            + repr(current["state"]) + "; the linkage now says " + repr(now_is["sender"])
+            + " reports to " + repr(now_is["recipient"]) + ". A message that was attempted is"
+            " never re-addressed, because its attempts would then describe a recipient they"
+            " were never sent to - so " + repr(now_is["recipient"]) + " has not been told by"
+            " this channel, and the obligation stands until the Linear record confirms it",
+        )
 
     def stage_standing(self, project_key, *, observations=()) -> dict:
         """Everything a project still owes upward, staged in one call.
@@ -371,21 +477,21 @@ class SupervisorChannel:
         basis = obligation.get("basis") or {}
         event_id = basis.get("eventId")
         if event_id:
-            return ["codex-session-relay show --event " + str(event_id)]
+            return [_command("codex-session-relay", "show", "--event", event_id)]
         selectors = _selectors(reading)
         if selectors is not None:
             # An omission has no event, so there is no row to point at and the command that
             # found it is the pointer. It is rendered WHOLE - reporting-show requires every
             # one of these and refuses without them - so the line can be run rather than
-            # merely read.
-            return ["codex-session-relay --state " + str(selectors["state"])
-                    + " reporting-show --marker-root " + str(selectors["markerRoot"])
-                    + " --workspace " + str(selectors["workspace"])
-                    + " --assignment " + str(selectors["assignment"])
-                    + " --session " + str(selectors["session"])
-                    + " --turn " + str(selectors["turn"])]
-        return ["codex-session-relay supervisor-standing --project "
-                + str(resolution.get("projectKey"))]
+            # merely read. The selectors are paths and names a caller chose, so each one is
+            # quoted: a workspace with a space in it was two arguments.
+            return [_command("codex-session-relay", "--state", selectors["state"],
+                             "reporting-show", "--marker-root", selectors["markerRoot"],
+                             "--workspace", selectors["workspace"],
+                             "--assignment", selectors["assignment"],
+                             "--session", selectors["session"], "--turn", selectors["turn"])]
+        return [_command("codex-session-relay", "supervisor-standing", "--project",
+                         resolution.get("projectKey"))]
 
     @staticmethod
     def _scope(resolution, issue):
@@ -417,22 +523,25 @@ class SupervisorChannel:
         lines += [
             "",
             "To confirm you read this, from inside your own turn:",
-            "  codex-session-relay --socket <your-relay-socket> supervisor-read",
-            "    --message " + region["messageId"] + " --turn <your-turn-id>",
-            "    --proof <your-proof> --as " + envelope.shown(region["recipient"]["taskId"]),
+            "  " + _command("codex-session-relay", "--socket", SOCKET_PLACEHOLDER,
+                            "supervisor-read", "--message", region["messageId"],
+                            "--turn", TURN_PLACEHOLDER, "--proof", PROOF_PLACEHOLDER,
+                            "--as", envelope.shown(region["recipient"]["taskId"])),
             "",
-            "Three placeholders and nothing else, each one word so the line splits into an",
-            "argv as it stands: the socket path these bytes cannot know, your own turn id,",
-            "and the proof over it. --socket is global and goes BEFORE the subcommand, and",
-            "--as is required, so the line is refused without either - which is why both are",
-            "written out here rather than left to be remembered.",
+            "Three words on that line are yours to replace: " + SOCKET_PLACEHOLDER + " with",
+            "your relay socket path, which these bytes cannot know, " + TURN_PLACEHOLDER,
+            "with your own turn id, and " + PROOF_PLACEHOLDER + " with the proof over it. Every",
+            "other argument is filled in and quoted for a POSIX shell, so quote a socket path",
+            "that has a space in it too. --socket is global and goes BEFORE the subcommand,",
+            "and --as is required, so the line is refused without either.",
             "",
             "The proof is sha256(messageId|<your own turn id>). This message does not and",
             "cannot contain that turn id, which is what separates reading it from quoting it",
             "back. Confirming is not an answer and agrees to nothing: it is the only thing in",
             "this store that can say the message was read.",
             "",
-            "Full record: codex-session-relay supervisor-show --message " + region["messageId"],
+            "Full record: " + _command("codex-session-relay", "supervisor-show", "--message",
+                                       region["messageId"]),
         ]
         return NEWLINE.join(lines)
 
@@ -486,14 +595,19 @@ class SupervisorChannel:
         # Re-read immediately before the send, the way delivery re-checks authorization inside
         # attempt(): a handover committed since staging must not be delivered through.
         resolution = self.resolve(row["relationship_id"])
-        if (resolution["recipient"] != recipient
-                or resolution["sender"] != row["sender_task_id"]):
+        if not _addressed_as(row, resolution):
+            # Sending never re-addresses: which task a report is FOR is decided where it is
+            # staged, so this refuses and says how the report recovers.
+            recovery = (" It was never attempted, so staging it again re-addresses it to the"
+                        " live supervisor" if row["attempt_count"] == 0 else
+                        " It has been attempted, so it stays addressed to the task it was"
+                        " sent to and is not re-addressed")
             raise DeliveryRefused(
                 RefusalReason.RELATION_OWNER_DRIFT,
                 "this message was staged from " + repr(row["sender_task_id"]) + " to "
                 + repr(recipient) + " and the linkage now says " + repr(resolution["sender"])
                 + " reports to " + repr(resolution["recipient"]) + "; the hierarchy moved"
-                " under a staged report, so it is held rather than sent to either",
+                " under a staged report, so it is held rather than sent to either." + recovery,
             )
         if self._rate_limited(recipient, now):
             self._reschedule(row, now + self.policy.min_send_interval_seconds)
@@ -728,32 +842,14 @@ class SupervisorChannel:
                              "attemptNo": attempt_no, "deliveryState": HELD_UNCERTAIN}),
                  at, at),
             )
-            # Counted in the SAME transaction as the claim, and against the recipient rather
-            # than against this channel. The bound exists to limit how often one task is woken,
-            # so two queues feeding one task must not each get their own budget - which does
-            # mean a report can wait behind parent-child traffic to a task that is both a
-            # parent and a supervisor. That is the intended trade, said out loud.
-            # The INTERVAL is read here, before the increment overwrites last_send_at with
-            # now. _rate_limited checks it too, but that runs before the host reads, so two
-            # callers both pass it and the second never sees the first's send. Reading inside
-            # BEGIN IMMEDIATE is what makes the pacing hold rather than merely usually hold.
-            window = int(now // 3600) * 3600
-            paced = db.execute(
-                "SELECT last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
-                "   AND window_start = ?", (recipient, window)).fetchone()
-            if (paced is not None and paced["last_send_at"] is not None
-                    and (now - paced["last_send_at"])
-                    < self.policy.min_send_interval_seconds):
-                raise _NotClaimable()
-            self._count_send(db, recipient, now)
-            # Re-read AFTER the increment, inside the same transaction. _rate_limited runs
-            # before the host reads and is therefore a preflight: two callers can both pass
-            # it, both increment, and the recipient is woken past its own bound. The counter
-            # is the thing that knows, so it is asked once it has been moved.
-            used = db.execute(
-                "SELECT sends FROM recipient_rate WHERE recipient_task_id = ?"
-                "   AND window_start = ?", (recipient, window)).fetchone()
-            if used and used["sends"] > self.policy.max_sends_per_recipient_per_hour:
+            # Spent in the SAME transaction as the claim, against the recipient rather than
+            # against this channel, and through the one predicate delivery's claim calls too.
+            # The bound limits how often one task is woken, so two queues feeding one task
+            # must not each get their own budget - which does mean a report can wait behind
+            # parent-child traffic to a task that is both a parent and a supervisor. That is
+            # the intended trade, said out loud. _rate_limited reads the same predicate before
+            # the host is read; two callers both pass that, so this is where it actually holds.
+            if reserve_send(db, self.policy, recipient, now) is not None:
                 raise _NotClaimable()
         return attempt_no, request_id, message
 
@@ -797,25 +893,8 @@ class SupervisorChannel:
                  "holdReason": hold}, at=at)
 
     def _rate_limited(self, recipient, now):
-        window = int(now // 3600) * 3600
-        row = self.store.one(
-            "SELECT sends, last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
-            " AND window_start = ?", (recipient, window))
-        if row is None:
-            return False
-        if row["sends"] >= self.policy.max_sends_per_recipient_per_hour:
-            return True
-        last = row["last_send_at"]
-        return last is not None and (now - last) < self.policy.min_send_interval_seconds
-
-    def _count_send(self, db, recipient, now) -> None:
-        window = int(now // 3600) * 3600
-        db.execute(
-            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
-            " VALUES (?,?,1,?)"
-            " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
-            " sends = sends + 1, last_send_at = excluded.last_send_at",
-            (recipient, window, now))
+        """A preflight over the claim's own predicate, which saves the host a read."""
+        return send_refusal(self.store.db, self.policy, recipient, now) is not None
 
     def _reschedule(self, row, when, *, state=None, hold=None) -> None:
         # Guarded on the state and attempt count that were observed, so a stale reading cannot
@@ -848,10 +927,16 @@ class SupervisorChannel:
                          state=DEFERRED_BUSY, hold=hold)
 
     def _deferrals(self, message_id) -> int:
-        """How many times this message has been put off for a busy recipient."""
+        """How many times this message has been put off for its CURRENT recipient being busy.
+
+        Counted from the latest re-address, so a successor does not inherit a cap its
+        predecessor ran up.
+        """
         row = self.store.one(
-            "SELECT COUNT(*) AS seen FROM journal WHERE kind = ? AND subject = ?",
-            ("supervisor_message_deferred", message_id))
+            "SELECT COUNT(*) AS seen FROM journal WHERE kind = ? AND subject = ?"
+            "   AND seq > (SELECT COALESCE(MAX(seq), 0) FROM journal"
+            "               WHERE kind = ? AND subject = ?)",
+            ("supervisor_message_deferred", message_id, READDRESSED, message_id))
         return row["seen"] if row is not None else 0
 
     def _withhold(self, row, observation, now) -> None:
@@ -900,6 +985,14 @@ class SupervisorChannel:
         it produces, so nothing here can establish who is asking. What it can do is write down
         who claimed to be asking and refuse a claim that does not name this message's
         recipient, which turns an unstated assumption into a recorded fact.
+
+        The verdict joins facts read at DIFFERENT moments. The turn is read first and the
+        transcript scanned after it, each through its own paged host calls, and the host offers
+        no snapshot or revision that could tie the two to one observation. What makes the join
+        sound is that both facts are about append-only history: a turn keeps its id and start
+        time once it has one, and an item keeps its text and its turn. A host that rewrites
+        history between the two reads - a rollback removing the turn or the item - is not
+        visible from here, and the verdict does not claim otherwise.
         """
         row = self.get(message_id)
         if asserted_by is not None and asserted_by != row["recipient_task_id"]:
@@ -1020,7 +1113,10 @@ class SupervisorChannel:
                 "limits": "a verified readback says this message is in the recipient's"
                           " transcript and that a real turn on its thread answered with a value"
                           " these bytes do not contain. It does not say who wrote the answer:"
-                          " this transport carries opaque text and no authenticated caller"}
+                          " this transport carries opaque text and no authenticated caller."
+                          " The turn and the transcript are read by separate host calls with"
+                          " no shared snapshot, which is sound for an append-only history and"
+                          " blind to one rewritten between them"}
 
 
     def _settled_readback(self, message_id):

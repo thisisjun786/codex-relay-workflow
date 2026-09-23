@@ -15,6 +15,7 @@ the direction that matters: a send that cannot say what it is preserving does no
 """
 
 import json
+import shlex
 import unittest
 
 from codex_session_relay import envelope, identity, manifest, packets, supervision
@@ -1120,8 +1121,9 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
         self.assertEqual(args.message, message_id)
         self.assertEqual(args.asserted_by, SUPERVISOR,
                          "the recipient is known when these bytes are rendered")
-        self.assertEqual([token for token in argv if token.startswith("<")],
-                         ["<your-relay-socket>", "<your-turn-id>", "<your-proof>"],
+        self.assertEqual([token for token in argv if token.startswith("YOUR_")],
+                         [channel_module.SOCKET_PLACEHOLDER, channel_module.TURN_PLACEHOLDER,
+                          channel_module.PROOF_PLACEHOLDER],
                          "what is left to the reader is the socket, the turn and the proof")
 
     def test_a_readback_naming_the_sends_turn_with_the_token_elsewhere_does_not_verify(self):
@@ -1160,13 +1162,209 @@ class WhatTheFourthReviewRoundFound(ChannelTestCase):
 
     @staticmethod
     def _rendered_readback(message):
-        """The invocation as it stands in the bytes, split the way a shell would split it."""
-        taking, lines = False, []
+        """The invocation as it stands in the bytes, split the way a POSIX shell splits it."""
         for line in message.splitlines():
             if line.strip().startswith("codex-session-relay --socket"):
-                taking = True
-            elif taking and not line.startswith("    "):
+                return shlex.split(line)
+        raise AssertionError("the message carries no readback line")
+
+
+SUCCESSOR = "01successor-supervisor"
+
+
+class WhatTheFifthReviewRoundFound(ChannelTestCase):
+    """A handover under a staged report, one gap for two senders, and quoted command lines."""
+
+    def hand_over(self):
+        self.adapter.add_thread(SUCCESSOR)
+        self.linkage.handover(
+            role="supervisor", scope_key=INITIATIVE, expect_task_id=SUPERVISOR,
+            endpoint=Endpoint(SUCCESSOR, HOST, cwd="/successor", cxc_session="cxc-next"),
+            acknowledged=[], evidence="the initiative changed hands", actor="a test")
+
+    def reports_for(self, obligation):
+        return self.store.all(
+            "SELECT seq FROM journal WHERE kind = ? AND subject = ?",
+            (supervision.JOURNAL_KIND, obligation["obligationId"]))
+
+    # ------------------------------------------------------------------ the handover
+
+    def test_a_report_staged_before_a_handover_reaches_the_successor_exactly_once(self):
+        """Staged for S1, handed to S2 before any send: restaging recovers it for S2.
+
+        The id is the fact's, so it is still one message and one supervisor_report entry. What
+        moved is who it is for, and the former supervisor is never resumed.
+        """
+        one, message_id = self.staged()
+        self.hand_over()
+        refusal = self.assertRefused(
+            RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, message_id,
+            self.adapter)
+        self.assertIn("staging it again re-addresses it", refusal.detail)
+
+        moved = self.channel.stage(one)
+        self.assertTrue(moved["readdressed"])
+        self.assertEqual(moved["to"]["recipient"], SUCCESSOR)
+        self.assertEqual(moved["from"]["recipient"], SUPERVISOR)
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUCCESSOR)
+        self.assertEqual(len(self.store.all("SELECT message_id FROM supervisor_messages")), 1)
+        self.assertEqual(len(self.reports_for(one)), 1,
+                         "one obligation is still one report after it changes hands")
+
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["recipientTaskId"], SUCCESSOR)
+        self.assertEqual([thread for _r, thread, _m, _o in self.adapter.sends], [SUCCESSOR])
+        self.assertIn("--as " + SUCCESSOR, self.bytes_of(message_id))
+
+        again = self.channel.stage(one)
+        self.assertFalse(again["staged"])
+        self.assertNotIn("readdressed", again)
+        self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(len(self.adapter.sends), 1, "the successor is told once")
+
+    def test_a_report_already_attempted_for_the_former_supervisor_stays_frozen(self):
+        """Bytes that went to S1 are never re-addressed; the drift is refused by name."""
+        one, message_id, _record = self.delivered()
+        self.hand_over()
+        refusal = self.assertRefused(
+            RefusalReason.RELATION_OWNER_DRIFT, self.channel.stage, one)
+        self.assertIn("never re-addressed", refusal.detail)
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUPERVISOR)
+        self.assertEqual(len(self.adapter.sends), 1)
+        self.assertEqual(self.store.all(
+            "SELECT seq FROM journal WHERE kind = ?", (channel_module.READDRESSED,)), [])
+
+        standing = self.channel.stage_standing(PROJECT)
+        self.assertEqual([one["reason"] for one in standing["refused"]],
+                         [RefusalReason.RELATION_OWNER_DRIFT.value],
+                         "a project-wide staging reports the frozen report rather than hiding it")
+
+    def test_a_claim_that_commits_first_turns_the_readdress_into_a_refusal(self):
+        """The no-attempt condition is a predicate inside the write, not a check before it."""
+        one, message_id = self.staged()
+        before = self.channel.get(message_id)
+        self.channel._claim(message_id, now=self.clock.now(), owner="first",
+                            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        self.hand_over()
+        resolution = self.channel.resolve(self.rid)
+        packet = self.channel.compose(one, resolution=resolution, observed_at=self.clock.iso())
+        self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel._readdress,
+                           before, packet, resolution)
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUPERVISOR)
+
+    def test_what_the_former_supervisor_being_busy_decided_does_not_follow_the_report(self):
+        """A busy cap is a bound about THAT task, so the successor starts from nothing."""
+        one, message_id = self.staged()
+        self.adapter.set_status(SUPERVISOR, "active")
+        for _ in range(self.channel.policy.busy_max_attempts + 1):
+            row = self.channel.get(message_id)
+            if row["hold_reason"]:
                 break
-            if taking:
-                lines.append(line.strip())
-        return " ".join(lines).split()
+            self.channel.attempt(message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertEqual(self.channel.get(message_id)["hold_reason"], "busy_cap")
+
+        self.hand_over()
+        self.channel.stage(one)
+        row = self.channel.get(message_id)
+        self.assertIsNone(row["hold_reason"])
+        self.assertEqual(row["state"], QUEUED)
+        self.assertEqual(self.channel._deferrals(message_id), 0)
+        self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
+                         DISPATCHED)
+
+    # --------------------------------------------------------- one gap, two senders
+
+    def queued_delivery(self, event_id):
+        """The parent-child queue over the same store, holding this event."""
+        from codex_session_relay.delivery import DeliveryService
+
+        service = DeliveryService(self.store, self.registry, self.intake, self.clock)
+        service.enqueue(event_id)
+        return service
+
+    def test_a_delivery_claimed_inside_the_gap_after_a_report_is_refused(self):
+        """Supervisor first, delivery second: the order the delivery claim never re-read.
+
+        The recipient passed to delivery's claim is the rate key its own attempt passes, the
+        task being resumed. Naming the supervisor makes it the task that is both a parent and a
+        supervisor, which is the shape a shared budget exists for.
+        """
+        from codex_session_relay import delivery as delivery_module
+
+        one, message_id = self.staged()
+        event_id = one["basis"]["eventId"]
+        service = self.queued_delivery(event_id)
+        self.channel.attempt(message_id, self.adapter)
+        with self.assertRaises(delivery_module._NotClaimable):
+            service._claim(event_id, now=self.clock.now() + 1, owner="the other queue",
+                           recipient=SUPERVISOR)
+        self.assertEqual(service.get(event_id)["state"], QUEUED)
+        self.assertEqual(self.store.all(
+            "SELECT request_id FROM attempts WHERE event_id = ?", (event_id,)), [])
+
+    def test_a_report_claimed_inside_the_gap_after_a_delivery_is_refused(self):
+        """Delivery first, supervisor second."""
+        one, message_id = self.staged()
+        event_id = one["basis"]["eventId"]
+        self.queued_delivery(event_id)._claim(event_id, now=self.clock.now(),
+                                              owner="the other queue", recipient=SUPERVISOR)
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(message_id, now=self.clock.now() + 1, owner="second",
+                                recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+
+    def test_the_gap_is_read_across_the_hour_boundary(self):
+        """last_send_at lives on the hour's row, so reading one hour let two sends straddle it."""
+        _one, first = self.staged()
+        self.clock.advance(5)
+        _other, second = self.staged(text="a second deliverable")
+        boundary = (int(self.clock.now() // 3600) + 1) * 3600
+        self.channel.attempt(first, self.adapter, now=boundary - 1)
+        with self.assertRaises(Exception) as caught:
+            self.channel._claim(second, now=boundary + 1, owner="next hour",
+                                recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        self.assertIn("NotClaimable", type(caught.exception).__name__)
+
+    # ------------------------------------------------------------ quoted command lines
+
+    def test_an_omission_pointer_with_spaces_and_quotes_parses_into_its_own_values(self):
+        """Concatenated, /tmp/My Project was two arguments. Quoted, it is one."""
+        from codex_session_relay import cli
+
+        selectors = {"state": "/state/a \"quoted\" dir", "markerRoot": "/marker/it's here",
+                     "workspace": "/tmp/My Project", "assignment": "asg 1",
+                     "session": "01child-session", "turn": "turn-unreported-1"}
+        reading = {"schema": "reporting-observation/1", "reportingState": "unreported",
+                   "relationshipId": self.rid, "reason": "the turn settled without a report",
+                   "selectors": selectors}
+        staged = self.channel.stage(supervision.from_observation(reading), reading=reading)
+        pointer = json.loads(self.channel.get(staged["messageId"])["packet"])[packets.EVIDENCE][0]
+        argv = shlex.split(pointer)
+        args = cli.build_parser().parse_args(argv[1:])
+        self.assertEqual(
+            (args.state, args.marker_root, args.workspace, args.assignment, args.session,
+             args.turn),
+            (selectors["state"], selectors["markerRoot"], selectors["workspace"],
+             selectors["assignment"], selectors["session"], selectors["turn"]))
+
+    def test_every_command_a_report_carries_is_one_the_real_parser_accepts(self):
+        """The class, not the instance: each line this channel renders, split and parsed."""
+        from codex_session_relay import cli
+
+        _one, message_id, _record = self.delivered()
+        packet = json.loads(self.channel.get(message_id)["packet"])
+        lines = list(packet[packets.EVIDENCE])
+        lines += [line.strip() for line in self.bytes_of(message_id).splitlines()
+                  if line.strip().startswith("codex-session-relay ")]
+        lines += [line.split("Full record: ", 1)[1]
+                  for line in self.bytes_of(message_id).splitlines()
+                  if line.startswith("Full record: ")]
+        lines += SupervisorChannel._evidence({}, {"projectKey": "a project, spaced"})
+        commands = set()
+        for line in lines:
+            argv = shlex.split(line)
+            self.assertEqual(argv[0], "codex-session-relay", line)
+            commands.add(cli.build_parser().parse_args(argv[1:]).command)
+        self.assertEqual(commands, {"show", "supervisor-read", "supervisor-show",
+                                    "supervisor-standing"})

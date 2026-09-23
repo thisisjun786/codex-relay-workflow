@@ -230,8 +230,6 @@ SUMMARIES = {
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
     ("daemon.py", "TickReport", "quiet", "field"):
         ((False,), (("declaration default: True", 1),), ("notes", "skipped")),
-    ("delivery.py", None, "_rate_limited", "function"):
-        ((False,), (("return: False", 1), ("return: True", 1)), ()),
     # A stated absence is a dict carrying one key, so the false side is reachable from either
     # input alone - anything that is not a mapping, and any mapping without the key.
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
@@ -294,6 +292,9 @@ FOLD_FREE_BOOLEANS = (
     ("assignment.py", None, "_any_receipt", "function"),
     ("assignment.py", None, "_claimed", "function"),
     ("daemon.py", None, "_alternate", "function"),
+    # One predicate now, shared with the supervisor channel's claim; the fold it used to do
+    # lives in delivery.send_refusal, which returns a reason rather than a boolean.
+    ("delivery.py", None, "_rate_limited", "function"),
     ("lifecycle.py", None, "is_busy", "function"),
     ("lifecycle.py", None, "may_send", "function"),
     ("scope.py", None, "at_least", "function"),

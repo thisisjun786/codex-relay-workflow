@@ -911,6 +911,11 @@ answers `sent: false` without touching the host when the message is held, inside
 or already sent. `supervisor-stage` records the report itself, so a run that stages does not
 also call `supervisor-report-recorded`.
 
+After a supervisor handover, stage the project again. A report staged for the former
+supervisor and never sent is re-addressed to the live one under the same message; one that was
+already sent stays with the task it went to and is listed under `refused` as
+`relation_owner_drift`, which means the successor has not been told through this channel.
+
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.
 codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
