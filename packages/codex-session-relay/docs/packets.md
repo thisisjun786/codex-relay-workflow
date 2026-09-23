@@ -174,7 +174,11 @@ type than the packet's (a recorded model of `123` against a packet's `"123"`, a 
 recorded as `"2"`) is not a reading of that field, so it is a gap and the answer is
 unavailable. The packet's own side is shape-checked first: a packet that is not the shape
 relay-packet/1 declares, in any part it carries, is refused as a packet, and `packet-check`
-does not end in a host error over what it was sent.
+does not end in a host error over what it was sent. That includes an artifact's identity
+(repository and head, or path and digest, all text) and the region's compared fields. A
+reading's refusal list that is not a list of model and effort pairs is unread rather than
+taken as "none refused", and a part of a supplied reading this cannot compare with is refused
+by name.
 
 The artifact head is a forge reading the store does not hold. It comes only from
 `--observation <file>`, a JSON object with its own `source` (and `observedAt` where known) and
@@ -201,6 +205,10 @@ which reads no store and is refused unless this ledger answered this very packet
 content) as accepted. `act` is true when today's answer is accepted and no application is
 recorded. So a receiver that checked and then stopped before acting gets the instruction back
 on the next arrival rather than losing it, and a correction applied once is not applied again.
+Nothing is acted on while the relationship is paused: the packet is current and accepted, but
+`act` is false and `actHeld` says it waits for `relationship-resume`, because nothing proceeds
+on a paused relationship until then. Nothing was recorded applied, so the same packet checked
+after the resume comes back with `act` true.
 The window between acting and recording is the receiver's own: after a restart it reads its
 own work to see whether the instruction is already in it, and records the application instead
 of acting twice.

@@ -403,7 +403,8 @@ treating that as acceptance is how an unverifiable instruction becomes an applie
 only where the answer is accepted and `act` is true; report a refusal by its field, and
 resolve an unavailable one by reading what was missing rather than proceeding. The pull
 request head is never a store fact, so it comes only from an observation file naming where
-it was read.
+it was read. On a paused relationship the answer is accepted with `act` false and
+`actHeld`: wait for `relationship-resume` and check the same packet again then.
 
 A correction arriving twice is applied once. The ledger keeps each answered message id beside
 the content it asked for and whether you recorded acting on it, so a repeat is answered from

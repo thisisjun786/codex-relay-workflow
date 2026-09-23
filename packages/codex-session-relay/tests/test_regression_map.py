@@ -240,6 +240,11 @@ SUMMARIES = {
     # another purpose, or a named recipient. reception reads it to choose which comparisons
     # apply, and test_reception_findings.py varies each by building the packets themselves.
     ("packets.py", None, "_first_assignment", "function"): ((False,), (), ()),
+    # A refusal list the reading holds and cannot read: present and not a list of objects.
+    # The false side is reachable from the one input alone - an absent list, or a list of
+    # pairs - and test_reception_findings.py and test_store_reception.py hand reception
+    # readings of each shape.
+    ("packets.py", None, "_refusals_unreadable", "function"): ((False,), (), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
@@ -332,6 +337,10 @@ UNRESOLVED_READS = (
      "reached through GeneratorExp/Call"),
     ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
      "_reads_no_selected_store", "reached through assertIs"),
+    # A filter, not a measurement: the type sweep skips a field holding a stated absence, and
+    # what it asserts is the disposition of every other field.
+    ("test_reception_findings.py", "test_a_compared_field_of_another_shape_never_ends_accepted",
+     "is_absent", "no enclosing assertion"),
     ("test_service.py", "holder", "lock_is_held", "no enclosing assertion"),
 )
 

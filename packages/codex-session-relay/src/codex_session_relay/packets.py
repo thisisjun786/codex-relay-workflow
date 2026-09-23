@@ -26,6 +26,7 @@ exists in delivery, ack and criteria; duplicating it would give the workflow a s
 import json
 
 from . import cxc, envelope, settings
+from .settings import normalise_policy as _normalise_policy
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
 from .registry import LIVE as LIVE_RELATION
@@ -60,6 +61,16 @@ FIELD_TYPES = {
     CRITERIA_DIGEST: str,
     CALLBACK: dict,
     BODY: str,
+}
+
+# The region fields reception compares, and their shapes.
+REGION_TYPES = {
+    "relationId": str,
+    "messageId": str,
+    "subject": str,
+    "correlationId": str,
+    "relationRevision": int,
+    "decision": str,
 }
 
 # What each occasion cannot do without, and nothing more. The restraint matters as much as
@@ -226,7 +237,26 @@ def _check_artifact(one):
                 RefusalReason.MALFORMED_RECEIPT,
                 "a pull request number is a positive integer, not a "
                 + type(number).__name__)
+    # Every other identity field is text, and optional ones text when present. A head of 123
+    # agreed with a record holding 123 and was only a gap against "123": the packet's own
+    # shape has to be refused before its value is compared with anything.
+    texts, optional = ARTIFACT_TEXT[one["kind"]]
+    wrong = [name for name in texts if not isinstance(one.get(name), str)]
+    wrong += [name for name in optional
+              if one.get(name) is not None and not isinstance(one[name], str)]
+    if wrong:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a " + one["kind"] + " artifact states " + ", ".join(wrong) + " as text, not as "
+            + ", ".join(type(one.get(name)).__name__ for name in wrong))
     return one
+
+
+# The text fields of each artifact shape: (required, optional).
+ARTIFACT_TEXT = {
+    PULL_REQUEST: (("repository", "headSha"), ("baseSha", "url")),
+    LOCATOR: (("path", "digest"), ("producedAt",)),
+}
 
 
 # ------------------------------------------------------------------------ the policy
@@ -553,6 +583,18 @@ def _check(one, *, required=None) -> None:
             + repr(region.get("version")) + "; the identification region is read under the"
             " version that wrote it or not at all")
     _rederive(region)
+    # The region's compared fields, typed before anything is compared with them: each is
+    # either its value's shape or a stated absence. An untyped one agreed with an equally
+    # wrong record value, or became a gap where the packet itself was malformed.
+    for name, wanted in REGION_TYPES.items():
+        value = region.get(name)
+        if value is None or envelope.is_absent(value):
+            continue
+        if isinstance(value, bool) or not isinstance(value, wanted):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the region's " + name + " is " + wanted.__name__ + " or a stated absence,"
+                " not a " + type(value).__name__)
     direction, purpose = region.get("direction"), region.get("purpose")
     if required is None:
         required = required_for(direction, purpose)
@@ -615,14 +657,15 @@ def _check(one, *, required=None) -> None:
                 and not isinstance(one[POLICY]["approval"], str):
             mistyped.append("approval")
         if one[POLICY].get("sandbox") is not None \
-                and not isinstance(one[POLICY]["sandbox"], (str, dict)):
+                and not isinstance(one[POLICY]["sandbox"], str) \
+                and _normalise_policy(one[POLICY]["sandbox"]) is None:
             mistyped.append("sandbox")
         if mistyped:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 "the policy states " + ", ".join(mistyped) + " as something other than"
-                " text (a sandbox may also be a policy object); a setting is a name, and"
-                " another shape would agree with its own spelling in the record")
+                " text (a sandbox may also be a policy object naming its type); a setting is"
+                " a name, and another shape would agree with its own spelling in the record")
         if one[POLICY][MODE] not in MODES:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
@@ -825,6 +868,19 @@ def reception(one, record) -> dict:
             RefusalReason.MALFORMED_RECEIPT,
             "the receiver's own reading is an object of named values, not a "
             + type(record).__name__)
+    try:
+        return _reception(one, region, record, problems, gaps)
+    except (AttributeError, TypeError, KeyError, IndexError) as fault:
+        # Total over the reading as check() is over the packet. A supplied reading can hold
+        # anything JSON can, and a part of it this cannot read is refused by name rather
+        # than ending packet-check as a host failure.
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a part of the receiver's reading is not a shape this reader can compare with:"
+            " " + type(fault).__name__ + ": " + str(fault)) from fault
+
+
+def _reception(one, region, record, problems, gaps) -> dict:
     first = _first_assignment(region)
     if first:
         # Written before the child existed, so the relation it names is the dispatch request
@@ -1155,6 +1211,8 @@ def _settings_problems(one, record) -> list:
     settings = one.get(POLICY)
     if not settings:
         return []
+    if _refusals_unreadable(record):
+        return []  # a gap, from _settings_gaps
     for pair in record.get("refusedPolicies") or ():
         if (str(pair.get("model")) == str(settings.get("model"))
                 and str(pair.get("effort")) == str(settings.get("effort"))):
@@ -1167,12 +1225,24 @@ def _settings_problems(one, record) -> list:
 
 
 def _settings_gaps(one, record) -> list:
+    if one.get(POLICY) and _refusals_unreadable(record):
+        return [mismatch(UNREADABLE, "policy", expected=None, found=one[POLICY],
+                         reason="the recorded refusals are not a list of model and effort"
+                                " pairs, so whether this pair is authorised for this role is"
+                                " unchecked")]
     if one.get(POLICY) and _present(record.get("refusedPolicies")) is None \
             and "refusedPolicies" not in record:
         return [mismatch(UNREADABLE, "policy", expected=None, found=one[POLICY],
                          reason="the receiver read no settings record, so whether this pair"
                                 " is authorised for this role is unchecked")]
     return []
+
+
+def _refusals_unreadable(record) -> bool:
+    """A refusal list that is there and is not a list of objects: not read as "none"."""
+    held = record.get("refusedPolicies")
+    return held is not None and (not isinstance(held, list)
+                                 or any(not isinstance(pair, dict) for pair in held))
 
 
 # --------------------------------------------------------------------- a message arriving twice
@@ -1257,6 +1327,7 @@ def repeat(one, answered) -> dict:
 
 COLLISION_MISMATCH = "message_collision"
 UNCHECKED = "unchecked"
+PAUSED_RELATION = "paused"
 
 
 def settle_repeat(answer, repeated) -> dict:
@@ -1273,7 +1344,24 @@ def settle_repeat(answer, repeated) -> dict:
     receiver records the application (receiver.record_applied). With no record of earlier
     answers (repeated is None) nothing can be told apart from a first arrival, so nothing is
     acted on.
+
+    And nothing is acted on while the relationship is paused. Paused is current, so the packet
+    is accepted - it is about this assignment - but no work proceeds on a paused relationship
+    until relationship-resume (the relay refuses claims and generation-open meanwhile), so act
+    is held and the answer says why. Nothing is recorded applied, so the same packet checked
+    after the resume comes back to be acted on.
     """
+    settled = _settle(answer, repeated)
+    status = (settled.get("record") or {}).get(RELATION_STATUS)
+    if settled["act"] and status == PAUSED_RELATION:
+        settled["act"] = False
+        settled["actHeld"] = ("the relationship is paused: this packet is current and accepted,"
+                              " and it is acted on only after relationship-resume; check it"
+                              " again then")
+    return settled
+
+
+def _settle(answer, repeated) -> dict:
     settled = dict(answer)
     accepted = settled["disposition"] == ACCEPTED
     if repeated is None:

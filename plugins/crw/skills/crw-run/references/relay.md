@@ -1015,6 +1015,7 @@ policy's verdict on them, and the execution mode from the receiver's own ledger.
 reading the store does not hold; it comes only from `--observation`, a JSON file with its own
 `source`, and without one the head is a gap. The ledger is how a repeat is applied once: `act`
 is true while today's answer is accepted and the ledger holds no application for that packet,
+and the relationship is not paused (then `actHeld` says it waits for `relationship-resume`);
 `--applied` records one after the receiver acted, and without a ledger `act` is always false.
 
 `--record` is the offline form: the reading the receiver did for ITSELF, supplied as a file.
