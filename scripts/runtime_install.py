@@ -2326,9 +2326,12 @@ def cmd_hook(args):
                     # Server rather than judging a Stop against it; with none there is nothing to
                     # compare and the document stays byte-identical to one written before this key.
                     #
-                    # Read with getattr for the same reason isolation above it is: this command is
-                    # also called with a Namespace built by a caller that never had the global
-                    # option, and a missing attribute there is an absent socket, not a crash.
+                    # The hook subparser declares --socket; an earlier revision read this without
+                    # declaring it, so the command line refused the option and no installed hook
+                    # ever recorded a socket. It is still read with getattr for the same reason
+                    # isolation above it is: in-process callers build a Namespace by hand without
+                    # every hook option, and a missing attribute there is an absent socket, not a
+                    # crash.
                     socket=getattr(args, "socket", None),
                     adapter_interpreter=interpreter,
                     adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
@@ -5208,6 +5211,10 @@ def build_parser():
     hook.add_argument("--relay-command", help="an explicit relay executable, instead of --dest")
     hook.add_argument("--marker-root")
     hook.add_argument("--db-path")
+    hook.add_argument("--socket",
+                      help="the App Server socket this installation serves, recorded in the"
+                           " completion hook's settings as socketPath so the guard can refuse a"
+                           " state directory whose store records another one")
     hook.add_argument("--journal-root")
     hook.add_argument("--python", help="the interpreter the registered command runs under")
     hook.add_argument("--mode", choices=completion.MODES, default=completion.OBSERVE,
