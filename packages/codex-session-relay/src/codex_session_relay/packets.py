@@ -25,7 +25,7 @@ exists in delivery, ack and criteria; duplicating it would give the workflow a s
 
 import json
 
-from . import cxc, envelope
+from . import cxc, envelope, settings
 from .errors import RefusalReason, RelayError
 from .identity import sha256_hex
 from .registry import LIVE as LIVE_RELATION
@@ -946,6 +946,62 @@ def _policy_agreement(one, record, problems, gaps) -> None:
                  stated.get(part), held.get(part),
                  "the task was created with another pair; a packet stating this one is"
                  " about settings the receiver does not hold")
+    # The permissions, where the packet states them. A packet that keeps the pair and changes
+    # the sandbox or the approval asks the receiver to act under permissions its record never
+    # authorised, which is the same staleness as another pair.
+    _sandbox_agreement(stated.get("sandbox"), held, problems, gaps)
+    if _present(stated.get("approval")) is not None:
+        _compare(problems, gaps, STALE_POLICY, "policy.approval", stated["approval"],
+                 held.get("approval"),
+                 "the task was created under another approval policy; acting on this packet"
+                 " would run under one its record never authorised")
+
+
+# A sandbox is stated two ways: as the mode a resume carries ("danger-full-access") or as the
+# policy object a creation receipt records ({"type": "dangerFullAccess", ...}).
+SANDBOX_TYPE_BY_MODE = {mode: kind for kind, mode in settings.RESUME_SANDBOX_MODE.items()}
+
+
+def _sandbox_reading(value):
+    """A sandbox as (type, normalised policy or None), or None where it cannot be read.
+
+    A mode string says only the type, so it is compared as a type. A policy object is filled
+    with its declared defaults (settings.normalise_policy) so an omitted default and an
+    explicit one agree, and is compared whole against a recorded object.
+    """
+    if isinstance(value, str):
+        name = value.strip()
+        return (SANDBOX_TYPE_BY_MODE.get(name, name), None) if name else None
+    policy = settings.normalise_policy(value)
+    return None if policy is None else (policy["type"], policy)
+
+
+def _sandbox_agreement(stated, held, problems, gaps) -> None:
+    if _present(stated) is None:
+        return
+    field = "policy.sandbox"
+    recorded = held.get("sandbox")
+    theirs = _sandbox_reading(recorded) if _present(recorded) is not None else None
+    if theirs is None:
+        gaps.append(mismatch(UNREADABLE, field, expected=None, found=stated,
+                             reason="the receiver read no sandbox recorded for this task, so"
+                                    " the stated one is unchecked"))
+        return
+    mine = _sandbox_reading(stated)
+    if mine is None:
+        problems.append(mismatch(STALE_POLICY, field, expected=recorded, found=stated,
+                                 reason="the stated sandbox is neither a mode nor a policy"
+                                        " object, so it names no sandbox the task holds"))
+        return
+    if mine[1] is not None and theirs[1] is not None:
+        same = mine[1] == theirs[1]
+    else:
+        same = mine[0] == theirs[0]
+    if not same:
+        problems.append(mismatch(STALE_POLICY, field, expected=recorded, found=stated,
+                                 reason="the task was created under another sandbox; acting"
+                                        " on this packet would run under permissions its"
+                                        " record never authorised"))
 
 
 def _mode_agreement(one, record, problems, gaps) -> list:

@@ -394,9 +394,10 @@ codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
 It gets one of three answers. Accepted, where every field its own store reading could answer
 agreed. Refused, naming the field and both values: another parent, another child, another
 relationship, a superseded or ended relationship, a stale generation, an old criteria digest,
-a head that moved, another callback or a callback pair that has changed, a policy or mode the
-receiver's reading contradicts, or a model and effort pair the record holds as refused for
-this role. Or unavailable, where its reading could not answer at all - which is neither of the
+a head that moved, another callback or a callback pair that has changed, a policy (model,
+effort, sandbox or approval) or mode the receiver's reading contradicts, or a model and effort
+pair the record holds as refused for this role. Or unavailable, where its reading could not
+answer at all - which is neither of the
 other two, because a receiver that could not check something has not checked it, and
 treating that as acceptance is how an unverifiable instruction becomes an applied one. Act
 only where the answer is accepted and `act` is true; report a refusal by its field, and

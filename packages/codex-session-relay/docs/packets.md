@@ -149,16 +149,25 @@ answer's `provenance` names what answered it.
 | dispatchRequestId | `generations`, the current generation |
 | relationRevision | `scope_links` through the relationship's project link, only while that link is live, has no successor and still joins this relationship's two tasks (otherwise a gap); null when unscoped |
 | criteriaDigest | `canonical_criteria`, a managed set with one digest |
-| policy | `authorized_settings` of the child |
+| policy | `authorized_settings` of the child: model, effort, the sandbox policy with its declared defaults, and the approval policy |
 | callback | the relationship's parent and its `authorized_settings` |
 | refusedPolicies | the role policy (`rolepolicy.check_record`) for the child's bound role |
 | mode | the receiver's reception ledger (below) |
 | repository, prNumber, headSha, artifactPath, artifactDigest | only `--observation` |
 
 The relationship is chosen among the receiver's own rows: its one live relationship where it
-has exactly one, otherwise the row the packet names if it is one of the receiver's, otherwise
-none and the relationship keys are gaps. The packet's relation id is a selector among rows the
-receiver already holds and is never copied into the record.
+has exactly one, otherwise the row the packet names if it is one of the receiver's. A first
+assignment names its dispatch rather than a relationship, so for one the row is the single
+live relationship whose current generation that dispatch opened. Otherwise none is chosen and
+the relationship keys are gaps. The packet's relation id is a selector among rows the receiver
+already holds and is never copied into the record.
+
+A policy that states a sandbox or an approval is compared with those recorded, not only its
+model and effort: a packet keeping the pair while naming wider permissions would have the
+receiver act under settings its record never authorised. A sandbox stated as a mode
+(`danger-full-access`) is compared by type; one stated as a policy object is compared whole,
+with omitted defaults filled on both sides. A record holding no readable sandbox or approval
+leaves a stated one a gap.
 
 The artifact head is a forge reading the store does not hold. It comes only from
 `--observation <file>`, a JSON object with its own `source` (and `observedAt` where known) and
@@ -171,7 +180,10 @@ and read by nothing else. It names its receiver and a version, and a ledger nami
 receiver is refused rather than read. It keeps each answered message id beside the content
 digest and disposition it got, whether the receiver has recorded acting on it, and, once an
 assignment is accepted, the mode and workflow that assignment gave. Writes happen under a lock
-on a sidecar file, in a directory created if it is missing, and replace the ledger atomically.
+on a sidecar file, in a directory created if it is missing, and replace the ledger atomically,
+with the directory synced after the rename. A ledger with an entry that is not one - an
+answer without its digest, disposition or applied flag, or an assignment whose fields are not
+text - is refused as damaged rather than read through.
 
 Being told and acting are two records. A check records the answer; only the receiver says it
 acted, afterwards, with `packet-check --packet <file> --receiver <id> --ledger <file> --applied`,

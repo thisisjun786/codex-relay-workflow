@@ -40,6 +40,7 @@ from .errors import AckRefused, RefusalReason, RelayError
 from .linkage import LIVE as LINK_LIVE, Linkage
 from .mergeturn import LANDED
 from .registry import LIVE, load_settings
+from .settings import normalise_policy
 from .sync import CONFIRMED
 
 LEDGER_VERSION = 1
@@ -187,6 +188,14 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
         named = region.get("relationId")
         row = next((one for one in held if one["relationship_id"] == named), None)
         how = "the receiver's relationship the packet named"
+        if row is None and packets._first_assignment(region):
+            # A first assignment was sent before its relationship existed, so it names the
+            # dispatch, not a relationship. A child shared by several live relationships takes
+            # it on the one whose current generation that dispatch opened, and on no other.
+            opened = [one for one in live if _opened_by(rows, one) == named]
+            if len(opened) == 1:
+                row, how = opened[0], ("the receiver's live relationship whose current"
+                                       " generation the packet's dispatch opened")
     if row is None:
         notes.append("the receiver holds %d relationship(s), %d live, and the packet names none"
                      " of them, so no relationship was read" % (len(held), len(live)))
@@ -223,6 +232,13 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     elif ledger is not None:
         notes.append("the reception ledger holds no accepted assignment for " + rid
                      + ", so the mode is unread")
+
+
+def _opened_by(rows, row):
+    opened = rows.one("SELECT dispatch_request_id FROM generations"
+                      " WHERE relationship_id = ? AND execution_generation = ?",
+                      (row["relationship_id"], row["execution_generation"]))
+    return None if opened is None else opened["dispatch_request_id"]
 
 
 def _read_link(rows, rid, row, answer, notes):
@@ -283,8 +299,12 @@ def _read_settings(rows, row, answer, notes):
     child, parent = row["child_task_id"], row["parent_task_id"]
     child_settings = _settings(rows, child, notes)
     if child_settings is not None:
+        # The permissions travel with the pair: a packet stating another sandbox or approval
+        # is compared with these, and a sandbox this record cannot read stays None, a gap.
         answer(packets.POLICY, {"model": child_settings.data.get("model"),
-                                "effort": child_settings.data.get("reasoningEffort")},
+                                "effort": child_settings.data.get("reasoningEffort"),
+                                "sandbox": normalise_policy(child_settings.data.get("sandbox")),
+                                "approval": child_settings.data.get("approvalPolicy")},
                "authorized_settings[" + child + "]")
     else:
         notes.append("no settings are recorded for " + child)
@@ -498,7 +518,30 @@ def load_ledger(path, receiver) -> dict:
         raise LedgerUnusable("the reception ledger at " + str(target) + " belongs to "
                              + repr(ledger.get("receiver")) + ", not " + repr(receiver)
                              + "; another receiver's answers are not this one's")
+    problem = _entry_problem(ledger)
+    if problem:
+        raise LedgerUnusable("the reception ledger at " + str(target) + " is damaged: " + problem
+                             + "; a ledger that cannot say what was answered is not read"
+                               " through")
     return ledger
+
+
+def _entry_problem(ledger):
+    """What makes an entry unreadable, or None. Every entry, so none can fail later mid-check."""
+    for identifier, entry in ledger["answered"].items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("contentDigest"), str) \
+                or not entry["contentDigest"].strip() \
+                or entry.get("disposition") not in packets.DISPOSITIONS \
+                or not isinstance(entry.get("applied", False), bool):
+            return ("answered entry " + repr(identifier) + " is not a content digest, a"
+                    " disposition and whether it was applied")
+    for relationship, entry in ledger["assignments"].items():
+        if not isinstance(entry, dict) or any(
+                entry.get(name) is not None and not isinstance(entry[name], str)
+                for name in ("mode", "workflow", "messageId", "dispatchRequestId")):
+            return ("assignment entry " + repr(relationship) + " is not a mode, a workflow, a"
+                    " message id and a dispatch id")
+    return None
 
 
 def record_answer(ledger, packet, answer) -> bool:
@@ -579,6 +622,13 @@ def save_ledger(path, ledger) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, target)
+        # The rename is what records the answer, so it is made durable too: a rename lost to a
+        # power failure would bring back an answer, or an application, already given.
+        directory = os.open(str(target.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except BaseException:
         if os.path.exists(temporary):
             os.unlink(temporary)
