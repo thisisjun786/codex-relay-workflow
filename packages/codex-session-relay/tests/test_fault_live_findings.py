@@ -143,6 +143,26 @@ class ManagedStartFailuresReachTheLedger(ManagedStartFixture):
         self.assertEqual([], self.managed(batch, cleared=True))
         self.assertIsNone(self.fault("failed")["cleared_at"])
 
+    def test_an_accepted_creation_that_cannot_be_attached_is_not_called_absent(self):
+        # The host accepted the creation and reported settings other than the request's: a
+        # child exists on the host that the relay would not attach. That is not "no child".
+        real_create = self.host.create_thread
+
+        def mismatched(request, **kwargs):
+            receipt = real_create(request, **kwargs)
+            receipt["creation"] = dict(receipt["creation"], model="some-other-model")
+            return receipt
+        self.host.create_thread = mismatched
+        result = self.start.run(self.request)
+        self.assertEqual(result["reason"], "creation_settings_unverified", result)
+        found = self.managed(self.swept())
+        self.assertEqual([{"issueKey": ISSUE, "receiptStatus": "settings_unverified"}],
+                         [entry["signature"] for entry in found])
+        facts = [item["observed"] for item in found[0]["evidence"] if item["kind"] == "facts"][0]
+        self.assertNotIn("published no child", facts["actual"])
+        self.assertIn("created", facts["actual"])
+        self.assertIn("not attached", facts["impact"])
+
 
 SOURCE = {"repositoryCommit": "a" * 40, "repositoryTree": "b" * 40,
           "subdirectoryTree": "c" * 40, "workingTreeClean": True}
@@ -239,3 +259,38 @@ class OccurrencesStateTheInstalledRevision(RelayTestCase):
                 self.assertIsNone(facts["installation"].get("revision"))
                 self.assertTrue(facts["installation"].get("revisionReason") or "")
                 self.assertIn(faultsweep.INSTALLATION_LIMIT, facts["limits"])
+
+    def test_a_same_size_replacement_at_the_same_instant_is_read_again(self):
+        # The installer saves by an atomic replace. A record of the same size whose times match
+        # the one read before must still be read, not answered from the earlier reading.
+        self.record([{"location": self.package, "source": SOURCE}])
+        self.assertEqual("a" * 40, (self.facts()["installation"].get("revision") or {}).get(
+            "repositoryCommit"))
+        before = self.path.stat()
+        replacement = self.path.with_name("host-record.json.next")
+        replacement.write_text(self.path.read_text(encoding="utf-8").replace("a" * 40, "9" * 40),
+                               encoding="utf-8")
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        os.replace(replacement, self.path)
+        self.assertEqual(before.st_size, self.path.stat().st_size)
+        self.assertEqual(before.st_mtime_ns, self.path.stat().st_mtime_ns)
+        self.assertEqual("9" * 40, (self.facts()["installation"].get("revision") or {}).get(
+            "repositoryCommit"))
+
+    def test_an_incomplete_source_is_not_stated_as_a_revision(self):
+        for missing in ("repositoryTree", "subdirectoryTree", "workingTreeClean"):
+            with self.subTest(missing):
+                partial = {key: value for key, value in SOURCE.items() if key != missing}
+                self.record([{"location": self.package, "source": partial}])
+                facts = self.facts()
+                self.assertIsNone(facts["installation"].get("revision"), missing)
+                self.assertIn("incomplete", facts["installation"].get("revisionReason") or "")
+                self.assertIn(faultsweep.INSTALLATION_LIMIT, facts["limits"])
+
+    def test_a_copy_installed_from_a_dirty_tree_says_the_commit_does_not_identify_it(self):
+        self.record([{"location": self.package, "source": dict(SOURCE, workingTreeClean=False)}])
+        facts = self.facts()
+        self.assertEqual("a" * 40, (facts["installation"].get("revision") or {}).get(
+            "repositoryCommit"))
+        self.assertIn("uncommitted changes", " ".join(facts["limits"]))
+        self.assertNotIn(faultsweep.INSTALLATION_LIMIT, facts["limits"])

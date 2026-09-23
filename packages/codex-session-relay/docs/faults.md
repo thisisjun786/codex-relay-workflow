@@ -426,7 +426,9 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   journaled (`managed_start_observed`, subject = the request id; the row `managed-show` reads):
   a reason `creation_failed`, `creation_unknown`, `creation_identity_unobserved` or
   `creation_settings_unverified` is an answer after a create was attempted, and its suffix is the
-  status. A recorded receipt that is not accepted still decides where one exists. Any other
+  status. The last two come after the host ACCEPTED the creation - its receipt named an unusable
+  identity, or settings that did not match the request - so the incident says a child may exist
+  that the relay could not attach, never that none was published. A recorded receipt that is not accepted still decides where one exists. Any other
   reason at that stage - a worker that cannot take the pair - means the host was not asked on
   that attempt, and is not a fault; nor is a request with no creation-stage row at all, which is
   a start still waiting for the host. Elapsed time decides nothing. The fault clears when the
@@ -483,8 +485,12 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   failed install's rollback removes its entry but leaves the component facts it wrote. Anything
   else - no record, an unreadable one, another record version, no entry for this location, or an
   entry written before entries carried their revision (every install made before this change,
-  until it is reinstalled) - leaves `revision` null with `revisionReason` saying which, and the
-  observation then carries the unknown-revision limit. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
+  until it is reinstalled), or an incomplete one (any of the three tree identities or
+  `workingTreeClean` missing or malformed) - leaves `revision` null with `revisionReason` saying
+  which, and the observation then carries the unknown-revision limit. A copy installed from a
+  working tree with uncommitted changes states its commit with the limit that the commit does
+  not fully identify the installed bytes. The record is re-read whenever the file's device,
+  inode, size or modification or change time differs from the last reading. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
 - `reading_faults(..., limit, after)` and `sweep(..., readings_after)` return
   `readingsNext`; more than 1000 readings are refused. `record_all` turns a refused
   observation into a gap and records the rest.

@@ -165,6 +165,29 @@ def _creation_answer(store, request_id) -> dict | None:
             "standbyRecovery": detail.get("standbyRecovery")}
 
 
+# The two answers that come AFTER the host accepted a creation: it returned a receipt, but the
+# child identity in it was unusable, or the settings it reported did not match the request. A
+# child may exist on the host in either case; what failed is attaching it, not creating it.
+ACCEPTED_UNATTACHED = {
+    "identity_unobserved": ("the host accepted the creation but returned no usable child or"
+                            " standby identity, so the relay could not attach a child"),
+    "settings_unverified": ("the host created a child whose reported settings did not match"
+                            " the request, so the relay refused to attach it"),
+}
+
+
+def _answer_facts(issue, status) -> tuple:
+    """(detail, actual, impact) for a managed start's answer, in the answer's own terms."""
+    if status in ACCEPTED_UNATTACHED:
+        actual = ACCEPTED_UNATTACHED[status]
+        return (f"a managed start for {issue} was answered {status}: {actual}", actual,
+                f"a child the host created for {issue} is not attached to any assignment,"
+                " and no managed child is working on it")
+    return (f"a managed start for {issue} was answered {status} without publishing a child",
+            f"the host answered {status} and published no child",
+            f"no child is working on {issue}")
+
+
 def _unaccepted_answer(store, row) -> tuple:
     """(status, journal answer or None) for an armed request, or (None, None) when there is
     no answer to collect. A recorded receipt that is not accepted is the registry's own answer
@@ -348,6 +371,8 @@ HOST_RECORD = ("codex-relay-workflow", "host-record.json")
 HOST_RECORD_VERSION = 1
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _REVISION_KEYS = ("repositoryCommit", "repositoryTree", "subdirectoryTree", "workingTreeClean")
+DIRTY_INSTALL_LIMIT = ("installed from a working tree with uncommitted changes, so the recorded"
+                       " commit does not fully identify the installed bytes")
 _revision_cache = {}
 
 
@@ -372,8 +397,9 @@ def installed_revision(path=None) -> dict:
     no longer installed. An entry written before entries carried their revision has none, and
     the answer is then unknown - which is what that record can actually support.
 
-    Cached on the record's identity (path, mtime, size), so a daemon that outlives an install
-    reads the new record and a steady one is read once.
+    Cached on the record file's identity - device, inode, size, and both its modification and
+    change times - so a daemon that outlives an install reads the new record (the installer
+    saves by an atomic replace, which is a new inode) and a steady one is read once.
     """
     path = Path(path) if path is not None else host_record_path()
 
@@ -386,7 +412,7 @@ def installed_revision(path=None) -> dict:
         return unknown(f"no host record at {path}")
     except OSError as error:
         return unknown(f"the host record at {path} could not be read: {type(error).__name__}")
-    key = (str(path), info.st_mtime_ns, info.st_size)
+    key = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
     cached = _revision_cache.get("last")
     if cached is not None and cached[0] == key:
         return cached[1]
@@ -416,12 +442,18 @@ def _revision_from(data, unknown) -> dict:
         return unknown(f"the host record has no install entry for {PACKAGE_DIRECTORY}")
     entry = mine[-1]
     source = entry.get("source")
-    commit = source.get("repositoryCommit") if isinstance(source, dict) else None
-    if not (isinstance(commit, str) and _COMMIT.fullmatch(commit)):
+    if not isinstance(source, dict):
         return unknown("this copy's install entry records no revision (entries written before"
                        " the installer recorded one per install carry none; the next install"
                        " records it)")
-    revision = {key: source.get(key) for key in _REVISION_KEYS}
+    bad = [key for key in _REVISION_KEYS[:3]
+           if not (isinstance(source.get(key), str) and _COMMIT.fullmatch(source[key]))]
+    if not isinstance(source.get("workingTreeClean"), bool):
+        bad.append("workingTreeClean")
+    if bad:
+        return unknown("this copy's install entry records an incomplete revision (" + ", ".join(bad)
+                       + " missing or malformed), which identifies nothing")
+    revision = {key: source[key] for key in _REVISION_KEYS}
     revision.update(environment=entry.get("environment"), integrity=entry.get("integrity"))
     return {"revision": revision, "record": None, "reason": None}
 
@@ -440,9 +472,12 @@ def _facts(*, expected, actual, impact, limits=(), **subject) -> dict:
     The subject fields (event, relationship, generation, turn) are given where the source holds
     them."""
     installed = installation()
+    revision = installed["revision"]
+    stated = [] if revision else [INSTALLATION_LIMIT]
+    if revision and revision["workingTreeClean"] is False:
+        stated = [DIRTY_INSTALL_LIMIT]
     observed = {"expected": expected, "actual": actual, "impact": impact,
-                "installation": installed,
-                "limits": [*limits] + ([] if installed["revision"] else [INSTALLATION_LIMIT])}
+                "installation": installed, "limits": [*limits, *stated]}
     observed.update({key: value for key, value in subject.items() if value is not None})
     return _evidence("facts", "sweep", observed)
 
@@ -825,6 +860,7 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
                 "reason": answer["reason"], "retainedChildTaskId": answer["retainedChildTaskId"],
                 "standbyRecovery": answer["standbyRecovery"],
             }))
+        detail, actual, impact = _answer_facts(row["issue_key"], status)
         limits = ["the registry keeps only the latest receipt of an armed request"]
         if answer is not None:
             limits = ["read from the newest creation answer the managed start journaled; a start"
@@ -837,13 +873,11 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
             signature={"issueKey": row["issue_key"], "receiptStatus": status},
             occurrence_key=f"managed:{row['request_id']}:{status}",
             scope={**dict(scope or {}), "issueKey": row["issue_key"]},
-            detail=f"a managed start for {row['issue_key']} was answered"
-                   f" {status} without publishing a child",
+            detail=detail,
             evidence=[*evidence, _facts(
-                expected=f"the host publishes a child for {row['issue_key']}",
-                actual=f"the host answered {status} and published no child",
-                impact=f"no child is working on {row['issue_key']}",
-                limits=limits)],
+                expected=f"the host publishes a child for {row['issue_key']}"
+                         " and the relay attaches it",
+                actual=actual, impact=impact, limits=limits)],
         ))
     return _page(observations, rows, "request_id", after, limit, until)
 
