@@ -903,9 +903,11 @@ them `pending` with their eligibility, but the only caller of `reserve_notificat
 installed system is the `fault-notification-reserve` command. The daemon tick sweeps and
 records; it never reserves or sends a notification, and nothing in the plugin wiring or the
 skills does either. A pending notification therefore waits until a person or a coordinating
-task runs `fault-notification-reserve` and acknowledges it. What does reach the level above
-without anybody running a command is the unsent-write warning: `attention()` is on `status`
-under `faults`, and the daemon carries it as a tick note when it appears or changes.
+task runs `fault-notification-reserve` and acknowledges it. Nor is the unsent-write warning
+delivered upward: `attention()` is visible locally, on `status` under `faults` and as a note in
+the daemon's tick result when it appears or changes, and the level above learns of it only by
+reading those. The supervisor channel's tick stages a project's standing obligations and sends
+nothing about faults.
 
 The smallest wiring that closes this, left as its own follow-up rather than built here: the
 daemon tick reserves eligible notifications (`reserve_notifications`) and stages each through

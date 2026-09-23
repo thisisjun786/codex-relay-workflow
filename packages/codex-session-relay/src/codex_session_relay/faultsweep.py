@@ -476,8 +476,9 @@ def installed_revision(path=None) -> dict:
 def _revision_from(data, unknown) -> dict:
     if not isinstance(data, dict) or data.get("recordVersion") != HOST_RECORD_VERSION:
         return unknown(f"the host record is not record version {HOST_RECORD_VERSION}")
-    component = (data.get("components") or {}) if isinstance(data.get("components"), dict) else {}
-    installs = (component.get("codex-session-relay") or {}).get("installs")         if isinstance(component.get("codex-session-relay"), dict) else None
+    components = data.get("components")
+    relay = components.get("codex-session-relay") if isinstance(components, dict) else None
+    installs = relay.get("installs") if isinstance(relay, dict) else None
     if not isinstance(installs, list):
         return unknown("the host record lists no codex-session-relay installs")
     here = os.path.realpath(PACKAGE_DIRECTORY)
@@ -925,8 +926,9 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
                       " same request is retried"]
         observations.append(faults.observation(
             product=product, fault_class="managed_start_failed", severity=faults.BROKEN,
-            # The host's answer is the error type: a rejection and a partial start are different
-            # failures and never one record, and one that is replaced by another is recovered.
+            # The recorded answer (the registry's status, else the journaled creation answer) is
+            # the error type: a rejection and a partial start are different failures and never
+            # one record, and one that is replaced by another is recovered.
             signature={"issueKey": row["issue_key"], "receiptStatus": status},
             occurrence_key=f"managed:{row['request_id']}:{status}",
             scope={**dict(scope or {}), "issueKey": row["issue_key"]},
