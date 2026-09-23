@@ -182,8 +182,10 @@ def relay_program() -> tuple:
     renders the same bytes, since a staged packet is compared byte for byte where its transport
     starts. Where no console script is installed, the interpreter itself runs the module.
 
-    An installation that is later replaced and removed takes that path with it; the same
-    arguments then run under whichever relay reads that store now.
+    An installation that is later replaced and removed takes that path with it: a line
+    already delivered then names an executable that no longer exists and fails as rendered.
+    Its arguments still apply, but whoever runs them has to name the relay that reads that
+    store now; nothing re-points a delivered line.
     """
     script = os.path.join(os.path.realpath(sys.prefix), "bin", PROGRAM_NAME)
     if os.path.isfile(script) and os.access(script, os.X_OK):

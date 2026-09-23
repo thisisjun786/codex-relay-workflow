@@ -110,7 +110,10 @@ def normalise_policy(policy):
     merged["type"] = kind
     if "writableRoots" in merged:
         roots = merged["writableRoots"]
-        if not isinstance(roots, list):
+        # A list of text, like every roots list a comparison here reads (_text_list). A list
+        # holding anything else used to pass, and a record and an answer that both held
+        # [123] compared equal, so a turn started on a sandbox nobody can read.
+        if not _text_list(roots):
             return None
         merged["writableRoots"] = list(roots)
     return merged

@@ -98,8 +98,10 @@ console script installed beside the writing interpreter, found through the real 
 environment so that the service's worker and a parent's CLI started through a `current` link
 write the same bytes - a staged packet is compared byte for byte where its transport starts -
 and the interpreter running the module where no console script is installed. A line is therefore
-runnable as rendered with no PATH at all, for as long as that installation exists; after it is
-replaced and removed, the same arguments run under whichever relay now reads the store.
+runnable as rendered with no PATH at all, for as long as that installation exists. After it is
+replaced and removed, a line already delivered names an executable that is gone and fails as
+rendered; its arguments still apply, and whoever runs them names the relay that now reads the
+store. Nothing re-points a delivered line.
 `tests/test_supervisor_live_findings.py` runs one rendered line as a real process with PATH
 pointing nowhere.
 
@@ -645,7 +647,8 @@ cwd while every other field held (CRW-215 live finding F2), so after such a resu
 the top level and in each environment - may be narrower than recorded, never wider. "Narrower"
 is a question about lists of paths, so both sides must be lists: the recorder refuses roots that
 are not a list of text, and environments that are not a list of objects with a text id, a text
-cwd and roots that are a list of text, as `settings_mistyped` (a record holding the text
+cwd and roots that are a list of text, as `settings_mistyped`, and a sandbox whose
+`writableRoots` hold anything but text as `unsupported_sandbox_type` (a record holding the text
 "/a/bc" used to pass and was compared as its characters, so a host root "/" read as one it
 names); and a host answer of any other shape refuses as `setting_unobservable`, retry-safe and
 before any turn, on both resume routes, where it used to raise and be recorded as an unknown

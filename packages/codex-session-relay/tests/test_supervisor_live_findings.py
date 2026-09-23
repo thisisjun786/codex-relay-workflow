@@ -364,6 +364,43 @@ class F2EveryShapeTheComparisonReads(_Seam):
                     self.assertTrue(findings, "an unreadable answer read as agreement")
                     self.assertEqual(findings[0]["code"], "setting_unobservable", findings)
 
+    def test_writable_roots_that_are_not_text_are_unreadable_on_both_sides(self):
+        """Fresh-context review 2 of a3c0bad1: the sandbox's own roots list was the one left out.
+
+        A record and an answer that both held writableRoots [123] compared equal, so the send
+        started on a sandbox nobody can read. Unreadable on either side is a refusal before any
+        turn, as it already was for a writableRoots that is not a list at all.
+        """
+        bad = dict(seam.AUTHORIZED_POLICY, writableRoots=[123])
+        view = TaskSettings(dict(seam.AUTHORIZED.data, sandbox=bad))
+        with self.subTest("the recorder"):
+            try:
+                view.require_usable()
+            except DeliveryRefused as refused:
+                self.assertEqual(refused.reason, RefusalReason.UNSUPPORTED_SANDBOX_TYPE)
+            else:
+                self.fail("a sandbox whose writableRoots are not text was accepted")
+        cases = {
+            "record and answer alike": (dict(seam.AUTHORIZED.data, sandbox=bad),
+                                        self._answer(sandbox=bad)),
+            "answer only": (dict(seam.AUTHORIZED.data), self._answer(sandbox=bad)),
+        }
+        for number, (label, (record, answer)) in enumerate(cases.items(), start=1):
+            for flagged in (True, False):
+                with self.subTest(label, settings_free=flagged):
+                    settings = record_based(record) if flagged else TaskSettings(record)
+                    adapter, calls = self._adapter(resume=answer, status="notLoaded")
+                    try:
+                        receipt = adapter.send_message(
+                            f"sup-6{int(flagged)}{number:010d}-a1", "thread-1", "hi", settings)
+                    except Exception as error:  # noqa: BLE001 - the defect is an exception
+                        self.fail(f"the comparison raised {error!r} on {label}")
+                    # An unreadable sandbox is never agreement (settings.mismatches), so it is
+                    # a difference: renamed on the route that transmitted nothing.
+                    self.assert_withheld_before_any_turn(
+                        receipt, calls,
+                        "settings_differ_after_load" if flagged else "settings_not_preserved")
+
     def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
         host = FakeHostAdapter(clock=None)
         host.add_thread("thread-1", status="notLoaded",
