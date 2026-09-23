@@ -12,7 +12,7 @@ from codex_session_relay.managed import ManagedStart, parse_request, operation_i
 from codex_session_relay.errors import RegistrationError
 
 from .support import RelayTestCase, task_settings, PARENT, HOST
-from .test_rolepolicy import write_policy, PARENT_MODEL, PARENT_EFFORT
+from .test_rolepolicy import write_policy, CHILD_EFFORT, CHILD_MODEL, PARENT_MODEL, PARENT_EFFORT
 
 
 class Host:
@@ -80,7 +80,8 @@ class ManagedEntry(RelayTestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         self.addCleanup(rolepolicy.reset)
-        child = task_settings(self.root, environments=[])
+        child = task_settings(self.root, model=CHILD_MODEL, reasoningEffort=CHILD_EFFORT,
+                              environments=[])
         self.request = {
             "schema": "managed-start/1", "requestId": "managed-1", "issueKey": "REL-MANAGED",
             "parent": {"taskId": PARENT, "hostId": HOST,

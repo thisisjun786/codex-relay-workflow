@@ -88,6 +88,10 @@ PARENT_EFFORT = "max"
 # name is shared across roles: it carries the child's effort under a different model, which
 # must not be what makes the check work.
 SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
+# What the child ran on until 2026-09-23, when it moved to MODEL and kept its effort. Kept for
+# the same reason as the parent's: a superseded pair is refused for its role. Because it keeps
+# the child's effort name, the model is the only axis that can refuse it.
+SUPERSEDED_CHILD = ("anthropic/claude-opus-5", "xhigh")
 
 
 def roles_policy(directory=None, *, roles=None, allowed=True):
@@ -190,6 +194,22 @@ def test_the_pair_a_role_used_to_run_on_is_refused_like_any_other_wrong_pair():
         policy.authorize(*SUPERSEDED_PARENT, role="parent")
     assert raised.value.code == "execution_role_mismatch"
     assert raised.value.allowed == [PARENT_MODEL]
+
+
+def test_the_pair_the_child_used_to_run_on_is_refused_on_the_model_alone():
+    """The child kept its effort name when it moved, so only the model tells the pairs apart.
+
+    No allowlist is declared, so the refusal can only come from the role question.
+    """
+    superseded_model, superseded_effort = SUPERSEDED_CHILD
+    assert superseded_effort == EFFORT
+    assert superseded_model != MODEL
+    policy = declared(allowed=False)
+    with pytest.raises(ExecutionRefused) as raised:
+        policy.authorize(superseded_model, superseded_effort, role="child")
+    assert raised.value.code == "execution_role_mismatch"
+    assert raised.value.field == "model"
+    assert policy.authorize(MODEL, EFFORT, role="child").model == MODEL
 
 
 @pytest.mark.parametrize("missing", [None, "", "   "])

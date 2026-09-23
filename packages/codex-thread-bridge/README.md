@@ -113,7 +113,7 @@ Example tool arguments (these are MCP calls, not shell commands):
   "cwd": "/absolute/path/to/project",
   "title": "Bridge validation",
   "sandbox": "read-only",
-  "model": "anthropic/claude-opus-5",
+  "model": "anthropic/claude-opus-5-5",
   "reasoning_effort": "xhigh",
   "prompt": "Do not use tools or edit files. Reply exactly: BRIDGE_READY"
 }
@@ -128,7 +128,7 @@ use them with `wait_thread`. After checking the session in Desktop, use
   "request_id": "demo-message-001",
   "thread_id": "<returned threadId>",
   "message": "Do not use tools or edit files. Reply exactly: BRIDGE_FOLLOWUP_OK",
-  "expected_settings": {"model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+  "expected_settings": {"model": "anthropic/claude-opus-5-5", "reasoning_effort": "xhigh"}
 }
 ```
 
@@ -200,14 +200,14 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 ```json
 {
   "allowed": [
-    {"model": "anthropic/claude-opus-5", "efforts": ["xhigh"]},
+    {"model": "anthropic/claude-opus-5-5", "efforts": ["xhigh"]},
     {"model": "openai/gpt-5.6-sol", "efforts": ["high"]},
     {"model": "devin/swe-2", "efforts": ["max"]}
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
     "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
-    "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
+    "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
   },
   "exceptions": {
     "one-task": {
@@ -540,7 +540,7 @@ Git object store; the task sandbox does not restrict the bridge's Git preparatio
   "destination": "/absolute/path/to/retained-checkout",
   "worktree_mode": "bridge-managed-retained",
   "sandbox": "read-only",
-  "model": "anthropic/claude-opus-5",
+  "model": "anthropic/claude-opus-5-5",
   "reasoning_effort": "xhigh",
   "expected_sandbox_policy": {"type": "readOnly", "networkAccess": false}
 }

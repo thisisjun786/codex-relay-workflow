@@ -30,12 +30,21 @@ PARENT_EFFORT = "max"
 # refused for its role like any other wrong pair, not carried as a second answer the checks
 # still accept.
 SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
+# The pair an issue child runs on. It moved from anthropic/claude-opus-5 to
+# anthropic/claude-opus-5-5 on 2026-09-23 at the same effort, and that move too was an edit to
+# the policy file and nothing else.
+CHILD_MODEL = "anthropic/claude-opus-5-5"
+CHILD_EFFORT = "xhigh"
+# The pair the child ran on before that. It keeps the child's effort name, so a record still
+# carrying it is wrong on the model alone: this is the fixture for a pair that differs from its
+# role's pair on one axis only.
+SUPERSEDED_CHILD = ("anthropic/claude-opus-5", "xhigh")
 
 POLICY = {
     "roles": {
         "supervisor": {"expectation": "record"},
         "parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT},
-        "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+        "child": {"model": CHILD_MODEL, "reasoningEffort": CHILD_EFFORT},
     }
 }
 
@@ -103,7 +112,8 @@ class PolicyResolution(unittest.TestCase):
         self.assertTrue(resolved)
         self.assertEqual(resolved.expectation("parent").model, PARENT_MODEL)
         self.assertEqual(resolved.expectation("parent").reasoning_effort, PARENT_EFFORT)
-        self.assertEqual(resolved.expectation("child").reasoning_effort, "xhigh")
+        self.assertEqual(resolved.expectation("child").model, CHILD_MODEL)
+        self.assertEqual(resolved.expectation("child").reasoning_effort, CHILD_EFFORT)
         self.assertIsNone(resolved.expectation("supervisor").model)
         self.assertIsNotNone(resolved.digest)
         # The comparison is exact equality on the whole pair, so whether two roles happen to
@@ -233,6 +243,36 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
             str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
         )
         self.assertIsNone(rolepolicy.check_record(current, "parent", policy))
+
+    def test_the_pair_a_child_used_to_run_on_is_recognised_as_superseded(self):
+        """The child's move is the same file edit, and its old pair stops being an answer too.
+
+        The child moved from anthropic/claude-opus-5 to anthropic/claude-opus-5-5 and kept
+        xhigh. A record still carrying the old pair shares the child's effort name, so the model
+        is the only thing that can make it stale: a check that compared efforts alone would
+        pass it.
+        """
+        from pathlib import Path
+
+        superseded = task_settings(
+            str(Path(self.tmp).resolve()),
+            model=SUPERSEDED_CHILD[0], reasoningEffort=SUPERSEDED_CHILD[1],
+        )
+        self.assertEqual(SUPERSEDED_CHILD[1], CHILD_EFFORT)
+        policy = rolepolicy.declared()
+        finding = rolepolicy.check_record(superseded, "child", policy)
+        self.assertIsNotNone(finding, "the superseded child pair must not read as current")
+        self.assertEqual(
+            finding["code"], RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value
+        )
+        self.assertEqual(finding["expected"]["model"], CHILD_MODEL)
+        self.assertEqual(finding["recorded"]["model"], SUPERSEDED_CHILD[0])
+        self.assertEqual(finding["recorded"]["reasoningEffort"],
+                         finding["expected"]["reasoningEffort"])
+        current = task_settings(
+            str(Path(self.tmp).resolve()), model=CHILD_MODEL, reasoningEffort=CHILD_EFFORT,
+        )
+        self.assertIsNone(rolepolicy.check_record(current, "child", policy))
 
     def test_a_task_bound_to_no_scope_is_outside_this_policy_entirely(self):
         """Declaring roles must not reach work that has nothing to do with these levels."""
@@ -613,7 +653,7 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         # And a recipient whose pair IS the declared one carries no such instruction.
         record_settings(
             self.store, self.clock, CHILD,
-            task_settings("/child", model="anthropic/claude-opus-5", reasoningEffort="xhigh"),
+            task_settings("/child", model=CHILD_MODEL, reasoningEffort=CHILD_EFFORT),
             source="creation_result", role="child",
         )
         from codex_session_relay.models import Endpoint
@@ -1074,7 +1114,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             "roles": {
                 "supervisor": {"expectation": "record"},
                 "parent": {"model": superseded_model, "reasoningEffort": superseded_effort},
-                "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+                "child": {"model": CHILD_MODEL, "reasoningEffort": CHILD_EFFORT},
             }
         })
         again = self.registry.linkage.bind_scope(
@@ -1098,7 +1138,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
         # binding with nothing to replay.
         record_settings(
             self.store, self.clock, PARENT,
-            task_settings("/parent", model="anthropic/claude-opus-5", reasoningEffort="xhigh"),
+            task_settings("/parent", model=CHILD_MODEL, reasoningEffort=CHILD_EFFORT),
             source="creation_result", role="child",
         )
         with self.assertRaises(LinkageError) as raised:
@@ -1149,7 +1189,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             "roles": {
                 "supervisor": {"expectation": "record"},
                 "parent": {"model": superseded_model, "reasoningEffort": superseded_effort},
-                "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+                "child": {"model": CHILD_MODEL, "reasoningEffort": CHILD_EFFORT},
             }
         })
         shown = cmd_settings_show(services, argparse.Namespace(task=PARENT))
@@ -1217,7 +1257,7 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
                     "supervisor": {"expectation": "record"},
                     "parent": {"model": superseded_model,
                                "reasoningEffort": superseded_effort},
-                    "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+                    "child": {"model": CHILD_MODEL, "reasoningEffort": CHILD_EFFORT},
                 }
             },
         )
