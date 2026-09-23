@@ -26,6 +26,8 @@ looked".
 """
 
 import json
+import os
+import re
 from pathlib import Path
 
 from . import __version__, faults
@@ -124,6 +126,53 @@ _REASON = "(CASE WHEN json_valid({t}.detail) THEN json_extract({t}.detail, '$.re
 # The receipt the registry attaches a managed start on. Anything else recorded against an
 # armed request is the host answering without publishing a child.
 ACCEPTED_RECEIPT = "accepted"
+# A managed start journals every result it returns (managed.ManagedStart.result, kind
+# managed_start_observed, subject = the request id), and the creation stage is where the host is
+# asked for the child. The NEWEST creation-stage row is the current answer for the request:
+# managed.py records a receipt only for an accepted creation, so every other answer lives here
+# and nowhere else in this store. Its reason names the outcome: creation_failed,
+# creation_unknown, creation_identity_unobserved and creation_settings_unverified are answers
+# after a create was attempted; any other reason at that stage (a worker that cannot take the
+# pair) means the host was not asked on that attempt. managed-show reads the same rows.
+MANAGED_OBSERVED = "managed_start_observed"
+CREATION_STAGE = "creation"
+CREATION_ANSWER = "creation_"
+_CREATION_ANSWER_SQL = (
+    "SELECT seq, detail FROM journal"
+    " WHERE subject = ? AND kind = '" + MANAGED_OBSERVED + "' AND json_valid(detail)"
+    "   AND json_extract(detail, '$.stage') = '" + CREATION_STAGE + "'"
+    " ORDER BY seq DESC LIMIT 1")
+
+
+def _creation_answer(store, request_id) -> dict | None:
+    """The managed start's newest creation-stage answer for this request, when it is one.
+
+    None when there is no creation-stage row at all - the create is still in flight, or the
+    caller stopped between arming and journaling - and None when the newest row says the host
+    was not asked. Elapsed time decides nothing: a start is judged only by what it recorded.
+    """
+    row = store.one(_CREATION_ANSWER_SQL, (request_id,))
+    if row is None:
+        return None
+    detail = json.loads(row["detail"])
+    reason = detail.get("reason") if isinstance(detail, dict) else None
+    if not (isinstance(reason, str) and reason.startswith(CREATION_ANSWER)
+            and len(reason) > len(CREATION_ANSWER)):
+        return None
+    return {"seq": row["seq"], "status": reason[len(CREATION_ANSWER):], "reason": reason,
+            "state": detail.get("state"),
+            "retainedChildTaskId": detail.get("retainedChildTaskId"),
+            "standbyRecovery": detail.get("standbyRecovery")}
+
+
+def _unaccepted_answer(store, row) -> tuple:
+    """(status, journal answer or None) for an armed request, or (None, None) when there is
+    no answer to collect. A recorded receipt that is not accepted is the registry's own answer
+    and decides; with no receipt, the newest creation-stage journal answer does."""
+    if row["receipt_status"] is not None:
+        return row["receipt_status"], None
+    answer = _creation_answer(store, row["request_id"])
+    return (answer["status"], answer) if answer is not None else (None, None)
 
 
 def _named(value):
@@ -284,22 +333,116 @@ def _evidence(kind, ref, observed) -> dict:
     return {"kind": kind, "ref": ref, "observed": observed}
 
 
-# What this relay can say about the copy it runs from. The revision it was installed from is
-# held by the runtime installer's own record, which the relay does not read, so it is stated as
-# a limit of every observation rather than guessed.
+# What this relay can say about the copy it runs from: the package, its version and where it is
+# installed. The revision it was installed from is read from the runtime installer's own host
+# record (installed_revision below), and stated only where that record attributes a revision to
+# THIS copy; anywhere else it is unknown and every observation says so.
+PACKAGE_DIRECTORY = str(Path(__file__).resolve().parent)
 INSTALLATION = {"package": "codex-session-relay", "version": __version__,
-                "location": str(Path(__file__).resolve().parent)}
+                "location": PACKAGE_DIRECTORY}
 INSTALLATION_LIMIT = ("the installed revision is not known to the relay; the package version and"
                       " the location of the installed copy identify it")
+# The runtime installer's host record, found by the rule scripts/crw_runtime/hostrecord.py
+# record_path() uses. Read as JSON; nothing from the installer is imported.
+HOST_RECORD = ("codex-relay-workflow", "host-record.json")
+HOST_RECORD_VERSION = 1
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_REVISION_KEYS = ("repositoryCommit", "repositoryTree", "subdirectoryTree", "workingTreeClean")
+_revision_cache = {}
+
+
+def host_record_path(env=None) -> Path:
+    """$XDG_STATE_HOME/codex-relay-workflow/host-record.json, else the same under
+    $HOME/.local/state - where the runtime installer writes its host record."""
+    env = os.environ if env is None else env
+    base = env.get("XDG_STATE_HOME")
+    root = Path(base).expanduser() if base else (
+        Path(env.get("HOME", "~")).expanduser() / ".local" / "state")
+    return root.joinpath(*HOST_RECORD)
+
+
+def installed_revision(path=None) -> dict:
+    """The revision the installer recorded for THIS copy, or None with the reason.
+
+    Read from the install entry whose location is this package's own directory, and from
+    nothing else. The installer writes the revision onto the entry (its "source") in the same
+    save that adds it, and a rollback removes the entry, so the two come and go together. The
+    component-level commit is deliberately not read: a failed install's rollback removes that
+    install's entry but leaves the component facts it wrote, so they can describe a copy that is
+    no longer installed. An entry written before entries carried their revision has none, and
+    the answer is then unknown - which is what that record can actually support.
+
+    Cached on the record's identity (path, mtime, size), so a daemon that outlives an install
+    reads the new record and a steady one is read once.
+    """
+    path = Path(path) if path is not None else host_record_path()
+
+    def unknown(reason):
+        return {"revision": None, "record": str(path), "reason": reason}
+
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return unknown(f"no host record at {path}")
+    except OSError as error:
+        return unknown(f"the host record at {path} could not be read: {type(error).__name__}")
+    key = (str(path), info.st_mtime_ns, info.st_size)
+    cached = _revision_cache.get("last")
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        answer = unknown(f"the host record at {path} is unreadable: {type(error).__name__}")
+    else:
+        answer = _revision_from(data, unknown)
+        if answer["revision"] is not None:
+            answer = {**answer, "record": str(path)}
+    _revision_cache["last"] = (key, answer)
+    return answer
+
+
+def _revision_from(data, unknown) -> dict:
+    if not isinstance(data, dict) or data.get("recordVersion") != HOST_RECORD_VERSION:
+        return unknown(f"the host record is not record version {HOST_RECORD_VERSION}")
+    component = (data.get("components") or {}) if isinstance(data.get("components"), dict) else {}
+    installs = (component.get("codex-session-relay") or {}).get("installs")         if isinstance(component.get("codex-session-relay"), dict) else None
+    if not isinstance(installs, list):
+        return unknown("the host record lists no codex-session-relay installs")
+    mine = [entry for entry in installs if isinstance(entry, dict)
+            and isinstance(entry.get("location"), str)
+            and os.path.realpath(entry["location"]) == os.path.realpath(PACKAGE_DIRECTORY)]
+    if not mine:
+        return unknown(f"the host record has no install entry for {PACKAGE_DIRECTORY}")
+    entry = mine[-1]
+    source = entry.get("source")
+    commit = source.get("repositoryCommit") if isinstance(source, dict) else None
+    if not (isinstance(commit, str) and _COMMIT.fullmatch(commit)):
+        return unknown("this copy's install entry records no revision (entries written before"
+                       " the installer recorded one per install carry none; the next install"
+                       " records it)")
+    revision = {key: source.get(key) for key in _REVISION_KEYS}
+    revision.update(environment=entry.get("environment"), integrity=entry.get("integrity"))
+    return {"revision": revision, "record": None, "reason": None}
+
+
+def installation() -> dict:
+    """INSTALLATION with the revision the host record attributes to this copy, or its absence."""
+    answer = installed_revision()
+    return {**INSTALLATION, "revision": answer["revision"],
+            "revisionRecord": answer["record"], "revisionReason": answer["reason"]}
 
 
 def _facts(*, expected, actual, impact, limits=(), **subject) -> dict:
     """The incident as criterion 1 asks for it: what should have happened, what did, what it
-    costs, what this reading cannot see, and the installation it was seen under. The subject
-    fields (event, relationship, generation, turn) are given where the source holds them."""
+    costs, what this reading cannot see, and the installation it was seen under - including the
+    revision it was installed from, where the installer's record attributes one to this copy.
+    The subject fields (event, relationship, generation, turn) are given where the source holds
+    them."""
+    installed = installation()
     observed = {"expected": expected, "actual": actual, "impact": impact,
-                "installation": INSTALLATION,
-                "limits": [*limits, INSTALLATION_LIMIT]}
+                "installation": installed,
+                "limits": [*limits] + ([] if installed["revision"] else [INSTALLATION_LIMIT])}
     observed.update({key: value for key, value in subject.items() if value is not None})
     return _evidence("facts", "sweep", observed)
 
@@ -650,9 +793,11 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
 def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
     """Managed starts the host answered without publishing a child.
 
-    An armed request whose recorded receipt is anything but accepted. The registry replaces a
-    non-publishing receipt with a later one and attaches only an accepted one, so the fault
-    clears exactly when a later receipt for that request is accepted.
+    An armed request with no accepted receipt, and an answer: a recorded receipt that is not
+    accepted, or - since managed.ManagedStart records a receipt only for an accepted creation -
+    the newest creation-stage answer it journaled (_creation_answer). A request still waiting
+    for the host has neither, and is not a fault. The fault clears when the request records an
+    accepted receipt or attaches, or its newest creation-stage answer says something else.
     """
     limit = faults.bounded(limit, "limit")
     after, until, _ = _rotation(store, cursor,
@@ -660,29 +805,46 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
     rows = [] if until is None else store.all(
         "SELECT request_id, issue_key, receipt_status, workspace, revision, updated_at"
         "  FROM managed_start_requests"
-        " WHERE state = 'create_armed' AND receipt_status IS NOT NULL AND receipt_status != ?"
+        " WHERE state = 'create_armed' AND (receipt_status IS NULL OR receipt_status != ?)"
         "   AND request_id > ? AND request_id <= ?"
         " ORDER BY request_id LIMIT ?",
         (ACCEPTED_RECEIPT, after or "", until, limit),
     )
-    observations = [faults.observation(
-        product=product, fault_class="managed_start_failed", severity=faults.BROKEN,
-        # The host's answer is the error type: a rejection and a partial start are different
-        # failures and never one record, and one that is replaced by another is recovered.
-        signature={"issueKey": row["issue_key"], "receiptStatus": row["receipt_status"]},
-        occurrence_key=f"managed:{row['request_id']}:{row['receipt_status']}",
-        scope={**dict(scope or {}), "issueKey": row["issue_key"]},
-        detail=f"a managed start for {row['issue_key']} was answered"
-               f" {row['receipt_status']} without publishing a child",
-        evidence=[_evidence("row", f"managed_start_requests:{row['request_id']}", {
+    observations = []
+    for row in rows:
+        status, answer = _unaccepted_answer(store, row)
+        if status is None:
+            continue
+        evidence = [_evidence("row", f"managed_start_requests:{row['request_id']}", {
             "receiptStatus": row["receipt_status"], "requestRevision": row["revision"],
             "workspace": row["workspace"], "updatedAt": row["updated_at"],
-        }), _facts(
-            expected=f"the host publishes a child for {row['issue_key']}",
-            actual=f"the host answered {row['receipt_status']} and published no child",
-            impact=f"no child is working on {row['issue_key']}",
-            limits=["the registry keeps only the latest receipt of an armed request"])],
-    ) for row in rows]
+        })]
+        if answer is not None:
+            evidence.append(_evidence("row", f"journal:{answer['seq']}", {
+                "kind": MANAGED_OBSERVED, "state": answer["state"], "stage": CREATION_STAGE,
+                "reason": answer["reason"], "retainedChildTaskId": answer["retainedChildTaskId"],
+                "standbyRecovery": answer["standbyRecovery"],
+            }))
+        limits = ["the registry keeps only the latest receipt of an armed request"]
+        if answer is not None:
+            limits = ["read from the newest creation answer the managed start journaled; a start"
+                      " that stopped after arming without journaling one is not seen until the"
+                      " same request is retried"]
+        observations.append(faults.observation(
+            product=product, fault_class="managed_start_failed", severity=faults.BROKEN,
+            # The host's answer is the error type: a rejection and a partial start are different
+            # failures and never one record, and one that is replaced by another is recovered.
+            signature={"issueKey": row["issue_key"], "receiptStatus": status},
+            occurrence_key=f"managed:{row['request_id']}:{status}",
+            scope={**dict(scope or {}), "issueKey": row["issue_key"]},
+            detail=f"a managed start for {row['issue_key']} was answered"
+                   f" {status} without publishing a child",
+            evidence=[*evidence, _facts(
+                expected=f"the host publishes a child for {row['issue_key']}",
+                actual=f"the host answered {status} and published no child",
+                impact=f"no child is working on {row['issue_key']}",
+                limits=limits)],
+        ))
     return _page(observations, rows, "request_id", after, limit, until)
 
 
@@ -1161,17 +1323,19 @@ def still_present(store, fault_class, signature) -> dict:
             "                 AND " + _in_streak("j") + ")",
             (signature.get("relationship"), *SETTLED_DELIVERY, signature.get("errorCode")))
     if fault_class == "managed_start_failed":
-        if signature.get("receiptStatus") is not None:
-            return store.one(
-                "SELECT 1 FROM managed_start_requests WHERE issue_key = ?"
-                "   AND state = 'create_armed' AND receipt_status = ? LIMIT 1",
-                (signature.get("issueKey"), signature.get("receiptStatus")))
-        # Recorded before the answer was part of identity: any unaccepted answer keeps it.
-        return store.one(
-            "SELECT 1 FROM managed_start_requests WHERE issue_key = ?"
-            "   AND state = 'create_armed' AND receipt_status IS NOT NULL"
-            "   AND receipt_status != ? LIMIT 1",
-            (signature.get("issueKey"), ACCEPTED_RECEIPT))
+        # Exactly what collection reads (_unaccepted_answer). One pending request per issue is
+        # enforced by the store, so this reads a request or two, not a history.
+        wanted = signature.get("receiptStatus")
+        for row in store.all(
+                "SELECT request_id, receipt_status FROM managed_start_requests"
+                " WHERE issue_key = ? AND state = 'create_armed'"
+                "   AND (receipt_status IS NULL OR receipt_status != ?)",
+                (signature.get("issueKey"), ACCEPTED_RECEIPT)):
+            status, _ = _unaccepted_answer(store, row)
+            # Recorded before the answer was part of identity: any unaccepted answer keeps it.
+            if status is not None and (wanted is None or status == wanted):
+                return row
+        return None
     # A class this cannot ask about is never cleared by absence.
     return {"unaskable": True}
 

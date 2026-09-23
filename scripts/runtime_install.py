@@ -2952,6 +2952,11 @@ def cmd_install(args):
                     ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT),
                 "workingTreeClean": definition.working_tree_clean(ROOT),
             }
+            # The same identity on the install entry itself, so the revision of an installed
+            # copy travels with its entry: a rollback that removes a failed install's entry
+            # leaves the component-level facts that install wrote, and an installed relay states
+            # its revision from its own entry (codex_session_relay.faultsweep.installed_revision).
+            install["source"] = dict(facts[component["component"]])
             hostrecord.put_install(record, component["component"], install)
             installs[component["component"]] = install
             performed.append({"step": "read imported location", "component": component["component"],

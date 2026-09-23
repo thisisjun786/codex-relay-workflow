@@ -420,9 +420,23 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   repetition whatever waited between them. A streak that ended is never counted again. Signature
   `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
   answered a managed start without publishing a child (broken; signature `{issueKey,
-  receiptStatus}`, so a rejection and a partial start are different faults; one clears when a
-  later receipt for that request is accepted or answers differently - the registry replaces a
-  non-publishing receipt - which is the only transition the registry offers an armed request).
+  receiptStatus}`, so a rejection and a partial start are different faults). The answer is read
+  where it actually lives. `managed.ManagedStart` records a receipt only for an ACCEPTED creation,
+  so for an armed request with no receipt the answer is the newest creation-stage row it
+  journaled (`managed_start_observed`, subject = the request id; the row `managed-show` reads):
+  a reason `creation_failed`, `creation_unknown`, `creation_identity_unobserved` or
+  `creation_settings_unverified` is an answer after a create was attempted, and its suffix is the
+  status. A recorded receipt that is not accepted still decides where one exists. Any other
+  reason at that stage - a worker that cannot take the pair - means the host was not asked on
+  that attempt, and is not a fault; nor is a request with no creation-stage row at all, which is
+  a start still waiting for the host. Elapsed time decides nothing. The fault clears when the
+  request records an accepted receipt or attaches, or its newest creation-stage row says
+  something else (a later refusal at creation, or another answer, which is a different fault).
+  Later rows of other stages (preflight, intent) never decide: they say nothing about what the
+  host answered. Stated limits: a caller that stops after arming without journaling any answer
+  (a crash, or an exception that leaves `run()` without a result) is not seen until the same
+  request is retried, which journals the answer the bridge kept; a request that stalls on
+  `intent_conflict` never reached creation and is not collected.
 - No source emits an active and a clearing observation for one fault in one sweep: a reading
   batch is reduced to the last reading per relationship and turn BEFORE it is paged, except that
   an `unmeasured` reading never replaces an established one of the same turn - a later read that
@@ -456,10 +470,21 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
 - Every automatically collected incident carries a `facts` evidence item: what was expected, what
   happened, the impact, what the reading cannot see, the subject (event, relationship, generation,
   turn) where its source holds them - the delivery, retry and refusal sources read generation and
-  turn from the delivery's event - and the installation - package version and the location of
-  the installed copy. The revision it was installed from is held by the runtime installer's
-  record, which the relay does not read, so it is stated as an observation limit rather than
-  guessed. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
+  turn from the delivery's event - and the installation - package version, the location of
+  the installed copy, and the revision it was installed from where the runtime installer's own
+  record attributes one to this copy (`installation.revision`: `repositoryCommit`,
+  `repositoryTree`, `subdirectoryTree`, `workingTreeClean`, with the entry's `environment` and
+  `integrity`, and `revisionRecord` naming the file read). The record read is
+  `$XDG_STATE_HOME/codex-relay-workflow/host-record.json`, or the same under
+  `$HOME/.local/state` - the path `scripts/crw_runtime/hostrecord.record_path` writes - read as
+  JSON, importing nothing from the installer. Only the install entry whose location is this
+  package's own directory is read, and only its `source`, which the installer writes onto the
+  entry in the same save that adds it; the component-level commit is never used, because a
+  failed install's rollback removes its entry but leaves the component facts it wrote. Anything
+  else - no record, an unreadable one, another record version, no entry for this location, or an
+  entry written before entries carried their revision (every install made before this change,
+  until it is reinstalled) - leaves `revision` null with `revisionReason` saying which, and the
+  observation then carries the unknown-revision limit. First and latest occurrence are the ledger's own `first_seen_at` and `last_seen_at`.
 - `reading_faults(..., limit, after)` and `sweep(..., readings_after)` return
   `readingsNext`; more than 1000 readings are refused. `record_all` turns a refused
   observation into a gap and records the rest.
@@ -604,7 +629,7 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
 | `observation_unmeasured` | relationship and turn | `unmeasured:<relationship>:<turn>` | a later reading of the same turn that establishes something | notice |
 | `delivery_refused` | relationship and refusal reason | `refused:<journal seq>` | the streak ending: a send, the delivery settling, a pause, or another reason | degraded |
-| `managed_start_failed` | issue key and receipt status | `managed:<request>:<receipt status>` | a later receipt for that request being accepted or answering differently | broken |
+| `managed_start_failed` | issue key and the host's answer (a non-accepted receipt, else the newest creation answer journaled) | `managed:<request>:<answer>` | the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else | broken |
 
 A notice recorded per relationship before notices were per turn is still answered: any
 establishing reading of that relationship clears it, under one constant key, so the clear is
@@ -850,6 +875,26 @@ It cannot own the other half. The relay holds no Linear credential by design, so
 performed by the process that does — the coordination parent, or an operator running the
 commands below. Until that consumer runs, a published fault is a queued publication, and this
 module says exactly that rather than implying an issue exists.
+
+### Who tells the level above (criterion 7)
+
+Today, nobody delivers a fault notification. The ledger raises them - `blocking` when a broken
+fault opens, `decision` when a write becomes uncertain or fails for good, `resolved` - and keeps
+them `pending` with their eligibility, but the only caller of `reserve_notifications` on an
+installed system is the `fault-notification-reserve` command. The daemon tick sweeps and
+records; it never reserves or sends a notification, and nothing in the plugin wiring or the
+skills does either. A pending notification therefore waits until a person or a coordinating
+task runs `fault-notification-reserve` and acknowledges it. What does reach the level above
+without anybody running a command is the unsent-write warning: `attention()` is on `status`
+under `faults`, and the daemon carries it as a tick note when it appears or changes.
+
+The smallest wiring that closes this, left as its own follow-up rather than built here: the
+daemon tick reserves eligible notifications (`reserve_notifications`) and stages each through
+the supervisor upward channel the relay already runs on its tick (CRW-215), passing the
+notification's `deliveryKey` as the idempotency key, then acknowledges it from that channel's
+own answer (`ack_notification`, or `reconcile_notification` after a lapsed lease). That keeps one
+notification path - eligibility, budget and pause/archive/no-contact are already decided at
+reservation - and one upward transport.
 
 ## What this does not claim
 
