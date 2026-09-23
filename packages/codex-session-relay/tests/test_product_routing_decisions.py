@@ -1037,6 +1037,8 @@ class ProjectEligibility(RouteRows):
         self.assertIn("the create covers ['unrelated']", " ".join(self.problems()))
         self.payload["components"] = ["cache", "queue", "unrelated"]
         self.assertTrue(self.problems())
+        self.payload["components"] = ["cache"]
+        self.assertIn("the create covers ['cache']", " ".join(self.problems()))
         self.payload["components"] = ["cache", "queue"]
         self.upsert("d" * 32, product="beta-meter")
         self.assertIn("1 held defect(s)", " ".join(self.problems()))

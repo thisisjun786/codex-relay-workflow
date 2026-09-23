@@ -528,6 +528,30 @@ class Projects(ProductRoutingCase):
         self.holder.run()
         self.assertEqual({}, self.linear.projects)
 
+    def test_a_member_that_leaves_the_goal_takes_its_component_out_of_the_create(self):
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        self.gamma("search", "slow", "g3")
+        self.router.set_policy(POLICY)
+        queued = self.router.evaluate_projects("gamma-kit")["queued"]
+        self.assertEqual(3, len(queued[0]["members"]))
+        # The search defect is now about another goal: the queued create is re-cut to the two
+        # members that still share offline_sync, under the same id.
+        moved = self.route(product="gamma-kit", repository="example-org/gamma-kit",
+                           surface="real_use", phase="in_use", component="search",
+                           symptom="slow", occurrenceKey="g3b",
+                           goal={"key": "fast_search", "criteria": "results in a second"})
+        (proposal,) = [p for p in self.router.show("gamma-kit")["projects"]]
+        (row,) = [r for r in self.router.port.publications(proposal["faultId"], kind=projects.KIND)
+                  if r["state"] != "cancelled"]
+        self.assertEqual(["cache", "queue"], row["payload"]["components"])
+        self.holder.run()
+        self.router.digest()
+        (made,) = [b for b in self.router.bindings("gamma-kit") if b["kind"] == "project"]
+        self.assertEqual(["cache", "queue"], made["components"])
+        search = routes.get(self.store, moved["faultId"])
+        self.assertEqual(("held", "fast_search"), (search["stage"], search["goal"]))
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

@@ -91,8 +91,9 @@ def eligibility(db, payload) -> list:
     members = []
     # What the create's members are, read from routing's rows rather than from the payload: a
     # member counts only as a route of this product and workspace, and the components the
-    # create names must be components its members have, covering every member that counts.
-    listed, counted = set(), set()
+    # create names must be exactly those of the members that count now: a member that left the
+    # goal takes its component with it, or the project would claim that component's defects.
+    counted = set()
     for fault_id in payload["members"]:
         route = db.execute("SELECT stage, target, goal, product_key, workspace"
                            "  FROM incident_routes WHERE fault_id = ?", (fault_id,)).fetchone()
@@ -100,7 +101,6 @@ def eligibility(db, payload) -> list:
                 payload["product"], payload["workspace"]):
             continue
         latest = _latest_incident(db, fault_id)
-        listed.add(latest.get("component"))
         if route["stage"] != products.STAGE_HELD:
             continue
         if json.loads(route["target"]).get("hold") != products.NO_PROJECT:
@@ -119,9 +119,9 @@ def eligibility(db, payload) -> list:
                         f" and its criteria;"
                         f" the policy needs {policy['minIndependentFixes']}")
     named = set(payload["components"])
-    if not counted <= named or not named <= listed:
+    if members and named != counted:
         problems.append(f"the create covers {sorted(named)}, but its members' components are"
-                        f" {sorted(c for c in listed if c)}")
+                        f" {sorted(c for c in counted if c)}")
     # Every defect now held for want of a project under this goal, not only the members the
     # create was queued with: one arriving since then with other criteria makes the goal two
     # contracts, and a project carrying either would decide between them without anybody.
@@ -275,10 +275,17 @@ def evaluate(router, product) -> dict:
         fault_id = port.fault_id(product, group["workspace"], products.PROJECT_NEEDED,
                                  {"goal": goal})
         rows = port.publications(fault_id, kind=KIND, limit=100)
-        if any(row.get("state") != "cancelled" for row in rows):
+        live = [row for row in rows if row.get("state") != "cancelled"]
+        if live and not (all(row.get("state") in REVISABLE for row in live)
+                         and any(row.get("payload") != payload for row in live)):
             skipped.append({"goal": goal, "reasons": ["a project create for this goal is"
                                                       " already queued or done"]})
             continue
+        for row in live:
+            # Not issued yet, and the goal's members, components or criteria have changed since
+            # it was queued: cancelled, and the same create is queued again with them below.
+            port.cancel(row["publication_id"],
+                        reason="the goal's members changed; queued again with them")
         # A create kind has one row per fault: a goal that qualifies again after a cancelled
         # create revives that row under its id with this payload, and the pre-issue check runs
         # again before it is issued. The trigger names the reason; it does not make a new write.
