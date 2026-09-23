@@ -1235,16 +1235,18 @@ exclude a writer that does not take that lock, such as an editor, and would dele
 file. Every file `register-mcp` reads while it holds that lock (the record, the policy, the Codex
 configuration, the cached manifests and declarations, and the package the launcher probe copies) is
 read from one descriptor opened without blocking and judged as a regular file, never by a second
-open of the path, so a pipe put in place of any of them cannot hold the lock. The transition reads
-the same way while it holds the lock: the configuration, the record and its archives, and, in the
-checks it repeats before removing anything, the cached package's manifest, declarations, launchers
-and payload, and the source of this checkout's packaging check. Two waits under the lock are bounded
-instead: the payload check and the interpreter probe run as subprocesses with timeouts of 300 and 30
-seconds. A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
-`record_differs` with the move-aside repair. The transition carries the recorded reference, so its
-preflight refuses a changed file, and its record step writes through the same function as
-`register-mcp`. An edit made after the last check is caught where every other one is: the launcher
-hashes the file at every start and refuses the record.
+open of the path, so a pipe put in place of any of them cannot hold the lock. The modules it would
+otherwise import while holding the lock, the configuration parser, the bridge's policy parser and
+the package selector, are imported before it takes it, because an import opens its source by path.
+The transition reads the same way while it holds the lock: the configuration, the record and its
+archives, and, in the checks it repeats before removing anything, the cached package's manifest,
+declarations, launchers and payload, and the source of this checkout's packaging check. Two waits
+under the lock are bounded instead: the payload check and the interpreter probe run as subprocesses
+with timeouts of 300 and 30 seconds. A `register-mcp` rerun after the file was edited hashes the new
+bytes and is refused as `record_differs` with the move-aside repair. The transition carries the
+recorded reference, so its preflight refuses a changed file, and its record step writes through the
+same function as `register-mcp`. An edit made after the last check is caught where every other one
+is: the launcher hashes the file at every start and refuses the record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the

@@ -12,6 +12,7 @@ The components it installs need 3.11 or newer; that interpreter is resolved, not
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import shutil
@@ -4826,11 +4827,8 @@ def _execution_policy_reading(value):
     wrong = bridgerecord.policy_path_complaints(candidate)
     if wrong:
         return None, "; ".join(wrong)
-    try:
-        if str(BRIDGE_SOURCE) not in sys.path:
-            sys.path.insert(0, str(BRIDGE_SOURCE))
-        from codex_thread_bridge import execution
-    except (ImportError, SyntaxError) as error:
+    execution, error = _import_before_the_lock("codex_thread_bridge.execution")
+    if error is not None:
         return None, ("the bridge's policy parser could not be loaded from " + str(BRIDGE_SOURCE)
                       + " (" + type(error).__name__ + ": " + str(error) + ")")
     loaded = Path(execution.__file__).resolve()
@@ -5071,7 +5069,11 @@ def _policy_launcher_refusal(codex_home):
             "the plugin cache could not be looked at (" + cache_detail + "), so whether it holds"
             " a crw package whose launcher would refuse this record was not established")
     cache = Path(codex_home) / "plugins" / "cache"
-    from crw_transition import inventory
+    inventory, error = _import_before_the_lock("crw_transition.inventory")
+    if error is not None:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the reader that selects the enabled crw package could not be loaded ("
+            + type(error).__name__ + ": " + str(error) + ")")
     plugin = inventory.read_plugin(codex_home)
     if plugin["configEntry"] == reading.ABSENT:
         return None
@@ -5304,6 +5306,27 @@ def _register_mcp_plugin_note(outcome, wrote, repair):
     return "Refused, and this run wrote nothing; detail says why" + then
 
 
+# Modules the ownership-locked path would otherwise import lazily, and what importing each gave.
+_LOCKED_IMPORTS = {}
+
+
+def _import_before_the_lock(name):
+    """(module, error) for a module register-mcp uses under crw-mcp-ownership, imported once.
+
+    An import opens its source by path, and a pipe put in place of that source would hold the
+    open and the lock with it. cmd_register_mcp asks for each of these before it takes the lock;
+    the locked path asks again and is handed the remembered answer, never a second import.
+    """
+    if name not in _LOCKED_IMPORTS:
+        if name == "codex_thread_bridge.execution" and str(BRIDGE_SOURCE) not in sys.path:
+            sys.path.insert(0, str(BRIDGE_SOURCE))
+        try:
+            _LOCKED_IMPORTS[name] = (importlib.import_module(name), None)
+        except (ImportError, SyntaxError) as error:
+            _LOCKED_IMPORTS[name] = (None, error)
+    return _LOCKED_IMPORTS[name]
+
+
 def cmd_register_mcp(args):
     """Decide the owner and register, with both halves under one lock.
 
@@ -5315,6 +5338,12 @@ def cmd_register_mcp(args):
     """
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     lock = bridgerecord.ownership_lock_path(codex_home)
+    # Everything the locked path would import, imported first: the configuration parser always,
+    # the bridge's policy parser and the package selector when a policy is named.
+    _import_before_the_lock("tomllib")
+    if getattr(args, "execution_policy", None) is not None:
+        _import_before_the_lock("codex_thread_bridge.execution")
+        _import_before_the_lock("crw_transition.inventory")
     try:
         with hostrecord.Locked(lock):
             return _register_mcp_owned(args, codex_home)

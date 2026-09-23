@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1193,6 +1194,59 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertNotIn(answer["outcome"], bridgerecord.SETTLED)
         self.assertIn("now hashes to", answer["detail"])
         self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
+
+    # register-mcp from a copy of this checkout, with argv[2] swapped for a pipe the moment the
+    # ownership lock is held: whatever the locked path imports from there after that would block.
+    SWAPS_A_MODULE_FOR_A_PIPE_UNDER_THE_LOCK = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "target = sys.argv[2]\n"
+        "real_enter = hostrecord.Locked.__enter__\n"
+        "def entered_then_swapped(self):\n"
+        "    held = real_enter(self)\n"
+        "    if self.path.name.startswith('crw-mcp-ownership') and os.path.isfile(target):\n"
+        "        os.unlink(target)\n"
+        "        os.mkfifo(target)\n"
+        "    return held\n"
+        "hostrecord.Locked.__enter__ = entered_then_swapped\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[3:]))\n"
+    )
+
+    def register_with_a_module_swapped_for_a_pipe(self, relative):
+        checkout = self.home.destination.parent / "checkout"
+        ignore = shutil.ignore_patterns("__pycache__")
+        for part in ("scripts", "plugins", "packages/codex-thread-bridge/src"):
+            shutil.copytree(ROOT / part, checkout / part, ignore=ignore)
+        target = checkout / relative
+        self.assertTrue(target.is_file(), target)
+        try:
+            done = subprocess.run(
+                [sys.executable, "-B", "-c", self.SWAPS_A_MODULE_FOR_A_PIPE_UNDER_THE_LOCK,
+                 str(checkout / "scripts"), str(target), "register-mcp", "--codex-home",
+                 str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+                 "plugin", "--execution-policy", str(self.policy), "--apply"],
+                capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("register-mcp blocked importing " + relative + " under the ownership lock")
+        self.assertTrue(stat.S_ISFIFO(os.lstat(target).st_mode), "the swap has to have happened")
+        return done, json.loads(done.stdout)
+
+    def test_the_policy_parser_is_imported_before_the_ownership_lock(self):
+        """Review of c647c09e: the bridge's parser was imported lazily under the lock."""
+        done, emitted = self.register_with_a_module_swapped_for_a_pipe(
+            "packages/codex-thread-bridge/src/codex_thread_bridge/execution.py")
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CREATED, done.stdout + done.stderr)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_package_selector_is_imported_before_the_ownership_lock(self):
+        """Review of c647c09e: crw_transition.inventory was imported lazily under the lock."""
+        self.install_package()
+        self.enable("crw@crw")
+        done, emitted = self.register_with_a_module_swapped_for_a_pipe(
+            "scripts/crw_transition/inventory.py")
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CREATED, done.stdout + done.stderr)
 
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
