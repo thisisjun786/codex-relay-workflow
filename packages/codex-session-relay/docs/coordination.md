@@ -135,6 +135,15 @@ pull request is itself in that situation with `scripts/crw_runtime/components.js
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
   here, and the review paginated to the end with nothing unresolved.
+  The merge-turn grant notice fills that flag in for its recipient, because the command it hands
+  over is one a parent runs as written, and omitting `--required` declares that nothing is
+  required. The names come from the candidate's own recorded handoff: the `requiredDeclared`
+  that `merge-evidence` read from the branch's effective rules, taken from the latest submission
+  of every report in the generation `merge-turn-check` will itself compare the head against. They
+  must all name the granted head, target and base and agree, and the notice names the report it
+  quotes. They are a proposal the caller restates, not a discovery: the check stores whatever
+  `--required` its caller passes. Where no such reading is recorded, the notice leaves a
+  placeholder and names the `merge-evidence` reading to take instead.
 - **A release restating a different reason is refused.** The first reason wins and a later
   notification restates it. Completion, failure, a resume and a duplicated notification all
   arrive as a release of one subject, so the second must not be a second release.

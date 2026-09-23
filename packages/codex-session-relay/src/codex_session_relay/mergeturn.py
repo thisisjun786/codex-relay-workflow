@@ -1705,12 +1705,15 @@ def grant_supersession_in(db, turn, grant):
     that rule lives, so the pre-send check, the re-check inside the atomic claim and the
     operator-facing report cannot disagree about it.
 
-    Four answers, and between them they cover every state a turn can legally be in. A turn
-    that no longer OCCUPIES its target has nothing to hand over. A turn whose newest grant is
-    a different one has moved to another candidate, and the newer notice is the one worth
-    delivering. A grant already acknowledged has been acted on. And a turn this store cannot
-    find is fail-closed on purpose: there is no acknowledgement and no return the message
-    could ask for, so sending it would ask a parent to act on something nobody can read.
+    Four answers, and between them they cover every state a turn can legally be in. A grant
+    already acknowledged has been acted on, and stays acknowledged when its turn later closes:
+    landing is how an acknowledged grant ordinarily ends, and answering closed for it described
+    the success path as a notice something had overtaken. A turn that no longer OCCUPIES its
+    target without that has nothing to hand over. A turn whose newest grant is a different one
+    has moved to another candidate, and the newer notice is the one worth delivering. And a
+    turn this store cannot find is fail-closed on purpose: there is no acknowledgement and no
+    return the message could ask for, so sending it would ask a parent to act on something
+    nobody can read.
 
     None means it is still current, which is the only answer that sends anything.
     """
@@ -1718,13 +1721,13 @@ def grant_supersession_in(db, turn, grant):
         "SELECT state, tenure FROM merge_turns WHERE turn_id = ?", (turn,)).fetchone()
     if row is None:
         return MERGE_TURN_ABSENT
-    if row["state"] not in OCCUPYING:
-        return MERGE_TURN_CLOSED
     answered = db.execute(
         "SELECT 1 FROM merge_turn_ledger WHERE turn_id = ? AND idempotency_key = ?",
         (turn, GRANT_ACKNOWLEDGED + ":" + grant)).fetchone()
     if answered is not None:
         return MERGE_TURN_GRANT_ANSWERED
+    if row["state"] not in OCCUPYING:
+        return MERGE_TURN_CLOSED
     current = MergeTurn._current_grant_in(db, turn, row["tenure"])
     # A turn with no readable grant at all does not make this one stale. That is a store whose
     # ledger cannot be read as this module's own, and the recogniser already reports it; it is
