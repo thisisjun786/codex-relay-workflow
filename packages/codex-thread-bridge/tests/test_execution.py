@@ -15,6 +15,9 @@ import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
 from codex_thread_bridge.execution import (
+    DIGEST_VARIABLE,
+    ENVIRONMENT_VARIABLE,
+    PRESENCE_ONLY,
     Execution,
     ExecutionPolicy,
     ExecutionPolicyError,
@@ -542,6 +545,53 @@ def test_the_digest_identifies_the_file_without_disclosing_it(tmp_path):
     assert str(path) not in json.dumps(receipt)
     assert "operator's note" not in json.dumps(receipt)
     assert receipt["exception"] is None and receipt["digest"] == summary["digest"]
+
+
+# ---------------------------------------------------------- the digest the file was registered under
+#
+# The plugin's launcher hands the bridge the digest register-mcp read the file under. Checking it
+# here closes the interval between the launcher's own check and this process's read: what counts is
+# the digest of the bytes actually parsed.
+
+
+def test_a_registered_digest_that_matches_the_file_loads_it(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    digest = ExecutionPolicy.from_file(path).summary()["digest"]
+    policy = ExecutionPolicy.from_environment(
+        {ENVIRONMENT_VARIABLE: str(path), DIGEST_VARIABLE: digest}
+    )
+    assert policy.summary()["digest"] == digest
+
+
+def test_a_file_that_changed_after_it_was_registered_is_refused(tmp_path):
+    """Another VALID policy, so the refusal is the digest's and not the parser's."""
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    registered = ExecutionPolicy.from_file(path).summary()["digest"]
+    path.write_text(json.dumps({"allowed": [{"model": MODEL, "efforts": [EFFORT]}]}))
+    with pytest.raises(ExecutionPolicyError, match="changed after it was registered"):
+        ExecutionPolicy.from_environment(
+            {ENVIRONMENT_VARIABLE: str(path), DIGEST_VARIABLE: registered}
+        )
+
+
+@pytest.mark.parametrize("configured", [None, "", "   "])
+def test_a_digest_naming_no_file_is_refused_rather_than_read_as_no_policy(configured):
+    environ = {DIGEST_VARIABLE: "a" * 64}
+    if configured is not None:
+        environ[ENVIRONMENT_VARIABLE] = configured
+    with pytest.raises(ExecutionPolicyError, match="names no file"):
+        ExecutionPolicy.from_environment(environ)
+
+
+def test_without_a_digest_the_environment_reads_exactly_as_before(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    assert ExecutionPolicy.from_environment({}) is PRESENCE_ONLY
+    assert ExecutionPolicy.from_environment({DIGEST_VARIABLE: "  "}) is PRESENCE_ONLY
+    unpinned = ExecutionPolicy.from_environment({ENVIRONMENT_VARIABLE: str(path)})
+    assert unpinned.summary() == ExecutionPolicy.from_file(path).summary()
 
 
 def test_efforts_are_scoped_to_their_model(tmp_path):

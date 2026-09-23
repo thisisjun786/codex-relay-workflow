@@ -53,6 +53,11 @@ from . import roles
 from .roles import ROLE_MISMATCH, ROLE_UNKNOWN
 
 ENVIRONMENT_VARIABLE = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
+# The digest the file was registered under, when whoever started this process knows one. The
+# plugin's launcher checks the file before it execs, and this closes the interval between that
+# check and the read below: the digest that counts is the digest of the bytes actually parsed.
+# It can only refuse. Leaving it unset changes nothing, and no value of it widens anything.
+DIGEST_VARIABLE = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST"
 
 SETTING_MISSING = "execution_setting_missing"
 SETTING_INVALID = "execution_setting_invalid"
@@ -383,7 +388,25 @@ class ExecutionPolicy:
     def from_environment(cls, environ) -> "ExecutionPolicy":
         """Read from this process's environment, which no tool argument can influence."""
         configured = (environ.get(ENVIRONMENT_VARIABLE) or "").strip()
-        return cls.from_file(configured) if configured else PRESENCE_ONLY
+        expected = (environ.get(DIGEST_VARIABLE) or "").strip()
+        if not configured:
+            if expected:
+                # A digest names a policy this process was started to enforce. Starting
+                # presence-only because the file's name went missing on the way here would be
+                # the silent downgrade the digest exists to make visible.
+                raise ExecutionPolicyError(
+                    f"{DIGEST_VARIABLE} expects a policy with digest {expected}, and "
+                    f"{ENVIRONMENT_VARIABLE} names no file"
+                )
+            return PRESENCE_ONLY
+        policy = cls.from_file(configured)
+        if expected and policy._digest != expected:
+            raise ExecutionPolicyError(
+                f"{configured} hashes to {policy._digest}, and this process was started "
+                f"expecting {expected}; it changed after it was registered, so it is refused "
+                "rather than enforced unregistered"
+            )
+        return policy
 
     def authorize(self, model, reasoning_effort, *, cwd=None, exception=None,
                   role=None) -> Execution:

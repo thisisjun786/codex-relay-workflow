@@ -228,6 +228,12 @@ rather than degrading to presence-only. Directories are compared by exact string
 equality, so an entry that is absolute but not canonical is refused at startup rather
 than loading cleanly and then matching nothing.
 
+A second variable, `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST`, names the SHA-256 the file is
+expected to hash to. It can only refuse: when it is set, the server does not start if the bytes it
+parses hash to anything else, or if no file is named at all. The crw plugin's launcher sets both
+variables from the record it reads, so a policy file edited after it was registered stops the
+server instead of being enforced unregistered. Left unset, nothing changes.
+
 A declared role pair is still asked the allowlist question — only an exception skips that — so
 where both sections are present, `allowed` has to approve every pair `roles` declares. A file
 that declares `parent` on a model its own allowlist omits describes a role nobody could create,
