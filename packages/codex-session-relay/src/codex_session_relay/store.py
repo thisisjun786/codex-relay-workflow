@@ -1723,8 +1723,9 @@ def _hold_database(db_path):
       name - and with a live write-ahead log that read raised `disk I/O error` and CREATED a
       stray `<newname>-wal`, because the log follows the pathname. A diagnostic that promises to
       write nothing must not reach that state, so a descriptor that no longer names this store
-      is refused before a connection is opened - every relocation that already happened, which
-      is the reachable case, though not one timed inside the call itself.
+      is refused before a connection is opened, and asked again once it is open - every
+      relocation still in place when it is asked, though not one timed inside a call or undone
+      between two asks.
 
     Returns `(fd, expected, None)` or `(None, None, detail)`. Never raises.
 
