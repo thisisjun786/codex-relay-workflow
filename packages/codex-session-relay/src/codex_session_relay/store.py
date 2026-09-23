@@ -1263,12 +1263,17 @@ CREATE TABLE IF NOT EXISTS fault_target_projects (
 
 -- What a queued write aims at beyond its tracker: the project an issue create files into, and
 -- a registered or update kind's payload. Kept in step with fault_publications.tracker_ref.
+-- target_mode is the kind's target requirement when the write was queued - 'team',
+-- 'team+project' or 'none' - so re-pointing a write never depends on whether the process doing
+-- it registered that kind. A row written before it existed is one of the built-in kinds, which
+-- every process registers.
 CREATE TABLE IF NOT EXISTS fault_publication_payloads (
     publication_id TEXT PRIMARY KEY,
     project_ref    TEXT,
     payload        TEXT,
     hold_reason    TEXT,
-    updated_at     TEXT NOT NULL
+    updated_at     TEXT NOT NULL,
+    target_mode    TEXT
 );
 
 -- Whether the issue a fault owns sits in the project its scope targets. revision is part of

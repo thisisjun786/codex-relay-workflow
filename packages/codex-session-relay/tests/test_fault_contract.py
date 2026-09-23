@@ -1518,6 +1518,76 @@ class ASweepJudgesOnlyWhatItsRowsCanShow(RelayTestCase):
         self.assertIsNotNone(self.ledger.get(own)["cleared_at"])
 
 
+class RepointingNeverDependsOnTheCallingProcess(ContractCase):
+    """Final review round four (invariants 10 and 14).
+
+    A write is re-pointed from the target requirement recorded when it was queued, so a process
+    that never loaded an extension kind's module still moves that kind's writes; and a repeated
+    call with an unchanged target still reports what an earlier change left.
+    """
+
+    def external(self, name):
+        capability(self, faults, "register_kind")(
+            name, creates=False, requires_issue=False, target="team+project",
+            evidence="block", confirm=lambda expected, observed: [])
+        self.addCleanup(faults.KINDS.pop, name, None)
+
+    def queued(self, name):
+        identifier = self.ledger.record(observation("k", severity=faults.NOTICE))["faultId"]
+        publication = capability(self, self.ledger, "queue")(
+            identifier, kind=name, trigger="one")["publicationId"]
+        return identifier, publication
+
+    def project_of(self, publication):
+        return capability(self, self.ledger, "publication")(publication)["target"]["projectRef"]
+
+    def test_a_target_change_re_points_a_kind_this_process_never_loaded(self):
+        self.external("external_kind_set")
+        _, publication = self.queued("external_kind_set")
+        self.assertEqual(PROJECT, self.project_of(publication))
+        faults.KINDS.pop("external_kind_set")  # a later process without the kind's module
+        answer = self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                        project_ref="P2")
+        self.assertEqual((1, 0), (answer["backfilled"], answer["backfillPending"]))
+        self.assertEqual("P2", self.project_of(publication))
+
+    def test_a_move_re_points_a_kind_this_process_never_loaded(self):
+        self.external("external_kind_move")
+        identifier, publication = self.queued("external_kind_move")
+        self.ledger.set_target(product=PRODUCT, project="OPS", team=TEAM, project_ref="proj-ops")
+        faults.KINDS.pop("external_kind_move")
+        moved = capability(self, self.ledger, "move")(identifier, scope={"projectKey": "OPS"})
+        self.assertEqual((1, 0), (moved["repointed"], moved.get("repointPending")))
+        self.assertEqual("proj-ops", self.project_of(publication))
+
+    def test_an_unchanged_repeat_still_reports_what_an_earlier_change_left(self):
+        extra = 1
+        for n in range(faults.RELINK_PER_CALL + extra):
+            self.ledger.record(observation(f"k{n}", signature={"relationship": f"r{n}",
+                                                                "turn": "t"}))
+        first = self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                       project_ref="P2")
+        self.assertEqual((faults.RELINK_PER_CALL, extra),
+                         (first["backfilled"], first["backfillPending"]))
+        again = self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                       project_ref="P2")
+        self.assertEqual((False, 0, extra),
+                         (again["changed"], again["backfilled"], again["backfillPending"]),
+                         "a retried call must not read the remaining work as done")
+        self.assertEqual(extra, self.ledger.relink()["backfilled"])
+        self.assertEqual(0, self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                                   project_ref="P2")["backfillPending"])
+
+    def test_a_stored_limit_is_listed_where_its_kind_was_never_loaded(self):
+        self.external("external_kind_limit")
+        capability(self, self.ledger, "set_limit")(PRODUCT, "external_kind_limit", max_count=3,
+                                                   window=3600)
+        faults.KINDS.pop("external_kind_limit")
+        listed = {entry["kind"]: entry["limit"]
+                  for entry in capability(self, self.ledger, "limits")(PRODUCT)}
+        self.assertEqual(3, listed.get("external_kind_limit"))
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 

@@ -39,9 +39,10 @@ a path that reaches the outcome without passing through that function is a defec
    token, or `reconcile()` - or on an attested end of its request (invariant 2).
 4. **Only unissued writes are cancelled, and cancelling spends nothing earlier.** Pending, failed
    and claimed-not-issued rows only; a claimed one refunds its own attempt and budget. Enforced by
-   `_cancel()`, the only path that cancels: `cancel()` is its public form, and adoption,
-   withdrawal, a pre-issue cancel, a create whose fault already owns an issue, and `set_project`
-   supersession all call it.
+   `_cancel()` and its set-based form `_cancel_where()`, the only paths that cancel: `cancel()` is
+   the public form, adoption, a pre-issue cancel and a create whose fault already owns an issue
+   call `_cancel()`, and withdrawal and `set_project` supersession call `_cancel_where()`, which
+   gives each claimed row back its own current claim's unit and attempt, and nothing earlier.
 5. **A clear withdraws what nothing landed for.** Owning an issue is not a write having landed.
    Enforced by `_landed()` inside `_transition()`.
 6. **A cause that comes back is a new occurrence.** The first active observation after a clear
@@ -56,7 +57,10 @@ a path that reaches the outcome without passing through that function is a defec
    registration, resolves through `canonical_id()` (aliases and the legacy workspace lookup).
    Enforced by `_canonical()`.
 10. **One rescope step.** Every scope change re-points unsent writes, keeps uncertain ones, and
-    relinks an owned issue. Enforced by `_rescope()` for `record()`, `move()` and `adopt()`.
+    relinks an owned issue. Which writes are target-bound is read from the requirement recorded
+    when each was queued (`fault_publication_payloads.target_mode`), so a process that never
+    loaded an extension kind still re-points that kind's writes. Enforced by `_rescope()` for
+    `record()`, `move()` and `adopt()`, through `_repoint_where()`.
 11. **The issue ends on the current project.** Each relink increments the link revision, a stale
     `set_project` is cancelled before issue, and every confirmation re-checks the target. With no
     project its product owns, an owned issue is unlinked - awaiting a target - and never
@@ -74,7 +78,8 @@ a path that reaches the outcome without passing through that function is a defec
     live supersession rule about a bounded number of deliveries per call, keeps its verdicts,
     and answers undetermined - clearing nothing - until a later call has judged them all.
     Re-pointing unsent writes and releasing lapsed leases take at most 100 rows per call and
-    report what remains; cancelling a fault's unissued writes is set-based. Enforced by
+    report what remains - a repeated `set_target()` with an unchanged target too, writing
+    nothing; cancelling a fault's unissued writes is set-based. Enforced by
     `bounded()`, `faultsweep._rotation()`, `faultsweep._first_current()`, `_repoint_where()`,
     `expire_leases()` and `_cancel_where()`.
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
@@ -168,7 +173,9 @@ a path that reaches the outcome without passing through that function is a defec
   project are unchanged).
 - `set_target(*, product, workspace=None, project=None, team, project_ref)` returns
   `{scopeKey, team, projectRef, changed, backfilled, backfillPending, relinked, relinkPending}`.
-  Values unchanged on a target this product already owns write nothing. A change re-points only
+  Values unchanged on a target this product already owns write nothing, and still report the
+  `backfillPending` and `relinkPending` an earlier change left, so a caller retrying a call whose
+  answer was lost does not read the remaining work as done. A change re-points only
   pending and failed writes whose target differs (an uncertain write stays where it may have
   landed), at most 100 per call with `backfillPending` counting the rest, and queues
   `set_project` for issues this scope's faults own whose linked project differs, at most 100 per
@@ -252,7 +259,8 @@ Either way:
 
 ### Move
 
-`move(fault_id, *, scope)` returns `{faultId, scopeKey, moved, repointed, alias}`. The same
+`move(fault_id, *, scope)` returns `{faultId, scopeKey, moved, repointed, repointPending, alias}`:
+at most 100 writes are re-pointed per call and `relink()` continues the rest. The same
 workspace, or out of `unassigned` into a real one (refused with `fault_scope_conflict` when a
 fault already exists under the id that workspace produces). Pending and failed writes follow the
 new target; uncertain ones stay; an owned issue whose linked project differs from the new target
@@ -355,7 +363,8 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
 
 - One sliding window per product and kind. Defaults per hour: `open_record` 5,
   `append_comment` 20, `update_record` 20, `notification` 10, any other kind 20.
-  `set_limit(product, kind, *, max_count, window)` and `limits(product)`.
+  `set_limit(product, kind, *, max_count, window)` and `limits(product)`, which lists the kinds
+  this process registered and every kind a limit was stored for, loaded here or not.
 - `budget(product, kind)` returns `{limit, window, used, remaining, source}`.
   `consume(product, kind, *, ref)` returns `{consumed, remaining, reason}`; one ref is consumed
   once; a spent budget answers `consumed: false, reason: budget_spent`. Any caller may use it.
@@ -861,7 +870,7 @@ ledger = faults.FaultLedger(store, clock)
 ledger.record(observation, *, adopt=None)  -> faultId, recorded, state, publication
 ledger.canonical_id(product, fault_class, signature, *, workspace=None)
 ledger.adopt(fault_id, *, external_ref, scope)
-ledger.move(fault_id, *, scope)
+ledger.move(fault_id, *, scope)          -> faultId, scopeKey, moved, repointed, repointPending, alias
 ledger.set_target(*, product, workspace=None, project=None, team, project_ref=None)
 ledger.targets(product=None, *, limit=20, after=None)
 ledger.relink(*, limit=100)              -> relinked, relinkPending, backfilled, backfillPending

@@ -857,6 +857,13 @@ class FaultLedger:
                       "relinkPending": 0}
             if (current is not None and current["product"] == product
                     and current["tracker_ref"] == team and current["project_ref"] == project_ref):
+                # Unchanged, so nothing is written. What an earlier change left is still
+                # counted: a caller retrying a call whose answer was lost must not read the
+                # remaining work as done. relink() continues it.
+                answer["backfillPending"] = self._repoint_where(db, now, scope_key=key,
+                                                                limit=0)[1]
+                answer["relinkPending"] = self._relink_where(db, now, scope_key=key,
+                                                             limit=0)[1]
                 return answer
             db.execute(
                 "INSERT INTO fault_targets (scope_key, tracker_ref, recorded_at) VALUES (?,?,?)"
@@ -904,33 +911,41 @@ class FaultLedger:
         and never issued against a target its scope has left; relink() continues the rest.
         Returns (re-pointed, still to re-point). The current target is read the way
         _owned_target() reads it: owned by the fault's product, on a key no other product carries.
+
+        Which writes are target-bound, and whether they carry a project, is read from the
+        target_mode recorded when each was queued, never from the kinds this process happens to
+        have registered: a process without an extension kind's module still re-points its
+        writes. A write queued before target_mode was recorded is a built-in kind.
         """
-        targeted = [name for name, spec in KINDS.items() if spec["target"]]
         projected = [name for name, spec in KINDS.items() if spec["target"] == "team+project"]
+        teamed = [name for name, spec in KINDS.items() if spec["target"] == "team"]
 
         def listed(values):
             return "(" + ",".join("?" * len(values)) + ")"
 
+        mode = ("COALESCE(pp.target_mode, CASE WHEN p.kind IN " + listed(projected)
+                + " THEN 'team+project' WHEN p.kind IN " + listed(teamed) + " THEN 'team' END)")
+        moded = (*projected, *teamed)
         owned = ("(tp.product = f.product AND NOT EXISTS (SELECT 1 FROM fault_ledger o"
                  "  WHERE o.scope_key = f.scope_key AND o.product != f.product))")
         team = "(CASE WHEN " + owned + " THEN t.tracker_ref END)"
-        project = ("(CASE WHEN p.kind IN " + listed(projected) + " AND " + owned
+        project = ("(CASE WHEN " + mode + " = 'team+project' AND " + owned
                    + " THEN tp.project_ref END)")
         base = (
             " FROM fault_publications p JOIN fault_ledger f ON f.fault_id = p.fault_id"
             "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
             "  LEFT JOIN fault_target_projects tp ON tp.scope_key = f.scope_key"
             "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
-            " WHERE p.state IN (?,?) AND p.kind IN " + listed(targeted)
+            " WHERE p.state IN (?,?) AND " + mode + " IN ('team', 'team+project')"
             + (" AND f.scope_key = ?" if scope_key is not None else "")
             + (" AND f.fault_id = ?" if fault_id is not None else "")
             + " AND (p.tracker_ref IS NOT " + team + " OR pp.project_ref IS NOT " + project + ")")
-        where = (PENDING, FAILED, *targeted,
+        where = (PENDING, FAILED, *moded,
                  *(() if scope_key is None else (scope_key,)),
-                 *(() if fault_id is None else (fault_id,)), *projected)
+                 *(() if fault_id is None else (fault_id,)), *moded)
         rows = db.execute("SELECT p.publication_id, " + team + " AS team, " + project
                           + " AS project" + base + " ORDER BY p.rowid LIMIT ?",
-                          (*projected, *where, limit)).fetchall()
+                          (*moded, *where, limit)).fetchall()
         for row in rows:
             db.execute("UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
                        " WHERE publication_id = ?", (row["team"], now, row["publication_id"]))
@@ -938,17 +953,19 @@ class FaultLedger:
         pending = db.execute("SELECT COUNT(*) AS n" + base, where).fetchone()["n"]
         return len(rows), pending
 
-    def _rescope(self, db, row, scope, now) -> int:
-        """Invariant 10: every scope change re-points unsent writes and relinks an owned issue."""
+    def _rescope(self, db, row, scope, now) -> tuple:
+        """Invariant 10: every scope change re-points unsent writes and relinks an owned issue.
+
+        Returns (re-pointed, still to re-point): one bounded batch, which relink() continues."""
         key = scope_key_for(row["product"], scope)
         if key != row["scope_key"]:
             self._assign_scope_key(db, row["product"], key)
         stored = json.dumps(scope, ensure_ascii=False, sort_keys=True)
         if key == row["scope_key"] and stored == row["scope"]:
-            return 0
+            return 0, 0
         db.execute("UPDATE fault_ledger SET scope = ?, scope_key = ?, updated_at = ?"
                    " WHERE fault_id = ?", (stored, key, now, row["fault_id"]))
-        repointed = self._repoint(db, row["fault_id"], now)
+        repointed = self._repoint_where(db, now, fault_id=row["fault_id"])
         if row["external_ref"]:
             self._link_to_target(db, row["fault_id"], now)
         return repointed
@@ -985,11 +1002,12 @@ class FaultLedger:
                     f"workspace {wanted!r} already records this failure as fault {resolved};"
                     f" two records never stand for one failure in one workspace")
             self._register_alias(db, alias, row["fault_id"], now)
-        repointed = self._rescope(db, row, scope, now)
+        repointed, still = self._rescope(db, row, scope, now)
         fresh = db.execute("SELECT scope_key, scope FROM fault_ledger WHERE fault_id = ?",
                            (row["fault_id"],)).fetchone()
         return {"faultId": row["fault_id"], "scopeKey": fresh["scope_key"],
-                "moved": fresh["scope"] != row["scope"], "repointed": repointed, "alias": alias}
+                "moved": fresh["scope"] != row["scope"], "repointed": repointed,
+                "repointPending": still, "alias": alias}
 
     # ------------------------------------------------------------------ reading
 
@@ -1726,7 +1744,8 @@ class FaultLedger:
             queued, detail = False, "this reason was already queued"
         if queued:
             _payload_set(db, publication, now, project_ref=project,
-                         payload=payload if payload is not None else _UNCHANGED)
+                         payload=payload if payload is not None else _UNCHANGED,
+                         target_mode=spec["target"] or "none")
         return {
             "publicationId": publication, "kind": kind, "trigger": trigger_key,
             "queued": queued,
@@ -2045,10 +2064,14 @@ class FaultLedger:
         return {"product": product, "kind": kind, "maxCount": max_count, "window": float(window)}
 
     def limits(self, product) -> list:
+        """Every kind's budget for this product: the kinds this process registered, and any
+        kind a limit was stored for, whether or not this process loaded its module."""
         _check_product(product)
         moment = self.clock.now()
-        kinds = sorted(set(KINDS) | {NOTIFICATION})
         with self.store.transaction() as db:
+            stored = {row["kind"] for row in db.execute(
+                "SELECT kind FROM fault_limits WHERE product = ?", (product,))}
+            kinds = sorted(set(KINDS) | {NOTIFICATION} | stored)
             return [self._budget(db, product, kind, moment) for kind in kinds]
 
     # ------------------------------------------------------------------ selection (7a)
@@ -3096,12 +3119,13 @@ _UNCHANGED = object()
 
 
 def _payload_set(db, publication, now, *, project_ref=_UNCHANGED, payload=_UNCHANGED,
-                 hold_reason=_UNCHANGED):
+                 hold_reason=_UNCHANGED, target_mode=_UNCHANGED):
     row = db.execute("SELECT * FROM fault_publication_payloads WHERE publication_id = ?",
                      (publication,)).fetchone()
     values = {"project_ref": row["project_ref"] if row else None,
               "payload": row["payload"] if row else None,
-              "hold_reason": row["hold_reason"] if row else None}
+              "hold_reason": row["hold_reason"] if row else None,
+              "target_mode": row["target_mode"] if row else None}
     if project_ref is not _UNCHANGED:
         values["project_ref"] = project_ref
     if payload is not _UNCHANGED:
@@ -3109,12 +3133,17 @@ def _payload_set(db, publication, now, *, project_ref=_UNCHANGED, payload=_UNCHA
                              json.dumps(payload, ensure_ascii=False, sort_keys=True))
     if hold_reason is not _UNCHANGED:
         values["hold_reason"] = hold_reason
+    if target_mode is not _UNCHANGED:
+        values["target_mode"] = target_mode
     db.execute(
         "INSERT INTO fault_publication_payloads (publication_id, project_ref, payload,"
-        "  hold_reason, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(publication_id) DO UPDATE"
+        "  hold_reason, updated_at, target_mode) VALUES (?,?,?,?,?,?)"
+        " ON CONFLICT(publication_id) DO UPDATE"
         " SET project_ref = excluded.project_ref, payload = excluded.payload,"
-        "   hold_reason = excluded.hold_reason, updated_at = excluded.updated_at",
-        (publication, values["project_ref"], values["payload"], values["hold_reason"], now))
+        "   hold_reason = excluded.hold_reason, updated_at = excluded.updated_at,"
+        "   target_mode = excluded.target_mode",
+        (publication, values["project_ref"], values["payload"], values["hold_reason"], now,
+         values["target_mode"]))
 
 
 def _notification(row) -> dict:
