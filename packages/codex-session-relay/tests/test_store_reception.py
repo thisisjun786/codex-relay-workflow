@@ -917,7 +917,12 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         damage = (("UPDATE journal SET kind = x'00' WHERE kind = 'relationship_tenure_reopened'"
                    " AND subject = ?"),
                   ("UPDATE generations SET reason = 'needs_changes_revision'"
-                   " WHERE relationship_id = ? AND reason IS NULL"))
+                   " WHERE relationship_id = ? AND reason IS NULL"),
+                  # A reopening the reader cannot parse at all: JSON nested deeper than it can
+                  # descend. Unread, never a host failure.
+                  ("UPDATE journal SET detail = replace(hex(zeroblob(15000)), '00', '[')"
+                   " || '0' || replace(hex(zeroblob(15000)), '00', ']')"
+                   " WHERE kind = 'relationship_tenure_reopened' AND subject = ?"))
         for number, statement in enumerate(damage, 1):
             with self.subTest(damage=statement):
                 child, issue = CHILD + "-twoways%d" % number, "REL-TWO-%d" % number
@@ -1016,6 +1021,47 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                                         task_settings("/parent", model=PARENT_MODEL,
                                                       reasoningEffort=PARENT_EFFORT),
                                         source="creation_result")
+
+    def test_settings_nested_too_deep_to_read_leave_their_field_unread(self):
+        # JSON nested deeper than the reader can descend - or deeper than any record the relay
+        # writes - is settings the store cannot answer, like a value of the wrong shape. The
+        # policy or the callback read from them is a gap: never a host failure, never
+        # agreement, and the rest of the reading still stands. Where the recursion limit
+        # falls differs by interpreter; the answer must not.
+        relationship = self.registered()
+        packet = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
+        _code, before = self.packet_check(packet, receiver_id=CHILD)
+        self.assertEqual(before["disposition"], packets.ACCEPTED, before)
+        marker = '"deep-value-marker"'
+        for task, field in ((CHILD, packets.POLICY), (PARENT, packets.CALLBACK)):
+            (original,) = self.store.db.execute(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?",
+                (task,)).fetchone()
+            data = json.loads(original)
+            for depth in (40, 900, 5000, 15000):
+                deep = "[" * depth + '"x"' + "]" * depth
+                placements = {
+                    "whole": deep,
+                    "model": json.dumps(dict(data, model="deep-value-marker")),
+                    "sandbox": json.dumps(dict(data, sandbox=dict(
+                        data["sandbox"], extra="deep-value-marker"))),
+                }
+                for placement, text in placements.items():
+                    with self.subTest(task=task, depth=depth, placement=placement):
+                        self.store.db.execute(
+                            "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                            (text.replace(marker, deep), task))
+                        try:
+                            code, answer = self.packet_check(packet, receiver_id=CHILD)
+                        finally:
+                            self.store.db.execute(
+                                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                                (original, task))
+                        self.assertNotEqual(code, cli.EXIT_HOST, answer)
+                        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                        self.assertIn(field, self.gap_fields(answer))
+                        self.assertEqual(answer["record"].get("relationId"),
+                                         relationship["relationshipId"], answer)
 
     def test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted(self):
         relationship = self.registered(project=None)
