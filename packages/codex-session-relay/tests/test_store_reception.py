@@ -1541,6 +1541,65 @@ class TheRolePolicyTheServiceDeclares(StoreReception):
         self.assertTrue(any(rolepolicy.ENVIRONMENT_VARIABLE in note for note in answer["notes"]),
                         answer["notes"])
 
+    def test_recording_an_applied_packet_does_not_wait_on_the_policy(self):
+        # --applied reads no store and judges no pair: it records, in the receiver's own
+        # ledger, that the receiver acted. Refused over the policy after the work was done, the
+        # ledger stayed unapplied and every replay said act again.
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        _code, first = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger)
+        self.assertTrue(first["act"], first)
+        self.declare(self.policy_file)
+        other = Path(self.tmp) / "other-policy"
+        other.mkdir()
+        self.environment_names(write_policy(other))
+        code, applied = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger,
+                                          applied=True)
+        self.assertEqual(code, 0, applied)
+        self.environment_names(self.policy_file)
+        _code, replay = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger)
+        self.assertFalse(replay["act"], replay)
+
+    def test_the_modes_that_open_no_store_are_not_held_to_its_selection(self):
+        # A store selection nobody made is refused before a command that reads that store.
+        # --record and --applied open none, so they are not refused over one; the store-backed
+        # check is.
+        class NoSelection:
+            @property
+            def selection(self):
+                raise AssertionError("the store selection was consulted")
+
+        parser = cli.build_parser()
+        packet = self._write("packet", self.assignment)
+        for extra, reads in ((["--record", packet], False),
+                             (["--receiver", CHILD, "--ledger", packet, "--applied"], False),
+                             (["--receiver", CHILD], True)):
+            with self.subTest(extra=extra):
+                args = parser.parse_args(["packet-check", "--packet", packet] + extra)
+                if reads:
+                    with self.assertRaises(AssertionError):
+                        cli._refuse_ambiguous_state(NoSelection(), args)
+                else:
+                    cli._refuse_ambiguous_state(NoSelection(), args)
+
+    def test_the_store_backed_check_writes_nothing_in_the_state_directory(self):
+        # It opens the store read-only and writes only the receiver's own ledger, which lives
+        # elsewhere. Resolving the declared policy through the service's status probe left a
+        # probe file created and removed in the state directory.
+        self.declare(self.policy_file)
+        self.environment_names(None)
+        ledgers = Path(self.tmp) / "ledgers"
+        ledgers.mkdir()
+        packet = self._write("packet", self.assignment)
+        before = (sorted(os.listdir(self.state)), os.stat(self.state).st_mtime_ns)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            code = cli.main(["--state", self.state, "packet-check", "--packet", packet,
+                             "--receiver", CHILD, "--ledger", str(ledgers / "child.json")])
+        self.assertEqual(code, 0, printed.getvalue())
+        self.assertEqual(json.loads(printed.getvalue())["disposition"], packets.ACCEPTED)
+        self.assertEqual((sorted(os.listdir(self.state)), os.stat(self.state).st_mtime_ns),
+                         before)
+
 
 class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
     def setUp(self):
