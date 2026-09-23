@@ -1969,8 +1969,11 @@ printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagno
 # from the one this row asks.
 #
 # The record carries sessionId and turnId, so ask with them.
+#
+# --socket is the socket diagnose was given above. The install records it as socketPath, which is
+# what lets the guard refuse a state directory whose store records another App Server.
 "$controller" scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
-    --dest <destination> --apply
+    --dest <destination> --socket <socket> --apply
 #   ... then end a real turn, and only then:
 "$controller" scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
 

@@ -768,6 +768,62 @@ class TheInstallerSeam(unittest.TestCase):
         self.assertEqual(len(registered), 1, "and no second registration was added")
 
 
+class TheInstallersOwnParser(unittest.TestCase):
+    """--socket through the installer's real parser, into its settings, and out to the guard.
+
+    Every other install case here builds an argparse.Namespace by hand, which is how the hook
+    subcommand came to read a --socket its parser never declared: the command line refused the
+    option, no installed hook recorded a socket, and every case stayed green. This one goes in
+    through runtime_install.main, so the parser is the one an operator's command line meets, and
+    comes out through the command the install registered, run the way the host runs it.
+    """
+
+    def test_the_socket_named_at_install_is_the_one_the_guard_is_asked_with(self):
+        # Isolated before the install, not only around the hook's own process: the installer
+        # itself resolves its settings path from CRW_COMPLETION_HOOK_CONFIG and CODEX_HOME, so a
+        # value inherited from the environment running this suite would send its write elsewhere.
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.dict(os.environ):
+            for name in ("CODEX_HOME", completion.CONFIG_ENV, "CODEX_SESSION_RELAY_STATE"):
+                os.environ.pop(name, None)
+            home = Path(temporary)
+            calls = home / "relay-call.json"
+            relay = fake_relay(temporary, stdout=json.dumps(RELEASED), record=calls)
+            socket = home / "app-server.sock"
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                try:
+                    code = runtime_install.main([
+                        "hook", "--codex-home", str(home), "--adapter", "completion",
+                        "--relay-command", str(relay), "--marker-root", str(home / "marker"),
+                        "--journal-root", str(home / "journal"), "--python", sys.executable,
+                        "--socket", str(socket), "--issue", "CRW-8", "--apply"])
+                except SystemExit as refused:
+                    # argparse exits rather than raising, and an undeclared option is exactly
+                    # the defect this case exists for; said as a failure, not a crash.
+                    self.fail("the installer's own parser refused the hook command line"
+                              " (exit " + str(refused.code) + ")")
+            self.assertEqual(code, 0, emitted)
+            document = json.loads(
+                completion.configuration_path(home).read_text(encoding="utf-8"))
+            self.assertEqual(document.get("socketPath"), os.path.abspath(str(socket)),
+                             "the install was named a socket and did not record it")
+            registered = completion.adapter_entries(
+                hooks.read(home / "hooks.json").value, completion.EVENT)
+            self.assertEqual(len(registered), 1, registered)
+            self.assertEqual(registered[0]["settings"],
+                             str(completion.configuration_path(home)))
+            done = subprocess.run(
+                completion.registered_argv(registered[0]["command"]),
+                input=json.dumps(STOP).encode("utf-8"), stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, timeout=60, cwd=temporary, env=dict(os.environ))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout, b"", "a release prints nothing at all")
+            argv = json.loads(calls.read_text(encoding="utf-8"))["argv"]
+        self.assertEqual(
+            argv[:3], ["--socket", os.path.abspath(str(socket)), completion.GUARD_COMMAND],
+            "the socket is a global option of the relay, so it goes before the subcommand")
+
+
 class HoldingNeedsTheGrantItDependsOn(unittest.TestCase):
     """The contract makes per-session write isolation a prerequisite for holding. An installer
     that sets the mode without it turns an unstated premise into an enforcement decision."""
