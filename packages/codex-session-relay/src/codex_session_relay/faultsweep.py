@@ -61,6 +61,21 @@ SETTLED_DELIVERY = ("dispatched", "inbox_only", "superseded")
 # attempt is ordinary; a second means the first did not land.
 RETRYING_ATTEMPTS = 2
 
+# A delivery whose obligation was superseded says nothing current, and the settled states above
+# cover only part of that. A delivery parked at its attempt cap cannot be rewritten to
+# superseded, so it is annotated in delivery_supersession instead; a replaced relationship is
+# never claimed again; and the rest - a later generation, an answered revision request, a newer
+# final revision, a regranted merge turn - is decided live by delivery.supersession_reason
+# (_current). Every delivery-derived source and both still_present branches skip such a
+# delivery. Otherwise an overtaken obligation held at its cap stayed a broken fault that
+# nothing could ever clear.
+_NOT_SUPERSEDED = (
+    "NOT EXISTS (SELECT 1 FROM delivery_supersession x WHERE x.event_id = {d}.event_id)"
+    " AND NOT EXISTS (SELECT 1 FROM relationships sr"
+    "                  WHERE sr.relationship_id = {d}.relationship_id"
+    "                    AND sr.superseded_by IS NOT NULL)"
+)
+
 # The refusals a send meets before any transport call that say the RECORD is wrong: settings
 # that are missing, mistyped or not preservable, a sandbox or approval policy this transport
 # cannot carry, and a role binding that contradicts the task's creation. Each needs somebody
@@ -168,6 +183,37 @@ def _page(observations, rows, key, after, limit, until=None) -> dict:
     }
 
 
+def _current(store, event_id, cache=None) -> bool:
+    """Does this delivery still say something current? The send path's own rule, read only."""
+    from .delivery import supersession_reason
+
+    if cache is not None and event_id in cache:
+        return cache[event_id]
+    answer = supersession_reason(store.db, event_id) is None
+    if cache is not None:
+        cache[event_id] = answer
+    return answer
+
+
+def _first_current(store, sql, params):
+    """The first delivery this query names that is still current, or None.
+
+    Paged, so no single read is unbounded, and stopping at the first current one: an existence
+    question needs one answer, and a recipient whose every stuck delivery was overtaken has
+    none.
+    """
+    after = ""
+    while True:
+        rows = store.all(sql + " AND d.event_id > ? ORDER BY d.event_id LIMIT ?",
+                         (*params, after, SWEEP_LIMIT))
+        for row in rows:
+            if _current(store, row["event_id"]):
+                return row
+        if len(rows) < SWEEP_LIMIT:
+            return None
+        after = rows[-1]["event_id"]
+
+
 def scope_of(store, relationship_id, base=None, cache=None) -> dict:
     """Where a fault about this relationship is filed, read from the relationship's own scope.
 
@@ -234,6 +280,7 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
         # Held deliveries only. A delivery that is retrying before any hold is set is read
         # from its attempt rows by retry_faults, one occurrence per settled failure.
         " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
+        "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND d.event_id > ? AND d.event_id <= ?"
         " ORDER BY d.event_id LIMIT ?",
         (*SETTLED_DELIVERY, after or "", until, limit),
@@ -241,6 +288,8 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
     observations = []
     cache = {}
     for row in rows:
+        if not _current(store, row["event_id"]):
+            continue
         capped = (row["attempt_count"] or 0) >= policy.max_attempts
         signature = {"recipient": row["recipient_task_id"],
                      "attemptState": row["last_state"]}
@@ -276,9 +325,10 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
     """
     # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
     limit = faults.bounded(limit, "limit")
-    # Integers, and coerced as such. fault_cursors.position is TEXT, and SQLite orders every
-    # integer before every string - so "rowid > '32'" matched nothing and the rotation
-    # silently restarted.
+    # Integers. A position written before positions were JSON is plain text and is read back as
+    # a number. SQLite would compare a numeric string with the rowid as a number anyway, but a
+    # value that is not one matches nothing, so _rotation restarts on it rather than letting a
+    # rotation end silently.
     after, until, _ = _rotation(store, cursor, "SELECT MAX(rowid) FROM attempts", integer=True)
     rows = [] if until is None else store.all(
         "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,"
@@ -292,11 +342,13 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
         # outcome is settled too, and stays eligible: nobody could establish that it landed.
         "   AND a.internal_state = 'settled'"
         "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
+        "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND a.rowid > ? AND a.rowid <= ?"
         " ORDER BY a.rowid LIMIT ?",
         (*SETTLED_DELIVERY, "dispatched", "inbox_only", after or 0, until, limit),
     )
     cache = {}
+    current = {}
     observations = [faults.observation(
         product=product, fault_class="delivery_stalled",
         severity=faults.BROKEN if row["hold_reason"] else faults.DEGRADED,
@@ -317,7 +369,7 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
             "holdReason": row["hold_reason"], "attemptCount": row["attempt_count"],
             "event": row["event_id"],
         })],
-    ) for row in rows]
+    ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
 
@@ -354,6 +406,15 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dic
 
 # The anchor key: text, zero-padded, so it orders the way the generations do.
 _ANCHOR_KEY = "(g.relationship_id || ':' || printf('%020d', g.execution_generation))"
+# The anchors the scheduler reads, which is the predicate observation_health uses: the CURRENT
+# generation of an active relationship nobody replaced. A paused assignment is waiting, and a
+# generation the assignment moved past is overtaken; the scheduler stops reading both, so a
+# failed last poll on either would otherwise stay a stalled fault nothing could clear.
+_READ_ANCHOR = (
+    "  JOIN relationships r ON r.relationship_id = g.relationship_id"
+    "   AND r.status = 'active' AND r.superseded_by IS NULL"
+    "   AND r.execution_generation = g.execution_generation"
+)
 
 
 def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
@@ -382,6 +443,7 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
         "SELECT g.relationship_id, g.execution_generation, g.dispatch_turn_id,"
         "       p.turn_id, p.last_polled_at, p.last_attempt_at, p.last_error, p.last_status"
         "  FROM generations g"
+        + _READ_ANCHOR +
         "  LEFT JOIN poll_observations p"
         "    ON p.relationship_id = g.relationship_id"
         "   AND p.execution_generation = g.execution_generation"
@@ -466,12 +528,14 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
         "  FROM journal j JOIN deliveries d ON d.event_id = j.subject"
         " WHERE j.kind = 'delivery_withheld' AND j.seq > ? AND j.seq <= ?"
         "   AND d.state NOT IN (?,?,?)"
+        "   AND " + _NOT_SUPERSEDED.format(d="d") +
         "   AND " + _REASON.format(t="j") + " IN (" + ",".join("?" * len(reasons)) + ")"
         "   AND " + _in_streak("j") +
         " ORDER BY j.seq LIMIT ?",
         (after or 0, until, *SETTLED_DELIVERY, *reasons, limit),
     )
     cache = {}
+    current = {}
     observations = [faults.observation(
         product=product, fault_class="delivery_refused", severity=faults.DEGRADED,
         signature={"relationship": row["relationship_id"], "errorCode": row["reason"]},
@@ -484,7 +548,7 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
             "detail": row["refusal_detail"] if isinstance(row["refusal_detail"], str) else None,
             "deliveryState": row["state"], "at": row["at"],
         })],
-    ) for row in rows]
+    ) for row in rows if _current(store, row["event_id"], current)]
     return _page(observations, rows, "seq", after, limit, until)
 
 
@@ -884,9 +948,11 @@ def still_present(store, fault_class, signature) -> dict:
         # that state. Asking only the second one called every held-but-never-attempted
         # delivery recovered, and asking only the first made a fault whose evidence sat
         # further back alternate between withdrawn and reopened on every sweep.
-        return store.one(
-            "SELECT 1 FROM deliveries d"
+        return _first_current(
+            store,
+            "SELECT d.event_id FROM deliveries d"
             " WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)"
+            "   AND " + _NOT_SUPERSEDED.format(d="d") +
             # Settled attempts in both branches, for the reason the derivations give: an
             # in-flight row's state is provisional, and letting it count as presence would
             # keep a recovered fault open for as long as some unrelated send was running.
@@ -894,8 +960,7 @@ def still_present(store, fault_class, signature) -> dict:
             "                     AND a.internal_state = 'settled'"
             "                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
             "        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id"
-            "                     AND a2.internal_state = 'settled' AND a2.state = ?))"
-            " LIMIT 1",
+            "                     AND a2.internal_state = 'settled' AND a2.state = ?))",
             (signature.get("recipient"), *SETTLED_DELIVERY, signature.get("attemptState"),
              signature.get("attemptState")))
     if fault_class == "record_sync_failed":
@@ -906,6 +971,7 @@ def still_present(store, fault_class, signature) -> dict:
     if fault_class == "observation_stalled":
         return store.one(
             "SELECT 1 FROM generations g"
+            + _READ_ANCHOR +
             "  LEFT JOIN poll_observations p"
             "    ON p.relationship_id = g.relationship_id"
             "   AND p.execution_generation = g.execution_generation"
@@ -922,13 +988,15 @@ def still_present(store, fault_class, signature) -> dict:
     if fault_class == "delivery_refused":
         # The same streak the derivation counts: a refusal for this reason, on an unsettled
         # delivery of this relationship, that nothing has ended since.
-        return store.one(
-            "SELECT 1 FROM deliveries d JOIN journal j ON j.subject = d.event_id"
+        return _first_current(
+            store,
+            "SELECT d.event_id FROM deliveries d"
             " WHERE d.relationship_id = ? AND d.state NOT IN (?,?,?)"
-            "   AND j.kind = 'delivery_withheld'"
-            "   AND " + _REASON.format(t="j") + " = ?"
-            "   AND " + _in_streak("j") +
-            " LIMIT 1",
+            "   AND " + _NOT_SUPERSEDED.format(d="d") +
+            "   AND EXISTS (SELECT 1 FROM journal j WHERE j.subject = d.event_id"
+            "                 AND j.kind = 'delivery_withheld'"
+            "                 AND " + _REASON.format(t="j") + " = ?"
+            "                 AND " + _in_streak("j") + ")",
             (signature.get("relationship"), *SETTLED_DELIVERY, signature.get("errorCode")))
     if fault_class == "managed_start_failed":
         return store.one(

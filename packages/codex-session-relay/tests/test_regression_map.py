@@ -267,6 +267,7 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("daemon.py", None, "_reads_were_complete", "function"),
     ("daemon.py", None, "_worth_polling", "function"),
     ("envelope.py", None, "stage_holds", "function"),
+    ("faultsweep.py", None, "_current", "function"),
     ("guard.py", None, "receipt_matches", "function"),
     ("guard.py", None, "reserve_hold", "function"),
     ("hostadapter.py", "TokenScan", "exhausted", "field"),

@@ -4076,7 +4076,11 @@ def build_parser() -> argparse.ArgumentParser:
     # NOT --state, for the reason fault-show gives.
     fault_notifications.add_argument("--notification-state")
     fault_notifications.add_argument("--limit", type=int, default=20)
-    fault_notifications.add_argument("--after")
+    # An integer, so a cursor that is not one is refused as a usage error. SQLite compares a
+    # numeric string with the rowid as a number, but one that is not a number matches nothing,
+    # and the next page read as empty with a success exit.
+    fault_notifications.add_argument("--after", type=int,
+                                     help="continue from the next value the last page returned")
     fault_notifications.set_defaults(handler=cmd_fault_notifications)
 
     notification_raise = subparsers.add_parser("fault-notification-raise")

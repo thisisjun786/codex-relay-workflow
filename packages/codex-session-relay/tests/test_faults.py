@@ -437,6 +437,10 @@ class FifthReviewFindings(RelayTestCase):
                 " VALUES (?,?,?,?,?,?)",
                 (self.relationship, generation, f"req-{generation}", "bound", turn,
                  self.clock.iso()))
+            # Binding a generation is the relationship moving to it; the scheduler reads only
+            # the current generation of an active relationship.
+            db.execute("UPDATE relationships SET execution_generation = ?"
+                       " WHERE relationship_id = ?", (generation, self.relationship))
 
     def poll(self, generation=7, turn="turn-new", polled=None, error=None):
         with self.store.transaction() as db:
@@ -1193,6 +1197,30 @@ class CommandLine(RelayTestCase):
         code, refusal = self.invoke("--kind-module", "no_such_module_crw205", "fault-attention")
         self.assertEqual(cli.EXIT_USAGE, code)
         self.assertIn("no_such_module_crw205", refusal["detail"])
+
+    def test_notifications_page_through_the_command_line(self):
+        """--after is compared with a rowid, so a string cursor ended the listing at page one."""
+        ledger = faults.FaultLedger(self.store, self.clock)
+        identifier = ledger.record(faults.observation(
+            product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
+            signature={"relationship": "rel-1", "turn": "turn-1"}, occurrence_key="u1",
+            scope=SCOPE))["faultId"]
+        for reason in ("owner_hold", "project_hold", "classification"):
+            ledger.raise_notification(identifier, reason=reason)
+        code, first = self.invoke("fault-notifications", "--limit", "2")
+        self.assertEqual(0, code)
+        self.assertEqual(2, len(first["notifications"]))
+        code, rest = self.invoke("fault-notifications", "--limit", "2",
+                                 "--after", str(first["next"]))
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(rest["notifications"]))
+        self.assertIsNone(rest["next"])
+
+    def test_a_notification_cursor_that_is_not_a_number_is_refused(self):
+        """Compared with a rowid, a non-numeric cursor matched nothing and read as an empty page."""
+        with self.assertRaises(SystemExit) as refusal:
+            self.invoke("fault-notifications", "--after", "not-a-cursor")
+        self.assertEqual(2, refusal.exception.code)
 
 
 class TheFaultPathReachesNoNetwork(unittest.TestCase):

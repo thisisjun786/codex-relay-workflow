@@ -461,6 +461,130 @@ class B5_ManagedTurnsAreReadThroughTheProjection(RelayTestCase):
         self.assertEqual([], calls)
 
 
+class SupersededDeliveriesAreNeverCurrentFaults(RelayTestCase):
+    """Routed from CRW-214's final reviews: a delivery whose obligation was superseded stayed a
+    current broken fault that never cleared.
+
+    A delivery parked at its attempt cap cannot be rewritten to superseded, so the relay
+    annotates it instead, and the rest of supersession (a later generation, a newer revision, a
+    regranted merge turn) is decided live. The sweep read neither, for any delivery kind.
+    """
+
+    def held(self, event, recipient, *, relationship="rel-1"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event, relationship, "completion", recipient, recipient, "withheld_pre_send",
+                 6, "attempt_cap", "t", "t"))
+
+    def stalled(self, batch):
+        return {entry["signature"]["recipient"] for entry in batch["observations"]
+                if entry["faultClass"] == "delivery_stalled"}
+
+    def test_an_annotated_capped_delivery_clears_and_a_live_one_still_records(self):
+        ledger = faults.FaultLedger(self.store, self.clock)
+        self.held("e1", "p1")
+        self.held("e2", "p2")
+        faultsweep.record_all(ledger, faultsweep.sweep(self.store), store=self.store)
+        overtaken = faults.fault_id(PRODUCT, "delivery_stalled",
+                                    {"recipient": "p1", "attemptState": None})
+        self.assertEqual(faults.OPEN, ledger.get(overtaken)["state"])
+        with self.store.transaction() as db:
+            db.execute("INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+                       " VALUES ('e1', 'superseded_revision', 't', 0)")
+        batch = faultsweep.sweep(self.store)
+        self.assertEqual({"p2"}, self.stalled(batch))
+        self.assertIn(overtaken, [faults.fault_id(PRODUCT, entry["faultClass"],
+                                                  entry["signature"])
+                                  for entry in batch["clears"]])
+
+    def test_a_delivery_a_later_generation_overtook_is_never_recorded(self):
+        self.register()
+        relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        with self.store.transaction() as db:
+            for event, generation in (("old", 1), ("new", 2)):
+                db.execute(
+                    "INSERT INTO events (event_id, relationship_id, execution_generation,"
+                    " revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status,"
+                    " receipt, first_seen_at, last_seen_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (event, relationship, generation, "hash-" + event, "ready_for_review",
+                     "child", "child-thread", "turn-" + event, "completed", "{}", "t", "t"))
+            db.execute("UPDATE relationships SET execution_generation = 2")
+        self.held("old", "p-old", relationship=relationship)
+        self.held("new", "p-new", relationship=relationship)
+        self.assertEqual({"p-new"}, self.stalled(faultsweep.sweep(self.store)))
+
+    def test_a_replaced_relationship_neither_retries_nor_refuses(self):
+        self.register()
+        relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET superseded_by = 'rel-successor'")
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, created_at, updated_at)"
+                " VALUES ('e9', ?, 'completion', 'p9', 'p9', 'withheld_pre_send', 2, 't', 't')",
+                (relationship,))
+            for number in (1, 2):
+                db.execute(
+                    "INSERT INTO attempts (request_id, event_id, attempt_no, kind,"
+                    " internal_state, state, observed_at) VALUES (?,?,?,?,?,?,?)",
+                    (f"req-{number}", "e9", number, "completion", "settled",
+                     "withheld_pre_send", "t"))
+            for _ in range(3):
+                self.store.journal("delivery_withheld", "e9",
+                                   {"reason": "settings_incomplete", "detail": "no"}, at="t")
+        batch = faultsweep.sweep(self.store)
+        self.assertEqual([], [entry["faultClass"] for entry in batch["observations"]
+                              if entry["faultClass"] in ("delivery_stalled",
+                                                         "delivery_refused")])
+
+
+class AnAnchorTheSchedulerNoLongerReadsIsNeverStalled(RelayTestCase):
+    """The same class as superseded deliveries, on the anchor source: the scheduler reads only
+    the current generation of an active relationship nobody replaced. A failed last poll on a
+    paused assignment (waiting) or on a generation it moved past (overtaken) is never read
+    again, so collecting it made a stalled fault that nothing could clear."""
+
+    def setUp(self):
+        super().setUp()
+        self.register()
+        row = self.store.one("SELECT relationship_id, execution_generation FROM relationships")
+        self.relationship, self.generation = row["relationship_id"], row["execution_generation"]
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO generations (relationship_id, execution_generation,"
+                " dispatch_request_id, anchor_state, dispatch_turn_id, opened_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (self.relationship, self.generation, "req-anchor", "bound", "turn-a", "t"))
+            db.execute(
+                "INSERT OR REPLACE INTO poll_observations (relationship_id,"
+                " execution_generation, turn_id, last_status, last_polled_at, last_attempt_at,"
+                " last_error) VALUES (?,?,?,?,?,?,?)",
+                (self.relationship, self.generation, "turn-a", "failed", None, "t", "boom"))
+
+    def stalled(self):
+        return [entry for entry in faultsweep.sweep(self.store)["observations"]
+                if entry["faultClass"] == "observation_stalled"]
+
+    def test_a_failed_poll_of_the_current_active_anchor_still_records(self):
+        self.assertEqual(1, len(self.stalled()))
+
+    def test_a_paused_assignment_is_waiting_not_stalled(self):
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET status = 'paused'")
+        self.assertEqual([], self.stalled())
+
+    def test_a_generation_the_assignment_moved_past_is_not_stalled(self):
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET execution_generation = execution_generation + 1")
+        self.assertEqual([], self.stalled())
+
+
 class B6_WorkspaceIsPartOfIdentity(ContractCase):
     """Post-merge blocker 6: two workspaces merged into one fault and overwrote each other."""
 
@@ -856,6 +980,64 @@ class Relinking(ContractCase):
                 capability(self, self.ledger, "publications")(identifier, kind="update_record")
                 if entry["state"] == faults.PENDING]
         self.assertEqual(live, ["proj-ops"])
+
+
+class ClaimsAreChargedOnceEachAndStaleRelinksNeverIssue(ContractCase):
+    """PR #142 review round one, each an instance of invariants 4, 11 and 12.
+
+    A claim that never issued gives its unit and attempt back however it ends, lapsing
+    included; every claim is charged as itself, so a retried write cannot match a unit an
+    earlier claim spent; and a relink is issued only to the project the scope targets now.
+    """
+
+    def test_a_lapsed_claim_gives_back_its_unit(self):
+        self.ledger.set_limit(PRODUCT, "open_record", max_count=1, window=3600)
+        _identifier, pub = self.opened()
+        self.ledger.claim(pub, owner="writer-A")
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        self.ledger.expire_leases()
+        try:
+            self.ledger.claim(pub, owner="writer-A")
+        except faults.FaultRefused as refusal:
+            self.fail(f"a claim that issued nothing kept the product's only unit:"
+                      f" {refusal.reason.value}")
+        self.assertEqual(1, self.ledger.budget(PRODUCT, "open_record")["used"])
+        self.assertEqual(["lease_lapsed", None],
+                         [entry["outcome"] for entry in self.ledger.attempts(pub)])
+
+    def test_a_retried_write_is_charged_again_and_keeps_its_history(self):
+        self.ledger.set_limit(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS,
+                              window=86400)
+        _identifier, pub = self.opened()
+        for _ in range(faults.MAX_ATTEMPTS):
+            claim = self.ledger.claim(pub, owner="writer-A")
+            self.ledger.fail(pub, claim_token=claim["claimToken"], error="refused before issue")
+            self.clock.advance(faults.MAX_BACKOFF + 1)
+        self.assertEqual(faults.FAILED, self.ledger.publication(pub)["state"])
+        self.ledger.retry(pub)
+        with self.assertRaises(faults.FaultRefused) as refusal:
+            self.ledger.claim(pub, owner="writer-A")
+        self.assertEqual(RefusalReason.FAULT_BUDGET_SPENT, refusal.exception.reason)
+        self.ledger.set_limit(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS + 1,
+                              window=86400)
+        self.ledger.claim(pub, owner="writer-A")
+        self.ledger.cancel(pub, reason="the operator withdrew it")
+        self.assertEqual(["failed_before_issue"] * faults.MAX_ATTEMPTS + ["cancelled"],
+                         [entry["outcome"] for entry in self.ledger.attempts(pub, limit=20)])
+
+    def test_a_relink_is_never_issued_once_the_scope_has_no_project(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P1")
+        relink = [entry["publication_id"]
+                  for entry in self.ledger.publications(identifier, kind="update_record")
+                  if entry["state"] == faults.PENDING]
+        self.assertEqual(1, len(relink))
+        claim = self.ledger.claim(relink[0], owner="writer-A")
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=None)
+        with self.assertRaises(faults.FaultRefused):
+            self.ledger.operation(relink[0], claim_token=claim["claimToken"])
+        self.assertEqual(faults.CANCELLED, self.ledger.publication(relink[0])["state"])
 
 
 class LegacyScopeKeys(ContractCase):

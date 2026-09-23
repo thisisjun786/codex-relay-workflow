@@ -67,9 +67,13 @@ a path that reaches the outcome without passing through that function is a defec
 15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
     reservation is uncertain, and caller-raised decisions use the same path. Enforced by
     `reserve_notifications()`.
-16. **Waiting is never a fault, and no sweep contradicts itself.** Paused, archived, busy and
-    waiting recipients are never collected; no source emits an active and a clear for one fault in
-    one sweep. Enforced by `faultsweep.sweep()`.
+16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
+    itself.** Paused, archived, busy and waiting recipients are never collected; a superseded
+    delivery and an anchor the scheduler no longer reads (a paused assignment, a generation it
+    moved past) are not collected and clear what they raised; no source emits an active and a
+    clear for one fault in one sweep. Enforced by `faultsweep.sweep()`, whose delivery sources and
+    `still_present()` ask `faultsweep._current()` (the send path's own
+    `delivery.supersession_reason()`) and whose anchor source reads the scheduler's own predicate.
 17. **Nothing malformed reaches the store.** Enforced by `read_observation()`.
 
 ### Identity
@@ -157,8 +161,9 @@ a path that reaches the outcome without passing through that function is a defec
   is part of the `set_project` write's identity (`update:set_project:<project>:r<revision>`),
   so a later target always gets its own write, even one returning to an earlier project.
   `set_project` carries a built-in pre-issue check: `operation()` cancels a `set_project` whose
-  project is no longer the fault's current target, so a stale write that an attested absence
-  returned to pending is never issued. When any `set_project` confirms, the link is compared with the
+  project is no longer the fault's current target - including when the scope no longer targets
+  any project its product owns - so a stale write, whether still claimed or returned to pending by
+  an attested absence, is never issued. Setting a target again queues a fresh one. When any `set_project` confirms, the link is compared with the
   target as it is NOW, and a fresh `set_project` is queued if they differ: the issue ends on the
   current target whatever order the writes completed in.
 - A create is confirmed against the project it was ISSUED with, and linked against the project
@@ -321,8 +326,13 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
 - `budget(product, kind)` returns `{limit, window, used, remaining, source}`.
   `consume(product, kind, *, ref)` returns `{consumed, remaining, reason}`; one ref is consumed
   once; a spent budget answers `consumed: false, reason: budget_spent`. Any caller may use it.
-- `claim()` consumes one unit; a spent budget refuses with `fault_budget_spent` and the write
-  stays pending. Nothing a budget holds is dropped.
+- `claim()` consumes one unit, charged against the claim's own attempt row rather than its attempt
+  number (which `retry()` starts again), so a retried write is charged again. A spent budget
+  refuses with `fault_budget_spent` and the write stays pending. Nothing a budget holds is dropped.
+- A claim that ends without issuing - cancelled, held or cancelled by a pre-issue check,
+  re-pointed, or lapsed - gets its own unit and attempt back; nothing earlier is refunded. Every
+  transition of a claim updates that claim's attempt row and no other, so earlier attempts keep
+  their history.
 - `next(limit)` is fair across products: spent product and kind pairs are excluded inside the
   query and the rest are taken round-robin by product, so a capped product never hides another's
   work. `queue_state(limit)` returns `ready`, `held` with reasons, and `budgets`.
@@ -346,6 +356,16 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
 - No source emits an active and a clearing observation for one fault in one sweep: a reading
   batch is reduced to the last reading per relationship and turn BEFORE it is paged. A paused, archived,
   busy or waiting recipient is never a fault.
+- A delivery whose obligation was superseded is not current, for every delivery kind: one in the
+  `superseded` state, one annotated in `delivery_supersession` (a delivery held at its attempt cap
+  cannot be rewritten, so it is annotated), one whose relationship was replaced, and one the send
+  path's own rule (`delivery.supersession_reason()`: a later generation, an answered revision
+  request, a newer final revision, a regranted merge turn) says is overtaken. `delivery_stalled`
+  and `delivery_refused` neither collect such a delivery nor let it keep a fault present, so a fault
+  it raised clears.
+- `observation_stalled` reads only the anchors the scheduler reads - the current generation of an
+  active relationship nobody replaced, the predicate `observation_health` uses - so a paused
+  assignment or a generation it moved past is never a stalled one.
 - Constructed with `fault_selection` (the bounded run passes the store selection), the daemon
   reads CRW-180 readings for attached managed turns through `omitted.observe`,
   `MANAGED_READINGS_PER_SWEEP` (8) per tick in a rotation over the settlements: each settled

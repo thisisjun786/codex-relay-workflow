@@ -2142,8 +2142,19 @@ class FaultLedger:
                         RefusalReason.FAULT_WRITER_CONFLICT,
                         f"this write belongs to {writer['owner']!r}; pass takeover to reassign it")
                 attempt = row["attempts"] + 1
+                # One claim, one identity: the attempt row it appends. The attempt NUMBER is not
+                # one - retry() starts the count again - so the budget unit is charged against
+                # the row, and a retried write is charged again instead of matching a unit an
+                # earlier claim already spent. A spent budget raises inside this transaction,
+                # which takes the row back out.
+                claimed = db.execute(
+                    "INSERT INTO fault_publication_attempts (publication_id, attempt, owner,"
+                    "  takeover, claimed_at, claimed_ts) VALUES (?,?,?,?,?,?)",
+                    (publication, attempt, owner,
+                     1 if (writer is not None and writer["owner"] != owner) else 0,
+                     stamp, moment)).lastrowid
                 used = self._consume(db, fault["product"], row["kind"],
-                                     f"{publication}:{attempt}", moment, stamp)
+                                     f"{publication}:{claimed}", moment, stamp)
                 if not used["consumed"]:
                     raise FaultRefused(RefusalReason.FAULT_BUDGET_SPENT,
                                        f"{fault['product']}'s {row['kind']} budget is spent")
@@ -2151,12 +2162,6 @@ class FaultLedger:
                     "UPDATE fault_publications SET state = ?, claim_token = ?, lease_owner = ?,"
                     "  lease_until = ?, attempts = ?, updated_at = ? WHERE publication_id = ?",
                     (CLAIMED, token, owner, moment + LEASE_SECONDS, attempt, stamp, publication))
-                db.execute(
-                    "INSERT INTO fault_publication_attempts (publication_id, attempt, owner,"
-                    "  takeover, claimed_at, claimed_ts) VALUES (?,?,?,?,?,?)",
-                    (publication, attempt, owner,
-                     1 if (writer is not None and writer["owner"] != owner) else 0,
-                     stamp, moment))
         if refusal is not None:
             raise refusal
         return {"publicationId": publication, "claimToken": token, "owner": owner,
@@ -2242,8 +2247,7 @@ class FaultLedger:
                     " WHERE publication_id = ?", (ISSUED, now, now, publication))
                 db.execute(
                     "UPDATE fault_publication_attempts SET issued_at = ?, issued_ts = ?"
-                    " WHERE publication_id = ? AND attempt = ?",
-                    (now, moment, publication, row["attempts"]))
+                    " WHERE " + CURRENT_ATTEMPT, (now, moment, publication))
                 view = self._publication_view(db, row)
                 block = render_block({**dict(row), "product": fault["product"],
                                       "fault_class": fault["fault_class"]})
@@ -2342,15 +2346,15 @@ class FaultLedger:
                 raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
                                    "an attested end says what ended the request")
             latest = db.execute(
-                "SELECT attempt, ended FROM fault_publication_attempts WHERE publication_id = ?"
-                " ORDER BY attempt_id DESC LIMIT 1", (publication,)).fetchone()
+                "SELECT attempt_id, attempt, ended FROM fault_publication_attempts"
+                " WHERE publication_id = ? ORDER BY attempt_id DESC LIMIT 1",
+                (publication,)).fetchone()
             ended = bool(latest and latest["ended"])
             if prior_ended and latest is not None:
                 db.execute(
                     "UPDATE fault_publication_attempts SET ended = 1, ended_at = ?,"
-                    "  error = COALESCE(error || '; ', '') || ? WHERE publication_id = ?"
-                    " AND attempt = ?", (now, f"attested end: {reason}", publication,
-                                         latest["attempt"]))
+                    "  error = COALESCE(error || '; ', '') || ? WHERE attempt_id = ?",
+                    (now, f"attested end: {reason}", latest["attempt_id"]))
             if not (ended or prior_ended):
                 return {**base, "outcome": "absent_unproven",
                         "detail": "nobody attested that the issuing request ended, and one still"
@@ -2362,8 +2366,7 @@ class FaultLedger:
                 (PENDING, now, publication))
             if latest is not None:
                 db.execute("UPDATE fault_publication_attempts SET outcome = 'reconciled_absent'"
-                           " WHERE publication_id = ? AND attempt = ?",
-                           (publication, latest["attempt"]))
+                           " WHERE attempt_id = ?", (latest["attempt_id"],))
             self._repoint(db, row["fault_id"], now)
             return {**base, "outcome": "absent", "state": PENDING,
                     "detail": "the attested search found nothing after the request ended, so one"
@@ -2441,8 +2444,7 @@ class FaultLedger:
                 (CONFIRMED, reference, moment, moment, publication))
             db.execute(
                 "UPDATE fault_publication_attempts SET outcome = 'confirmed', ended = 1,"
-                "  ended_at = ? WHERE publication_id = ? AND attempt = ?",
-                (moment, publication, row["attempts"]))
+                "  ended_at = ? WHERE " + CURRENT_ATTEMPT, (moment, publication))
             if row["kind"] == OPEN_RECORD:
                 db.execute(
                     "UPDATE fault_ledger SET external_ref = ?, published_at = ?,"
@@ -2503,9 +2505,8 @@ class FaultLedger:
                     " WHERE publication_id = ?", (UNCERTAIN, str(error), stamp, publication))
                 db.execute(
                     "UPDATE fault_publication_attempts SET outcome = 'uncertain', error = ?,"
-                    "  ended = ?, ended_at = ? WHERE publication_id = ? AND attempt = ?",
-                    (str(error), 1 if ended else 0, stamp if ended else None, publication,
-                     row["attempts"]))
+                    "  ended = ?, ended_at = ? WHERE " + CURRENT_ATTEMPT,
+                    (str(error), 1 if ended else 0, stamp if ended else None, publication))
                 state = UNCERTAIN
                 self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
                              reason=f"write:{publication}:{UNCERTAIN}")
@@ -2521,8 +2522,8 @@ class FaultLedger:
                      publication))
                 db.execute(
                     "UPDATE fault_publication_attempts SET outcome = 'failed_before_issue',"
-                    "  error = ?, ended = 1, ended_at = ? WHERE publication_id = ? AND attempt = ?",
-                    (str(error), stamp, publication, row["attempts"]))
+                    "  error = ?, ended = 1, ended_at = ? WHERE " + CURRENT_ATTEMPT,
+                    (str(error), stamp, publication))
                 if terminal:
                     self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
                                  reason=f"write:{publication}:{FAILED}")
@@ -2549,7 +2550,7 @@ class FaultLedger:
                 f"a {row['state']} write may already have reached the connector; it is"
                 f" reconciled, never cancelled")
         if row["state"] == CLAIMED:
-            self._refund(db, row, "cancelled")
+            self._refund(db, row, "cancelled", now)
         db.execute(
             "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
             "  lease_until = NULL, last_error = ?, updated_at = ?,"
@@ -2557,19 +2558,25 @@ class FaultLedger:
             (CANCELLED, reason, now,
              row["attempts"] - (1 if row["state"] == CLAIMED else 0), row["publication_id"]))
 
-    def _refund(self, db, row, outcome):
+    def _refund(self, db, row, outcome, now=None):
+        """Give back the CURRENT claim's unit and end its attempt row; nothing earlier."""
         fault = db.execute("SELECT product FROM fault_ledger WHERE fault_id = ?",
                            (row["fault_id"],)).fetchone()
+        current = db.execute("SELECT attempt_id FROM fault_publication_attempts WHERE "
+                             + CURRENT_ATTEMPT, (row["publication_id"],)).fetchone()
+        if current is None:
+            return
         db.execute("DELETE FROM fault_budget_uses WHERE product = ? AND kind = ? AND ref = ?",
-                   (fault["product"], row["kind"], f"{row['publication_id']}:{row['attempts']}"))
+                   (fault["product"], row["kind"],
+                    f"{row['publication_id']}:{current['attempt_id']}"))
         db.execute(
-            "UPDATE fault_publication_attempts SET outcome = ?, ended = 1 WHERE"
-            " publication_id = ? AND attempt = ?",
-            (outcome, row["publication_id"], row["attempts"]))
+            "UPDATE fault_publication_attempts SET outcome = ?, ended = 1,"
+            "  ended_at = COALESCE(?, ended_at) WHERE attempt_id = ?",
+            (outcome, now, current["attempt_id"]))
 
     def _release(self, db, row, now, *, outcome, next_attempt_at=None, hold_reason=None):
         """Back to pending before anything was issued, with this claim's attempt refunded."""
-        self._refund(db, row, outcome)
+        self._refund(db, row, outcome, now)
         db.execute(
             "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
             "  lease_until = NULL, attempts = ?, next_attempt_at = ?, updated_at = ?"
@@ -2588,13 +2595,11 @@ class FaultLedger:
                     " AND lease_until IS NOT NULL AND lease_until <= ?",
                     (CLAIMED, ISSUED, moment)).fetchall():
                 if row["state"] == CLAIMED:
-                    db.execute(
-                        "UPDATE fault_publications SET state = ?, claim_token = NULL,"
-                        "  lease_owner = NULL, lease_until = NULL, updated_at = ?"
-                        " WHERE publication_id = ?", (PENDING, stamp, row["publication_id"]))
-                    db.execute("UPDATE fault_publication_attempts SET outcome = 'lease_lapsed',"
-                               " ended = 1, ended_at = ? WHERE publication_id = ? AND attempt = ?",
-                               (stamp, row["publication_id"], row["attempts"]))
+                    # Never issued, so nothing reached the connector: released like every other
+                    # unissued claim, with its own unit and attempt given back. Keeping them let
+                    # workers that crashed before operation() spend the product's budget with no
+                    # write ever made.
+                    self._release(db, row, stamp, outcome="lease_lapsed")
                     released += 1
                 else:
                     db.execute(
@@ -2604,8 +2609,7 @@ class FaultLedger:
                         " was issued') WHERE publication_id = ?",
                         (UNCERTAIN, stamp, row["publication_id"]))
                     db.execute("UPDATE fault_publication_attempts SET outcome = 'uncertain'"
-                               " WHERE publication_id = ? AND attempt = ?",
-                               (row["publication_id"], row["attempts"]))
+                               " WHERE " + CURRENT_ATTEMPT, (row["publication_id"],))
                     self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
                                  reason=f"write:{row['publication_id']}:{UNCERTAIN}")
                     uncertain += 1
@@ -2859,6 +2863,13 @@ def _exists(db, identifier):
                       (identifier,)).fetchone() is not None
 
 
+# The current claim's attempt row, parameterised by the publication id. One claim is live at a
+# time and every claim appends one row, so the newest row is the claim a transition concerns.
+# Its attempt number is not an identity: retry() starts the count again, and after a retry
+# "attempt 1" names two claims - an update by number rewrote the earlier one's history too.
+CURRENT_ATTEMPT = ("attempt_id = (SELECT MAX(attempt_id) FROM fault_publication_attempts"
+                   " WHERE publication_id = ?)")
+
 SLOT_ISSUE = "issue"
 SLOT_CREATE = "create"
 
@@ -3030,7 +3041,13 @@ def _set_project_is_current(context):
         "SELECT p.project_ref, p.product FROM fault_target_projects p WHERE p.scope_key = ?",
         (fault["scope_key"],)).fetchone()
     current = row["project_ref"] if row and row["product"] == fault["product"] else None
-    if current is not None and current != payload.get("value"):
+    if current is None:
+        # Removed, never owned by this product, or owned by another: a relink queued for the
+        # old project is stale either way, and issuing it would move the issue there and record
+        # the link as healthy. Setting a target again queues a fresh set_project.
+        return {"cancel": f"the scope no longer targets a project {fault['product']} owns,"
+                          f" so {payload.get('value')} is not where the issue belongs"}
+    if current != payload.get("value"):
         return {"cancel": f"the scope now targets {current}, not {payload.get('value')}"}
     return None
 
