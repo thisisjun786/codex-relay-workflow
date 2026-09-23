@@ -303,8 +303,9 @@ in the Codex home, outside the cache. At this replacement it was still version 1
 was enabled and cached and its launcher predates version 2, so `register-mcp` could only write the
 policy once the new package was in place, and it did so about thirty seconds after the restart. The
 twelve restarted bridges checked no role pair, and ten of them were still running that way more
-than an hour and a half later. Every bridge started after the record was written carried the
-policy, one of them started when a thread was resumed.
+than an hour and a half later. Every bridge started after the record was written whose state
+could be read carried the policy, one of them started when a thread was resumed; one short-lived
+process exited before it could be classified.
 
 A later replacement does not repeat that while the record is version 2 and the new launcher reads
 it the way this one does. The launcher finds the Codex home six directories above its own file and
@@ -455,7 +456,10 @@ making its first policy registration as well, and step 8 says what that changes.
    changed. At the measured replacement the host started bridges again inside this step, before the
    trust was given.
 6. Read back what landed:
-   - the installed payload, with `check-declaration` or `python3 scripts/ci/plugin.py --payload <dir>`;
+   - the installed payload: `check-declaration --package` on the version directory the add
+     installed reports a `payloadDigest` that should equal the one the same command reports for
+     the throwaway directory from step 4; `python3 scripts/ci/plugin.py --payload <dir>` checks it
+     against the package rules;
    - the step 2 dry run again, which now probes the server the new package declares and should
      still answer `record_unchanged`;
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
