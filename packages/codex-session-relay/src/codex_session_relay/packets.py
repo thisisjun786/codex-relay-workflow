@@ -52,12 +52,12 @@ CORRELATION = "correlationId"
 # What each typed field IS, so a value of the wrong shape is refused rather than compared.
 # Non-empty was the whole test before, and an object-valued generation compared equal to an
 # equally malformed record value, so two wrong answers agreed and the reading came back
-# accepted. A generation is a number; the rest are text.
+# accepted. A generation is a number and a callback is an object; the rest are text.
 FIELD_TYPES = {
     ISSUE: str,
     GENERATION: int,
     CRITERIA_DIGEST: str,
-    CALLBACK: str,
+    CALLBACK: dict,
     BODY: str,
 }
 
@@ -219,25 +219,60 @@ def _check_artifact(one):
 
 # ------------------------------------------------------------------------ the policy
 
-POLICY_FIELDS = ("model", "effort", "sandbox", "approval", "workflow")
+POLICY_FIELDS = ("model", "effort", "sandbox", "approval", "workflow", "mode")
 
 
-def policy(*, model, effort, workflow, sandbox=None, approval=None) -> dict:
+def policy(*, model, effort, workflow, mode, sandbox=None, approval=None) -> dict:
     """The settings and the workflow, together, because only one of them has a transport field.
 
     Model, effort, sandbox and approval are creation arguments a receipt reads back. The
     workflow is not: no transport carries it, so a message that does not say it has dropped
     it, and the recipient's own reading cannot recover what it was told to run under. Keeping
     the five in one record is what makes that omission a refusal instead of a silence.
+
+    The mode is the machine-readable half of the workflow: loop, non_loop or coordination,
+    which decides what an activation reading can answer. It is stated rather than inferred
+    from the workflow's wording, because prose is exactly what this module refuses to parse
+    into a fact; the wording is read only to refuse a contradiction (see _mode_problem).
     """
-    for name, value in (("model", model), ("effort", effort), ("workflow", workflow)):
+    for name, value in (("model", model), ("effort", effort), ("workflow", workflow),
+                        ("mode", mode)):
         if _present(value) is None:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 "a policy states its " + name
                 + "; an unstated one is read as whatever the recipient already had")
     return {"model": str(model), "effort": str(effort), "workflow": str(workflow),
-            "sandbox": sandbox, "approval": approval}
+            "mode": str(mode), "sandbox": sandbox, "approval": approval}
+
+
+# ---------------------------------------------------------------------- the callback
+
+CALLBACK_FIELDS = ("taskId", "model", "effort")
+
+
+def callback(*, task_id, model, effort) -> dict:
+    """Where to answer, and the pair the task being answered is authorised to run now.
+
+    An object rather than a sentence, because the pair is the part that goes stale. A parent
+    whose model the user changed runs another pair from then on, and a packet that still names
+    the old one has to be refusable by name; "parent task X" could not be compared at all.
+    """
+    for name, value in (("task_id", task_id), ("model", model), ("effort", effort)):
+        if _present(value) is None or not isinstance(value, str):
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "a callback states its " + name + " as text; one without it names nowhere to"
+                " answer or no pair to answer under")
+    return {"taskId": task_id, "model": model, "effort": effort}
+
+
+def _callback_problems(value) -> list:
+    """What is wrong with a callback read back from disk, where no constructor ran."""
+    wrong = [name for name in CALLBACK_FIELDS
+             if not isinstance(value.get(name), str) or not value.get(name).strip()]
+    extra = sorted(set(value) - set(CALLBACK_FIELDS))
+    return wrong + ["unexpected " + name for name in extra]
 
 
 # -------------------------------------------------------------------- CXC activation
@@ -266,6 +301,8 @@ LOOP = "loop"
 NON_LOOP = "non_loop"
 COORDINATION = "coordination"
 MODES = (LOOP, NON_LOOP, COORDINATION)
+# The key an activation reading and a policy both use for the mode they were stated under.
+MODE = "mode"
 
 
 def activation_fact(state, *, source=None, detail="") -> dict:
@@ -289,11 +326,22 @@ def activation_fact(state, *, source=None, detail="") -> dict:
 
 
 def unexamined(mode) -> dict:
-    """The honest starting triple for a mode: inapplicable where the mode has no such thing."""
+    """The honest starting triple for a mode: inapplicable where the mode has no such thing.
+
+    The reading carries the mode it was read under. Without it, not_applicable could be
+    written by a loop child as easily as by an audit, and nothing downstream could tell which
+    mode the answer belonged to.
+    """
     if mode not in MODES:
         raise PacketRefused(
             RefusalReason.MALFORMED_RECEIPT,
             repr(mode) + " is not an execution mode; it is one of " + ", ".join(sorted(MODES)))
+    triple = _unexamined_facts(mode)
+    triple[MODE] = mode
+    return triple
+
+
+def _unexamined_facts(mode) -> dict:
     if mode == LOOP:
         return {name: activation_fact(UNVERIFIED, detail="nothing readable answered yet")
                 for name in ACTIVATION_FACTS}
@@ -517,7 +565,7 @@ def check(one, *, required=None) -> None:
                 RefusalReason.MALFORMED_RECEIPT,
                 "a policy is an object of named settings, not a "
                 + type(one[POLICY]).__name__)
-        missing = [name for name in ("model", "effort", "workflow")
+        missing = [name for name in ("model", "effort", "workflow", MODE)
                    if _present((one[POLICY] or {}).get(name)) is None]
         if missing:
             raise PacketRefused(
@@ -525,6 +573,18 @@ def check(one, *, required=None) -> None:
                 "the policy states " + ", ".join(missing) + " as nothing; the workflow in"
                 " particular has no transport field, so an unstated one is dropped rather"
                 " than defaulted")
+        if one[POLICY][MODE] not in MODES:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                repr(one[POLICY][MODE]) + " is not an execution mode; it is one of "
+                + ", ".join(sorted(MODES)))
+    if one.get(CALLBACK) is not None:
+        wrong = _callback_problems(one[CALLBACK])
+        if wrong:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the callback states " + ", ".join(wrong) + "; it is the task to answer and"
+                " the model and effort that task runs now, each as text, and nothing else")
     if _present(one.get(ARTIFACT)) is not None:
         _check_artifact(one[ARTIFACT])
     if _present(one.get(BODY)) is not None:
@@ -560,6 +620,12 @@ def check(one, *, required=None) -> None:
             # spelling of "observed needs a source" is how the two start disagreeing.
             activation_fact(fact.get("state"), source=fact.get("source"),
                             detail=fact.get("detail") or "")
+        if triple.get(MODE) not in MODES:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "an activation reading states the mode it was read under, one of "
+                + ", ".join(sorted(MODES)) + ", not " + repr(triple.get(MODE))
+                + "; not_applicable means something only under a mode that arms nothing")
 
 
 # ---------------------------------------------------------------- agreement with the record
@@ -994,10 +1060,13 @@ def packet_lines(one) -> list:
     settings = one.get(POLICY)
     if settings:
         lines.append("  workflow: " + str(settings.get("workflow"))
+                     + "  mode: " + str(settings.get(MODE))
                      + "  model: " + str(settings.get("model"))
                      + "  effort: " + str(settings.get("effort")))
-    if _present(one.get(CALLBACK)) is not None:
-        lines.append("  answer to: " + str(one[CALLBACK]))
+    answer_to = one.get(CALLBACK)
+    if _present(answer_to) is not None:
+        lines.append("  answer to: " + str(answer_to.get("taskId")) + " ("
+                     + str(answer_to.get("model")) + ", " + str(answer_to.get("effort")) + ")")
     artifact = one.get(ARTIFACT)
     if artifact and artifact.get("kind") == PULL_REQUEST:
         lines.append("  pull request: " + str(artifact.get("repository")) + " #"
@@ -1007,6 +1076,7 @@ def packet_lines(one) -> list:
                      + str(artifact.get("digest")))
     triple = one.get("activation")
     if triple:
+        lines.append("  activation read under: " + str(triple.get(MODE)))
         for name in ACTIVATION_FACTS:
             entry = triple[name]
             source = " (" + entry["source"] + ")" if entry.get("source") else ""

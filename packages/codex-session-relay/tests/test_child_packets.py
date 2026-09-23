@@ -41,17 +41,30 @@ BODY = chr(10).join((
 
 def a_policy(**overrides):
     base = {"model": "anthropic/claude-opus-5", "effort": "xhigh",
-            "workflow": "CXC Loop", "sandbox": "danger-full-access",
+            "workflow": "CXC Loop", "mode": packets.LOOP, "sandbox": "danger-full-access",
             "approval": "never"}
     base.update(overrides)
     return packets.policy(**base)
+
+
+# The pair the parent runs on since 2026-09-23, and the one it left. A callback names the task
+# to answer and the pair that task is authorised to run now, so the left pair is what a stale
+# callback carries.
+PARENT_PAIR = ("anthropic/claude-opus-5-5", "xhigh")
+LEFT_PARENT_PAIR = ("devin/swe-2", "max")
+
+
+def a_callback(**overrides):
+    base = {"task_id": PARENT, "model": PARENT_PAIR[0], "effort": PARENT_PAIR[1]}
+    base.update(overrides)
+    return packets.callback(**base)
 
 
 def an_assignment(**overrides):
     base = dict(
         direction=envelope.PARENT_TO_CHILD, purpose="assignment", relation_id=RELATION,
         sender=PARENT, recipient=CHILD, subject=ISSUE, issue=ISSUE,
-        criteria_digest=DIGEST, policy_record=a_policy(), callback="parent task " + PARENT,
+        criteria_digest=DIGEST, policy_record=a_policy(), callback=a_callback(),
         body=BODY,
     )
     base.update(overrides)
@@ -114,7 +127,7 @@ class WhatAnOccasionCannotDoWithout(unittest.TestCase):
     def test_a_resume_that_drops_the_workflow_is_refused(self):
         """No transport carries it, so an unstated workflow is dropped rather than deferred."""
         with self.assertRaises(packets.PacketRefused) as caught:
-            packets.policy(model="opus", effort="xhigh", workflow="")
+            packets.policy(model="opus", effort="xhigh", workflow="", mode=packets.LOOP)
         self.assertIn("workflow", caught.exception.detail)
 
     def test_a_progress_note_is_not_made_to_invent_a_head(self):
@@ -233,7 +246,7 @@ class ACorrectionArrivingTwice(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback="parent task " + PARENT,
+            callback=a_callback(),
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
@@ -305,8 +318,10 @@ class WhetherTheChildActuallyArmedAnything(unittest.TestCase):
 
     def test_the_three_facts_start_unverified_rather_than_absent(self):
         """Nobody has looked is not the same as nothing is there."""
-        for name, fact in packets.unexamined(packets.LOOP).items():
-            self.assertEqual(fact["state"], packets.UNVERIFIED, name)
+        reading = packets.unexamined(packets.LOOP)
+        for name in packets.ACTIVATION_FACTS:
+            self.assertEqual(reading[name]["state"], packets.UNVERIFIED, name)
+        self.assertEqual(reading[packets.MODE], packets.LOOP)
 
     def test_an_answered_fact_names_the_record_that_answered_it(self):
         with self.assertRaises(packets.PacketRefused):
@@ -456,7 +471,7 @@ class TheWholeRoundTrip(unittest.TestCase):
 
     def test_the_round_trip_stays_on_one_task_one_pull_request_and_one_callback(self):
         record = a_record()
-        callback = "parent task " + PARENT
+        callback = a_callback()
 
         assignment = an_assignment(callback=callback)
         self.accepted(assignment, record)
@@ -732,7 +747,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
             direction=envelope.PARENT_TO_CHILD, purpose="revision_request",
             relation_id=RELATION, sender=PARENT, recipient=CHILD, subject="evt-1",
             issue=ISSUE, generation=2, criteria_digest=DIGEST,
-            callback="parent task " + PARENT,
+            callback=a_callback(),
             artifact=packets.pull_request(repository="thisisjun786/codex-relay-workflow",
                                           number=107, head_sha=HEAD))
         base.update(overrides)
@@ -744,7 +759,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
 
     def test_a_different_callback_under_one_id_is_a_collision(self):
         first = self.correction()
-        second = self.correction(callback="some other task")
+        second = self.correction(callback=a_callback(task_id="some other task"))
         self.assertEqual(packets.repeat(second, self.answered(first))["state"],
                          packets.COLLISION)
 
@@ -773,7 +788,7 @@ class WhatMakesTwoPacketsTheSameInstruction(unittest.TestCase):
         base = self.correction()
         for field, changed in ((packets.ISSUE, "CRW-999"), (packets.GENERATION, 7),
                                (packets.CRITERIA_DIGEST, "1" * 64),
-                               (packets.CALLBACK, "elsewhere")):
+                               (packets.CALLBACK, a_callback(model=LEFT_PARENT_PAIR[0]))):
             with self.subTest(field=field):
                 other = self.correction(**{
                     {packets.ISSUE: "issue", packets.GENERATION: "generation",
