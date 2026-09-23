@@ -36,7 +36,9 @@ from codex_session_relay.transport import (
     classify_operation_receipt,
 )
 
-from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase, task_settings
+from .support import (
+    CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase, WorkerKilled, task_settings,
+)
 
 SUPERVISOR = "01supervisor-task"
 PROJECT = "PRJ-1"
@@ -1405,6 +1407,7 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
     """Decisions read before the write lock and acted on under it, at staging and readback."""
 
     hand_over = WhatTheFifthReviewRoundFound.hand_over
+    reports_for = WhatTheFifthReviewRoundFound.reports_for
 
     def reconciliations(self):
         return self.store.all("SELECT detail FROM journal WHERE kind = ?",
@@ -1450,12 +1453,9 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
     def test_a_send_whose_worker_died_is_recovered_and_settled_by_its_readback(self):
         """Claimed, the bytes landed, the worker died before the receipt, the lease ran out."""
         _one, message_id = self.staged()
-        _n, request_id, message = self.channel._claim(
-            message_id, now=self.clock.now(), owner="a worker that died",
-            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
-        landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        request_id, landed = self.died_after_delivering(message_id)
         self.clock.advance(self.channel.policy.lease_seconds + 1)
-        answer = self.read_back(message_id, landed.turn_id)
+        answer = self.read_back(message_id, landed)
         self.assertEqual(answer["verified"], channel_module.HOST_READ)
         self.assertEqual(answer["reconciled"]["requestId"], request_id)
         self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
@@ -1464,17 +1464,14 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
         """The slow sender's own receipt is recorded; the message it no longer owns is not moved."""
         _one, message_id = self.staged()
         before = self.channel.get(message_id)
-        _n, request_id, message = self.channel._claim(
-            message_id, now=self.clock.now(), owner="slow", recipient=SUPERVISOR,
-            resolution=self.channel.resolve(self.rid))
-        landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        request_id, landed = self.died_after_delivering(message_id)
         self.clock.advance(self.channel.policy.lease_seconds + 1)
-        self.read_back(message_id, landed.turn_id)
+        self.read_back(message_id, landed)
         self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
 
         receipt = {"requestId": request_id, "operation": "send_message_to_thread",
                    "status": "accepted", "threadId": SUPERVISOR, "retrySafe": False,
-                   "resumed": {"approvalPolicy": "never"}, "turnId": landed.turn_id}
+                   "resumed": {"approvalPolicy": "never"}, "turnId": landed}
         self.channel._settle(before, request_id, classify_operation_receipt(receipt),
                              {"requestId": request_id}, self.clock.now())
         self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
@@ -1591,21 +1588,173 @@ class WhatTheSixthReviewRoundFound(ChannelTestCase):
         self.store.db.commit()
         self.assertIsNone(send_refusal(self.store.db, self.channel.policy, SUPERVISOR, now))
 
+    # ------------------------------------------------------------ chronology
+
+    def test_a_turn_opened_between_the_claim_and_the_transport_does_not_verify(self):
+        """The send is stamped when the transport is called, not when the row was claimed.
+
+        The recipient opens a turn in between and the transport steers the message into it,
+        so the token IS in the named turn and only the send time can refuse it.
+        """
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+        opened = {}
+
+        def claim_then_a_gap(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.clock.advance(5)
+            opened["turn"] = self.adapter.start_turn(SUPERVISOR, status="inProgress")
+            self.clock.advance(5)
+            return claimed
+
+        self.adapter.script("steer_existing")
+        with mock.patch.object(self.channel, "_claim", claim_then_a_gap):
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["turnId"], opened["turn"].turn_id)
+        answer = self.read_back(message_id, opened["turn"].turn_id)
+        self.assertEqual(answer["verified"], channel_module.TURN_PREDATES_SEND)
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+    def test_a_turn_opened_while_the_transport_queued_the_message_does_not_verify(self):
+        """Called at one moment, landed at a later one: the named turn has to follow the LANDING."""
+        _one, message_id = self.staged()
+        deliver = self.adapter.send_message
+        opened = {}
+
+        def queued(request_id, thread_id, message, settings=None):
+            self.clock.advance(5)
+            opened["turn"] = self.adapter.start_turn(SUPERVISOR, status="completed")
+            self.clock.advance(5)
+            return deliver(request_id, thread_id, message, settings)
+
+        with mock.patch.object(self.adapter, "send_message", queued):
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertNotEqual(record["turnId"], opened["turn"].turn_id)
+        answer = self.read_back(message_id, opened["turn"].turn_id)
+        self.assertEqual(answer["verified"], channel_module.TURN_PREDATES_SEND)
+        self.assertIn(record["turnId"], answer["detail"])
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
     @contextmanager
     def committed_before_the_lock(self, concurrent_write):
-        """Run a concurrent writer's commit immediately before the next staging lock."""
+        """Run a concurrent writer's commit immediately before the next staging lock, once."""
         real = self.store.composing
+        pending = [concurrent_write]
 
         @contextmanager
         def composing():
-            concurrent_write()
+            if pending:
+                pending.pop()()
             with real() as db:
                 yield db
 
         with mock.patch.object(self.store, "composing", composing):
             yield
 
-    def reports_for(self, obligation):
-        return self.store.all(
-            "SELECT seq FROM journal WHERE kind = ? AND subject = ?",
-            (supervision.JOURNAL_KIND, obligation["obligationId"]))
+    def died_after_delivering(self, message_id):
+        """attempt() whose host takes the bytes and whose worker dies before the receipt.
+
+        The transport was called, so its start is stamped; the receipt was never recorded, so
+        the row is left in sending for its lease to lapse. Returns the request id and the turn
+        the bytes landed in.
+        """
+        deliver = self.adapter.send_message
+
+        def delivered_then_died(request_id, thread_id, message, settings=None):
+            deliver(request_id, thread_id, message, settings)
+            raise WorkerKilled("the worker died after the host took the message")
+
+        with mock.patch.object(self.adapter, "send_message", delivered_then_died):
+            with self.assertRaises(WorkerKilled):
+                self.channel.attempt(message_id, self.adapter)
+        attempt = self.store.one(
+            "SELECT request_id, transport_started_at FROM supervisor_attempts"
+            " WHERE message_id = ?", (message_id,))
+        self.assertIsNotNone(attempt["transport_started_at"])
+        self.assertEqual(self.channel.get(message_id)["state"], "sending")
+        return attempt["request_id"], self.adapter.threads[SUPERVISOR].turns[-1].turn_id
+
+
+class WhatTheSeventhReviewRoundFound(ChannelTestCase):
+    """A readback verifies only on evidence bound to THIS attempt's transport and turns, and a
+    settled one is answered in the shape of the first; the hierarchy is read under each lock."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+    committed_before_the_lock = WhatTheSixthReviewRoundFound.committed_before_the_lock
+    died_after_delivering = WhatTheSixthReviewRoundFound.died_after_delivering
+
+    # ------------------------------------------------------ the hierarchy under the lock
+
+    def test_a_handover_between_resolving_and_the_lock_stages_nothing_for_the_former(self):
+        one = self.obligation()
+        with self.committed_before_the_lock(self.hand_over):
+            refusal = self.assertRefused(
+                RefusalReason.RELATION_OWNER_DRIFT, self.channel.stage, one)
+        self.assertIn("under the write lock", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        again = self.channel.stage(one)
+        self.assertEqual(again["recipient"], SUCCESSOR)
+
+    def test_a_stale_readdress_does_not_move_a_successors_report_back(self):
+        one, message_id = self.staged()
+        stale = self.channel.resolve(self.rid)
+        stale_packet = self.channel.compose(one, resolution=stale, observed_at=self.clock.iso())
+        self.hand_over()
+        self.channel.stage(one)
+        current = self.channel.get(message_id)
+        self.assertEqual(current["recipient_task_id"], SUCCESSOR)
+        self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel._readdress,
+                           current, stale_packet, stale)
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUCCESSOR)
+
+    # --------------------------------------------------- evidence bound to the attempt
+
+    def test_a_token_in_no_named_turn_does_not_verify(self):
+        """Found, and the host would not say in which turn: tied to nothing, so not verified."""
+        _one, message_id, record = self.delivered()
+        token = record["requestId"]
+        thread = self.adapter.threads[SUPERVISOR]
+        thread.items = [(None, text) if token in text else (turn, text)
+                        for turn, text in thread.items]
+        answer = self.read_back(message_id, record["turnId"])
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
+        self.assertIn("did not say which turn", answer["detail"])
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+    def test_an_attempt_whose_transport_never_started_does_not_verify(self):
+        """Claimed and never sent: there is no send to measure a turn against."""
+        _one, message_id = self.staged()
+        _n, _request_id, message = self.channel._claim(
+            message_id, now=self.clock.now(), owner="died before sending",
+            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        self.clock.advance(self.channel.policy.lease_seconds + 1)
+        answer = self.read_back(message_id, landed.turn_id)
+        self.assertEqual(answer["verified"], channel_module.NO_HOST)
+        self.assertIn("no recorded transport start", answer["detail"])
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+
+    # ------------------------------------------------------------- the answer's shape
+
+    def test_every_answer_to_one_readback_has_the_shape_of_the_first(self):
+        """Written, answered from the settled row, and lost to a racing settle: one fact."""
+        message_id, _record = self.lost_response()
+        landed = self.adapter.start_turn(SUPERVISOR, status="completed",
+                                         text=self.bytes_of(message_id))
+        first = self.read_back(message_id, landed.turn_id)
+        settled = self.read_back(message_id, landed.turn_id)
+        with mock.patch.object(self.channel, "_settled_readback", lambda message: None):
+            raced = self.read_back(message_id, landed.turn_id)
+        self.assertEqual((first["recorded"], settled["recorded"], raced["recorded"]),
+                         (True, False, False))
+        self.assertEqual((first["raced"], settled["raced"], raced["raced"]),
+                         (False, False, True))
+        for later in (settled, raced):
+            self.assertEqual(sorted(later), sorted(first))
+            for key in first:
+                if key not in ("recorded", "raced"):
+                    self.assertEqual(later[key], first[key], key)
+        self.assertIsInstance(settled["detail"], str)
+        self.assertEqual(settled["reconciled"]["requestId"], _record["requestId"])
+
+    lost_response = WhatTheSixthReviewRoundFound.lost_response

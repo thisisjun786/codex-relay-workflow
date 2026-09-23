@@ -1015,6 +1015,12 @@ CREATE TABLE IF NOT EXISTS supervisor_messages (
 -- live here rather than beside the packet because they are per attempt: the request id is
 -- rendered into them, so attempt 2 does not say what attempt 1 said, and lost-response
 -- reconciliation searches a recipient for the token the message actually carried.
+--
+-- sent_at is when the attempt was CLAIMED and its bytes frozen. transport_started_at is the
+-- instant immediately before the transport was called, committed before the call, and NULL
+-- when the transport never started; a readback's chronology is measured from it and from
+-- nothing else. It was added before this table was ever released, so no store holds the table
+-- without it.
 CREATE TABLE IF NOT EXISTS supervisor_attempts (
     request_id     TEXT PRIMARY KEY,
     message_id     TEXT NOT NULL,
@@ -1026,6 +1032,7 @@ CREATE TABLE IF NOT EXISTS supervisor_attempts (
     turn_id        TEXT,
     record         TEXT NOT NULL,
     sent_at        TEXT NOT NULL,
+    transport_started_at TEXT,
     observed_at    TEXT NOT NULL,
     UNIQUE (message_id, attempt_no)
 );

@@ -143,26 +143,38 @@ the delivered bytes carry the message id, because a recipient has to be able to 
 they cannot carry the turn id, because that turn does not exist until the message arrives. That
 is the whole of what it rules out, and it is the property `ack.acknowledge` already rests on.
 
-A verified readback says exactly four things, in these words:
+One rule decides every verification: **a readback verifies only on evidence bound to THIS
+attempt** - measured from the instant this attempt's transport started, and found in a turn
+the host names on the recipient's thread. A link in that chain the host cannot establish does
+not verify. `host_read` needs all of the following:
 
-- a bounded scan of the recipient's items - at most 200 of them - found THIS attempt's request
-  id. Not the frozen message, which is never compared; not necessarily in the turn that
-  answered, which is never correlated. What it is good for is that it does not come from our
-  own send receipt.
 - the host can read the named turn on the recipient's thread and it carries a start time. The
   read is thread-scoped, so it establishes membership as well as existence; asking a bounded
   LISTING first would have answered `turn_not_found` for a real turn a busy recipient had
   pushed off the end of it.
-- the named turn is not CERTAINLY earlier than the send - a start that precedes it by more
-  than the host's timestamp precision is refused. This applies to every candidate, including
-  the turn the attempt reports having opened, because a send can STEER an existing turn rather
-  than open one: that turn predates the message, and exempting it let it verify a readback for
-  a message it could not have been opened by.
-- where the named turn is the one the SEND opened, the delivered bytes are in that same turn.
-  Those two cannot disagree about one message: what the token is IN is where the message
-  landed, so a claim to have read it where it landed has to name that turn. The tie holds for
-  that case only, and deliberately - a turn the recipient opened AFTERWARDS is not expected to
-  carry the token, and is the stronger reading anyway, because the sender never knew its id.
+- the named turn is not CERTAINLY earlier than this attempt's `transport_started_at`, the
+  instant stamped immediately before the transport was called - a start that precedes it by
+  more than the host's timestamp precision is refused. The claim time is not that instant,
+  because settings, lock contention and scheduling separate the two, and an attempt with no
+  transport instant at all, claimed and never sent, verifies nothing. This applies to every
+  candidate, including the turn the attempt names, because a send can STEER an existing turn
+  rather than open one.
+- a bounded scan of the recipient's items - at most 200 - found THIS attempt's request id, in a
+  turn the host names. The frozen message is never compared, and what the scan is good for is
+  that it does not come from our own send receipt. A token the host places in no turn is tied
+  to nothing and answers `transcript_unconfirmed`.
+- the named turn is that turn, or does not certainly begin before it. The transport can hold a
+  message after it is called, so a turn opened in that interval followed the stamp and still
+  came before the bytes: where the message landed is the later bound. If the host gives no
+  start for the turn it landed in, the readback does not verify.
+- where the named turn is the one the SEND opened, the token is in that same turn: what the
+  token is IN is where the message landed, so a disagreement answers
+  `transcript_turn_mismatch`. A turn the recipient opened afterwards is not expected to carry
+  the token, and is the stronger reading anyway, because the sender never knew its id.
+
+Every answer to one readback has one shape - the first, a later one answered from the settled
+row, and one that lost the race to settle it - built from the stored row, with `recorded` and
+`raced` saying which it was.
 
 It does not say who wrote the answer, that the turn answered anything, or that the supervisor
 acted. The turn a send opens is one the sender already knows the id of, so a readback from that
@@ -322,6 +334,11 @@ goes out inside the parent's own turn. An uncertain send is never retried automa
 because there is no reconciler for this queue and a second send that lands is a second wake for
 one fact; it stays `held_uncertain`, which is not claimable, and says so, until a verified
 readback of that attempt settles it.
+
+Nothing else settles it. There is no reconciler for this queue, so a held message whose
+supervisor never reads it back stays held until somebody opens `supervisor-show` and decides
+what to do. That is manual settlement, and it is deliberate: the only automatic way to find out
+whether an unanswered send landed would be to send it again.
 
 A send interrupted between its claim and its transport receipt is the same answer reached a
 different way. The claim commits first, so a process that stops existing in between leaves the

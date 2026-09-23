@@ -589,8 +589,9 @@ reason to leave it unanswered.
 request understood and agreed to, a change actually applied, and a result verified. Silence is none
 of them. A conditional acceptance is not an application, a delivery failure is not a refusal, and
 an unconfirmed or stale revision is not a current one. Where a relation has no mechanism for a
-stage - and the supervisor relation has none above the record itself, because no channel for one
-exists - the answer is that there is nothing to look at rather than that nobody has looked yet.
+stage - and the supervisor relation has one only for a report's send and its readback, and none
+above those - the answer is that there is nothing to look at rather than that nobody has looked
+yet.
 
 **A report is not a record.** Producing a report, the transport accepting it, the recipient reading
 it and Linear holding it are four facts. The obligation to report something upward is discharged by

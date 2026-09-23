@@ -32,7 +32,7 @@ import json
 import shlex
 
 from . import envelope, packets, supervision
-from .ack import certainly_before
+from .ack import TURN_START_PRECISION_SECONDS, certainly_before
 from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
 from .identity import supervisor_read_proof, supervisor_request_id
@@ -90,6 +90,16 @@ INITIATIVE = "initiative"
 # truncated scan is inconclusive and never proof of absence.
 TRANSCRIPT_SCAN = 200
 NEWLINE = chr(10)
+# What any readback answer says it establishes, and what it does not.
+READBACK_LIMITS = (
+    "a verified readback says this attempt's request id is in a named turn of the recipient's"
+    " thread - the turn it names, or one that turn follows - and that the named turn did not"
+    " certainly begin before this attempt's transport started. It does not say that turn"
+    " answered or who computed the proof: the proof is two identifiers this store holds, and"
+    " when the named turn is the one the send opened (turnOrigin relay_opened) no act of the"
+    " recipient's is needed at all, so it shows arrival rather than reading. The turn and the"
+    " transcript are read by separate host calls with no shared snapshot, which is sound for"
+    " an append-only history and blind to one rewritten between them")
 # The journal kind a handover's re-address writes. A busy deferral counts from the latest one,
 # because a busy former supervisor is not a reason to hold the report its successor is owed.
 READDRESSED = "supervisor_message_readdressed"
@@ -118,6 +128,18 @@ def _addressed_as(row, resolution):
             and row["project_key"] == resolution["projectKey"])
 
 
+def _began_before(first, second):
+    """Whether one host start time is certainly earlier than another: True, False, or None.
+
+    None when either is not a time, so the caller can treat "not established" as not verified
+    rather than as "not earlier", which is the side an unknown must not fall on.
+    """
+    try:
+        return float(first) + TURN_START_PRECISION_SECONDS <= float(second)
+    except (TypeError, ValueError):
+        return None
+
+
 def _nothing_owed(obligation, decided):
     """The refusal for an obligation select() says produces no report, decided under the lock."""
     return DeliveryRefused(
@@ -127,6 +149,23 @@ def _nothing_owed(obligation, decided):
         " The obligation is preserved either way; what is refused is producing a second"
         " report about a fact somebody has already reported or the supervisor can already"
         " read for itself",
+    )
+
+
+def _same_hierarchy(first, second):
+    """Whether two resolutions name the same sender, recipient and project."""
+    return all(first[key] == second[key] for key in ("sender", "recipient", "projectKey"))
+
+
+def _hierarchy_moved(read, live):
+    """The refusal for a hierarchy that changed between a caller's reading and its write."""
+    return DeliveryRefused(
+        RefusalReason.RELATION_OWNER_DRIFT,
+        "the hierarchy moved while this was being decided: it was read as "
+        + repr(read["sender"]) + " reporting to " + repr(read["recipient"])
+        + ", and under the write lock it is " + repr(live["sender"]) + " reporting to "
+        + repr(live["recipient"]) + ". Nothing was written; staging again addresses the report"
+        " to the live supervisor",
     )
 
 
@@ -299,6 +338,12 @@ class SupervisorChannel:
             # already said the report existed, and a stage from the former hierarchy
             # committing in between made this caller refuse or return that row instead of
             # re-addressing it, so the successor was never told.
+            # And the hierarchy itself is read again: the packet was composed for the
+            # resolution taken before the lock, and a handover committing since would have this
+            # caller insert a message for a supervisor who has stepped down.
+            live = self.resolve(obligation["relationId"])
+            if not _same_hierarchy(live, resolution):
+                raise _hierarchy_moved(resolution, live)
             existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                                   (message_id,)).fetchone()
             if existing is None:
@@ -367,7 +412,13 @@ class SupervisorChannel:
         now_is = {"sender": resolution["sender"], "recipient": resolution["recipient"],
                   "projectKey": resolution["projectKey"]}
         at = self.clock.iso()
-        with self.store.transaction() as db:
+        with self.store.composing() as db:
+            # Re-resolved under this write too. A caller holding a reading from before a
+            # handover would otherwise move a row a later caller had already addressed to the
+            # successor back to the supervisor who stepped down.
+            live = self.resolve(row["relationship_id"])
+            if not _same_hierarchy(live, resolution):
+                raise _hierarchy_moved(resolution, live)
             cursor = db.execute(
                 "UPDATE supervisor_messages SET sender_task_id = ?, recipient_task_id = ?,"
                 " project_key = ?, packet = ?, state = ?, next_eligible_at = NULL,"
@@ -561,10 +612,12 @@ class SupervisorChannel:
             "that has a space in it too. --socket is global and goes BEFORE the subcommand,",
             "and --as is required, so the line is refused without either.",
             "",
-            "The proof is sha256(messageId|<your own turn id>). This message does not and",
-            "cannot contain that turn id, which is what separates reading it from quoting it",
-            "back. Confirming is not an answer and agrees to nothing: it is the only thing in",
-            "this store that can say the message was read.",
+            "The proof is sha256(messageId|<your own turn id>). This message cannot contain",
+            "that turn id, so quoting it back does not produce the proof - and that is all the",
+            "proof rules out. Anyone holding the relay's store can compute it as well, so a",
+            "readback records that this message reached your thread and that the turn you name",
+            "is real there, not that you read it. Confirming is not an answer and agrees to",
+            "nothing.",
             "",
             "Full record: " + _command("codex-session-relay", "supervisor-show", "--message",
                                        region["messageId"]),
@@ -664,6 +717,16 @@ class SupervisorChannel:
             return None
         except _NotClaimable:
             return None
+        # The transport's start is stamped HERE, immediately before it is called, and committed
+        # first. sent_at holds the claim time, and settings, lock contention and scheduling can
+        # separate the two, so a turn the recipient opened in between passed the chronology
+        # check as if it followed the send. A stamp that cannot be written raises before
+        # anything is sent, which leaves the claim to lapse into held_uncertain with no
+        # transport instant at all - and a readback of an attempt with none does not verify.
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE supervisor_attempts SET transport_started_at = ? WHERE request_id = ?",
+                (self.clock.iso(), request_id))
         try:
             receipt = adapter.send_message(request_id, recipient, message, settings)
         except Exception as error:  # noqa: BLE001 - a transport fault is an unknown outcome
@@ -1084,9 +1147,7 @@ class SupervisorChannel:
             # This is a fast path and it returns BEFORE the proof is checked, so a later
             # proof-valid answer is not recorded and a later mismatch is not refused. That is
             # deliberate and it is why the row below says what it says.
-            return {"schema": VERSION, "messageId": message_id, "recorded": False,
-                    "verified": existing["verified"], "readTurnId": existing["read_turn_id"],
-                    "detail": existing["detail"], "readAt": existing["read_at"]}
+            return self._answer(existing, recorded=False)
         expected = supervisor_read_proof(message_id, read_turn_id)
         if proof != expected:
             raise DeliveryRefused(
@@ -1110,7 +1171,8 @@ class SupervisorChannel:
             attempt = self.store.one(
                 "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state IN (?,?)"
                 " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
-        verified, detail, origin = self._verify_read_turn(row, attempt, read_turn_id, adapter)
+        verified, detail, origin, read_turn = self._verify_read_turn(
+            row, attempt, read_turn_id, adapter)
         delivered = self._delivered_evidence(row, attempt, adapter)
         if verified == HOST_READ and not delivered.get("found"):
             # The turn is real; the message is not established as having reached the place the
@@ -1126,6 +1188,14 @@ class SupervisorChannel:
                                 + ("" if delivered.get("exhausted")
                                    else ", and the scan was not exhausted, so this is"
                                    " inconclusive rather than absence"))))
+        elif verified == HOST_READ and not delivered.get("turnId"):
+            # Found, and in no turn the host would name. Every other check ties the evidence
+            # to a turn - the named one, or one the named turn follows - and a token in an
+            # unknown place is tied to neither, so it is not a verification of anything.
+            verified = TRANSCRIPT_UNCONFIRMED
+            detail = ("the transcript holds this attempt's request id and the host did not say"
+                      " which turn it is in, so it is not tied to the named turn or to any turn"
+                      " that turn follows")
         elif (verified == HOST_READ and origin == RELAY_OPENED
               and delivered.get("turnId")
               and delivered["turnId"] != read_turn_id):
@@ -1139,6 +1209,24 @@ class SupervisorChannel:
             detail = ("this readback names the turn the send opened, " + str(read_turn_id)
                       + ", and the delivered token is in " + str(delivered["turnId"])
                       + "; where the message landed is where a reader of it reads")
+        elif (verified == HOST_READ and delivered.get("turnId")
+              and delivered["turnId"] != read_turn_id):
+            # The named turn has to follow the turn the message LANDED in, which is a host fact
+            # and closes what a send time cannot: the transport can queue a message after it
+            # is called, so a turn opened in that interval followed the stamp and still came
+            # before the bytes. An unknown start is not established, and is not verified.
+            earlier = _began_before(read_turn.started_at if read_turn else None,
+                                    self._turn_start(row, delivered["turnId"], adapter))
+            if earlier is None:
+                verified = NO_HOST
+                detail = ("the turn this message landed in, " + str(delivered["turnId"])
+                          + ", has no start time the host would give, so whether "
+                          + str(read_turn_id) + " followed it is not established")
+            elif earlier:
+                verified = TURN_PREDATES_SEND
+                detail = (str(read_turn_id) + " began before " + str(delivered["turnId"])
+                          + ", the turn this message landed in, so it cannot be the turn"
+                          " that read it")
         reconciled = None
         if uncertain and verified == HOST_READ:
             reconciled = {"from": HELD_UNCERTAIN, "by": "readback",
@@ -1161,11 +1249,7 @@ class SupervisorChannel:
                 (message_id, HOST_READ),
             ).fetchone()
             if settled is not None:
-                return {"schema": VERSION, "messageId": message_id, "recorded": False,
-                        "verified": settled["verified"],
-                        "readTurnId": settled["read_turn_id"],
-                        "detail": settled["detail"], "readAt": settled["read_at"],
-                        "raced": True}
+                return self._answer(settled, recorded=False, raced=True)
             # And the message is still the one these checks were made against. They ran outside
             # the lock, so a move in between would have them describe a state that is gone.
             current = db.execute(
@@ -1208,20 +1292,28 @@ class SupervisorChannel:
                 {"verified": verified, "turnOrigin": origin, "readTurnId": read_turn_id,
                  "deliveredEvidence": delivered.get("found"),
                  "reconciled": reconciled is not None}, at=at)
-        return {"schema": VERSION, "messageId": message_id, "recorded": True,
-                "verified": verified, "readTurnId": read_turn_id, "turnOrigin": origin,
-                "detail": detail, "delivered": delivered, "readAt": at,
-                "assertedBy": asserted_by or "undeclared", "reconciled": reconciled,
-                "limits": "a verified readback says this attempt's request id is in the"
-                          " recipient's transcript and that the named turn is real on its thread"
-                          " and did not certainly begin before the send. It does not say that"
-                          " turn answered or who computed the proof: the proof is two"
-                          " identifiers this store holds, and when the named turn is the one"
-                          " the send opened (turnOrigin relay_opened) no act of the recipient's"
-                          " is needed at all, so it shows arrival rather than reading."
-                          " The turn and the transcript are read by separate host calls with"
-                          " no shared snapshot, which is sound for an append-only history and"
-                          " blind to one rewritten between them"}
+            written = db.execute(
+                "SELECT * FROM supervisor_readbacks WHERE message_id = ?", (message_id,)
+            ).fetchone()
+        return self._answer(written, recorded=True)
+
+    def _answer(self, readback, *, recorded, raced=False) -> dict:
+        """One readback answer, built from the stored row, whichever path reached it.
+
+        The first answer, a later one answered from the settled row and one that lost the race
+        to settle it are the same fact, so they have the same shape: every field decoded from
+        what was stored, with recorded and raced saying which of the three this was. The
+        second used to hand back the stored detail as JSON text and drop the turn's origin,
+        the transcript evidence, who asserted it and how it was reconciled.
+        """
+        stored = json.loads(readback["detail"]) if readback["detail"] else {}
+        return {"schema": VERSION, "messageId": readback["message_id"],
+                "recorded": recorded, "raced": raced,
+                "verified": readback["verified"], "readTurnId": readback["read_turn_id"],
+                "turnOrigin": stored.get("turnOrigin"), "detail": stored.get("detail"),
+                "delivered": stored.get("delivered"), "readAt": readback["read_at"],
+                "assertedBy": stored.get("assertedBy"), "reconciled": stored.get("reconciled"),
+                "limits": READBACK_LIMITS}
 
 
     def _settled_readback(self, message_id):
@@ -1251,7 +1343,7 @@ class SupervisorChannel:
             origin = RELAY_OPENED if attempt["turn_id"] == read_turn_id else RECIPIENT_OPENED
         if adapter is None:
             return NO_HOST, ("no host adapter in this process, so whether this turn is real was"
-                             " not established"), origin
+                             " not established"), origin, None
         # read_turn is asked directly rather than checking a listing first. The listing is
         # bounded - the last 25 turns - so a recipient that has taken a few turns since being
         # woken pushes a perfectly real read turn off the end of it, and the readback came
@@ -1261,23 +1353,40 @@ class SupervisorChannel:
         try:
             turn = adapter.read_turn(recipient, read_turn_id)
         except Exception as error:  # noqa: BLE001
-            return NO_HOST, "the turn could not be read: " + str(error), origin
+            return NO_HOST, "the turn could not be read: " + str(error), origin, None
         if turn is None:
-            return TURN_NOT_FOUND, "the host has no such turn on this thread", origin
+            return TURN_NOT_FOUND, "the host has no such turn on this thread", origin, None
         if turn.started_at is None:
             return NO_HOST, ("the host did not say when this turn began, and an unknown"
-                             " chronology is not a verification"), origin
+                             " chronology is not a verification"), origin, turn
         # Applied to EVERY candidate, including the turn the send reports having opened. That
         # turn is not always a new one: the transport can steer an existing turn, and the
         # delivery path keeps a whole flag for that case, so exempting it let a turn that
         # predates the message verify a readback for the message. The precision allowance in
         # certainly_before already covers a turn genuinely started by this send.
-        if attempt is not None and certainly_before(
-                turn.started_at, attempt["sent_at"] or attempt["observed_at"]):
+        # Measured from the instant the transport started and from nothing earlier: the claim
+        # time let a turn opened between the claim and the call pass as if it followed the
+        # send. An attempt with no transport instant has no send to measure against, and a
+        # readback that cannot be tied to the send does not verify.
+        started = attempt["transport_started_at"] if attempt is not None else None
+        if started is None:
+            return NO_HOST, ("this attempt has no recorded transport start, so there is no send"
+                             " to measure the turn against"), origin, turn
+        if certainly_before(turn.started_at, started):
             return TURN_PREDATES_SEND, ("this turn began before the send, so it cannot be the"
-                                        " turn that read it"), origin
+                                        " turn that read it"), origin, turn
         return HOST_READ, ("the host lists this turn on the recipient's thread and it did not"
-                           " begin before the send"), origin
+                           " begin before the send"), origin, turn
+
+    def _turn_start(self, row, turn_id, adapter):
+        """When a turn on the recipient's thread began, or None when the host will not say."""
+        if adapter is None:
+            return None
+        try:
+            turn = adapter.read_turn(row["recipient_task_id"], turn_id)
+        except Exception:  # noqa: BLE001 - an unreadable turn is an unestablished start
+            return None
+        return turn.started_at if turn is not None else None
 
     def _delivered_evidence(self, row, attempt, adapter) -> dict:
         """Whether the bytes this send froze are in the recipient's own transcript.
