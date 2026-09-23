@@ -178,6 +178,21 @@ def _text(value, name, *, optional=False, limit=MAX_TEXT):
     return value.strip()
 
 
+# The scope a product's project-create records file under (projects.PROJECTS_SCOPE). Its owned
+# target names the product's team and no project, and every project create of the product is
+# issued under it, so no real or test project may carry the name: a record there would share
+# that target, and a simulated one would repoint it to the test team.
+PROJECTS_SCOPE = "__projects__"
+RESERVED_PROJECTS = (PROJECTS_SCOPE,)
+
+
+def _project(value, name, *, optional=False):
+    project = _text(value, name, optional=optional)
+    if project in RESERVED_PROJECTS:
+        malformed(f"{name} {project!r} is reserved for routing's own project-create records")
+    return project
+
+
 def _key(value, name, *, optional=False):
     """An identifying key: a component, a symptom, a product. Keys decide identity, so they are
     constrained; prose never is one."""
@@ -233,7 +248,7 @@ def _target(value, name):
         return None
     _closed(value, ("team", "project"), name)
     return {"team": _text(value.get("team"), f"{name}.team"),
-            "project": _text(value.get("project"), f"{name}.project")}
+            "project": _project(value.get("project"), f"{name}.project")}
 
 
 REGISTRY_KEYS = ("schema", "product", "workspace", "team", "familyLabel", "repositories",
@@ -262,7 +277,7 @@ def read_registry(record) -> dict:
         "familyLabel": _text(record.get("familyLabel"), "familyLabel"),
         "repositories": _keys(record.get("repositories"), "repositories"),
         "surfaces": watched,
-        "triageProject": _text(record.get("triageProject"), "triageProject", optional=True),
+        "triageProject": _project(record.get("triageProject"), "triageProject", optional=True),
         "testTarget": _target(record.get("testTarget"), "testTarget"),
     }
     target = answer["testTarget"]
@@ -317,7 +332,7 @@ def read_binding(record, registry=None) -> dict:
             if record.get(key) is not None:
                 malformed(f"a project binding carries no {key}")
         answer.update({
-            "ref": _text(record.get("ref"), "ref"),
+            "ref": _project(record.get("ref"), "ref"),
             "state": _choice(record.get("state"), PROJECT_STATES, "state"),
             "goal": _key(record.get("goal"), "goal", optional=True),
         })
@@ -327,7 +342,7 @@ def read_binding(record, registry=None) -> dict:
         answer.update({
             "ref": _issue(record.get("ref"), "ref"),
             "state": _choice(record.get("state"), ISSUE_STATES, "state"),
-            "project": _text(record.get("project"), "project", optional=True),
+            "project": _project(record.get("project"), "project", optional=True),
             "symptoms": _keys(record.get("symptoms"), "symptoms"),
             "fixRef": _text(record.get("fixRef"), "fixRef", optional=True),
             "followUpOf": _follow_ups(record.get("followUpOf")),

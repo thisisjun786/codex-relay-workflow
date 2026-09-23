@@ -27,8 +27,9 @@ from . import ledger_port, products, routes
 
 KIND = "project_create"
 # The scope a product's project records file under. Its target names a team and no project,
-# which is what a project create needs and what no issue create can use.
-PROJECTS_SCOPE = "__projects__"
+# which is what a project create needs and what no issue create can use. products reserves the
+# name, so no registry or binding can put a real or test project in it.
+PROJECTS_SCOPE = products.PROJECTS_SCOPE
 PAYLOAD_KEYS = ("product", "workspace", "team", "familyLabel", "goal", "criteria", "name",
                 "members", "components")
 

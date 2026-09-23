@@ -111,6 +111,7 @@ class Holder:
     def __init__(self, ledger, linear):
         self.ledger, self.linear = ledger, linear
         self.lose_next_response = False
+        self.operations = []  # every operation carried, as the ledger issued it
 
     def pending(self):
         return self.ledger.next(limit=50)
@@ -130,6 +131,7 @@ class Holder:
         claim = self.ledger.claim(publication, owner="holder")
         token = claim["claimToken"]
         operation = self.ledger.operation(publication, claim_token=token)
+        self.operations.append(operation)
         kind = operation["kind"]
         block = operation.get("block")
         if kind == "open_record":
@@ -1331,6 +1333,46 @@ class RegistryChanges(ProductRoutingCase):
         self.assertEqual(["TST-5"], [c["issue"] for c in self.linear.comments])
         self.assertEqual(("done", "proj-test"), (self.linear.issues["TST-5"]["state"],
                                                  self.linear.issues["TST-5"]["project"]))
+
+    def test_no_project_takes_the_name_of_the_project_create_scope(self):
+        # Every project create of a product is issued under that scope's owned target, so a
+        # real or test project of the same name would share it.
+        scope = projects.PROJECTS_SCOPE
+        for record in (dict(GAMMA, testTarget={"team": "TST", "project": scope}),
+                       dict(GAMMA, triageProject=scope)):
+            with self.subTest(record=sorted(record)), \
+                    self.assertRaises(products.RouteRefused) as caught:
+                self.router.register_product(record)
+            self.assertEqual("route_input_malformed", caught.exception.reason.value)
+        for record in (binding("gamma-kit", "project", scope, components=["cache"]),
+                       binding("gamma-kit", "issue", "GMK-4", project=scope,
+                               components=["cache"])):
+            with self.subTest(kind=record["kind"]), \
+                    self.assertRaises(products.RouteRefused) as caught:
+                self.router.bind(record)
+            self.assertEqual("route_input_malformed", caught.exception.reason.value)
+
+    def test_a_simulated_completion_check_leaves_a_pending_project_create_on_its_team(self):
+        self.router.register_product(dict(GAMMA, testTarget={"team": "TST",
+                                                             "project": "proj-gmk-test"}))
+        self.router.set_policy(POLICY)
+        for component, symptom, key in (("cache", "stale", "g1"), ("queue", "lost", "g2")):
+            self.route(product="gamma-kit", repository="example-org/gamma-kit",
+                       surface="real_use", phase="in_use", component=component,
+                       symptom=symptom, occurrenceKey=key,
+                       goal={"key": "offline_sync", "criteria": "edits survive reconnect"})
+        self.router.bind(binding("gamma-kit", "issue", "TST-7", state="done",
+                                 components=["cache"], project="proj-gmk-test", test=True))
+        answer = self.router.check_completion(reading("TST-7", product="gamma-kit",
+                                                      origin="simulated",
+                                                      observed={"acceptance": "absent"}))
+        self.assertEqual("mismatch", answer["verdict"])
+        self.holder.run()
+        creates = [op for op in self.holder.operations if op["kind"] == projects.KIND]
+        self.assertEqual([("GMK", "GMK")], [(op["trackerRef"], op["payload"]["team"])
+                                            for op in creates])
+        self.assertEqual(["GMK"], [p["team"] for p in self.linear.projects.values()])
+        self.assertEqual(["TST-7"], [c["issue"] for c in self.linear.comments])
 
 
 class TransactionBoundaries(ProductRoutingCase):

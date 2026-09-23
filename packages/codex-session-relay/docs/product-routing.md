@@ -153,6 +153,10 @@ so sharing a project would repoint real writes there. A registry whose triage pr
 target project is refused. So is a registry naming a test target on a project the product binds,
 or files observed routes in, for real work. A real binding on the test target project is refused
 too, the converse of a test binding having to sit on it.
+Routing files its own project-create records under a scope named `__projects__`, whose target
+names the product's team and no project. No triage project, test target or binding may use that
+name. Otherwise a record there would share the target every project create of the product is
+issued under.
 
 ## Shared causes
 
