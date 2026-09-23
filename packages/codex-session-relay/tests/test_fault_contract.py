@@ -1958,6 +1958,78 @@ class ManagedStartAnswersAreTheirOwnFaults(RelayTestCase):
                              "the answer that is gone is recovered")
 
 
+class PresenceAsksWhatCollectionCollects(RelayTestCase):
+    """Final review round eleven (criterion 1, invariant 16, the routed supersession finding).
+
+    A held fault is present only while a delivery is held for a reason other than a busy
+    recipient: a waiting delivery to the same recipient - queued, or held at busy_cap - never
+    keeps it open after the delivery that raised it was superseded.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.register()
+        self.relationship = self.store.one("SELECT relationship_id FROM relationships")[
+            "relationship_id"]
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+
+    def delivery(self, event, state, hold):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
+                " recipient_thread_id, state, attempt_count, hold_reason, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event, self.relationship, "completion", "parent", "parent", state, 0, hold,
+                 "t", "t"))
+
+    def swept(self):
+        batch = faultsweep.sweep(self.store)
+        faultsweep.record_all(self.ledger, batch, store=self.store)
+        return batch
+
+    def test_a_waiting_delivery_never_keeps_a_superseded_held_fault_open(self):
+        for waiting in (("queued", None), ("deferred_busy", "busy_cap")):
+            with self.subTest(waiting=waiting):
+                self.delivery(f"old-{waiting[0]}", "withheld_pre_send", "attempt_cap")
+                raised = [entry for entry in self.swept()["observations"]
+                          if entry["faultClass"] == "delivery_stalled" and not entry["cleared"]]
+                self.assertEqual(1, len(raised))
+                identifier = faults.fault_id(PRODUCT, "delivery_stalled", raised[0]["signature"])
+                with self.store.transaction() as db:
+                    db.execute("UPDATE deliveries SET state = 'superseded'"
+                               " WHERE event_id = ?", (f"old-{waiting[0]}",))
+                self.delivery(f"new-{waiting[0]}", *waiting)
+                self.swept()
+                self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"],
+                                     "only a waiting delivery is left for that recipient")
+
+
+class ADefinitiveReadingOutlivesAnUnmeasuredOne(RelayTestCase):
+    """Final review round eleven (criterion 1): a later read that established nothing does not
+    un-establish an earlier answer for the same turn in one batch."""
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+
+    def read(self, *states):
+        batch = faultsweep.sweep(self.store, readings=[
+            {"schema": faultsweep.OBSERVATION_SCHEMA, "relationshipId": "rel-3",
+             "selectors": {"turn": "t1"}, "reportingState": state} for state in states])
+        faultsweep.record_all(self.ledger, batch, store=self.store)
+        return [entry for entry in batch["observations"]
+                if entry["faultClass"] == "report_omitted" and not entry["cleared"]]
+
+    def test_a_confirmed_omission_is_recorded_despite_a_later_unmeasured_read(self):
+        self.assertEqual(1, len(self.read("unreported", "unmeasured")))
+
+    def test_a_found_report_clears_the_omission_despite_a_later_unmeasured_read(self):
+        omitted = self.read("unreported")
+        identifier = faults.fault_id(PRODUCT, "report_omitted", omitted[0]["signature"])
+        self.read("reported", "unmeasured")
+        self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 

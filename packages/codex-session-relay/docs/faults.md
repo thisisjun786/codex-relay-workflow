@@ -424,8 +424,12 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   later receipt for that request is accepted or answers differently - the registry replaces a
   non-publishing receipt - which is the only transition the registry offers an armed request).
 - No source emits an active and a clearing observation for one fault in one sweep: a reading
-  batch is reduced to the last reading per relationship and turn BEFORE it is paged. A paused, archived,
-  busy or waiting recipient is never a fault.
+  batch is reduced to the last reading per relationship and turn BEFORE it is paged, except that
+  an `unmeasured` reading never replaces an established one of the same turn - a later read that
+  established nothing does not un-establish an answer. A paused, archived, busy or waiting
+  recipient is never a fault, and `still_present()` asks exactly what each source collects: a
+  held-delivery fault is present only while a delivery to its recipient is held for a reason
+  other than `busy_cap`, so a waiting delivery never keeps it open.
 - A delivery whose obligation was superseded is not current, for every delivery kind: one in the
   `superseded` state, one annotated in `delivery_supersession` (a delivery held at its attempt cap
   cannot be rewritten, so it is annotated), one whose relationship was replaced, and one the send

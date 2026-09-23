@@ -768,10 +768,20 @@ def _last_per_turn(readings) -> list:
     same turn: a turn read unreported and then reported is read as reported, whichever page
     either reading would otherwise have fallen on. A reading this cannot interpret keeps its own
     place, so it is still named as a gap.
+
+    An unmeasured reading never replaces an established one of the same turn: a later read that
+    could not establish anything does not un-establish what an earlier one did. Last-wins let
+    [reported, unmeasured] keep an omission open after its report was found, and
+    [unreported, unmeasured] never record the omission it had confirmed.
     """
     order = {}
     for index, reading in enumerate(readings):
         key = _reading_key(reading) or ("#unusable", index)
+        held = order.get(key)
+        if (isinstance(held, dict) and isinstance(reading, dict)
+                and reading.get("reportingState") == UNMEASURED
+                and held.get("reportingState") in ESTABLISHED):
+            continue
         order.pop(key, None)
         order[key] = reading
     return list(order.values())
@@ -1104,13 +1114,17 @@ def still_present(store, fault_class, signature) -> dict:
             # Settled attempts in both branches, for the reason the derivations give: an
             # in-flight row's state is provisional, and letting it count as presence would
             # keep a recovered fault open for as long as some unrelated send was running.
-            "   AND (COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
+            # Each branch asks exactly what its derivation collects. The hold page collects a
+            # delivery held for a reason other than a busy recipient, so a delivery that is
+            # merely waiting - queued, or held at busy_cap - never keeps a held fault present.
+            "   AND ((d.hold_reason IS NOT NULL AND d.hold_reason != ?"
+            "         AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
             "                     AND a.internal_state = 'settled'"
-            "                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
+            "                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, ''))"
             "        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id"
             "                     AND a2.internal_state = 'settled' AND a2.state = ?))",
-            (signature.get("recipient"), *SETTLED_DELIVERY, signature.get("attemptState"),
-             signature.get("attemptState")))
+            (signature.get("recipient"), *SETTLED_DELIVERY, BUSY_HOLD,
+             signature.get("attemptState"), signature.get("attemptState")))
     if fault_class == "record_sync_failed":
         return store.one(
             "SELECT 1 FROM sync_outbox WHERE state = ? AND target = ? AND target_ref = ?"
