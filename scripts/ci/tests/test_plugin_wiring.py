@@ -1099,16 +1099,38 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
                          [], "nothing is moved aside")
 
+    # register-mcp in a process where another writer puts a record at the path just as this run
+    # takes the record's lock, so the write is refused as changed underneath: a refusal that
+    # carries no repair field.
+    WRITES_A_RECORD_AT_THE_LOCK = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "real_enter = hostrecord.Locked.__enter__\n"
+        "def entered_then_written(self):\n"
+        "    held = real_enter(self)\n"
+        "    if self.path.name.startswith('crw-bridge-mcp.json'):\n"
+        "        (self.path.parent / 'crw-bridge-mcp.json').write_text('{}', encoding='utf-8')\n"
+        "    return held\n"
+        "hostrecord.Locked.__enter__ = entered_then_written\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[2:]))\n"
+    )
+
     def test_a_refusal_points_at_a_repair_only_when_it_carries_one(self):
         """Review of 829bed79: every refusal note said "repair says what to do", with or without one."""
-        import runtime_install
-        for outcome, wrote in ((bridgerecord.DIFFERS, False), (bridgerecord.POLICY_CHANGED, True),
-                               (bridgerecord.CHANGED_UNDERNEATH, False)):
-            with self.subTest(outcome):
-                without = runtime_install._register_mcp_plugin_note(outcome, wrote, False)
-                self.assertNotIn("repair", without)
-                self.assertIn("repair says what to do",
-                              runtime_install._register_mcp_plugin_note(outcome, wrote, True))
+        done = subprocess.run(
+            [sys.executable, "-c", self.WRITES_A_RECORD_AT_THE_LOCK, str(ROOT / "scripts"),
+             "register-mcp", "--codex-home", str(self.home.codex_home), "--bridge-command",
+             str(self.bridge), "--owner", "plugin", "--execution-policy", str(self.policy),
+             "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        emitted = json.loads(done.stdout)
+        self.assertNotEqual(done.returncode, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CHANGED_UNDERNEATH, output)
+        self.assertNotIn("repair", emitted, "precondition: this refusal carries no repair")
+        self.assertNotIn("repair", emitted.get("note") or "", output)
 
     def test_a_rerun_that_writes_nothing_does_not_say_it_wrote(self):
         """Review of f743d438: every outcome printed "The record was written"."""
