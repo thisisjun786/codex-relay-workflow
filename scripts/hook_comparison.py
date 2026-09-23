@@ -1051,9 +1051,13 @@ def journal_records(arm, session, turn):
     """
     found = {}
     for day in sorted(arm.journal.glob("*")):
-        if not day.is_dir():
+        # Day directories only: the adapter keeps its accepted records under accepted/ beside
+        # them (CRW-212), and one of those read as a row would count one firing twice.
+        if not day.is_dir() or not completion.JOURNAL_DAY.match(day.name):
             continue
         for record in sorted(day.glob("*.json")):
+            if not completion.JOURNAL_NAME.match(record.name):
+                continue
             try:
                 payload = json.loads(record.read_text(encoding="utf-8"))
             except (OSError, ValueError):
