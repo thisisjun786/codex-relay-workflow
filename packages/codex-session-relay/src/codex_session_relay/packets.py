@@ -1120,11 +1120,12 @@ def content_digest(one) -> str:
 def repeat(one, answered) -> dict:
     """Whether this packet has been answered before, and whether it is the same one.
 
-    Three answers, not two. A packet whose id and content both match is a REPLAY and is given
-    back the disposition it already got, which is what makes an uncertain send safe to settle
-    by asking rather than by sending again. A packet reusing an id while asking for something
-    else is a COLLISION: it is neither a replay nor a new instruction, and answering it with
-    the earlier disposition would apply a decision to a request nobody made.
+    Three answers, not two. A packet whose id and content both match is a REPLAY, and the
+    disposition it already got is reported beside today's reading (settle_repeat), which is
+    what makes an uncertain send safe to settle by asking rather than by sending again. A
+    packet reusing an id while asking for something else is a COLLISION: it is neither a
+    replay nor a new instruction, and answering it with the earlier disposition would apply a
+    decision to a request nobody made.
     """
     region = one.get("envelope") or {}
     identifier = region.get("messageId")
@@ -1134,14 +1135,59 @@ def repeat(one, answered) -> dict:
     mine = content_digest(one)
     if str(prior.get("contentDigest")) == mine:
         return {"state": REPLAY, "messageId": identifier, "contentDigest": mine,
-                "disposition": prior.get("disposition"),
+                "disposition": prior.get("disposition"), "answeredDigest": mine,
                 "reason": "this id was answered already and asks for the same thing, so it is"
-                          " given the same answer rather than acted on twice"}
+                          " not acted on twice"}
     return {"state": COLLISION, "messageId": identifier, "contentDigest": mine,
             "disposition": prior.get("disposition"),
+            "answeredDigest": prior.get("contentDigest"),
             "reason": "this id was answered already and asks for something else. It is raised"
                       " rather than given the earlier answer, which is also what stops a"
                       " predictable id being spent in advance to suppress the real request"}
+
+
+COLLISION_MISMATCH = "message_collision"
+UNCHECKED = "unchecked"
+
+
+def settle_repeat(answer, repeated) -> dict:
+    """Today's reading stands; a repeat only decides whether it may be acted on again.
+
+    An earlier disposition never replaces the current one. Handing a replay the answer it got
+    before let an accepted correction come back accepted after its generation had moved on or
+    after its record had become unreadable, which is exactly the reading this check exists to
+    refuse. So the current disposition is kept, the earlier one is reported beside it, and act
+    says whether this is the one arrival that still has to be applied: a first acceptance, or an
+    acceptance where the earlier answer was not one. With no record of earlier answers
+    (repeated is None) nothing can be told apart from a first arrival, so nothing is acted on.
+    """
+    settled = dict(answer)
+    accepted = settled["disposition"] == ACCEPTED
+    if repeated is None:
+        settled["repeat"] = {"state": UNCHECKED,
+                             "reason": "no reception ledger was named, so a repeat cannot be"
+                                       " told from a first arrival"}
+        settled["act"] = False
+        return settled
+    state = repeated["state"]
+    if state == FIRST:
+        settled["repeat"] = {"state": FIRST, "contentDigest": repeated["contentDigest"]}
+        settled["act"] = accepted
+        return settled
+    previous = repeated.get("disposition")
+    if state == REPLAY:
+        settled["repeat"] = {"state": REPLAY, "contentDigest": repeated["contentDigest"],
+                             "previousDisposition": previous, "reason": repeated["reason"]}
+        settled["act"] = accepted and previous != ACCEPTED
+        return settled
+    settled["mismatches"] = list(settled["mismatches"]) + [mismatch(
+        COLLISION_MISMATCH, "messageId", expected=repeated.get("answeredDigest"),
+        found=repeated["contentDigest"], reason=repeated["reason"])]
+    settled["disposition"] = REFUSAL
+    settled["repeat"] = {"state": COLLISION, "contentDigest": repeated["contentDigest"],
+                         "previousDisposition": previous, "reason": repeated["reason"]}
+    settled["act"] = False
+    return settled
 
 
 # -------------------------------------------------------------- the seven states of a handover
@@ -1163,6 +1209,9 @@ PROGRESSION = (READ, TRANSPORT_ACCEPTED, RELAY_ACK, CRITERIA_VERDICT, PARENT_ACC
 # Which record answers each one, and where none does. read is first and has no mechanism at
 # all: no row in this store says a recipient read anything, and a model writing "received,
 # understood" is prose. Saying so here is what stops it being the state everybody assumes.
+# linear_done is the issue's own status in Linear, which a readback of that issue answers and
+# this store never holds. The outbox confirms that a coordination summary block was written
+# and read back, which says nothing about the issue's status, so it does not answer this.
 PROGRESSION_SOURCES = {
     READ: None,
     TRANSPORT_ACCEPTED: "attempts",
@@ -1170,7 +1219,7 @@ PROGRESSION_SOURCES = {
     CRITERIA_VERDICT: "verdicts",
     PARENT_ACCEPTANCE: "verdicts",
     MERGE_LANDING: "merge_turns",
-    LINEAR_DONE: "sync_outbox",
+    LINEAR_DONE: "linear_issue_status",
 }
 
 NO_PROGRESSION_MECHANISM = {
@@ -1254,6 +1303,31 @@ def unsupported_promotions(ladder) -> list:
         if state == envelope.YES and not held:
             out.append(name)
         held = state == envelope.YES
+    return out
+
+
+def claims(claimed, held) -> dict:
+    """The states a packet's own ladder claims that the receiver's reading does not hold.
+
+    Two lists, because they are two different answers. unbacked: the reading answered and said
+    no (or only conditionally). unmeasurable: the reading could not answer at all - read never
+    can, Linear Done is not in this store, a landing needs an observed head. A packet writing
+    yes promotes nothing either way; this says which of the two it ran into.
+    """
+    out = {"unbacked": [], "unmeasurable": []}
+    if claimed is None:
+        return out
+    check_progression(claimed)
+    for name in PROGRESSION:
+        if claimed[name].get("state") != envelope.YES:
+            continue
+        state = (held.get(name) or {}).get("state")
+        if state == envelope.YES:
+            continue
+        if state in (envelope.NO, envelope.CONDITIONAL):
+            out["unbacked"].append(name)
+        else:
+            out["unmeasurable"].append(name)
     return out
 
 
