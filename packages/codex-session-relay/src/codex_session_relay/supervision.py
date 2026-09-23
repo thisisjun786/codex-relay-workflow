@@ -237,10 +237,18 @@ def from_observation(reading) -> dict | None:
     Only reportingState == unreported raises anything. unmeasured in particular does not: a
     failed evidence read is the absence of an answer, and turning it into an obligation would
     be inventing the one thing the reading refused to assert.
+
+    Nor does an unreported reading that says nothing is owed. omitted.classify keeps the
+    diagnosis of a turn fixed and answers separately whether a report is still owed: a receipt
+    for the turn goes upward as its own fact, a later admitted turn means the work went on, and
+    an omission inside its grace has not yet had the chance to be answered. A reading carrying
+    no owed field predates that answer and is read as owed, which is what it always meant.
     """
     if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
         return None
     if reading.get("reportingState") != OBSERVED_OMISSION:
+        return None
+    if reading.get("owed") is False:
         return None
     relation = reading.get("relationshipId")
     turn = _turn_of(reading)
@@ -657,6 +665,11 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
         if state == OBSERVED_UNMEASURED:
             _carry(gaps, unmeasured_gap(reading))
             continue
+        if reading.get("owed") is False:
+            # Diagnosed as an omission, and nothing is owed because of it now: the turn's own
+            # receipt went upward, a later turn was admitted, or it is inside its grace. That is
+            # an ordinary reading, neither an obligation nor a gap.
+            continue
         one = from_observation(reading)
         if one is None:
             # unreported is the one state that needs an owner, because it is the one that
@@ -681,7 +694,10 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
             "limits": "derived from this store's rows only. It says what is owed upward, never"
                       " that a supervisor received anything, and never that the project is"
                       " complete. A turn that ended without reporting has no row here at all,"
-                      " so it is present only when its observation was passed in"}
+                      " so it is present only when a reading of it was passed in: one taken"
+                      " through the marker (reporting-show), or one this store derives from"
+                      " the declarations a child's relay recorded here (omitted.derive), which"
+                      " the supervisor channel and supervisor-standing pass in themselves"}
 
 
 def status_answer(store, linkage, assignments, project_key, *, observations=()) -> dict:

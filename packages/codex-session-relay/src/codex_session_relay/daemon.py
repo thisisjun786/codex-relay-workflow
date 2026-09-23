@@ -28,6 +28,11 @@ from .scope import assert_assignment_delivery
 from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
 
 
+# Who a claim the daemon makes on a supervisor message belongs to. A claim is owned by its
+# attempt number and this name together, so a parent sending by hand beside it cannot settle it.
+DAEMON_OWNER = "relay-daemon"
+
+
 @dataclass
 class TickReport:
     observed: int = 0
@@ -39,6 +44,8 @@ class TickReport:
     anchorsBound: int = 0
     requeued: int = 0
     faultsRecorded: int = 0
+    supervisorStaged: int = 0
+    supervisorSent: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -50,6 +57,8 @@ class TickReport:
             "anchorsBound": self.anchorsBound,
             "requeued": self.requeued,
             "faultsRecorded": self.faultsRecorded,
+            "supervisorStaged": self.supervisorStaged,
+            "supervisorSent": self.supervisorSent,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -109,7 +118,7 @@ class SingleInstance:
 class RelayDaemon:
     def __init__(self, store, registry, intake, delivery, ack, reconciler, adapter, *,
                  policy=None, clock=None, log=None, faults=None, fault_scope=None,
-                 fault_selection=None):
+                 fault_selection=None, supervisor_channel=None):
         self.store = store
         self.registry = registry
         self.intake = intake
@@ -131,6 +140,15 @@ class RelayDaemon:
         # The unsent-writes warning last carried as a note, so it is carried when it appears or
         # changes rather than on every tick of a run that collects every tick's report.
         self._last_attention = None
+        # Optional too, and absent means the supervisor pass does not run. Given one, a parent
+        # that never stages or sends still has its reports go up (CRW-215).
+        self.supervisor_channel = supervisor_channel
+        # The last project key the supervisor pass served, where its rotation resumes. In memory
+        # on purpose: see _report_upward.
+        self._supervisor_after = None
+        # The (staged_at, message_id) of the last supervisor queue head _send_upward considered,
+        # where its next page starts. In memory for the same reason.
+        self._supervisor_send_after = None
         self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
@@ -151,9 +169,13 @@ class RelayDaemon:
         self._bind_anchors(report)
         self._verify_acks(report, now)
         self._deliver(report, now)
+        # After the parent-child deliveries, which share each recipient's budget with it: a
+        # task that is both a parent and a supervisor hears its children first.
+        self._report_upward(report, now)
         report.quiet = not (report.observed or report.reconciled or report.delivered
                             or report.deferred or report.acksVerified or report.anchorsBound
-                            or report.requeued or report.faultsRecorded)
+                            or report.requeued or report.faultsRecorded
+                            or report.supervisorStaged or report.supervisorSent)
         return report
 
     def _sweep_faults(self, report) -> None:
@@ -892,6 +914,167 @@ class RelayDaemon:
         for parent, taken in attempted.items():
             if taken and totals.get(parent):
                 self._advance_cursor(f"deliver:{parent}", taken, totals[parent])
+
+    # ----------------------------------------------------------- upward
+
+    def _report_upward(self, report, now) -> None:
+        """What each project owes the level above, staged and sent with nobody asking.
+
+        The same two steps a parent takes by hand - staging and SupervisorChannel.attempt - so
+        every rule the channel enforces holds here unchanged: one obligation is one message,
+        what goes out is re-derived where the transport starts (I-247), the recipient's budget
+        is shared with parent-child traffic, a paused, archived or unreachable supervisor is
+        withheld rather than woken and keeps the obligation, and a message another caller is
+        sending is not claimable. A parent that also stages or sends by hand converges on the
+        same ids and cannot cause a second wake.
+
+        An omission - a turn that ended with no report - is staged here too, from what this
+        store derives (SupervisorChannel.store_readings): the declarations the child's own relay
+        recorded beside its marker, read through the same predicate reporting-show uses, once
+        the grace has passed. The daemon still reads no marker file. A child that claimed
+        without recording that it writes declarations here is a legacy admission and nothing is
+        derived for it.
+
+        Bounded in projects and sends like every pass here: max_supervisor_projects_per_tick
+        project keys are read and staged and max_supervisor_sends_per_tick messages attempted per
+        tick, and a project whose messages have all gone out costs reads and no write. Within a
+        project, staging reads the project's whole history - the read supervisor-standing makes -
+        so one project's length is not bounded here.
+        """
+        channel = self.supervisor_channel
+        if channel is None:
+            return
+        cap = self.policy.max_supervisor_projects_per_tick
+        if cap <= 0:
+            window = []
+        else:
+            # A page of project keys after the last one served, wrapping to the start: the cap
+            # bounds what is READ, not only what is staged, so a store with many projects costs
+            # one bounded query per tick. The position is kept in this process's memory rather
+            # than in discovery_cursors, because a durable cursor was a write on every tick,
+            # owed or not; losing it on a restart changes only where the next rotation starts.
+            listed = ("SELECT DISTINCT project_key FROM relationship_scope"
+                      " WHERE project_key IS NOT NULL")
+            try:
+                if self._supervisor_after is None:
+                    window = [row["project_key"] for row in self.store.all(
+                        listed + " ORDER BY project_key LIMIT ?", (cap,))]
+                else:
+                    window = [row["project_key"] for row in self.store.all(
+                        listed + " AND project_key > ? ORDER BY project_key LIMIT ?",
+                        (self._supervisor_after, cap))]
+                    if len(window) < cap:
+                        window += [row["project_key"] for row in self.store.all(
+                            listed + " AND project_key <= ? ORDER BY project_key LIMIT ?",
+                            (self._supervisor_after, cap - len(window)))
+                            if row["project_key"] not in window]
+            except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+                report.notes.append(f"supervisor pass could not list projects: {error}")
+                return
+            if window:
+                self._supervisor_after = window[-1]
+        for project in window:
+            try:
+                answer = channel.stage_unsent(project)
+            except Exception as error:  # noqa: BLE001
+                report.notes.append(f"supervisor staging failed for {project}: {error}")
+                continue
+            for one in answer["staged"]:
+                if one.get("staged") or one.get("readdressed") or one.get("restated"):
+                    report.supervisorStaged += 1
+        self._send_upward(channel, report, now)
+
+    def _send_upward(self, channel, report, now) -> None:
+        from .supervisorchannel import CLAIMABLE, SENDING
+
+        budget = self.policy.max_supervisor_sends_per_tick
+        if budget <= 0:
+            return
+        # Each recipient's OLDEST eligible message, oldest first. The claim lets only that one go
+        # anyway, and reading every eligible row let one recipient's backlog - withheld again on
+        # every recheck - fill the whole window each tick, so a report to anybody else was never
+        # read at all. A claim whose lease ran out is eligible, because attempting it is what
+        # recovers it: queued again when its transport never started, held uncertain when it may
+        # have.
+        eligible = ("((%(m)s.state IN (?,?,?) AND %(m)s.hold_reason IS NULL"
+                    "  AND (%(m)s.next_eligible_at IS NULL OR %(m)s.next_eligible_at <= ?))"
+                    " OR (%(m)s.state = ? AND %(m)s.lease_until IS NOT NULL"
+                    "     AND %(m)s.lease_until <= ?))")
+        heads = ("SELECT m.message_id, m.recipient_task_id, m.staged_at"
+                 " FROM supervisor_messages m WHERE " + eligible % {"m": "m"}
+                 + " AND NOT EXISTS (SELECT 1 FROM supervisor_messages o"
+                   "  WHERE o.recipient_task_id = m.recipient_task_id"
+                   "    AND " + eligible % {"m": "o"}
+                 + "    AND (o.staged_at < m.staged_at OR (o.staged_at = m.staged_at"
+                   "         AND o.message_id < m.message_id)))")
+        ordered = " ORDER BY m.staged_at, m.message_id LIMIT ?"
+        base = (*CLAIMABLE, now, SENDING, now, *CLAIMABLE, now, SENDING, now)
+        # A page of heads that starts after the last head the previous tick considered and wraps.
+        # Starting from the oldest every tick let a window's worth of heads that are never
+        # sendable - withheld, faulted - be the whole window on every tick, however the budget
+        # is counted, and the heads after them were never read. The page is bounded, so is the
+        # tick, and every eligible head is reached within a bounded number of ticks.
+        window = budget * 4
+        after = self._supervisor_send_after
+        if after is None:
+            rows = self.store.all(heads + ordered, (*base, window))
+        else:
+            staged, message = after
+            rows = self.store.all(
+                heads + " AND (m.staged_at > ? OR (m.staged_at = ? AND m.message_id > ?))"
+                + ordered, (*base, staged, staged, message, window))
+            if len(rows) < window:
+                seen = {row["message_id"] for row in rows}
+                rows += [row for row in self.store.all(
+                    heads + " AND (m.staged_at < ? OR (m.staged_at = ? AND m.message_id <= ?))"
+                    + ordered, (*base, staged, staged, message, window - len(rows)))
+                    if row["message_id"] not in seen]
+        struggling = set()
+        attempted = 0
+        for row in rows:
+            # The budget counts attempts that produced an attempt record - that reached the
+            # claim and the transport - and nothing else. A head that was withheld, deferred,
+            # held or faulted sent nothing, and counting it let one recipient that is never
+            # sendable take every tick's budget whenever ticks are further apart than its
+            # recheck, so a healthy recipient behind it was never tried. What bounds the work
+            # is the page above: one head per recipient, at most budget * 4 of them.
+            if attempted >= budget:
+                break
+            self._supervisor_send_after = (row["staged_at"], row["message_id"])
+            recipient = row["recipient_task_id"]
+            if recipient in struggling:
+                report.skipped += 1
+                continue
+            try:
+                record = channel.attempt(row["message_id"], self.adapter, now=now,
+                                         owner=DAEMON_OWNER)
+            except Exception as error:  # noqa: BLE001 - a refusal is an answer, not a crash
+                report.notes.append(
+                    f"supervisor report {row['message_id']} not sent: {error}")
+                struggling.add(recipient)
+                # Not quiet: the attempt may have held the message (hierarchy_unresolved) on
+                # its way out, and the deferral below writes. Counted where nothing was sent.
+                report.deferred += 1
+                # Out of the head of the queue for a recheck, so a message that faults on every
+                # attempt cannot spend every tick's budget ahead of the reports behind it.
+                try:
+                    channel.defer_after_fault(row["message_id"], now, error)
+                except Exception as deferral:  # noqa: BLE001
+                    report.notes.append(
+                        f"supervisor report {row['message_id']} not deferred: {deferral}")
+                continue
+            if record is None:
+                # Busy, withheld, paced or recovered: nothing went out, and the row says when
+                # it may be tried again.
+                struggling.add(recipient)
+                report.deferred += 1
+                continue
+            attempted += 1
+            if record["deliveryState"] == DISPATCHED:
+                report.supervisorSent += 1
+            else:
+                struggling.add(recipient)
+                report.deferred += 1
 
     # ----------------------------------------------------------------- state
 
