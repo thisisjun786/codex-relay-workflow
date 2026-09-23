@@ -160,11 +160,11 @@ nothing, and carry no authorization record that might imply otherwise.
 
 
 **Was it this role's pair?** The two questions above can both be answered correctly by a task
-that is still on the wrong model. Callers that run several levels of work give each level its own
-pair, and nothing related a task's role to the pair it was started on: a project parent created
-on another level's model passed presence and the allowlist and was still wrong. So a caller may
-name the role it is creating for, through `role`, and a named role is compared against the pair
-this host declares for it.
+that is still on the wrong model. Callers that run several levels of work decide a pair for each
+level's role, and nothing related a task's role to the pair it was started on: a project parent
+created on a model decided for another level passed presence and the allowlist and was still
+wrong. So a caller may name the role it is creating for, through `role`, and a named role is
+compared against the pair this host declares for it.
 
 The values live in the file and nowhere else. This package ships no pair for any role, because a
 pair written into code would compete with the operator's file and would answer the approval
@@ -206,7 +206,7 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
-    "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+    "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"},
     "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
   },
   "exceptions": {
@@ -222,8 +222,10 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 ```
 
 Efforts are scoped to their model, so this file approves `opus/xhigh` and `sol/high` and
-refuses `opus/high`, which nobody wrote down. It is read once at startup from this
-process's environment; a file that is configured and cannot be used stops the server
+refuses `opus/high`, which nobody wrote down. It approves `swe-2/max` for a request that names
+no role and refuses it for one naming `parent`, because the role question is asked first and
+the parent row names another pair. It is read once at startup from this process's
+environment; a file that is configured and cannot be used stops the server
 rather than degrading to presence-only. Directories are compared by exact string
 equality, so an entry that is absolute but not canonical is refused at startup rather
 than loading cleanly and then matching nothing.
