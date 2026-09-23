@@ -1987,8 +1987,9 @@ def _hold_database(db_path):
       name - and with a live write-ahead log that read raised `disk I/O error` and CREATED a
       stray `<newname>-wal`, because the log follows the pathname. A diagnostic that promises to
       write nothing must not reach that state, so a descriptor that no longer names this store
-      is refused before a connection is opened - every relocation that already happened, which
-      is the reachable case, though not one timed inside the call itself.
+      is refused before a connection is opened, and asked again once it is open - every
+      relocation still in place when it is asked, though not one timed inside a call or undone
+      between two asks.
 
     Returns `(fd, expected, None)` or `(None, None, detail)`. Never raises.
 
@@ -2017,14 +2018,22 @@ def _hold_database(db_path):
 def _relocation(fd, expected):
     """Why the held file is no longer this store, or None while it still is.
 
-    Asked immediately before EVERY connection rather than once at the open. `probe` opens a
-    read connection and then a write probe through one descriptor, and a rename between them
-    reaches the relocated-log case above, with its failed read and its stray sidecar.
+    Asked immediately before EVERY connection rather than once at the open, and again as soon
+    as the connection is open, before it runs anything. `probe` opens a read connection and
+    then a write probe through one descriptor, and a rename between them reaches the
+    relocated-log case above, with its failed read and its stray sidecar.
 
-    An observation, not a lock. A rename landing between this answer and SQLite's own open is
-    not caught - the same residual as SQLite resolving the descriptor and then opening the name
-    it found. What the check removes is every relocation that happened before it was asked,
-    which is the reachable case; what it cannot remove is a rename timed inside one call.
+    The second ask is what keeps a connection on a moved name from running anything, as long as
+    the store is still moved when it asks. SQLite resolves the descriptor inside the connect, so
+    a store moved before that and still moved after it was opened under the moved name, and the
+    first statement there creates that name's log - on the builds measured up to 3.38.5 even
+    `PRAGMA database_list` does. A readlink creates nothing on any build, which is why it runs
+    before any statement. Asked on both sides of the connect, it misses a move and a return that
+    both land inside the connect call; `_opened_elsewhere` answers that one.
+
+    An observation, not a lock. It refuses a store that is still moved when it asks. A rename
+    timed after its answer, or a move and a return that both land between two asks, is not
+    observed.
     """
     try:
         actual = os.readlink(f"{PROC_FD}/{fd}")
@@ -2135,6 +2144,17 @@ def _opened_elsewhere(connection, expected):
     `PRAGMA database_list` is the only view of that decision `sqlite3` exposes; it reports the
     main database's filename as SQLite computed it. A reading that cannot be obtained is itself
     a refusal, because an unverifiable open is not a verified one.
+
+    It is the first STATEMENT on every connection the diagnostics open, read or write, and it
+    comes after `_relocation` has been asked again on the open connection. SQLite creates the
+    write-ahead log beside whichever name it opened, on the first statement that touches the
+    file, and a log beside a moved name outlives the refusal. Whether this pragma is such a
+    statement depends on the build: measured on this host on 2026-09-23 on a moved store, it
+    created no file on SQLite 3.39.4, 3.40.1, 3.42.0, 3.44.0, 3.45.1, 3.46.1 and 3.53.1, while
+    on 3.34.1, 3.37.2 and 3.38.5 it read the schema and created the moved name's log. So the
+    readlink before it is what keeps a connection to a still-moved store from running anything.
+    What this adds is SQLite's own account of the name, which on the builds measured also
+    refuses a move and a return that both land inside the connect.
     """
     try:
         rows = connection.execute("PRAGMA database_list").fetchall()
@@ -2247,7 +2267,8 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "ro"), uri=True, timeout=5)
                             try:
                                 connection.row_factory = sqlite3.Row
-                                elsewhere = _opened_elsewhere(connection, expected)
+                                elsewhere = (_relocation(fd, expected)
+                                             or _opened_elsewhere(connection, expected))
                                 if elsewhere is not None:
                                     notes.append("database read failed: " + elsewhere)
                                 else:
@@ -2272,12 +2293,13 @@ def probe(selection: StateSelection) -> dict:
                             notes.append(
                                 f"database read failed: {type(error).__name__}: {error}")
 
-                    # Asked again, and it closes two things. A rename between the two
-                    # connections would put the write probe on a relocated name, where SQLite
-                    # was measured to fail AND leave a stray log behind. It is also the closing
-                    # question for the read that just happened: a store that moved during it
-                    # leaves an identity a caller reads as "the store at this path", so what
-                    # that read published is withdrawn rather than reported.
+                    # Asked again, and it closes two things. It is the closing question for the
+                    # read that just happened: a store still moved when it asks leaves an identity
+                    # a caller reads as "the store at this path", so what that read published is
+                    # withdrawn rather than reported. And a rename that already happened between
+                    # the two connections never reaches the write probe. One landing after this
+                    # answer is refused by the write connection's own checks if the store is still
+                    # moved when they ask; one landing after those is not observed.
                     moved = _relocation(fd, expected)
                     if moved is not None:
                         notes.append("the database moved while it was being read: " + moved)
@@ -2292,12 +2314,19 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
                             )
                             try:
-                                connection.execute("BEGIN IMMEDIATE")
-                                connection.execute("ROLLBACK")
-                                elsewhere = _opened_elsewhere(connection, expected)
+                                # Before the transaction, never after it. A move that lands
+                                # between the check above and this connect leaves SQLite on the
+                                # moved name, and BEGIN IMMEDIATE there creates its -wal, which
+                                # survives the refusal and the file's return (PR115-RB1). The
+                                # readlink goes first: on the builds measured up to 3.38.5 the
+                                # pragma creates that -wal too.
+                                elsewhere = (_relocation(fd, expected)
+                                             or _opened_elsewhere(connection, expected))
                                 if elsewhere is not None:
                                     notes.append("database write probe failed: " + elsewhere)
                                 else:
+                                    connection.execute("BEGIN IMMEDIATE")
+                                    connection.execute("ROLLBACK")
                                     # Acquiring a write transaction is evidence that this
                                     # process can write NOW. It is not a promise that a later
                                     # commit succeeds; a full disk still fails.
@@ -2350,15 +2379,17 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
-            # Before the statement runs: which file did SQLite itself open?
-            elsewhere = _opened_elsewhere(connection, expected)
+            # Before anything runs: does the descriptor still name this store, and which file
+            # did SQLite itself open?
+            elsewhere = _relocation(fd, expected) or _opened_elsewhere(connection, expected)
             if elsewhere is not None:
                 return {**unknown, "readable": False, "rows": [], "detail": elsewhere}
             rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
         except sqlite3.Error as error:
-            # Ask why before reporting what. A store moved out from under the read fails the
+            # Ask why before reporting what. A store still moved out from under the read fails the
             # statement too, and calling that a readable database whose query failed would
-            # describe the symptom while hiding the cause.
+            # describe the symptom while hiding the cause. A move already undone by the time this
+            # asks is not seen, and then the answer is exactly that: readable, no rows, the error.
             moved = _relocation(fd, expected)
             if moved is not None:
                 return {**unknown, "readable": False, "rows": [], "detail": moved}
@@ -2366,11 +2397,12 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         finally:
             connection.close()
-        # Asked once more, now that the read is over. The pre-connect answer says the file was
-        # this store when the read started; without this one, a rename during the read would
-        # still return rows and an identity a caller reads as "the store at this path". The
-        # claim these two make together is that the file was the one at this pathname for the
-        # whole read.
+        # Asked once more, now that the read is over. The earlier answers say the file was this
+        # store when the read started; without this one, a rename during the read that is still
+        # in place would return rows and an identity a caller reads as "the store at this path".
+        # The claim the checks make together is that the file was the one at this pathname
+        # whenever one of them asked. A move and a return that both land between two of them are
+        # not observed.
         moved = _relocation(fd, expected)
         if moved is not None:
             return {**unknown, "readable": False, "rows": [], "detail": moved}
@@ -2424,7 +2456,7 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
-            elsewhere = _opened_elsewhere(connection, expected)
+            elsewhere = _relocation(fd, expected) or _opened_elsewhere(connection, expected)
             if elsewhere is not None:
                 return {**unknown, "nonce": nonce, "found": False, "readable": False,
                         "detail": elsewhere}
@@ -2444,8 +2476,9 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         finally:
             connection.close()
         # The same closing question the row leg asks, and it matters more here: this answer is
-        # the only evidence compare_store grades as proof, so it must not survive the store
-        # moving out from under it mid-read.
+        # the only evidence compare_store grades as proof, so it must not survive a store that
+        # is still moved when this asks. A move and a return that both land inside the read are
+        # not observed.
         moved = _relocation(fd, expected)
         if moved is not None:
             return {**unknown, "nonce": nonce, "found": False, "readable": False,
