@@ -991,7 +991,7 @@ class ClaimsAreChargedOnceEachAndStaleRelinksNeverIssue(ContractCase):
     """
 
     def test_a_lapsed_claim_gives_back_its_unit(self):
-        self.ledger.set_limit(PRODUCT, "open_record", max_count=1, window=3600)
+        capability(self, self.ledger, "set_limit")(PRODUCT, "open_record", max_count=1, window=3600)
         _identifier, pub = self.opened()
         self.ledger.claim(pub, owner="writer-A")
         self.clock.advance(faults.LEASE_SECONDS + 1)
@@ -1001,43 +1001,43 @@ class ClaimsAreChargedOnceEachAndStaleRelinksNeverIssue(ContractCase):
         except faults.FaultRefused as refusal:
             self.fail(f"a claim that issued nothing kept the product's only unit:"
                       f" {refusal.reason.value}")
-        self.assertEqual(1, self.ledger.budget(PRODUCT, "open_record")["used"])
+        self.assertEqual(1, capability(self, self.ledger, "budget")(PRODUCT, "open_record")["used"])
         self.assertEqual(["lease_lapsed", None],
-                         [entry["outcome"] for entry in self.ledger.attempts(pub)])
+                         [entry["outcome"] for entry in capability(self, self.ledger, "attempts")(pub)])
 
     def test_a_retried_write_is_charged_again_and_keeps_its_history(self):
-        self.ledger.set_limit(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS,
+        capability(self, self.ledger, "set_limit")(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS,
                               window=86400)
         _identifier, pub = self.opened()
         for _ in range(faults.MAX_ATTEMPTS):
             claim = self.ledger.claim(pub, owner="writer-A")
             self.ledger.fail(pub, claim_token=claim["claimToken"], error="refused before issue")
             self.clock.advance(faults.MAX_BACKOFF + 1)
-        self.assertEqual(faults.FAILED, self.ledger.publication(pub)["state"])
+        self.assertEqual(faults.FAILED, capability(self, self.ledger, "publication")(pub)["state"])
         self.ledger.retry(pub)
         with self.assertRaises(faults.FaultRefused) as refusal:
             self.ledger.claim(pub, owner="writer-A")
         self.assertEqual(RefusalReason.FAULT_BUDGET_SPENT, refusal.exception.reason)
-        self.ledger.set_limit(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS + 1,
+        capability(self, self.ledger, "set_limit")(PRODUCT, "open_record", max_count=faults.MAX_ATTEMPTS + 1,
                               window=86400)
         self.ledger.claim(pub, owner="writer-A")
-        self.ledger.cancel(pub, reason="the operator withdrew it")
+        capability(self, self.ledger, "cancel")(pub, reason="the operator withdrew it")
         self.assertEqual(["failed_before_issue"] * faults.MAX_ATTEMPTS + ["cancelled"],
-                         [entry["outcome"] for entry in self.ledger.attempts(pub, limit=20)])
+                         [entry["outcome"] for entry in capability(self, self.ledger, "attempts")(pub, limit=20)])
 
     def test_a_relink_is_never_issued_once_the_scope_has_no_project(self):
         identifier, pub = self.opened()
         self.publish(pub)
         self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P1")
         relink = [entry["publication_id"]
-                  for entry in self.ledger.publications(identifier, kind="update_record")
+                  for entry in capability(self, self.ledger, "publications")(identifier, kind="update_record")
                   if entry["state"] == faults.PENDING]
         self.assertEqual(1, len(relink))
         claim = self.ledger.claim(relink[0], owner="writer-A")
         self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=None)
         with self.assertRaises(faults.FaultRefused):
             self.ledger.operation(relink[0], claim_token=claim["claimToken"])
-        self.assertEqual(faults.CANCELLED, self.ledger.publication(relink[0])["state"])
+        self.assertEqual(faults.CANCELLED, capability(self, self.ledger, "publication")(relink[0])["state"])
 
 
 class LegacyScopeKeys(ContractCase):

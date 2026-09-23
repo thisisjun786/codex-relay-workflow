@@ -1106,6 +1106,7 @@ class CommandLine(RelayTestCase):
         if command is not None:
             action = next(a for a in parser._actions
                           if isinstance(a, argparse._SubParsersAction))
+            self.assertIn(command, action.choices, f"the relay has no {command} command")
             parser = action.choices[command]
         flags = {option for action in parser._actions for option in action.option_strings}
         self.assertIn(flag, flags, f"{command or 'the relay'} takes no {flag}")
@@ -1199,8 +1200,10 @@ class CommandLine(RelayTestCase):
         self.assertIn("no_such_module_crw205", refusal["detail"])
 
     def test_notifications_page_through_the_command_line(self):
-        """--after is compared with a rowid, so a string cursor ended the listing at page one."""
+        """A guard: a listing continues from the next value its last page returned."""
         ledger = faults.FaultLedger(self.store, self.clock)
+        self.assertTrue(callable(getattr(ledger, "raise_notification", None)),
+                        "the ledger offers no raise_notification()")
         identifier = ledger.record(faults.observation(
             product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
             signature={"relationship": "rel-1", "turn": "turn-1"}, occurrence_key="u1",
@@ -1218,6 +1221,7 @@ class CommandLine(RelayTestCase):
 
     def test_a_notification_cursor_that_is_not_a_number_is_refused(self):
         """Compared with a rowid, a non-numeric cursor matched nothing and read as an empty page."""
+        self.offers("fault-notifications", "--after")
         with self.assertRaises(SystemExit) as refusal:
             self.invoke("fault-notifications", "--after", "not-a-cursor")
         self.assertEqual(2, refusal.exception.code)
