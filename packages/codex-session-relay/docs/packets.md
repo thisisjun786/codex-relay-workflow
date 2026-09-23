@@ -211,7 +211,12 @@ the relationship - the initial one, or a returning one after a supersession, whi
 relationship id - and is identified by the dispatch of the generation that registration
 opened, read from the registry's journal of registrations (`relationship_registered`,
 `relationship_tenure_reopened`) rather than from a generation's free reason; a tenure whose
-registration or opening row cannot be read is unread. Revision generations open under their own dispatches inside a tenure, so the mode and
+registration or opening row cannot be read is unread. The journal's answer is checked against
+the generation rows, which answer the same question on their own: only a returning
+registration writes a generation without a reason, so the latest such generation at or below
+the current one (or generation 1) is where they say the tenure began. Where the two disagree
+the tenure is unread; a reopening record that is missing or damaged is never taken as proof
+that the child did not return. Revision generations open under their own dispatches inside a tenure, so the mode and
 workflow hold through a correction; a returning registration begins a new tenure, the
 earlier one's mode and workflow are then unread, and the new tenure's assignment defines and
 replaces them. Writes happen under a lock

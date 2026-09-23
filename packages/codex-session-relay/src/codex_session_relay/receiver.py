@@ -284,7 +284,31 @@ def _tenure_start(rows, rid, current, notes):
     returning registration at or below the current generation began the tenure; with none,
     the initial registration did, at generation 1. A journal that answers neither, or holds a
     reopening it cannot read, leaves the tenure unread.
+
+    And checked against the generations rows, which answer the same question independently:
+    only a returning registration writes a generation with no reason (a revision has to name
+    one), so the latest reasonless generation at or below the current one - or 1 - is where
+    they say the tenure began. The absence of a record cannot prove there was no return: a
+    damaged reopening row read as "never returned" handed the earlier tenure's mode to its
+    stale packets. So the two have to agree, and where they do not the tenure is unread.
     """
+    journalled = _journal_tenure_start(rows, rid, current, notes)
+    reasonless = rows.one("SELECT MAX(execution_generation) AS start FROM generations"
+                          " WHERE relationship_id = ? AND execution_generation <= ?"
+                          " AND reason IS NULL", (rid, current))
+    counted = reasonless["start"] if reasonless is not None and \
+        reasonless["start"] is not None else 1
+    if journalled is None:
+        return None
+    if journalled != counted:
+        notes.append("the registration journal says the current tenure of " + rid + " began at"
+                     " generation %s and the generation rows say %s, so the tenure is unread"
+                     % (journalled, counted))
+        return None
+    return journalled
+
+
+def _journal_tenure_start(rows, rid, current, notes):
     reopened = rows.all("SELECT detail FROM journal WHERE kind = ? AND subject = ?"
                         " ORDER BY seq DESC", (REOPENED, rid))
     starts = []
