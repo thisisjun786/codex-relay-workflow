@@ -1580,8 +1580,9 @@ writers share, and the transition aliases it rather than keeping a second copy.
 ### Who registers the hook
 
 The plugin package declares this hook as well, and a host holding both registrations runs both
-on every Stop: each asks the guard, each journals, and the turn's one hold goes to whichever
-wins the reservation. `--owner` decides which registration exists.
+on every Stop: each leaves a row, but only the one that claims the event's accepted record asks
+the guard, and the other records itself as a duplicate (see [One accepted record per Stop
+event](#one-accepted-record-per-stop-event)). `--owner` decides which registration exists.
 
 `user` is the default and appends to the hook file as before. Its settings document is
 byte-identical to what installed hosts already hold -- the owner is written only when it is not
@@ -1757,6 +1758,209 @@ moved pointer and a file that cannot be executed are different repairs. An exit 
 relay's own error record is the relay declining a request it understood; an exit of 2 carrying
 nothing is its argument parser refusing before any command ran. Every one of these releases the
 turn and is recorded.
+
+## One accepted record per Stop event
+
+A turn can end more than once. When any Stop hook holds, the host appends a continuation to the
+same turn and fires Stop again; when a message was waiting, it appends that and does the same.
+Each of those is its own Stop event, and each one gets its own decision. Two registrations
+answering one Stop, or one Stop delivered twice, are a different thing: one event handled twice.
+The adapter keeps exactly one accepted record per event, asks the guard once for it, and still
+leaves a row for every invocation, so the two cases stay apart instead of being counted as one
+number per turn.
+
+### What identifies an event
+
+The host hands a Stop hook nine fields and no per-invocation identifier. None of them separates
+two events of one turn: `turn_id` is kept across a continuation chain, `stop_hook_active` is
+false on a turn's first Stop and true on every later one, and `last_assistant_message` can repeat
+word for word. An isolated run on Codex 0.154.0 produced three Stops in one turn whose second and
+third payloads were byte-identical. What differs is the transcript. Every sampling that ends in a
+Stop leaves one final answer, and before running Stop hooks the host records it in the file named
+by `transcript_path` as an `item_completed` `AgentMessage` carrying the turn id, the thread id
+and an item id of its own. So an event is
+
+    (session_id, turn_id, stop_hook_active, answer item id)
+
+where the answer item is the one Stop of the turn, as the transcript shows it, that reported the
+payload's text under the payload's `stop_hook_active`. The Stops of a turn are the last answer
+before each later continuation or user message, and the newest answer, which is the latest
+sampling's; a Stop's `stop_hook_active` is true once a hook continuation has happened in the turn.
+The live Stop reports the newest answer, and a late delivery of an earlier Stop reports that
+Stop's own answer, so the rule names the right event for both. It is established only when
+
+- the latest sampling's answer is recorded: when the newest item for the turn is a continuation
+  or user message, the invocation may be that sampling's own Stop, whose answer the transcript
+  does not show yet, or a late delivery of an earlier one, and nothing tells them apart;
+- exactly one Stop of the turn matches. Two Stops that reported the same text under the same
+  `stop_hook_active` cannot be told apart, and claiming would let a late delivery of one take the
+  other's event and answer the real one as a duplicate. The isolated run above is such a turn:
+  its third Stop is left unestablished;
+- the matching answer's thread, recorded on the item, is the delivered session.
+
+The key is a SHA-256 over the four values, so no host value becomes a path component and nothing
+is minted per invocation.
+
+The transcript is read backwards from its end to the turn's `task_started`, because the rule needs
+every Stop of the turn. The read is bounded at 64 MiB and 0.75 seconds,
+inside the margin the launcher keeps over the guard budget; the largest turn on the host this was
+built on was 62 MB, and reading that far took about a third of a second. Nothing that could be
+one of the turn's items is read past: a last line without its newline is one the host is still writing,
+and any line naming the turn that does not parse could be an input. A path that is
+missing, relative, not a regular file or unreadable, a scan that hits either bound, a transcript
+that begins without the turn's start (its earlier Stops are not there to compare), an unfinished
+last line, an unreadable line about the turn, and any failed condition above leave the identity
+unestablished, with the reason on the row. An unestablished invocation is asked about exactly as
+before and is never deduplicated: the adapter does not know which event it is, so it cannot know
+that the event was already answered, and a reading of the journal does not vouch for a window
+that holds one.
+
+### Accepted records and attempt rows
+
+A claim is two create-once files. The first is the host's,
+`<CODEX_HOME>/crw-completion-hook/stop-events/<key>.json`, under the Codex home of the process the
+Stop fired in: every registration the host starts for one Stop inherits that environment, while
+the settings each one reads, and so its journal root, may differ, so this is the file two
+registrations of one host always meet. Only the invocation that creates it owns the event, and
+only the owner asks the guard. The owner creates the accepted record,
+`<journalRoot>/accepted/<key>.json`, beside the rows and naming the host's ledger; asks the guard;
+writes its row; and then writes `accepted/<key>.outcome.json` naming the session, the turn, the
+outcome, the row and the `journalPolicy`. An invocation that finds either file already there asks
+nothing, prints nothing and writes a row whose `adapterOutcome` is `duplicate_invocation`, with
+`acceptedAs` naming the file it found (the host's relative to the Codex home, the accepted record
+relative to the root). Creating a file that must not exist is atomic on a local filesystem, so two
+registrations firing in the same instant produce one owner and one duplicate, whichever roots
+their settings name.
+
+When the host's file can be neither created nor found, nobody can own the event, so nobody asks:
+the invocation writes an `unarbitrated` row (`adapterOutcome` `arbitration_failed`) and releases
+the Stop, the adapter's ordinary failure direction. An owner whose root cannot hold the accepted
+record (`claim_failed`), or whose settings name no `journalRoot` (`unclaimable`), still asks the
+guard once: the host's file stays, so a later delivery of the event is a duplicate. The claim files
+are state rather than invocation records, and are written under every `journalPolicy`.
+
+Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
+existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
+(whether it was established, and why not), `identityScanMs`, `acceptance` (`accepted`,
+`duplicate`, `unestablished`, `unclaimable`, `claim_failed` or `unarbitrated`), `acceptedAs` and
+`guardInvoked`. `faults_only` leaves out the rows of answered and duplicate invocations of
+identified events, and keeps every invocation answered without an identity or an owner: no
+accepted record covers those, so the row is the only trace. `no_journal` keeps no rows at all, so
+those invocations leave nothing, and a reading of such a ledger says it cannot vouch for them.
+
+The outcome record says what the adapter answered, not what the host received: it is written
+before the answer is printed, exactly as the row is. A claimant killed after its outcome and
+before printing a hold leaves a complete record of a hold the host never saw; one killed after
+claiming and before its outcome leaves a claim with no outcome; one killed between the host's file
+and its claim leaves only the host's file. In each the event has its owner, a later delivery of it
+is a duplicate and is not answered again, and the Stop was released -- the adapter's ordinary
+failure direction. A reading of the journal names the last two cases; the first is
+indistinguishable from success on disk.
+
+### Reading it back
+
+`scripts/stop_events.py --journal-root <root>` reads the rows, the accepted records and the host
+ledgers the claims name, and answers one verdict. It judges an event as a unit: `--since`,
+`--until`, `--session` and `--turn` choose the events the window reaches, which are the events
+with any record (host file, claim, outcome or row) in it, and every record of a chosen event is
+then checked whatever its own time; rows that name no event are chosen one by one. `FALSE` (exit 1)
+means an event was accepted more than once: claims for one key in two roots, two accepted rows for
+one key, an accepted row whose claim is missing, or a duplicate that asked the guard. `UNREADABLE`
+(exit 3) means the reading cannot vouch for what it read:
+
+- a listing that failed, including an `accepted` or host ledger path that is not a directory, and an
+  `accepted` that is a link;
+- a row, claim, outcome or host file that does not parse or is not one the adapter writes: a link
+  or anything but a regular file in a record's place (the adapter creates each with `O_EXCL`, which
+  never makes or follows a link), bytes other than the ones its writers produce for that content
+  (sorted keys, one line, a newline, so a reformatted file or a key given twice is refused), a
+  missing field its path writes, an outcome its acceptance never ends in (a duplicate is only a
+  `duplicate_invocation`, an unowned release only `arbitration_failed`), a guard outcome that does
+  not follow from the process ending, exit code and stdout reading it records, a decision, state,
+  hold or receipt on a record that got no answer, a hold without a block or a block without a
+  hold, a fault that is not a prefix of `run()`'s order (asked, then the call, then an answer), a
+  version that is not the integer the adapter writes, a time or day directory that is not a real
+  one in the adapter's format, a field the adapter does not write on that record's path (a fault or
+  the journal's answer on a row that did not fault, or any field outside the fixed set a claim, an
+  outcome, a host file or an identity is written with) or one in another type than it writes it, an
+  accepted row that did not ask the guard or names another record, or any record whose own
+  session, turn, `stop_hook_active` and answer item do not hash to its key;
+- a row that records something at a stage it did not reach, or leaves out what a stage it reached
+  records: the payload's session, turn and flag come with the settings' mode or not at all, a
+  release always says why, and a duplicate or an unowned release in the one sentence the adapter
+  has for it, a guard call's detail is present exactly when its process neither exited nor was
+  signalled, the settings path is absolute and normalized and an established transcript path
+  absolute, an unestablished reason is one the adapter gives, and it carries the transcript path
+  and answer item only where that reason is reached after them;
+- a path in a ledger record in a form its writer never gives it: a claim's host ledger that is not
+  absolute, normalized and ending in `crw-completion-hook/stop-events`, or a host file's journal root
+  that is not absolute (the settings require it);
+- a path the adapter had already used with the operating system that the system would never take
+  (an embedded NUL, a character it cannot encode, a name over 255 bytes or a path of 4096 or more):
+  the transcript of an identified Stop, or of any reason reached after its lstat, the settings
+  path of a row past reading them, and the host ledger a claim names. It is judged on the path
+  itself; whether the file is still there when the journal is read is not asked;
+- a guard's stderr the adapter could not have kept: more than the 400 characters it keeps, or not
+  valid text, since it decodes the stream with replacement;
+- a row version it does not know, an entry in a ledger that is not one of its records, or an entry
+  in a journal root or a day directory that the adapter never writes there
+  (`foreignJournalEntries`): the root holds only real day directories (never a link to one) and
+  `accepted`, a day only `<32 hex>.json` rows. These are listed whatever the window, so a copy of a row kept under
+  another name is not skipped, and a journal root shared with other files never reads `TRUE`;
+- an outcome without its claim, naming another session or turn than its claim, or without the
+  accepted row it names (or with none under `every_invocation`), and a claim without its outcome
+  in the same root;
+- a host file whose event has no claim in the root it names, or that names a root the reading was
+  not given, and a claim whose host file is missing;
+- records of one event that disagree (`recordsThatDisagree`): the host file, the claim, the
+  outcome and the accepted row are written by one owner in one run, so they name one slot and one
+  process, the accepted row sits in that slot, the outcome and that row carry one guard result
+  (`adapterOutcome`, `guardDecision`, `guardState`, `held`), only a guard's answer holds, and a
+  duplicate that found the accepted record in its own root finds it there;
+- an accepted row the owner's policy would not have written (`no_journal`, or a plain answer
+  under `faults_only`), or a missing one it would have;
+- a duplicate whose event has no claim in any root read, or a ledger written under `no_journal`;
+- any invocation in the window it cannot judge, nothing to judge, or a reading that could not
+  finish (`readerFault`).
+
+`TRUE` (exit 0) otherwise. The invocations it cannot judge are those whose identity was not
+established, that had no owner, whose owner's root could not hold the claim or that never reached
+an event, and rows written by a runtime older than event identity: for each, the journal does not
+show that its Stop was answered exactly once. They are counted by reason (`unjudgedInvocations`,
+`legacyRows`), and a window that leaves them out can still read `TRUE`. The superseded count of
+rows per (session, turn) is printed too, labelled as superseded, so the two readings can be
+compared. `--since` and `--until` take a time in the records' own format, `YYYY-MM-DDTHH:MM:SSZ`,
+because a record and a bound are compared as strings; any other shape is a usage error (exit 2).
+`--journal-root` repeats for every root the host's registrations write to, and
+`--codex-home` adds a host whose ledger no claim names yet (a host whose only event lost its owner
+before the claim). The same reading is `completion.stop_events()`.
+
+### Limits
+
+The guarantee holds among the registrations of one Codex home, which is every registration one
+host starts for a Stop. Registrations that do not share it, or an adapter from before the host's
+file existed, each accept an event in their own root; a reading given both roots says `FALSE`.
+The claim files are never removed, like the rows. The reading checks that records are ones the
+adapter writes and that the records of one event agree, and it does not order their timestamps. It
+judges what each file holds and that it is the regular file the adapter creates, with exactly its
+writer's bytes; a regular file holding those same bytes, put in a record's place, is not told
+apart from the one the adapter wrote, since inode, owner, mode and times are not judged. It cannot
+contradict the values the adapter observed once and recorded in one place (timings, the
+transcript path as the host sent it, the guard's stderr, the detail of a guard call or a refused
+input, another absolute settings path or journal root, which of the two modes the
+settings named, and the receipt values an answer carries). It checks the types of those the adapter
+forms itself and the time format, not the values; the receipt values are copied from the guard's
+answer as they came, so any JSON value there is one the adapter writes. A duplicate row records
+one invocation's attempt, so a copy of one under a new slot reads as one more late delivery, which
+it cannot be told apart from; neither is an acceptance or an effect. That the host
+records the answer before running Stop hooks was observed in every isolated run and is consistent
+with every record in the live journal, but it is not a documented host contract; a host that ran a
+Stop before recording both that sampling's continuation and its answer would show the previous
+Stop as the newest, and a Stop reporting the same text as an earlier one of the same kind would be
+taken for it. A sampling that
+ends with no answer at all was not observed. A turn whose Stops repeat the same text trades
+deduplication for safety: those Stops are asked about by every registration, and a reading of a
+window that holds them is `UNREADABLE`.
 
 ## Registration is not firing
 
@@ -2069,8 +2273,19 @@ for directory in sorted(p for p in root.glob("*") if p.is_dir() and day.match(p.
         except (OSError, ValueError):
             unreadable += 1
 mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
+# A turn can end more than once, and each end is its own Stop event with its own accepted record.
+# Rows count invocations; the events are the distinct eventKeys the accepted rows name. A runtime
+# older than event identity writes rows without them, and those are counted apart, not guessed at.
+accepted = {r.get("eventKey") for r in mine if r.get("acceptance") == "accepted"}
 print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
-                  "recordsForThisTurn": len(mine), "record": mine[:1]}, indent=2))
+                  "recordsForThisTurn": len(mine),
+                  "acceptedEventsForThisTurn": len(accepted),
+                  "duplicatesForThisTurn": sum(r.get("acceptance") == "duplicate" for r in mine),
+                  "unidentifiedForThisTurn": sum(r.get("acceptance") in
+                                                 ("unestablished", "unclaimable", "claim_failed")
+                                                 for r in mine),
+                  "legacyRowsForThisTurn": sum(r.get("recordVersion") != 2 for r in mine),
+                  "record": mine[:1]}, indent=2))
 PY
 printf 'hook turn exit=%s\n' "$?" > <receipt>/hook.turn.exit; cat <receipt>/hook.turn.json
 
@@ -2294,11 +2509,18 @@ observed, and before a Stop has reached the hook the callback row is an absence.
 them is, is a failure of the thing they were asked about, and recording them as though the
 questions had been put is the one way this procedure can lie.
 
-`recordsForThisTurn` is the reading. One record naming the session and the turn that was ended
+`recordsForThisTurn` is the reading. A record naming the session and the turn that was ended
 is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
 turn that did not reach the hook, and the row is unreadable for this run whatever the totals
 say. Do not record a total instead -- it is the answer to a question nobody asked here, and it
 is the one piece of this procedure another session can move.
+
+More than one record for the turn is not a duplicate by itself. A turn whose Stop was held ends
+again, and that second end is a second event: `acceptedEventsForThisTurn` counts them, and
+`duplicatesForThisTurn` counts invocations that found their event already accepted, which is
+what two registrations answering one Stop leave behind. Whether any event anywhere in the journal
+was accepted twice is the question `scripts/stop_events.py` answers; see [One accepted record per
+Stop event](#one-accepted-record-per-stop-event).
 
 Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unreadable count is
 not an answer either: a record the hook had created but not finished writing is neither your
