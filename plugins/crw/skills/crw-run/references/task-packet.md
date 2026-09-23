@@ -199,7 +199,7 @@ Execution:
   [the typed form these fields travel in](#the-typed-form-these-fields-travel-in) with your
   own task id and reception ledger, act only on an accepted answer whose `act` is true, and
   once you have acted, record it with the same command and `--applied` (refused unless the
-  last check of that packet said `act`).
+  a check of that packet said `act`).
 - [Only when a relay holds this assignment:] emit your completion receipt for this
   generation over the actual deliverable paths, from inside your own turn, against
   the shared state directory. Offline that receipt is STAGED until an independent

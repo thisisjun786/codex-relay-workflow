@@ -633,7 +633,10 @@ def _check(one, *, required=None) -> None:
                     RefusalReason.MALFORMED_RECEIPT,
                     "each evidence entry is a pointer somebody can follow, not "
                     + repr(item))
-    if _present(one.get(POLICY)) is not None:
+    # Presence rather than _present, for the policy and the artifact alike: an empty list or
+    # object where one belongs is not an absent field but one of the wrong shape, and letting
+    # it pass as nothing said is how a malformed one reaches a reader unexamined.
+    if one.get(POLICY) is not None:
         if not isinstance(one[POLICY], dict):
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
@@ -681,7 +684,7 @@ def _check(one, *, required=None) -> None:
                 RefusalReason.MALFORMED_RECEIPT,
                 "the callback states " + ", ".join(wrong) + "; it is the task to answer and"
                 " the model and effort that task runs now, each as text, and nothing else")
-    if _present(one.get(ARTIFACT)) is not None:
+    if one.get(ARTIFACT) is not None:
         _check_artifact(one[ARTIFACT])
     if _present(one.get(BODY)) is not None:
         problems_of, form = BODY_SECTIONS.get((direction, purpose), DEFAULT_BODY_SECTIONS)

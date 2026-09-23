@@ -226,10 +226,20 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     _read_criteria(rows, connection, rid, answer, notes)
     _read_settings(rows, row, answer, notes)
     entry = ((ledger or {}).get("assignments") or {}).get(rid)
-    if entry and entry.get(packets.MODE):
+    opened = fields.get(packets.DISPATCH_REQUEST)
+    if entry and entry.get(packets.MODE) and opened is not None \
+            and entry.get("dispatchRequestId") == opened:
+        # Only the tenure the current generation's dispatch opened. A returning registration
+        # reuses the relationship id under a later generation, and the mode and workflow of
+        # the earlier tenure are not this one's.
         answer(packets.MODE, entry[packets.MODE],
                "ledger: assignment " + str(entry.get("messageId")))
         answer("workflow", entry["workflow"], "ledger: assignment " + str(entry.get("messageId")))
+    elif entry:
+        notes.append("the reception ledger's assignment for " + rid + " was accepted under"
+                     " dispatch " + str(entry.get("dispatchRequestId")) + ", not the one that"
+                     " opened the current generation, so this tenure's mode and workflow are"
+                     " unread")
     elif ledger is not None:
         notes.append("the reception ledger holds no accepted assignment for " + rid
                      + ", so the mode and the workflow are unread")
@@ -536,7 +546,7 @@ def _entry_problem(ledger):
                 or not isinstance(entry.get("applied", False), bool):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
                     " disposition and whether it was applied")
-        if not isinstance(entry.get("act", False), bool):
+        if not isinstance(entry.get("toldToAct", False), bool):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
                     " disposition and whether it was applied")
     for relationship, entry in ledger["assignments"].items():
@@ -561,8 +571,14 @@ def record_answer(ledger, packet, answer) -> bool:
     and workflow it gave, once, for the relationship the receiver read - never overwritten, so
     no later packet can redefine it. Nothing here says the answer was acted on: a first answer
     is recorded as not applied, and only record_applied changes that. What every check told
-    the receiver - act or not - is kept as the entry's act, because an application may be
-    recorded only after a check said to act (a held or refused answer did not).
+    the receiver is kept as toldToAct, true once any check said act and never taken back: an
+    application may be recorded only for a packet the receiver was told to act on, and a
+    later check that held act (a paused relationship) does not unsay what an earlier one said
+    about work the receiver may already have done.
+
+    The assignment is recorded per tenure. A returning registration reuses the relationship
+    id under a generation a new dispatch opened, so an accepted assignment under another
+    dispatch than the one recorded replaces it; under the same dispatch it never does.
     """
     changed = False
     identifier = answer.get("messageId")
@@ -572,22 +588,24 @@ def record_answer(ledger, packet, answer) -> bool:
     if state == packets.FIRST:
         ledger["answered"][identifier] = {"contentDigest": answer["repeat"]["contentDigest"],
                                           "disposition": answer["disposition"],
-                                          "applied": False, "act": told}
+                                          "applied": False, "toldToAct": told}
         changed = True
     elif state == packets.REPLAY:
         entry = ledger["answered"][identifier]
         if accepted and entry.get("disposition") != packets.ACCEPTED:
             entry["disposition"] = packets.ACCEPTED
             changed = True
-        if entry.get("act", False) is not told:
-            entry["act"] = told
+        if told and entry.get("toldToAct") is not True:
+            entry["toldToAct"] = True
             changed = True
     region = packet["envelope"]
     relationship = (answer.get("record") or {}).get("relationId")
+    dispatch = (answer.get("record") or {}).get(packets.DISPATCH_REQUEST)
+    recorded = ledger["assignments"].get(relationship) if relationship else None
     if accepted and state in (packets.FIRST, packets.REPLAY) \
             and region.get("direction") == envelope.PARENT_TO_CHILD \
             and region.get("purpose") == "assignment" and relationship \
-            and relationship not in ledger["assignments"]:
+            and (recorded is None or recorded.get("dispatchRequestId") != dispatch):
         settings = packet.get(packets.POLICY) or {}
         ledger["assignments"][relationship] = {
             "mode": settings.get(packets.MODE), "workflow": settings.get("workflow"),
@@ -622,10 +640,10 @@ def record_applied(ledger, packet) -> dict:
             "message " + str(identifier) + " was answered " + str(entry.get("disposition"))
             + ", so there was nothing to act on and nothing to record as applied")
     before = entry.get("applied") is True
-    if not before and entry.get("act") is not True:
+    if not before and entry.get("toldToAct") is not True:
         raise NotApplicable(
-            "the last check of message " + str(identifier) + " did not say act (it was held,"
-            " for example while the relationship was paused), so there is nothing acted on to"
+            "no check of message " + str(identifier) + " has said act (it was held, for"
+            " example while the relationship was paused), so there is nothing acted on to"
             " record; check it again and record it applied only after a check says act")
     entry["applied"] = True
     return {"messageId": identifier, "contentDigest": repeated["contentDigest"],

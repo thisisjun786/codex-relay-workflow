@@ -195,8 +195,12 @@ observed path and digest and is never asked for a head.
 **The reception ledger** (`--ledger <file>`) is the receiver's own file, written by this command
 and read by nothing else. It names its receiver and a version, and a ledger naming another
 receiver is refused rather than read. It keeps each answered message id beside the content
-digest and disposition it got, whether the receiver has recorded acting on it, and, once an
-assignment is accepted, the mode and workflow that assignment gave. Writes happen under a lock
+digest and disposition it got, whether any check told the receiver to act on it, whether the
+receiver has recorded acting on it, and, once an assignment is accepted, the mode and workflow
+that assignment gave, for the tenure whose dispatch opened the current generation. A
+returning registration reuses the relationship id under a generation a new dispatch opened;
+the earlier tenure's mode and workflow are then unread, and the new tenure's assignment
+defines and replaces them. Writes happen under a lock
 on a sidecar file, in a directory created if it is missing, and replace the ledger atomically,
 with the directory synced after the rename. A ledger with an entry that is not one - an
 answer without its digest, disposition or applied flag, or an assignment that cannot name the
@@ -208,8 +212,9 @@ compared, so no packet can write an entry the next check would refuse.
 Being told and acting are two records. A check records the answer; only the receiver says it
 acted, afterwards, with `packet-check --packet <file> --receiver <id> --ledger <file> --applied`,
 which reads no store and is refused unless this ledger answered this very packet (same id, same
-content) as accepted and the last check of it said `act`: an answer that was held, as on a
-paused relationship, told the receiver not to act, so it has nothing applied to record. `act`
+content) as accepted and some check of it said `act`: a packet only ever answered held, as
+on a paused relationship, told the receiver not to act, so it has nothing applied to record,
+while a held replay after an `act` does not take back what the receiver was already told. `act`
 is true when today's answer is accepted and no application is
 recorded. So a receiver that checked and then stopped before acting gets the instruction back
 on the next arrival rather than losing it, and a correction applied once is not applied again.
