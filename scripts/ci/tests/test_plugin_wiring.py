@@ -957,6 +957,42 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertIn("now hashes to", answer["detail"])
         self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
 
+    def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
+        """Review of 28f11c04: the removal took whatever was at the path by then.
+
+        The lock around the write does not exclude a writer that ignores it, or one that
+        reclaimed it as stale. Here that writer replaces the record after the write and before
+        the removal; its record has to survive, and the answer must not claim a rollback.
+        """
+        wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
+                                       owner=bridgerecord.OWNER_PLUGIN,
+                                       execution_policy={"path": str(self.policy),
+                                                         "digest": self.digest})
+        theirs = json.dumps(bridgerecord.document(command=str(self.bridge),
+                                                  name="codex-thread-bridge",
+                                                  owner=bridgerecord.OWNER_PLUGIN),
+                            indent=2) + "\n"
+        real = bridgerecord.policy_file_complaints
+
+        def replaced_then_stale(reference):
+            staged = self.record.with_name("theirs.tmp")
+            staged.write_text(theirs, encoding="utf-8")
+            os.replace(staged, self.record)
+            return ["the execution policy " + reference["path"] + " now hashes to another digest"]
+
+        bridgerecord.policy_file_complaints = replaced_then_stale
+        try:
+            answer = bridgerecord.write(self.record, wanted, apply=True)
+        finally:
+            bridgerecord.policy_file_complaints = real
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertIs(answer.get("rolledBack"), False, answer)
+        self.assertTrue(self.record.exists(), "another writer's record was deleted: "
+                        + json.dumps(answer))
+        self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
+        self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
+                         [], "nothing is left aside when the record could be put back")
+
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
                                       "--bridge-command", str(self.bridge),

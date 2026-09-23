@@ -327,6 +327,71 @@ def _policy_now(wanted):
     return [] if reference is None else policy_file_complaints(reference)
 
 
+def _file_identity(path):
+    """(identity, bytes) of the regular file at path, from one descriptor, or None.
+
+    Opened without blocking or following a link, and judged on that descriptor, so the inode and
+    the bytes are one file's even if the path moves while this reads it.
+    """
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                             | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        found = os.fstat(descriptor)
+        if not stat_module.S_ISREG(found.st_mode):
+            return None
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                return (found.st_dev, found.st_ino), b"".join(chunks)
+            chunks.append(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _remove_if_written_here(path, written):
+    """Remove the record at path only while it is the file this run wrote: (removed, why).
+
+    Compare-and-remove, because the lock around the write does not exclude a writer that ignores
+    it or one that reclaimed it as stale, and removing whatever is at the path by then deletes
+    that writer's record. The file is renamed aside, which is atomic, and judged there: the same
+    inode holding the same bytes is this run's and is deleted. Anything else is linked back,
+    which fails rather than replace a record that arrived since; it then stays aside under the
+    name the answer gives. Either way nothing another writer put there is deleted.
+    """
+    aside = path.with_name(path.name + ".policy-changed-" + str(os.getpid()) + "-"
+                           + os.urandom(4).hex())
+    try:
+        os.rename(str(path), str(aside))
+    except OSError as error:
+        return False, ("it could not be moved aside to be judged (" + type(error).__name__ + ": "
+                       + str(error) + ")")
+    if written is not None and _file_identity(aside) == written:
+        try:
+            os.unlink(str(aside))
+        except OSError as error:
+            return False, ("it was moved aside to " + str(aside) + " and could not be deleted ("
+                           + type(error).__name__ + ": " + str(error) + ")")
+        return True, None
+    try:
+        os.link(str(aside), str(path))
+    except OSError as error:
+        return False, ("the file there was no longer the one this run wrote; it was moved aside to "
+                       + str(aside) + " and could not be put back (" + type(error).__name__ + ": "
+                       + str(error) + "), so it is kept there and nothing was deleted")
+    try:
+        os.unlink(str(aside))
+    except OSError:
+        return False, ("the file there was no longer the one this run wrote, so it was left in"
+                       " place; a second name for it remains at " + str(aside))
+    return False, "the file there was no longer the one this run wrote, so it was left in place"
+
+
 def outcome_for(wanted, found):
     if not found.usable:
         return found.state
@@ -358,7 +423,8 @@ def write(path, wanted, *, apply=False):
     the lock: a mismatch removes the record this run wrote, which leaves the path as it was
     found (absent, the only state a write starts from), and answers POLICY_CHANGED. An
     already-installed record whose policy no longer matches is not this run's, so it is left as
-    it is and answered the same way.
+    it is and answered the same way. The removal is compare-and-remove (_remove_if_written_here):
+    a record another writer put there after the write is never the one deleted.
     """
     path = Path(path)
     unusable = complaints(wanted)
@@ -405,18 +471,18 @@ def write(path, wanted, *, apply=False):
             answer["detail"] = ("the record changed after it was read, so nothing was written;"
                                 " rerun to decide against the file as it now stands")
             return answer
-        hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
+        text = json.dumps(wanted, indent=2, sort_keys=True) + "\n"
+        hostrecord.atomic_write(path, text)
+        # The inode and bytes this run put there, taken before anything is judged, so a removal
+        # can later tell this run's file from one that replaced it.
+        written = _file_identity(path)
+        if written is not None and written[1] != text.encode("utf-8"):
+            written = None
         back = read_json_without_blocking(path, "the bridge MCP record")
         stale = _policy_now(wanted) if back.usable and back.value == wanted else []
         if stale:
-            # Only the bytes this run wrote, still under the lock that wrote them.
-            try:
-                os.unlink(str(path))
-            except OSError:
-                pass  # the reading below says what is there now, and the answer reports it
-            gone = read_json_without_blocking(path, "the bridge MCP record")
+            removed, why = _remove_if_written_here(path, written)
     if stale:
-        removed = gone.state == reading.ABSENT
         answer["outcome"] = POLICY_CHANGED
         answer["wrote"] = True
         answer["rolledBack"] = removed
@@ -425,8 +491,7 @@ def write(path, wanted, *, apply=False):
                             " from it, so "
                             + ("the record this run wrote was removed and nothing is installed"
                                if removed else
-                               "this run tried to remove the record it wrote and could not"
-                               " confirm it is gone (" + str(gone.state) + ")"))
+                               "this run tried to remove the record it wrote and did not: " + why))
         answer["repair"] = ("run register-mcp again against the file as it now stands"
                             if removed else _POLICY_REPAIR.format(path=path))
         return answer
