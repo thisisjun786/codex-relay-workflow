@@ -390,6 +390,11 @@ SUMMARY_SITES = (
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
      "paired: deliverable folds a row existing with its stage final, and the stage is asserted"
      " suppressed two lines below, so an absent row cannot read as a suppressed one"),
+    ("test_faults.py", "test_recorded_faults_keep_a_tick_from_being_called_quiet", "quiet",
+     False, "self.assertFalse(report.quiet)",
+     "the flag is the subject and the fold is the subject too: the test exists because a new"
+     " counter was added to the disjunction quiet reduces, and false pins that the counter"
+     " reaches it. The summary means what the test is named for"),
     ("test_fairness.py", "test_cancelling_one_assignment_leaves_the_others_served", "quiet",
      False, "self.assertFalse(report.quiet)",
      "redundant rather than wrong: the condition the name states is carried by the send-list"
