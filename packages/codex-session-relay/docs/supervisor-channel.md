@@ -166,9 +166,10 @@ the report that now stands is restated in place and sent as that report, journal
 `supervisor_message_restated` with both submissions. An event that now raises a different
 obligation - the block that turned out to be a decision - holds its old
 message as `superseded_by_report`, and the new obligation is staged as its own message. That
-hold is terminal, and can be: a `ready_for_review` event accepts only a DONE or NOOP report, so
-a completion stays a completion, and a block's obligation id includes the report's status once
-it has one, so no correction brings back the id the report-less block had.
+hold is derived, so it is not terminal. What it was derived from can move back - a report
+corrected away from a block and then back to it, a confirmed Linear record whose target is
+repointed - so the hold is re-derived whenever the message is staged or attempted, and released
+on the same message once the obligation is owed through it again.
 
 An omission's reading is checked against its obligation before anything is composed: the
 schema is `reporting-observation/1`, the state is `unreported`, the relationship and the turn in
@@ -602,8 +603,10 @@ cannot verify, because it needs the host to read the named turn on the recipient
 
 ## Who calls it today
 
-Nothing in the relay calls this channel on its own. The four commands are the whole entry
-surface: no daemon pass, Stop hook, MCP tool or service stages or sends a report. In live
+Nothing in the relay calls this channel on its own. Its commands are the whole entry surface -
+`supervisor-stage`, `supervisor-send`, `supervisor-read` and `supervisor-show`, beside the
+readings `supervisor-select`, `supervisor-standing` and `supervisor-report-recorded` - and no
+daemon pass, Stop hook, MCP tool or service stages or sends a report. In live
 operation the caller is the project parent, from inside its own turn - `supervisor-stage
 --project` for what the project owes, then `supervisor-send` for each staged message - and the
 supervisor answers with `supervisor-read` from a turn of its own. crw-run's relay reference

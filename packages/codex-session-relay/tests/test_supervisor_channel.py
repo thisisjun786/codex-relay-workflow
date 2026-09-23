@@ -3072,17 +3072,16 @@ class TheStagedRowIsAProposal(ChannelTestCase):
 
     observation = WhatTheThirdReviewRoundFound.observation
 
-    def test_an_obligation_discharged_after_staging_is_not_sent(self):
-        """RED: the Linear record confirmed the completion after it was staged, and the report
-        still woke the supervisor about a fact the record it reads already has."""
+    DOCUMENT = "https://linear.app/example/document/coordination-000000000000"
+
+    def confirmed(self, one):
+        """Confirm the verdict row that discharges this completion; returns the outbox."""
         from codex_session_relay.sync import SyncOutbox, render_block
 
-        one, message_id = self.staged()
         event_id = one["basis"]["eventId"]
         row = self.store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
         outbox = SyncOutbox(self.store, self.clock)
-        document = "https://linear.app/example/document/coordination-000000000000"
-        outbox.set_target(self.rid, "coordination_document", document)
+        outbox.set_target(self.rid, "coordination_document", self.DOCUMENT)
         with self.store.transaction() as db:
             ruling = outbox.enqueue_in(
                 db, relationship_id=self.rid, issue_key="REL-1", subject_kind="verdict",
@@ -3090,8 +3089,70 @@ class TheStagedRowIsAProposal(ChannelTestCase):
                 revision=row["revision_hash"], verdict="verified", criteria_digest="digest-a")
         claim = outbox.claim(ruling, owner="test")
         stored = self.store.one("SELECT * FROM sync_outbox WHERE sync_id = ?", (ruling,))
-        outbox.complete(ruling, claim_token=claim["claimToken"], target_ref=document,
+        outbox.complete(ruling, claim_token=claim["claimToken"], target_ref=self.DOCUMENT,
                         readback=render_block(stored), external_ref="linear-doc-1")
+        return outbox
+
+    def block_reported(self, event_id, status, submission_no):
+        report_module.record(
+            self.store, self.clock, event_id=event_id,
+            repository="thisisjun786/codex-relay-workflow", cxc_status=status,
+            cxc_reason="the upstream package has not landed",
+            summary="waiting on the upstream package", next_action="wait for it",
+            evidence=["the upstream pull request is still open"],
+            submission_no=submission_no)
+
+    def test_a_block_corrected_away_and_back_before_its_send_still_goes_up(self):
+        """RED (review 15): corrected to a decision, the block was held as obsolete for good;
+        corrected back, the same obligation was current again and nothing could send it."""
+        from codex_session_relay import cxc
+
+        payload = self.execution_payload(self.relationship, "blocked_needs_input")
+        self.accept(payload)
+        event_id = payload["eventId"]
+        self.block_reported(event_id, cxc.BLOCKED, 1)
+        one = self.obligation(event_id)
+        message_id = self.channel.stage(one)["messageId"]
+
+        self.block_reported(event_id, cxc.NEEDS_HUMAN, 2)
+        self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
+                           message_id, self.adapter)
+        self.assertEqual(self.channel.get(message_id)["hold_reason"],
+                         channel_module.SUPERSEDED_HOLD)
+
+        self.block_reported(event_id, cxc.BLOCKED, 3)
+        self.assertEqual(self.obligation(event_id)["obligationId"], one["obligationId"])
+        self.channel.stage(self.obligation(event_id))
+        self.assertIsNone(self.channel.get(message_id)["hold_reason"],
+                          "the block is owed again, so its hold is released")
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertIsNotNone(record, "the block is owed again and nothing sent it")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.channel.get(message_id)["submission_no"], 3)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_discharge_a_repointed_target_reopens_releases_the_report(self):
+        """RED (review 15): discharged, the completion was held for good; the target repointed,
+        the obligation stood again and the send answered nothing."""
+        one, message_id = self.staged()
+        outbox = self.confirmed(one)
+        self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
+                           message_id, self.adapter)
+        outbox.set_target(self.rid, "coordination_document",
+                          "https://linear.app/example/document/coordination-111111111111")
+        self.assertEqual(supervision.discharge_of(self.store, one)["standing"],
+                         supervision.STANDING)
+
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertIsNotNone(record, "the obligation stands again and nothing sent it")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_an_obligation_discharged_after_staging_is_not_sent(self):
+        """RED: the Linear record confirmed the completion after it was staged, and the report
+        still woke the supervisor about a fact the record it reads already has."""
+        one, message_id = self.staged()
+        self.confirmed(one)
 
         refusal = self.assertRefused(RefusalReason.SUPERSEDED_REVISION, self.channel.attempt,
                                      message_id, self.adapter)

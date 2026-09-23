@@ -325,10 +325,11 @@ def _settings_key(settings):
 
 
 class _Stale(_NotClaimable):
-    """A claim refused because nothing is owed through this message any more (I-247).
+    """A claim refused because nothing is owed through this message now (I-247).
 
     "obsolete" - its event raises another obligation or none, the obligation is discharged, or
-    an omitted turn has a receipt now; the message is held rather than sent. A message whose
+    an omitted turn has a receipt now; the message is held rather than sent, and the hold is
+    re-derived whenever it is staged or attempted again (_reopen_if_owed). A message whose
     obligation merely says something newer is restated in place instead, and never raises this.
     """
 
@@ -574,6 +575,40 @@ class SupervisorChannel:
                           + " and what is owed now is event " + repr(event_id)
                           + " submission " + repr(_submission_of(report))}
 
+    def _reopen_if_owed(self, message_id) -> bool:
+        """Release a superseded_by_report hold whose obligation is owed through it again.
+
+        That hold is an answer _proposal_now derived from the store, and what it derived from
+        can move back: a report corrected away from a block and then back to it makes the same
+        block current again, and a confirmed Linear record stops discharging anything once its
+        target is repointed. Holding the message for good left the obligation owed with nothing
+        able to send it. So the hold is re-derived, inside a write, whenever the message is staged
+        or attempted, and released on the same message - one obligation is still one message,
+        and nothing about it has been sent. Returns whether it released it.
+        """
+        with self.store.transaction() as db:
+            row = db.execute(
+                "SELECT hold_reason FROM supervisor_messages WHERE message_id = ?",
+                (message_id,)).fetchone()
+            if row is None or row["hold_reason"] != SUPERSEDED_HOLD:
+                return False
+            current = self._proposal_now(db, message_id)
+            if current["kind"] == "obsolete":
+                return False
+            at = self.clock.iso()
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET hold_reason = NULL, next_eligible_at = NULL,"
+                " updated_at = ? WHERE message_id = ? AND hold_reason = ? AND state IN (?,?,?)",
+                (at, message_id, SUPERSEDED_HOLD, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND))
+            if cursor.rowcount != 1:
+                return False
+            self.store.journal(
+                "supervisor_message_reopened", message_id,
+                {"proposal": current["kind"] or "current",
+                 "reason": "what this message is for is owed through it again, so the"
+                           " superseded_by_report hold is released"}, at=at)
+            return True
+
     def _restate_in(self, db, message_id, current, *, claim=None) -> bool:
         """Make a never-sent row the current proposal, in place, inside the caller's write.
 
@@ -811,6 +846,12 @@ class SupervisorChannel:
                     " was written; stage it again")
             existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                                   (message_id,)).fetchone()
+            if (existing is not None and existing["hold_reason"] == SUPERSEDED_HOLD
+                    and self._reopen_if_owed(message_id)):
+                # Held because what it was for had stopped being owed through it, and owed
+                # again now; released inside this lock, so what follows sees the row as it is.
+                existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
+                                      (message_id,)).fetchone()
             if (existing is not None and obligation["kind"] == supervision.UNREPORTED
                     and _frozen_reading_key(existing) != _reading_key(reading)):
                 # One omission, one reading. The row froze the reading its packet was composed
@@ -1229,6 +1270,8 @@ class SupervisorChannel:
         now = self.clock.now() if now is None else now
         row = self.get(message_id)
         row = self._recover_if_stranded(row, now)
+        if row["hold_reason"] == SUPERSEDED_HOLD and self._reopen_if_owed(message_id):
+            row = self.get(message_id)
         if row["hold_reason"]:
             return None
         if row["state"] not in CLAIMABLE:

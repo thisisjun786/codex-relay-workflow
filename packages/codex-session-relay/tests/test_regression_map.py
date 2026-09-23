@@ -283,6 +283,8 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    # And whether a held message is owed again: false on every path that finds it is not.
+    ("supervisorchannel.py", None, "_reopen_if_owed", "function"),
     # A compare-and-set's rowcount: true only when every observed field still matched.
     ("supervisorchannel.py", None, "_reschedule_in", "function"),
     # The same kind of rowcount: true only when the never-sent row it rewrites still matched.
