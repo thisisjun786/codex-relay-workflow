@@ -430,12 +430,16 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   identity, or settings that did not match the request - so the incident says a child may exist
   that the relay could not attach, never that none was published. The incident states only what
   the answer establishes: a child the journaled answer names (the `retainedChildTaskId` a partial
-  creation left) is named and said not to be attached; `unknown` says whether a child was created
-  is not established; only a definite journaled answer whose receipt named no child says so. A
-  recorded receipt that is not accepted still decides where one exists, and says nothing about a
-  child either way: the registry keeps a child id only for a receipt it accepts (an accepted one
-  missing its thread or standby id is stored as `partial` with none), so from that row whether
-  the host created a child is not established. The newest creation-stage row is found through the partial index
+  creation left) is named and said not to be attached; `unknown` - the managed start's own
+  classification of a receipt it could not read as accepted or failed - says whether a child was
+  created is not established; only a journaled answer whose receipt named no thread says so. A
+  recorded receipt that is not accepted still decides where one exists, and is stated as the
+  registry's stored status whatever it names, never as the host's answer or a journaled one: the
+  registry keeps a child id only for a receipt it accepts and stores an accepted one missing its
+  thread or standby id as `partial` with none, so from that row neither what the host answered
+  nor whether it created a child is established. The record a fault publishes says it clears on
+  exactly what `still_present` reads: an accepted receipt, attaching, or a newer creation-stage
+  answer. The newest creation-stage row is found through the partial index
   `journal_managed_creation`, which holds only those rows, so it is one probe however many rows
   a request's retries journaled. Any other
   reason at that stage - a worker that cannot take the pair - means the host was not asked on
@@ -644,7 +648,7 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
 | `observation_unmeasured` | relationship and turn | `unmeasured:<relationship>:<turn>` | a later reading of the same turn that establishes something | notice |
 | `delivery_refused` | relationship and refusal reason | `refused:<journal seq>` | the streak ending: a send, the delivery settling, a pause, or another reason | degraded |
-| `managed_start_failed` | issue key and the host's answer (a non-accepted receipt, else the newest creation answer journaled) | `managed:<request>:<answer>` | the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else | broken |
+| `managed_start_failed` | issue key and the answer (the registry's non-accepted receipt status, else the newest creation answer journaled) | `managed:<request>:<answer>` | the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else | broken |
 
 A notice recorded per relationship before notices were per turn is still answered: any
 establishing reading of that relationship clears it, under one constant key, so the clear is

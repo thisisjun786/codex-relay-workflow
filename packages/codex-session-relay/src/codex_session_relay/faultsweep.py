@@ -185,43 +185,52 @@ ACCEPTED_UNATTACHED = {
 
 
 def _answer_facts(issue, status, answer=None) -> tuple:
-    """(detail, actual, impact) for a managed start's answer, stating only what it establishes.
+    """(detail, actual, impact) for an armed request's answer, stating only what its evidence
+    establishes and attributing each status to whoever produced it.
 
-    The journaled creation answer carries the thread id the host's receipt named
-    (retainedChildTaskId): a named child is named and said not to be attached, and only a
-    definite answer whose receipt named none says so. A receipt the registry recorded (answer
-    None) carries no child at all - the registry keeps a child id only for a receipt it
-    accepts, and stores an accepted one missing an id as partial with none - so from that row
-    whether the host created a child is not established. Nor is it from an unknown answer.
+    A receipt the registry recorded (answer None) is stated as the registry's, whatever its
+    status: the registry keeps a child id only for a receipt it accepts and normalises an
+    accepted one missing an id to partial, so its row establishes neither what the host answered
+    nor whether a child exists. Only the managed start's journaled creation answer says more.
+    Its reason is the managed start's own classification of the host's receipt, and it carries
+    the thread id that receipt named (retainedChildTaskId): a named child is named and said not
+    to be attached, an unknown answer establishes nothing about creation, and only a receipt that
+    named no thread is stated as naming none.
     """
+    if answer is None:
+        actual = (f"the registry stored receipt status {status} for this request and keeps a"
+                  " child id only for a receipt it accepts, so what the host answered and"
+                  f" whether it created a child for {issue} are not established")
+        return (f"a managed start for {issue} holds registry receipt status {status}: {actual}",
+                actual, f"no attached child is working on {issue}, and any child the host did"
+                        " create is not attached")
+    detail = f"a managed start for {issue} recorded creation_{status}"
     if status in ACCEPTED_UNATTACHED:
         actual = ACCEPTED_UNATTACHED[status]
-        return (f"a managed start for {issue} was answered {status}: {actual}", actual,
+        return (f"{detail}: {actual}", actual,
                 f"a child the host created for {issue} is not attached to any assignment,"
                 " and no managed child is working on it")
-    child = answer.get("retainedChildTaskId") if answer is not None else None
-    if _named(child) and status == "unknown":
-        actual = (f"the host answered unknown naming child {child}, so whether that child"
-                  " was created is not established; the relay retained it and did not"
-                  " attach it")
+    child = answer.get("retainedChildTaskId")
+    if status == "unknown" and _named(child):
+        actual = (f"the managed start recorded the host's answer as unknown, naming child"
+                  f" {child}; whether that child was created is not established, and the relay"
+                  " retained it and did not attach it")
         impact = (f"child {child}, if the host created it, is not attached to any"
                   f" assignment, and no managed child is working on {issue}")
+    elif status == "unknown":
+        actual = ("the managed start recorded the host's answer as unknown, so whether the"
+                  f" host created a child for {issue} is not established")
+        impact = (f"no attached child is working on {issue}, and any child the host did"
+                  " create is not attached")
     elif _named(child):
-        actual = (f"the host answered {status} after creating child {child}, which the relay"
+        actual = (f"the host's receipt said {status} and named child {child}, which the relay"
                   " retained and did not attach")
         impact = (f"child {child} is not attached to any assignment, and no managed child is"
                   f" working on {issue}")
-    elif answer is None or status == "unknown":
-        said = (f"the registry recorded the host's answer {status} and keeps a child id only"
-                " for an answer it accepts" if answer is None
-                else "the host answered unknown")
-        actual = f"{said}, so whether the host created a child for {issue} is not established"
-        impact = (f"no attached child is working on {issue}, and any child the host did"
-                  " create is not attached")
     else:
-        actual = f"the host answered {status} and its receipt named no child"
+        actual = f"the host's receipt said {status} and named no child"
         impact = f"no child is working on {issue}"
-    return (f"a managed start for {issue} was answered {status}: {actual}", actual, impact)
+    return (f"{detail}: {actual}", actual, impact)
 
 
 def _unaccepted_answer(store, row) -> tuple:

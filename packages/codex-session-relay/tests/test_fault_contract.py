@@ -1273,7 +1273,8 @@ class ExistenceQuestionsAreBounded(RelayTestCase):
 class EveryCollectedIncidentStatesItsFacts(RelayTestCase):
     """Final review round one, blocker 5 (criterion 1): each automatically collected incident
     records what was expected, what happened, the impact, what the reading cannot see, and the
-    installation it was seen under - the revision being a stated limit the relay cannot know."""
+    installation it was seen under - the revision the installer's record attributes to this copy,
+    or, where it attributes none, a stated limit (I-441)."""
 
     def test_each_collected_observation_carries_its_facts(self):
         from codex_session_relay import __version__

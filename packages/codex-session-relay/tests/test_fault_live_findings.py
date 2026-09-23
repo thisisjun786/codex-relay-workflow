@@ -201,16 +201,22 @@ class ManagedStartFailuresReachTheLedger(ManagedStartFixture):
         self.assertIn("not established", facts["actual"])
         self.assertNotIn("no child", facts["actual"])
         _, actual, _ = faultsweep._answer_facts(ISSUE, "failed", {"retainedChildTaskId": None})
-        self.assertIn("its receipt named no child", actual)
+        self.assertIn("receipt said failed and named no child", actual)
 
     def test_a_registry_answer_does_not_claim_there_is_no_child(self):
         # The registry keeps a child id only for a receipt it accepts. An accepted receipt that
-        # names its thread but no standby turn is stored as partial with no child, and a failed
-        # one keeps none either, so from the registry row whether a child exists is unknown.
+        # names its thread but no standby turn is stored as partial with no child - a status the
+        # registry produced, not the host - and a failed one keeps none either. A receipt whose
+        # status reads like a journaled answer (settings_unverified) is still only the registry's
+        # row, so none of them establishes a child, or what the host answered.
         registry = Registry(self.store, self.clock)
-        for request, issue, receipt in (
-                ("registry-1", "REL-PARTIAL", {"status": "accepted", "threadId": "child-1"}),
-                ("registry-2", "REL-FAILED", {"status": "failed", "threadId": "child-2"})):
+        cases = (
+            ("registry-1", "REL-PARTIAL", {"status": "accepted", "threadId": "child-1"},
+             "partial"),
+            ("registry-2", "REL-FAILED", {"status": "failed", "threadId": "child-2"}, "failed"),
+            ("registry-3", "REL-SETTINGS",
+             {"status": "settings_unverified", "threadId": "child-3"}, "settings_unverified"))
+        for request, issue, receipt, _ in cases:
             registry.reserve_start({
                 "request_id": request, "issue_key": issue, "request_fingerprint": "fp",
                 "fingerprint_version": "1", "workspace": "/work", "marker_root": "/markers",
@@ -220,15 +226,45 @@ class ManagedStartFailuresReachTheLedger(ManagedStartFixture):
             stored = registry.record_start_receipt(request, "fp", receipt)
             self.assertIsNone(stored["child_task_id"], stored)
         found = {entry["signature"]["issueKey"]: entry for entry in self.managed(self.swept())}
-        self.assertEqual({"REL-PARTIAL": "partial", "REL-FAILED": "failed"},
+        self.assertEqual({issue: status for _, issue, _, status in cases},
                          {issue: found[issue]["signature"]["receiptStatus"]
-                          for issue in ("REL-PARTIAL", "REL-FAILED")})
-        for issue in ("REL-PARTIAL", "REL-FAILED"):
+                          for _, issue, _, _ in cases})
+        for _, issue, _, status in cases:
             facts = [item["observed"] for item in found[issue]["evidence"]
                      if item["kind"] == "facts"][0]
             self.assertNotIn("no child", facts["actual"])
             self.assertIn("not established", facts["actual"])
             self.assertNotIn("no child is working", facts["impact"])
+            self.assertIn(f"registry stored receipt status {status}", facts["actual"])
+            for claim in (f"the host answered {status}", "host's answer", "the host accepted",
+                          "the host created a child whose"):
+                self.assertNotIn(claim, facts["actual"])
+
+    def test_the_published_record_names_every_condition_that_clears_it(self):
+        # still_present clears the fault when the request records an accepted receipt, when it
+        # attaches, or when its newest creation-stage answer says something else. The record the
+        # ledger queues says when it clears, so it must name all three, not only the receipt.
+        self.host.creation_status = "unknown"
+        self.start.run(self.request)
+        self.swept()
+        fault = self.fault("unknown")
+        opened = self.ledger.publications(fault["fault_id"], kind=faults.OPEN_RECORD)
+        self.assertEqual(1, len(opened), opened)
+
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from strings(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from strings(item)
+        said = [line for text in strings(opened[0]) for line in text.splitlines()
+                if line.startswith("clears when:")]
+        self.assertEqual(1, len(said), opened[0])
+        for condition in ("accepted", "attach", "creation-stage answer"):
+            self.assertIn(condition, said[0])
 
     def test_the_creation_answer_is_found_without_reading_every_row_of_its_request(self):
         # Every retry of a request journals a result, so one request can hold many rows that are
