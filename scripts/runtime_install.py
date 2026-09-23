@@ -4840,49 +4840,80 @@ def _write_probe_file(path, text):
         hostrecord.atomic_write(path, text)
 
 
-def _probe_launcher_once(argv, root, policy, probe, recorded, proof, cwd):
-    """Start the declared server once against a record naming `recorded`; what the probe saw."""
+# What the App Server hands a plugin-declared server, measured on Codex Desktop 0.154.0: these and
+# nothing else. No CODEX_HOME among them, so a launcher has to find its home the way it would there.
+_DESKTOP_ENVIRONMENT = ("LANG", "LOGNAME", "PATH", "SHELL", "USER")
+
+
+def _probe_launcher_once(argv, codex_home, user_home, policy, probe, recorded, proof, cwd):
+    """Start the declared server once against a record naming `recorded`; what the probe saw.
+
+    The record sits in the Codex home the copied package lives under, and the process gets the
+    environment the App Server gives a plugin server, with HOME pointed somewhere else entirely.
+    """
     record = bridgerecord.document(
         command=sys.executable, arguments=[str(probe), str(proof), *_POLICY_VARIABLES],
         name=MCP_NAME, issue="probe", owner=bridgerecord.OWNER_PLUGIN,
         execution_policy={"path": str(policy), "digest": recorded})
-    _write_probe_file(root / bridgerecord.RECORD_NAME, json.dumps(record))
-    done = subprocess.run(list(argv), cwd=str(cwd or root),
-                          env={"PATH": os.environ.get("PATH", ""), "CODEX_HOME": str(root)},
+    _write_probe_file(codex_home / bridgerecord.RECORD_NAME, json.dumps(record))
+    environment = {name: os.environ[name] for name in _DESKTOP_ENVIRONMENT if name in os.environ}
+    environment["HOME"] = str(user_home)
+    done = subprocess.run(list(argv), cwd=str(cwd), env=environment,
                           stdin=subprocess.DEVNULL, capture_output=True, text=True,
                           timeout=LAUNCHER_PROBE_SECONDS)
     seen = json.loads(proof.read_text(encoding="utf-8")) if proof.exists() else None
     return done, seen
 
 
-def _launcher_honours_policy_records(argv, *, cwd=None):
+def _launcher_honours_policy_records(version, entry):
     """Why a launcher cannot be trusted with a record naming a policy, or None when it can.
 
-    Asked by running it exactly as the package declares it -- its command, its arguments, its
-    working directory -- the way Codex starts it at every thread, against a throwaway CODEX_HOME
-    whose record names a probe instead of the bridge. What it declares proves nothing:
-    a launcher can define the new record version and still refuse it, ignore the policy, or exec
-    the bridge without the variables. So the three behaviours are observed together. A matching
-    record has to start the probe with both variables naming the recorded file and digest, and a
-    record whose digest no longer matches has to be refused without starting it. The launcher
-    executed is the one the enabled crw package ships, which Codex already executes on every
-    thread; nothing it could reach here is the host's.
+    Asked by running it the way Codex starts it at every thread: the package copied into a
+    throwaway Codex home under the same cache layout, started with its declared command,
+    arguments and working directory, and given the environment the App Server gives a plugin
+    server -- no CODEX_HOME, and a HOME that is not that Codex home -- so the launcher has to find
+    its record the way it would there. The record names a probe instead of the bridge. What the
+    launcher declares proves nothing: it can define the new record version and still refuse it,
+    ignore the policy, or exec the bridge without the variables. So its behaviour is observed. A
+    matching record has to start the probe with both variables naming the recorded file and
+    digest and exit cleanly; a record whose digest no longer matches, one naming a missing file
+    and one naming a directory each have to be refused without starting it. The launcher run is
+    a copy of the one the enabled crw package ships, which Codex already runs on every thread.
     """
     try:
         scratch = tempfile.mkdtemp(prefix="crw-launcher-probe-")
     except OSError as error:
         return "its behaviour could not be probed: " + type(error).__name__ + ": " + str(error)
-    root = Path(scratch)
+    root = Path(scratch).resolve()
     try:
-        policy = root / "execution-policy.json"
+        codex_home = root / ".codex"
+        copy = codex_home / "plugins" / "cache" / "probe" / Path(version).parent.name \
+            / Path(version).name
+        user_home = root / "home"
+        work = root / "work"
+        try:
+            # copytree refuses a pipe or a device inside the package rather than opening it.
+            shutil.copytree(str(version), str(copy), symlinks=True)
+            user_home.mkdir()
+            work.mkdir()
+        except (OSError, shutil.Error) as error:
+            return ("its package could not be copied to probe it: " + type(error).__name__ + ": "
+                    + str(error)[:300])
+        declared = _declared_start(copy, entry)
+        if isinstance(declared, str):
+            return "its declaration cannot be started: " + declared
+        argv, cwd, launcher = declared
+        if not launcher.is_file():
+            return "it is not a regular file"
+        policy = work / "execution-policy.json"
         text = '{"roles": {"child": {"model": "probe", "reasoningEffort": "probe"}}}\n'
         _write_probe_file(policy, text)
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        probe = root / "probe.py"
+        probe = work / "probe.py"
         _write_probe_file(probe, _LAUNCHER_PROBE)
         try:
-            done, seen = _probe_launcher_once(argv, root, policy, probe, digest,
-                                              root / "accepted.json", cwd)
+            done, seen = _probe_launcher_once(argv, codex_home, user_home, policy, probe,
+                                              digest, work / "accepted.json", cwd)
             tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:]
             said = " (exit " + str(done.returncode) + (": " + tail[0][:300] if tail else "") + ")"
             if seen is None:
@@ -4896,21 +4927,21 @@ def _launcher_honours_policy_records(argv, *, cwd=None):
             if seen != wanted:
                 return ("it started the bridge without handing it the recorded policy (the bridge"
                         " saw " + json.dumps(seen) + ")")
-            done, seen = _probe_launcher_once(argv, root, policy, probe, "0" * 64,
-                                              root / "mismatched.json", cwd)
+            done, seen = _probe_launcher_once(argv, codex_home, user_home, policy, probe,
+                                              "0" * 64, work / "mismatched.json", cwd)
             if seen is not None:
                 return ("it started the bridge under a policy whose digest no longer matches the"
                         " record")
             # And a record naming a policy it cannot read at all -- gone, or not a file -- has to
             # be refused too. A launcher that fell back to starting the bridge without the
             # variables would pass both checks above and still start a bridge checking no role.
-            directory = root / "policy-directory"
+            directory = work / "policy-directory"
             directory.mkdir()
             for label, unreadable, proof in (
-                    ("missing", root / "absent-policy.json", root / "missing.json"),
-                    ("a directory", directory, root / "directory.json")):
-                done, seen = _probe_launcher_once(argv, root, unreadable, probe, digest, proof,
-                                                  cwd)
+                    ("missing", work / "absent-policy.json", work / "missing.json"),
+                    ("a directory", directory, work / "directory.json")):
+                done, seen = _probe_launcher_once(argv, codex_home, user_home, unreadable, probe,
+                                                  digest, proof, cwd)
                 if seen is not None:
                     return ("it started the bridge when the policy the record names was " + label
                             + " (the bridge saw " + json.dumps(seen) + ")")
@@ -5046,11 +5077,8 @@ def _policy_launcher_refusal(codex_home):
         return LAUNCHER_NOT_ESTABLISHED, (
             "the cached crw package at " + str(version) + " declares " + MCP_NAME + " in a way"
             " this command cannot start: " + declared)
-    argv, cwd, launcher = declared
-    # A regular file before it is run. A launcher that becomes a pipe after this is still bounded:
-    # the probe gives it LAUNCHER_PROBE_SECONDS and then refuses.
-    why = (None if launcher.is_file() else "it is not a regular file") \
-        or _launcher_honours_policy_records(argv, cwd=cwd)
+    launcher = declared[2]
+    why = _launcher_honours_policy_records(version, entry)
     if why is None:
         return None
     return LAUNCHER_PREDATES_POLICY, (

@@ -1226,10 +1226,13 @@ because a user-owned registration is started by its configuration entry and neve
 record. A version-2 record is also refused while the crw package this host loads ships a launcher
 that cannot be given one (`launcher_predates_policy`): that launcher would refuse the record, or
 start the bridge without the policy, and every thread started afterwards would be affected. What
-the launcher declares is not taken as evidence. It is run the way Codex runs it, against a
-throwaway CODEX_HOME whose record names a probe instead of the bridge, and it has to start that
-probe with both variables naming the recorded file and digest, and refuse a record whose digest
-no longer matches. The package is the one the Codex configuration enables as
+the launcher declares is not taken as evidence. The package is copied into a throwaway Codex
+home under the same cache layout and started with its declared command, arguments and working
+directory and the environment the App Server gives a plugin server, with no `CODEX_HOME` and a
+`HOME` that is somewhere else, so it has to find its record the way it would in Desktop. The
+record there names a probe instead of the bridge. The launcher has to start that probe with both
+variables naming the recorded file and digest and exit cleanly, and it has to refuse a record
+whose digest no longer matches, one naming a missing file and one naming a directory. The package is the one the Codex configuration enables as
 `crw@<marketplace>`, read from its single cached version; other plugins that happen to declare a
 server with the same name are not asked. When that selection cannot be
 made, because the configuration cannot be read, crw is registered from two marketplaces or more

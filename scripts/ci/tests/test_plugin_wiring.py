@@ -963,6 +963,10 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 "        fail(\"the execution policy the record at \" + str(record) + \" names could"
                 " not be read (\"\n",
                 "when the policy the record names was missing"),
+            "looks for its record in HOME rather than where it is installed": (
+                "    named = os.environ.get(\"CODEX_HOME\")\n",
+                "    named = os.environ.get(\"CODEX_HOME\") or str(Path.home() / \".codex\")\n",
+                "did not start a bridge"),
             "starts the bridge and then fails": (
                 "            os.execve(executable, [executable, *arguments], environment)\n",
                 "            __import__('subprocess').run([executable, *arguments], env=environment)\n"
