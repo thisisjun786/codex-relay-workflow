@@ -47,14 +47,13 @@ class LedgerCase(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
 
     def publish(self, identifier, publication, *, external_ref="REL-77"):
         """Carry one publication all the way to confirmed, as a connector holder would."""
         claim = self.ledger.claim(publication, owner="operator")
         operation = self.ledger.operation(publication, claim_token=claim["claimToken"])
-        return self.ledger.complete(
-            publication, claim_token=claim["claimToken"],
+        return self.ledger.complete(publication, project_ref="proj-CRW", claim_token=claim["claimToken"],
             readback="a document\n\n" + operation["block"] + "\n\nmore text",
             external_ref=external_ref,
         )
@@ -169,12 +168,12 @@ class ThirdReviewFindings(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         self.identifier = self.ledger.record(omission("a"))["faultId"]
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
-        self.ledger.complete(job, claim_token=claim["claimToken"],
+        self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"],
                              readback=operation["block"], external_ref="REL-77")
 
     def test_the_same_check_run_again_after_a_second_fix_is_a_second_verification(self):
@@ -302,7 +301,7 @@ class FourthReviewFindings(RelayTestCase):
             db.execute("UPDATE deliveries SET hold_reason = NULL, state = 'dispatched'")
 
     def test_a_fault_whose_scope_moved_is_repointed_at_the_new_project(self):
-        self.ledger.set_target("crw:NEW", "team-new")
+        self.ledger.set_target(product="crw", project="NEW", team="team-new", project_ref="proj-NEW")
         first = self.ledger.record(omission("a"))
         self.assertTrue(first["publication"]["awaitingTarget"])
         moved = dict(omission("b"), scope={"projectKey": "NEW", "issueKey": "NEW-1"})
@@ -314,7 +313,7 @@ class FourthReviewFindings(RelayTestCase):
         self.assertIn(first["faultId"], [job["fault_id"] for job in self.ledger.next()])
 
     def test_a_fix_recorded_before_the_threshold_does_not_suppress_the_record_forever(self):
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         first = self.ledger.record(stall("delivery:1"))
         self.assertEqual(faults.OBSERVED, first["state"])
         self.ledger.record_fix(first["faultId"], ref="PR #1")
@@ -411,9 +410,10 @@ class AnExistingStoreGainsTheFaultTables(RelayTestCase):
         self.addCleanup(reopened.close)
         names = {row[0] for row in reopened.all(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fault%'")}
-        self.assertEqual(7, len(names))
+        # Seven from the first contract, ten from the corrected one; none of them altered.
+        self.assertEqual(17, len(names))
         ledger = faults.FaultLedger(reopened, self.clock)
-        ledger.set_target("crw:CRW", TRACKER)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         answer = ledger.record(omission("upgrade"))
         self.assertEqual(faults.OPEN, answer["state"])
         self.assertTrue(ledger.next())
@@ -509,12 +509,12 @@ class FifthReviewFindings(RelayTestCase):
         self.assertEqual(faults.BROKEN, derived[0]["severity"])
 
     def test_retargeting_a_scope_moves_writes_queued_against_the_old_tracker(self):
-        self.ledger.set_target("crw:CRW", "team-old")
+        self.ledger.set_target(product="crw", project="CRW", team="team-old", project_ref="proj-CRW")
         answer = self.ledger.record(omission("a"))
         self.assertEqual("team-old", self.store.one(
             "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
             (answer["publication"]["publicationId"],))["tracker_ref"])
-        moved = self.ledger.set_target("crw:CRW", "team-new")
+        moved = self.ledger.set_target(product="crw", project="CRW", team="team-new", project_ref="proj-CRW")
         self.assertEqual(1, moved["backfilled"])
         self.assertEqual("team-new", self.store.one(
             "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
@@ -551,7 +551,7 @@ class FifthReviewFindings(RelayTestCase):
 
     def test_a_re_observed_occurrence_still_carries_a_scope_move(self):
         """Familiar occurrence, new project. The write must follow the fault, not the key."""
-        self.ledger.set_target("crw:NEW", "team-new")
+        self.ledger.set_target(product="crw", project="NEW", team="team-new", project_ref="proj-NEW")
         first = self.ledger.record(omission("same-key"))
         self.assertTrue(first["publication"]["awaitingTarget"])
         again = self.ledger.record(dict(omission("same-key"),
@@ -563,13 +563,13 @@ class FifthReviewFindings(RelayTestCase):
             (first["publication"]["publicationId"],))["tracker_ref"])
 
     def test_retargeting_reaches_a_failed_write_because_retry_reopens_it(self):
-        self.ledger.set_target("crw:CRW", "team-old")
+        self.ledger.set_target(product="crw", project="CRW", team="team-old", project_ref="proj-CRW")
         answer = self.ledger.record(omission("a"))
         publication = answer["publication"]["publicationId"]
         with self.store.transaction() as db:
             db.execute("UPDATE fault_publications SET state = ? WHERE publication_id = ?",
                        (faults.FAILED, publication))
-        self.ledger.set_target("crw:CRW", "team-new")
+        self.ledger.set_target(product="crw", project="CRW", team="team-new", project_ref="proj-CRW")
         self.ledger.retry(publication)
         self.assertEqual("team-new", self.store.one(
             "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
@@ -739,7 +739,7 @@ class Publication(LedgerCase):
         self.ledger.fail(job, claim_token=claim["claimToken"], error="timeout")
         found = self.ledger.reconcile(job, "issue body\n" + operation["block"])
         self.assertEqual("present", found["outcome"])
-        done = self.ledger.complete(job, readback="issue body\n" + operation["block"],
+        done = self.ledger.complete(job, project_ref="proj-CRW", readback="issue body\n" + operation["block"],
                                     external_ref="REL-9")
         self.assertTrue(done["confirmed"])
         self.assertEqual("REL-9", self.ledger.get(done["fault_id"])["external_ref"])
@@ -753,7 +753,12 @@ class Publication(LedgerCase):
         unattested = self.ledger.reconcile(job, "nothing here")
         self.assertEqual("absent_unattested", unattested["outcome"])
         self.assertEqual([], self.ledger.next())
-        attested = self.ledger.reconcile(job, "nothing here", searched=True)
+        # An attested search is not enough on its own: the request may still land after it.
+        unproven = self.ledger.reconcile(job, "nothing here", searched=True)
+        self.assertEqual("absent_unproven", unproven["outcome"])
+        self.assertEqual([], self.ledger.next())
+        attested = self.ledger.reconcile(job, "nothing here", searched=True, prior_ended=True,
+                                         reason="the connector answered 400")
         self.assertEqual("absent", attested["outcome"])
         self.assertEqual([job], [row["publication_id"] for row in self.ledger.next()])
 
@@ -765,7 +770,7 @@ class Publication(LedgerCase):
         damaged = operation["block"].replace("faultClass: report_omitted",
                                              "faultClass: something_else")
         with self.assertRaises(faults.FaultRefused) as refusal:
-            self.ledger.complete(job, claim_token=claim["claimToken"], readback=damaged,
+            self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"], readback=damaged,
                                  external_ref="REL-1")
         self.assertEqual("fault_readback_mismatch", refusal.exception.reason.value)
 
@@ -819,7 +824,7 @@ class Publication(LedgerCase):
         self.assertTrue(answer["publication"]["awaitingTarget"])
         self.assertEqual([], [job for job in ledger.next()
                               if job["fault_id"] == answer["faultId"]])
-        ledger.set_target("crw:OTHER", "team-other")
+        ledger.set_target(product="crw", project="OTHER", team="team-other", project_ref="proj-OTHER")
         self.assertIn(answer["faultId"], [job["fault_id"] for job in ledger.next()])
 
 
@@ -829,7 +834,7 @@ class Sweep(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
 
     def stall_a_delivery(self, event_id, *, recipient="01parent-task"):
         with self.store.transaction() as db:
@@ -927,7 +932,7 @@ class DaemonPass(DeliveryTestCase):
         from codex_session_relay.daemon import TickReport
 
         ledger = faults.FaultLedger(self.store, self.clock)
-        ledger.set_target("crw:CRW", TRACKER)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         with self.store.transaction() as db:
             db.execute(
                 "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
@@ -956,7 +961,7 @@ class DaemonPass(DeliveryTestCase):
     def test_recorded_faults_keep_a_tick_from_being_called_quiet(self):
         """Through the real tick, so this fails if tick() stops folding the counter in."""
         ledger = faults.FaultLedger(self.store, self.clock)
-        ledger.set_target("crw:CRW", TRACKER)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         with self.store.transaction() as db:
             db.execute(
                 "INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id,"
@@ -986,7 +991,7 @@ class CommandLine(RelayTestCase):
         return code, json.loads(buffer.getvalue())
 
     def test_a_fault_is_observed_filed_and_carried_to_confirmed_from_the_command_line(self):
-        code, _ = self.invoke("fault-target", "--scope", "crw:CRW", "--tracker-ref", TRACKER)
+        code, _ = self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER, "--project-ref", "proj-CRW")
         self.assertEqual(0, code)
         code, recorded = self.invoke("fault-observe", "--observation",
                                   json.dumps(omission("cli-1")))
@@ -1001,14 +1006,15 @@ class CommandLine(RelayTestCase):
         readback = self.artifact("readback.md", "issue\n" + operation["block"])
         code, done = self.invoke("fault-complete", "--publication", publication,
                               "--claim-token", claim["claimToken"],
-                              "--readback", "@" + readback, "--external-ref", "REL-5")
+                              "--readback", "@" + readback, "--external-ref", "REL-5",
+                              "--project-ref", "proj-CRW")
         self.assertEqual(0, code)
         self.assertTrue(done["confirmed"])
         code, shown = self.invoke("fault-show", "--fault", recorded["faultId"])
         self.assertEqual("REL-5", shown["external_ref"])
 
     def test_the_command_line_refuses_to_resolve_an_unverified_fault(self):
-        self.invoke("fault-target", "--scope", "crw:CRW", "--tracker-ref", TRACKER)
+        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER, "--project-ref", "proj-CRW")
         _code, recorded = self.invoke("fault-observe", "--observation",
                                    json.dumps(omission("cli-1")))
         self.invoke("fault-fix", "--fault", recorded["faultId"], "--ref", "PR #1")
@@ -1132,13 +1138,13 @@ class ReviewFindings(RelayTestCase):
 
     def test_a_create_cannot_be_confirmed_without_naming_the_issue_it_created(self):
         """Otherwise the ledger owns no issue and every later comment waits forever."""
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         self.ledger.record(omission("a"))
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
         with self.assertRaises(faults.FaultRefused) as refusal:
-            self.ledger.complete(job, claim_token=claim["claimToken"],
+            self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"],
                                  readback=operation["block"])
         self.assertEqual("fault_readback_mismatch", refusal.exception.reason.value)
 
@@ -1194,10 +1200,11 @@ class SecondReviewFindings(LedgerCase):
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
         stale = "issue body\n" + operation["block"]
         self.ledger.fail(job, claim_token=claim["claimToken"], error="the response was lost")
-        self.assertEqual("absent", self.ledger.reconcile(job, "nothing here",
-                                                         searched=True)["outcome"])
+        self.assertEqual("absent", self.ledger.reconcile(
+            job, "nothing here", searched=True, prior_ended=True,
+            reason="the connector answered 400")["outcome"])
         with self.assertRaises(faults.FaultRefused) as refusal:
-            self.ledger.complete(job, readback=stale, external_ref="REL-1")
+            self.ledger.complete(job, project_ref="proj-CRW", readback=stale, external_ref="REL-1")
         self.assertEqual("fault_state_conflict", refusal.exception.reason.value)
 
     def test_a_queued_comment_is_written_against_the_cycle_it_was_queued_in(self):
@@ -1214,7 +1221,7 @@ class SecondReviewFindings(LedgerCase):
         claim = self.ledger.claim(queued, owner="operator")
         operation = self.ledger.operation(queued, claim_token=claim["claimToken"])
         self.assertIn("cycle: 1", operation["block"])
-        done = self.ledger.complete(queued, claim_token=claim["claimToken"],
+        done = self.ledger.complete(queued, project_ref="proj-CRW", claim_token=claim["claimToken"],
                                     readback=operation["block"], external_ref="REL-77")
         self.assertTrue(done["confirmed"])
 
@@ -1240,7 +1247,7 @@ class SixthReviewFindings(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         self.register()
         self.relationship = self.store.one(
             "SELECT relationship_id FROM relationships")["relationship_id"]
@@ -1249,7 +1256,7 @@ class SixthReviewFindings(RelayTestCase):
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
-        self.ledger.complete(job, claim_token=claim["claimToken"],
+        self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"],
                              readback=operation["block"], external_ref="REL-77")
 
     def test_a_recurrence_is_counted_once_however_many_sweeps_follow_it(self):
@@ -1279,7 +1286,8 @@ class SixthReviewFindings(RelayTestCase):
             self.ledger.record(omission("a:cleared", cleared=True))
             episodes.append(self.ledger.get(first["faultId"])["episode"])
         self.assertEqual([1, 1, 1], episodes)
-        self.assertEqual(2, self.ledger.get(first["faultId"])["occurrence_count"])
+        # A clear is not an occurrence: the count is the one thing that went wrong.
+        self.assertEqual(1, self.ledger.get(first["faultId"])["occurrence_count"])
 
     def test_pruning_evidence_cannot_make_a_familiar_occurrence_look_new(self):
         first = self.ledger.record(omission("a"))
@@ -1362,7 +1370,7 @@ class SeventhReviewFindings(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         self.register()
         self.relationship = self.store.one(
             "SELECT relationship_id FROM relationships")["relationship_id"]
@@ -1425,7 +1433,7 @@ class SeventhReviewFindings(RelayTestCase):
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
-        self.ledger.complete(job, claim_token=claim["claimToken"],
+        self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"],
                              readback=operation["block"], external_ref="REL-77")
         self.ledger.record_fix(identifier, ref="PR #1")
         self.ledger.record_reverification(identifier, method="suite", ref="pytest",
@@ -1469,7 +1477,7 @@ class SeventhReviewFindings(RelayTestCase):
             "SELECT COUNT(*) AS n FROM fault_publications")["n"])
 
     def test_a_write_released_by_an_attested_absence_picks_up_the_current_tracker(self):
-        self.ledger.set_target("crw:NEW", "team-new")
+        self.ledger.set_target(product="crw", project="NEW", team="team-new", project_ref="proj-NEW")
         answer = self.ledger.record(omission("a"))
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
@@ -1477,7 +1485,8 @@ class SeventhReviewFindings(RelayTestCase):
         self.ledger.fail(job, claim_token=claim["claimToken"], error="lost")
         self.ledger.record(dict(omission("b"),
                                 scope={"projectKey": "NEW", "issueKey": "NEW-1"}))
-        self.ledger.reconcile(job, "nothing here", searched=True)
+        self.ledger.reconcile(job, "nothing here", searched=True, prior_ended=True,
+                              reason="the connector answered 400")
         self.assertEqual("team-new", self.store.one(
             "SELECT tracker_ref FROM fault_publications WHERE publication_id = ?",
             (job,))["tracker_ref"])
@@ -1488,17 +1497,17 @@ class SeventhReviewFindings(RelayTestCase):
         job = self.ledger.next()[0]["publication_id"]
         claim = self.ledger.claim(job, owner="operator")
         operation = self.ledger.operation(job, claim_token=claim["claimToken"])
-        self.ledger.complete(job, claim_token=claim["claimToken"],
+        self.ledger.complete(job, project_ref="proj-CRW", claim_token=claim["claimToken"],
                              readback=operation["block"], external_ref="REL-77")
         fix = self.ledger.record_fix(identifier, ref="PR #1")
         comment = fix["publication"]["publicationId"]
         claim = self.ledger.claim(comment, owner="operator")
         operation = self.ledger.operation(comment, claim_token=claim["claimToken"])
         with self.assertRaises(faults.FaultRefused) as refusal:
-            self.ledger.complete(comment, claim_token=claim["claimToken"],
+            self.ledger.complete(comment, project_ref="proj-CRW", claim_token=claim["claimToken"],
                                  readback=operation["block"], external_ref="REL-99")
         self.assertEqual("fault_readback_mismatch", refusal.exception.reason.value)
-        done = self.ledger.complete(comment, claim_token=claim["claimToken"],
+        done = self.ledger.complete(comment, project_ref="proj-CRW", claim_token=claim["claimToken"],
                                     readback=operation["block"])
         self.assertTrue(done["confirmed"])
         self.assertEqual("REL-77", done["external_ref"])
@@ -1526,7 +1535,7 @@ class ProvisionalRowsAndBounds(RelayTestCase):
     def setUp(self):
         super().setUp()
         self.ledger = faults.FaultLedger(self.store, self.clock)
-        self.ledger.set_target("crw:CRW", TRACKER)
+        self.ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
         self.register()
         self.relationship = self.store.one(
             "SELECT relationship_id FROM relationships")["relationship_id"]

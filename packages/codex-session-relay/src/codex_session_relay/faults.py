@@ -32,6 +32,7 @@ actually observed can move it.
 """
 
 import json
+import re
 import secrets
 
 from . import sync
@@ -78,8 +79,51 @@ CONFIRMED = "confirmed"
 FAILED = "failed"
 UNCERTAIN = "uncertain"
 
+CANCELLED = "cancelled"
+
 OPEN_RECORD = "open_record"
 APPEND_COMMENT = "append_comment"
+UPDATE_RECORD = "update_record"
+# The one-operation update on an issue the fault already owns. set_project is identified by the
+# link revision rather than by its value, so a later target always gets its own write.
+UPDATE_OPS = ("set_project", "reopen", "add_relation", "add_label")
+
+# The identity field for an incident whose product workspace is not known yet.
+UNASSIGNED = "unassigned"
+# A product is a plain identifier: letters, digits, dot, underscore and dash. Without ':', '@'
+# and '|' the product always ends where a target key's first separator begins.
+PRODUCT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# What the ledger records about the work that follows an issue, each as its own state.
+STAGES = ("accepted", "assigned", "merged", "installed")
+INSTALLED = "installed"
+
+LINKED = "linked"
+UNLINKED = "unlinked"
+NO_LINK = "none"
+
+# Upward notifications, and the budget kind they spend.
+NOTIFICATION = "notification"
+BLOCKING = "blocking"
+DECISION = "decision"
+RESOLVED_NOTICE = "resolved"
+RESERVED = "reserved"
+DELIVERED = "delivered"
+
+# Per product and kind, per window: how many writes or notifications may go out.
+DEFAULT_LIMITS = {
+    OPEN_RECORD: (5, 3600.0),
+    APPEND_COMMENT: (20, 3600.0),
+    UPDATE_RECORD: (20, 3600.0),
+    NOTIFICATION: (10, 3600.0),
+}
+DEFAULT_KIND_LIMIT = (20, 3600.0)
+RELINK_PER_CALL = 100
+HOLD_SECONDS = 30.0
+MAX_POLICY_THRESHOLD = 100
+MIN_POLICY_WINDOW = 60.0
+MAX_POLICY_WINDOW = 2592000.0
+MAX_BUDGET = 10000
 
 # Why a publication exists. It is part of the publication's identity, so one reason queues one
 # write however many times the ledger is swept.
@@ -240,25 +284,41 @@ def canonical_signature(signature) -> str:
     return json.dumps(signature, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-def fault_id(product, fault_class, signature) -> str:
+def fault_id(product, fault_class, signature, *, workspace=None) -> str:
     """One breakage, one id, however many times and by whoever it is observed.
 
-    The time, the occurrence, the attempt, the event and the scope are all deliberately
+    The time, the occurrence, the attempt, the event and the project are all deliberately
     outside it. Each of them changes while the fault stays the same, and an identity carrying
     any of them files a second issue every time the system fails again.
+
+    The workspace is inside it, because two workspaces are two tenants and the same failure in
+    each is two faults. It joins the text only when one is given, so every id computed before
+    workspaces existed is unchanged. Computable with no store, so a caller can decide an owner
+    or a target before the first record.
     """
-    for name, value in (("product", product), ("faultClass", fault_class)):
-        if not _named(value):
-            raise FaultRefused(
-                RefusalReason.FAULT_OBSERVATION_MALFORMED,
-                f"{name} must be a non-empty string",
-            )
-        if "|" in value:
-            raise FaultRefused(
-                RefusalReason.FAULT_OBSERVATION_MALFORMED,
-                f"{name} must not contain '|', which is the field separator",
-            )
-    return sha256_hex(f"{product}|{fault_class}|{canonical_signature(signature)}")[:ID_WIDTH]
+    _check_product(product)
+    if not _named(fault_class):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           "faultClass must be a non-empty string")
+    if "|" in fault_class:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           "faultClass must not contain '|', which is the field separator")
+    text = f"{product}|{fault_class}|{canonical_signature(signature)}"
+    if workspace is not None:
+        if not _named(workspace):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a workspace is a non-blank string")
+        text += f"|workspace={workspace}"
+    return sha256_hex(text)[:ID_WIDTH]
+
+
+def _check_product(product):
+    if not isinstance(product, str) or not PRODUCT_NAME.match(product):
+        raise FaultRefused(
+            RefusalReason.FAULT_OBSERVATION_MALFORMED,
+            f"product {product!r} is not a plain identifier (letters, digits, '.', '_', '-');"
+            f" a ':' '@' or '|' would let one product's key read as another's",
+        )
 
 
 def occurrence_id(identifier, occurrence_key, episode=1, cleared=False) -> str:
@@ -291,10 +351,33 @@ def evidence_digest(evidence) -> str:
                                  separators=(",", ":")))
 
 
+def target_key(product, *, workspace=None, project=None) -> str:
+    """The key a target and a fault's scope share. Injective, and unchanged for old scopes.
+
+    Without a workspace it is the merged key, product or product:project, and the product
+    cannot contain ':' so the product always ends at the first one. With a workspace every part
+    is percent-encoded behind a 'ws|' prefix, which no merged key can begin with because no
+    product contains '|'.
+    """
+    if workspace is None:
+        return f"{product}:{project}" if project is not None else product
+    return "ws|" + "|".join(_encode("" if part is None else str(part))
+                            for part in (product, workspace, project))
+
+
+def _encode(part):
+    """Percent-encode the four characters a key is split on. '%' first, so it stays injective."""
+    for character, code in (("%", "%25"), ("|", "%7C"), (":", "%3A"), ("@", "%40")):
+        part = part.replace(character, code)
+    return part
+
+
 def scope_key_for(product, scope) -> str:
     """Where this fault is filed. Outside identity, because a re-read scope is one fault."""
-    project = (scope or {}).get("projectKey")
-    return f"{product}:{project}" if _named(project) else product
+    scope = scope or {}
+    project = scope.get("projectKey")
+    return target_key(product, workspace=scope.get("workspace"),
+                      project=project if _named(project) else None)
 
 
 def _bounded_evidence(evidence):
@@ -340,7 +423,7 @@ def read_observation(observation_record) -> dict:
     fault_class = observation_record.get("faultClass")
     severity = observation_record.get("severity")
     policy = policy_for(fault_class, severity)
-    identifier = fault_id(product, fault_class, observation_record.get("signature"))
+    _check_product(product)
     occurrence_key = observation_record.get("occurrenceKey")
     if not _named(occurrence_key):
         raise FaultRefused(
@@ -348,12 +431,16 @@ def read_observation(observation_record) -> dict:
             "occurrenceKey must be a non-empty string derived from the underlying fact, or a"
             " repeated sweep of one unchanged row counts as many occurrences",
         )
-    scope = observation_record.get("scope") or {}
-    if not isinstance(scope, dict):
-        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "scope is an object")
+    scope = _read_scope(observation_record.get("scope"))
+    identifier = fault_id(product, fault_class, observation_record.get("signature"),
+                          workspace=scope.get("workspace"))
+    detail = _optional_text(observation_record.get("detail"), "detail")
+    observed_at = _optional_text(observation_record.get("observedAt"), "observedAt")
     evidence, truncated = _bounded_evidence(observation_record.get("evidence"))
     return {
         "faultId": identifier,
+        "workspace": scope.get("workspace"),
+        "signatureObject": dict(observation_record.get("signature")),
         "product": product,
         "faultClass": fault_class,
         "component": policy["component"],
@@ -364,14 +451,44 @@ def read_observation(observation_record) -> dict:
         "occurrenceKey": occurrence_key,
         # Filled in by the ledger, which is what knows the episode.
         "occurrenceId": occurrence_id(identifier, occurrence_key),
-        "observedAt": observation_record.get("observedAt"),
-        "detail": observation_record.get("detail") or "",
+        "observedAt": observed_at,
+        "detail": detail or "",
         "evidence": evidence,
         "evidenceDigest": evidence_digest(evidence),
         "truncated": truncated,
         "cleared": _flag(observation_record.get("cleared")),
         "policy": policy,
     }
+
+
+def _optional_text(value, name):
+    """A string or nothing. Anything else is refused here, before a value SQLite cannot bind
+    turns a malformed observation into what looks like an outage."""
+    if value is None or isinstance(value, str):
+        return value
+    raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                       f"{name} is a string, not {type(value).__name__}")
+
+
+def _read_scope(scope):
+    """A scope: an object of JSON scalars, whose workspace and projectKey are non-blank strings.
+
+    A number or an empty string is refused, so no two inputs can name one target.
+    """
+    if scope is None:
+        return {}
+    if not isinstance(scope, dict):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "scope is an object")
+    for key, value in scope.items():
+        if not isinstance(key, str) or not (value is None or isinstance(
+                value, (str, int, float, bool))):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"scope.{key} is not a JSON scalar")
+    for key in ("workspace", "projectKey"):
+        if key in scope and scope[key] is not None and not _named(scope[key]):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"scope.{key} is a non-blank string")
+    return {key: value for key, value in scope.items() if value is not None}
 
 
 def _flag(value):
@@ -395,7 +512,7 @@ def observation(*, product, fault_class, severity, signature, occurrence_key, sc
         "component": (CLASS_POLICY.get(fault_class) or {}).get("component"),
         "severity": severity, "signature": dict(signature), "scope": dict(scope or {}),
         "occurrenceKey": occurrence_key, "observedAt": observed_at, "detail": detail,
-        "evidence": list(evidence), "cleared": bool(cleared),
+        "evidence": list(evidence), "cleared": cleared,
     }
 
 
@@ -600,68 +717,283 @@ def render_summary(row, *, trigger_key, occurrences=(), remediation=None, clears
 
 
 class FaultLedger:
-    """The ledger and its outbox. Nothing here performs a network call."""
+    """The ledger and its outbox. Nothing here performs a network call.
+
+    The contract is docs/faults.md, "Corrected contract". Each invariant there names the one
+    method below that enforces it; the others call that method rather than repeating its test.
+    """
 
     def __init__(self, store, clock):
         self.store = store
         self.clock = clock
 
-    # ------------------------------------------------------------------ targets
+    # ------------------------------------------------------------------ identity (invariant 9)
 
-    def set_target(self, scope_key, tracker_ref) -> dict:
-        """Where this scope's fault issues are filed, plus whatever was waiting for one.
+    def _canonical(self, db, identifier):
+        """The id the store keeps this fault under: an alias resolved, anything else unchanged."""
+        row = db.execute("SELECT fault_id FROM fault_aliases WHERE alias_id = ?",
+                         (identifier,)).fetchone()
+        return row["fault_id"] if row else identifier
 
-        Backfilling matters: a fault raised before anybody configured a target is a real
-        fault, and leaving its publication pointing nowhere would make configuring the target
-        silently insufficient.
-        """
-        now = self.clock.iso()
-        with self.store.transaction() as db:
-            db.execute(
-                "INSERT INTO fault_targets (scope_key, tracker_ref, recorded_at)"
-                " VALUES (?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
-                "   tracker_ref = excluded.tracker_ref, recorded_at = excluded.recorded_at",
-                (scope_key, tracker_ref, now),
-            )
-            # Every pending write for this scope, not only the ones pointing nowhere. A
-            # retarget left writes queued against the tracker the scope no longer uses, so
-            # they would have been filed where nobody is looking any more.
-            # Pending AND failed. retry() offers a failed row again unchanged, so leaving its
-            # tracker behind meant a retried write could still reach the retired project.
-            # An uncertain row is left alone: it is reconciled against wherever it may
-            # already have landed.
-            waiting = db.execute(
-                "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-                " WHERE state IN (?,?) AND (tracker_ref IS NULL OR tracker_ref != ?)"
-                "   AND fault_id IN"
-                "   (SELECT fault_id FROM fault_ledger WHERE scope_key = ?)",
-                (tracker_ref, now, PENDING, FAILED, tracker_ref, scope_key),
-            ).rowcount
-        return {"scopeKey": scope_key, "trackerRef": tracker_ref, "backfilled": waiting}
+    def _legacy(self, db, product, fault_class, signature, workspace):
+        """A fault recorded before workspace joined identity, whose stored scope says it
+        belongs to this workspace. Such a fault is the one this workspace's id names."""
+        if workspace is None:
+            return None
+        legacy = fault_id(product, fault_class, signature)
+        row = db.execute("SELECT scope FROM fault_ledger WHERE fault_id = ?",
+                         (legacy,)).fetchone()
+        if row is not None and _json(row["scope"]).get("workspace") == workspace:
+            return legacy
+        return None
 
-    def target_for(self, scope_key):
-        row = self.store.one(
-            "SELECT * FROM fault_targets WHERE scope_key = ?", (scope_key,))
-        return dict(row) if row else None
+    def _resolve(self, db, product, fault_class, signature, workspace):
+        identifier = fault_id(product, fault_class, signature, workspace=workspace)
+        canonical = self._canonical(db, identifier)
+        if canonical != identifier or _exists(db, identifier):
+            return identifier, canonical
+        legacy = self._legacy(db, product, fault_class, signature, workspace)
+        return identifier, (legacy or identifier)
 
-    # ------------------------------------------------------------------ reading
+    def canonical_id(self, product, fault_class, signature, *, workspace=None) -> str:
+        """The id this store keeps a fault under, before or after its first record."""
+        return self._resolve(self.store.db, product, fault_class, signature, workspace)[1]
 
-    def get(self, identifier):
-        row = self.store.one("SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,))
-        return dict(row) if row else None
+    def _register_alias(self, db, alias_id, target, now):
+        if alias_id == target:
+            return
+        existing = db.execute("SELECT fault_id FROM fault_aliases WHERE alias_id = ?",
+                              (alias_id,)).fetchone()
+        if existing is not None:
+            if existing["fault_id"] != target:
+                raise FaultRefused(RefusalReason.FAULT_SCOPE_CONFLICT,
+                                   f"{alias_id} already names fault {existing['fault_id']}")
+            return
+        if _exists(db, alias_id):
+            raise FaultRefused(RefusalReason.FAULT_SCOPE_CONFLICT,
+                               f"{alias_id} is already a recorded fault of its own")
+        db.execute("INSERT INTO fault_aliases (alias_id, fault_id, created_at) VALUES (?,?,?)",
+                   (alias_id, target, now))
 
-    def _row(self, identifier, db=None):
-        reader = db.execute if db is not None else None
-        row = (reader("SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
-               if reader else
-               self.store.one("SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)))
+    def _fault(self, db, identifier):
+        row = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                         (self._canonical(db, identifier),)).fetchone()
         if row is None:
             raise FaultRefused(RefusalReason.FAULT_UNKNOWN, f"no fault {identifier!r}")
         return row
 
+    # ------------------------------------------------------------------ scope and targets
+
+    def _assign_scope_key(self, db, product, scope_key):
+        """Invariant 7: one product per scope key, on every path that assigns one."""
+        other = db.execute(
+            "SELECT fault_id, product FROM fault_ledger WHERE scope_key = ? AND product != ?"
+            " LIMIT 1", (scope_key, product)).fetchone()
+        if other is None:
+            other = db.execute(
+                "SELECT product FROM fault_target_projects WHERE scope_key = ? AND product != ?",
+                (scope_key, product)).fetchone()
+        if other is not None:
+            raise FaultRefused(
+                RefusalReason.FAULT_SCOPE_CONFLICT,
+                f"scope key {scope_key!r} is already carried by product {other['product']!r};"
+                f" one product's issues are never filed through another's key")
+
+    def _owned_target(self, db, product, scope_key):
+        """Invariant 8: this product's own target for the key, or None and why not."""
+        row = db.execute(
+            "SELECT t.tracker_ref, p.project_ref, p.product FROM fault_targets t"
+            "  LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key"
+            " WHERE t.scope_key = ?", (scope_key,)).fetchone()
+        if row is None:
+            return None, "awaiting_target"
+        if row["product"] is None:
+            return None, "awaiting_target"
+        if row["product"] != product:
+            return None, "scope_key_contested"
+        contested = db.execute(
+            "SELECT 1 FROM fault_ledger WHERE scope_key = ? AND product != ? LIMIT 1",
+            (scope_key, product)).fetchone()
+        if contested is not None:
+            return None, "scope_key_contested"
+        return {"team": row["tracker_ref"], "projectRef": row["project_ref"]}, None
+
+    def set_target(self, *, product, workspace=None, project=None, team, project_ref=None) -> dict:
+        """Where this product's faults in one scope are filed. Unchanged values write nothing.
+
+        A change re-points the unsent writes whose target differs (an uncertain one stays where
+        it may already have landed) and relinks issues this scope's faults own, a bounded number
+        per call; relink() continues the rest. A target row written before targets had owners
+        is claimed by this call, which is therefore not a no-op for it.
+        """
+        _check_product(product)
+        for name, value in (("workspace", workspace), ("project", project),
+                            ("project_ref", project_ref)):
+            if value is not None and not _named(value):
+                raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                                   f"{name} is a non-blank string")
+        if not _named(team):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "team is a non-blank string")
+        key = target_key(product, workspace=workspace, project=project)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            self._assign_scope_key(db, product, key)
+            current = db.execute(
+                "SELECT t.tracker_ref, p.product, p.project_ref FROM fault_targets t"
+                "  LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key"
+                " WHERE t.scope_key = ?", (key,)).fetchone()
+            answer = {"scopeKey": key, "product": product, "team": team, "projectRef": project_ref,
+                      "changed": False, "backfilled": 0, "relinked": 0, "relinkPending": 0}
+            if (current is not None and current["product"] == product
+                    and current["tracker_ref"] == team and current["project_ref"] == project_ref):
+                return answer
+            db.execute(
+                "INSERT INTO fault_targets (scope_key, tracker_ref, recorded_at) VALUES (?,?,?)"
+                " ON CONFLICT(scope_key) DO UPDATE SET tracker_ref = excluded.tracker_ref,"
+                "   recorded_at = excluded.recorded_at", (key, team, now))
+            db.execute(
+                "INSERT INTO fault_target_projects (scope_key, product, project_ref, recorded_at)"
+                " VALUES (?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
+                "   product = excluded.product, project_ref = excluded.project_ref,"
+                "   recorded_at = excluded.recorded_at", (key, product, project_ref, now))
+            answer["changed"] = True
+            faults_here = [row["fault_id"] for row in db.execute(
+                "SELECT fault_id FROM fault_ledger WHERE scope_key = ? AND product = ?",
+                (key, product))]
+            for identifier in faults_here:
+                answer["backfilled"] += self._repoint(db, identifier, now)
+            answer["relinked"], answer["relinkPending"] = self._relink_where(
+                db, now, scope_key=key, limit=RELINK_PER_CALL)
+        return answer
+
+    def targets(self, product=None, *, limit=SHOWN_PER_PAGE, after=None) -> list:
+        limit = _bounded(limit, "limit")
+        rows = self.store.all(
+            "SELECT t.scope_key, t.tracker_ref AS team, p.product, p.project_ref, t.recorded_at"
+            "  FROM fault_targets t LEFT JOIN fault_target_projects p"
+            "    ON p.scope_key = t.scope_key"
+            " WHERE (? IS NULL OR p.product = ?) AND t.scope_key > ?"
+            " ORDER BY t.scope_key LIMIT ?", (product, product, after or "", limit))
+        return [dict(row) for row in rows]
+
+    def target_for(self, scope_key):
+        row = self.store.one(
+            "SELECT t.scope_key, t.tracker_ref, p.product, p.project_ref FROM fault_targets t"
+            "  LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key"
+            " WHERE t.scope_key = ?", (scope_key,))
+        return dict(row) if row else None
+
+    def _repoint(self, db, identifier, now) -> int:
+        """Point this fault's unsent target-bound writes at its product's current target.
+
+        Pending and failed only. An uncertain write may already have landed at its old target,
+        and a claimed one is re-checked by operation() before it is issued.
+        """
+        fault = db.execute("SELECT product, scope_key FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
+        team = target["team"] if target else None
+        project = target["projectRef"] if target else None
+        changed = 0
+        for row in db.execute(
+                "SELECT p.publication_id, p.kind, p.tracker_ref, pp.project_ref"
+                "  FROM fault_publications p LEFT JOIN fault_publication_payloads pp"
+                "    ON pp.publication_id = p.publication_id"
+                " WHERE p.fault_id = ? AND p.state IN (?,?)",
+                (identifier, PENDING, FAILED)).fetchall():
+            spec = KINDS.get(row["kind"])
+            if spec is None or spec["target"] is None:
+                continue
+            wanted_project = project if spec["target"] == "team+project" else None
+            if row["tracker_ref"] == team and row["project_ref"] == wanted_project:
+                continue
+            db.execute("UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
+                       " WHERE publication_id = ?", (team, now, row["publication_id"]))
+            _payload_set(db, row["publication_id"], now, project_ref=wanted_project)
+            changed += 1
+        return changed
+
+    def _rescope(self, db, row, scope, now) -> int:
+        """Invariant 10: every scope change re-points unsent writes and relinks an owned issue."""
+        key = scope_key_for(row["product"], scope)
+        if key != row["scope_key"]:
+            self._assign_scope_key(db, row["product"], key)
+        stored = json.dumps(scope, ensure_ascii=False, sort_keys=True)
+        if key == row["scope_key"] and stored == row["scope"]:
+            return 0
+        db.execute("UPDATE fault_ledger SET scope = ?, scope_key = ?, updated_at = ?"
+                   " WHERE fault_id = ?", (stored, key, now, row["fault_id"]))
+        repointed = self._repoint(db, row["fault_id"], now)
+        if row["external_ref"]:
+            target, _ = self._owned_target(db, row["product"], key)
+            if target and target["projectRef"]:
+                self._relink(db, row["fault_id"], target["projectRef"], now)
+        return repointed
+
+    def move(self, identifier, *, scope) -> dict:
+        """Re-scope a fault without replaying an observation.
+
+        Inside its workspace, or out of unassigned into a real one: then the id that workspace
+        produces becomes an alias of this fault, after checking it names no other record.
+        """
+        scope = _read_scope(scope)
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._fault(db, identifier)
+            answer = self._move(db, row, scope, now)
+        return answer
+
+    def _move(self, db, row, scope, now) -> dict:
+        current = _json(row["scope"]).get("workspace")
+        wanted = scope.get("workspace")
+        alias = None
+        if wanted != current:
+            if current != UNASSIGNED or wanted in (None, UNASSIGNED):
+                raise FaultRefused(
+                    RefusalReason.FAULT_SCOPE_CONFLICT,
+                    f"a fault moves inside its workspace, or out of {UNASSIGNED}; this one is in"
+                    f" {current!r} and was asked to move to {wanted!r}")
+            signature = _json(row["signature"])
+            alias, resolved = self._resolve(db, row["product"], row["fault_class"], signature,
+                                            wanted)
+            if resolved != row["fault_id"] and _exists(db, resolved):
+                raise FaultRefused(
+                    RefusalReason.FAULT_SCOPE_CONFLICT,
+                    f"workspace {wanted!r} already records this failure as fault {resolved};"
+                    f" two records never stand for one failure in one workspace")
+            self._register_alias(db, alias, row["fault_id"], now)
+        repointed = self._rescope(db, row, scope, now)
+        fresh = db.execute("SELECT scope_key, scope FROM fault_ledger WHERE fault_id = ?",
+                           (row["fault_id"],)).fetchone()
+        return {"faultId": row["fault_id"], "scopeKey": fresh["scope_key"],
+                "moved": fresh["scope"] != row["scope"], "repointed": repointed, "alias": alias}
+
+    # ------------------------------------------------------------------ reading
+
+    def get(self, identifier):
+        with self.store.transaction() as db:
+            row = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                             (self._canonical(db, identifier),)).fetchone()
+            return self._fault_view(db, row) if row else None
+
+    def _fault_view(self, db, row) -> dict:
+        record = dict(row)
+        link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
+                          (row["fault_id"],)).fetchone()
+        if not row["external_ref"]:
+            record["linkState"], record["linkedProject"] = NO_LINK, None
+        elif link is None:
+            record["linkState"], record["linkedProject"] = UNLINKED, None
+        else:
+            record["linkState"] = link["state"]
+            record["linkedProject"] = link["observed_project_ref"]
+        return record
+
     def occurrences(self, identifier, *, limit=RENDERED_OCCURRENCES, newest=True) -> list:
         limit = _bounded(limit, "limit")
         order = "DESC" if newest else "ASC"
+        identifier = self._canonical(self.store.db, identifier)
         rows = self.store.all(
             f"SELECT * FROM fault_occurrences WHERE fault_id = ? ORDER BY rowid {order}"
             " LIMIT ?", (identifier, limit),
@@ -671,29 +1003,26 @@ class FaultLedger:
     def remediations(self, identifier, *, limit=SHOWN_PER_FAULT) -> list:
         """The newest remediations, oldest first. A fault reopened many times has many."""
         limit = _bounded(limit, "limit")
+        identifier = self._canonical(self.store.db, identifier)
         rows = self.store.all(
             "SELECT * FROM fault_remediations WHERE fault_id = ? ORDER BY rowid DESC LIMIT ?",
             (identifier, limit))
         return [dict(row) for row in reversed(rows)]
 
-    def snapshot(self, *, scope_key=None, state=None, limit=SHOWN_PER_PAGE,
-                 after=None) -> dict:
+    def snapshot(self, *, product=None, fault_class=None, scope_key=None, state=None,
+                 limit=SHOWN_PER_PAGE, after=None) -> dict:
         """One page of faults, oldest first, with where the next page starts.
 
-        Bounded at every level it reads. It used to load every fault in the store with every
-        publication each one had ever queued, so the listing that exists for an operator to
-        glance at grew with the store's whole history. Nested lists are capped per fault, and
-        the page is continued by rowid, which is stable: a fault recorded between two pages
-        lands after the cursor rather than shifting everything it was compared against.
+        Bounded at every level it reads, continued by rowid, and filterable by product and class
+        so a product's own records (a project create, say) can be kept out of defect listings.
         """
         limit = _bounded(limit, "limit")
         clauses, params = [], []
-        if scope_key is not None:
-            clauses.append("scope_key = ?")
-            params.append(scope_key)
-        if state is not None:
-            clauses.append("state = ?")
-            params.append(state)
+        for column, value in (("product", product), ("fault_class", fault_class),
+                              ("scope_key", scope_key), ("state", state)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
         if after is not None:
             if isinstance(after, bool) or not isinstance(after, int) or after < 0:
                 raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
@@ -701,12 +1030,16 @@ class FaultLedger:
             clauses.append("rowid > ?")
             params.append(after)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        # One row past the page, to learn whether there is a next page without a second query.
-        fetched = self.store.all(
-            "SELECT rowid AS seq, * FROM fault_ledger" + where + " ORDER BY rowid LIMIT ?",
-            (*params, limit + 1))
-        truncated = len(fetched) > limit
-        rows = [dict(row) for row in fetched[:limit]]
+        with self.store.transaction() as db:
+            fetched = db.execute(
+                "SELECT rowid AS seq, * FROM fault_ledger" + where + " ORDER BY rowid LIMIT ?",
+                (*params, limit + 1)).fetchall()
+            truncated = len(fetched) > limit
+            rows = []
+            for row in fetched[:limit]:
+                record = self._fault_view(db, row)
+                record["seq"] = row["seq"]
+                rows.append(record)
         for row in rows:
             row["occurrences"] = self.occurrences(row["fault_id"])
             publications = self.store.all(
@@ -717,6 +1050,9 @@ class FaultLedger:
             row["publicationsTruncated"] = len(publications) > SHOWN_PER_FAULT
             row["publications"] = [dict(entry) for entry in
                                    reversed(publications[:SHOWN_PER_FAULT])]
+            row["clears"] = self.store.one(
+                "SELECT COUNT(*) AS n FROM fault_timeline WHERE fault_id = ? AND kind = ?",
+                (row["fault_id"], CLEARED))["n"]
         return {
             "schema": LEDGER_SCHEMA, "scopeKey": scope_key, "faults": rows,
             "limit": limit,
@@ -729,13 +1065,22 @@ class FaultLedger:
 
     # ------------------------------------------------------------------ recording
 
-    def record(self, observation_record) -> dict:
-        """Record one observation, converge it on its fault, and queue at most one write."""
+    def record(self, observation_record, *, adopt=None) -> dict:
+        """Record one observation, converge it on its fault, and queue at most one write.
+
+        adopt={"externalRef": ..., "scope": {...}} adopts an existing issue in the same
+        transaction as the fault's first record, before suppression can open it.
+        """
         fact = read_observation(observation_record)
+        adoption = _read_adoption(adopt) if adopt is not None else None
         now_iso = self.clock.iso()
         now = self.clock.now()
-        identifier = fact["faultId"]
         with self.store.transaction() as db:
+            alias, identifier = self._resolve(db, fact["product"], fact["faultClass"],
+                                              fact["signatureObject"], fact["workspace"])
+            if identifier != alias and not _exists(db, alias):
+                # The legacy lookup found this workspace's fault under its pre-workspace id.
+                self._register_alias(db, alias, identifier, now_iso)
             row = db.execute(
                 "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
             if row is None and fact["cleared"]:
@@ -746,6 +1091,7 @@ class FaultLedger:
                         "occurrenceCount": 0, "publication": None,
                         "reason": "a clearing observation for a fault that was never recorded"}
             if row is None:
+                self._assign_scope_key(db, fact["product"], fact["scopeKey"])
                 db.execute(
                     "INSERT INTO fault_ledger (fault_id, product, fault_class, component,"
                     "  severity, signature, scope, scope_key, state, cycle, occurrence_count,"
@@ -758,108 +1104,107 @@ class FaultLedger:
                      fact["scopeKey"], OBSERVED, fact["detail"], None, now_iso, now_iso,
                      now_iso),
                 )
+            elif (fact["workspace"] == _json(row["scope"]).get("workspace")
+                  and fact["scopeKey"] != row["scope_key"]):
+                # A scope moves only inside the fault's current workspace. A stale observation
+                # still saying unassigned for a fault that has moved leaves it where it is.
+                self._rescope(db, row, fact["scope"], now_iso)
+            row = db.execute(
+                "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
+            adopted = None
+            if adoption is not None:
+                adopted = self._adopt(db, row, adoption, now_iso)
                 row = db.execute(
                     "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
-            episode = row["episode"]
             if fact["cleared"] and row["state"] in (WITHDRAWN, RESOLVED):
-                # Already closed. A repeated clearing reading says nothing new, and opening an
-                # episode for it would hand the next identical reading a fresh identity too,
-                # counting one recovery over and over.
                 return {"faultId": identifier, "recorded": False, "state": row["state"],
                         "occurrenceCount": row["occurrence_count"],
                         "reason": "this fault is already closed", "publication": None}
+            episode = row["episode"]
+            if not fact["cleared"] and row["cleared_at"] is not None:
+                # Invariant 6: the first active observation after a clear opens an episode,
+                # whatever its key. Keyed on the duplicate alone, a key that was recorded
+                # before the clear was dropped as familiar and resolve() then closed a fault
+                # whose cause had come back.
+                episode += 1
             fact["occurrenceId"] = occurrence_id(identifier, fact["occurrenceKey"], episode,
                                                  fact["cleared"])
-            # Asked of the TIMELINE, not of the evidence rows, and before the insert rather
-            # than off rowcount. The timeline is never pruned, so removing evidence an
-            # operator has finished reading cannot make a familiar occurrence look new and
-            # inflate the count on the next sweep. rowcount was unreliable across paths
-            # through this transaction, and "is this occurrence new" is the hinge the whole
-            # convergence turns on.
+            # Asked of the TIMELINE, which is never pruned, so removing evidence cannot make a
+            # familiar occurrence look new.
             recorded = db.execute(
                 "SELECT 1 FROM fault_timeline WHERE fault_id = ? AND ref_id = ?",
                 (identifier, fact["occurrenceId"])).fetchone() is None
+            # A clear stored under its own key: the evidence table's uniqueness is per key and
+            # episode, and a clear under the key its active observation used would otherwise be
+            # dropped from the evidence while the timeline kept it.
+            stored_key = (fact["occurrenceKey"] + "#cleared" if fact["cleared"]
+                          else fact["occurrenceKey"])
             db.execute(
                 "INSERT OR IGNORE INTO fault_occurrences (occurrence_id, fault_id, episode,"
                 "  occurrence_key, severity, cleared, detail, evidence, evidence_digest,"
                 "  truncated, observed_at, recorded_at, recorded_ts)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (fact["occurrenceId"], identifier, episode, fact["occurrenceKey"],
-                 fact["severity"],
+                (fact["occurrenceId"], identifier, episode, stored_key, fact["severity"],
                  1 if fact["cleared"] else 0, fact["detail"],
                  json.dumps(fact["evidence"], ensure_ascii=False, sort_keys=True),
                  fact["evidenceDigest"], 1 if fact["truncated"] else 0, fact["observedAt"],
                  now_iso, now),
             )
             if not recorded:
-                # The same underlying fact, read again: the case a repeated sweep produces on
-                # every tick, and the reason this returns cheaply instead of re-deciding.
-                #
-                # Two things still have to land. A SCOPE move, because the occurrence being
-                # familiar says nothing about where the fault now belongs. And a STATE that
-                # this repeat contradicts: a fault that was withdrawn or resolved and is
-                # being observed again is happening again, whatever key it arrives under, and
-                # returning before the transition left it closed while its cause was back.
-                if fact["scopeKey"] != row["scope_key"]:
-                    self._move(db, identifier, fact, now_iso)
                 return {"faultId": identifier, "recorded": False, "state": row["state"],
                         "occurrenceCount": row["occurrence_count"],
                         "reason": "this occurrence was already recorded in this episode",
-                        "publication": None}
-            if recorded:
-                db.execute(
-                    "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
-                    "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
-                    (identifier, row["cycle"], CLEARED if fact["cleared"] else OCCURRENCE,
-                     fact["occurrenceId"], fact["detail"], now_iso, now),
-                )
-            # Counted forward rather than recounted from the evidence rows. fault-prune
-            # removes evidence an operator no longer needs to read, and a recount would let
-            # that lower the number of occurrences this fault is known to have had. A repeat
-            # under a familiar key adds no occurrence and must not inflate it either.
-            count = row["occurrence_count"] + (1 if recorded else 0)
+                        "publication": adopted}
+            db.execute(
+                "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
+                "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
+                (identifier, row["cycle"], CLEARED if fact["cleared"] else OCCURRENCE,
+                 fact["occurrenceId"], fact["detail"], now_iso, now),
+            )
+            # Active occurrences only: a clear is not something that went wrong.
+            count = row["occurrence_count"] + (0 if fact["cleared"] else 1)
             severity = (fact["severity"]
                         if SEVERITY_RANK[fact["severity"]] > SEVERITY_RANK[row["severity"]]
                         else row["severity"])
             escalated = severity != row["severity"]
-            policy = policy_for(fact["faultClass"], severity)
+            policy = self._policy(db, row["product"], fact["faultClass"], severity)
             suppression = self._suppression(db, identifier, policy, now)
-            opened = db.execute(
-                "SELECT publication_id FROM fault_publications"
-                " WHERE fault_id = ? AND kind = ?", (identifier, OPEN_RECORD)).fetchone()
+            opened = bool(row["external_ref"]) or db.execute(
+                "SELECT 1 FROM fault_publications WHERE fault_id = ? AND kind = ?"
+                " AND state != ?", (identifier, OPEN_RECORD, CANCELLED)).fetchone() is not None
             state, cycle, reopened, trigger_key = _transition(
                 row["state"], row["cycle"], cleared=fact["cleared"],
                 publishable=suppression["publish"], escalated=escalated, severity=severity,
-                published=bool(row["external_ref"]) or opened is not None,
+                landed=_landed(db, identifier), opened=opened,
             )
             db.execute(
                 "UPDATE fault_ledger SET state = ?, cycle = ?, severity = ?, episode = ?,"
                 "  occurrence_count = ?, reopen_count = reopen_count + ?, detail = ?,"
                 "  suppression = ?, last_seen_at = ?, cleared_at = ?, resolved_at = ?,"
-                "  updated_at = ?, scope = ?, scope_key = ?"
-                " WHERE fault_id = ?",
-                # An episode opens when a fault actually CLOSES, not whenever a clearing
-                # reading arrives. A published fault is not closed by its cause going quiet,
-                # so bumping on the reading alone handed the next identical reading a fresh
-                # identity and counted one recovery over and over.
-                (state, cycle, severity,
-                 episode + (1 if state == WITHDRAWN else 0), count,
-                 1 if reopened else 0,
-                 fact["detail"] or row["detail"],
+                "  updated_at = ? WHERE fault_id = ?",
+                (state, cycle, severity, episode + (1 if state == WITHDRAWN else 0), count,
+                 1 if reopened else 0, fact["detail"] or row["detail"],
                  json.dumps(suppression, ensure_ascii=False, sort_keys=True), now_iso,
-                 # Reset by a real occurrence, so a fault that recovers, happens again and
-                 # recovers again is cleared once per episode rather than once ever.
                  now_iso if fact["cleared"] else None,
-                 None if state != RESOLVED else row["resolved_at"], now_iso,
-                 json.dumps(fact["scope"], ensure_ascii=False, sort_keys=True),
-                 fact["scopeKey"], identifier),
+                 None if state != RESOLVED else row["resolved_at"], now_iso, identifier),
             )
-            if fact["scopeKey"] != row["scope_key"]:
-                self._move(db, identifier, fact, now_iso)
-            publication = None
+            if state == WITHDRAWN:
+                # Invariant 5: nothing landed, so nothing is owed. Its unissued writes go too.
+                for pending in db.execute(
+                        "SELECT * FROM fault_publications WHERE fault_id = ?"
+                        " AND state IN (?,?,?)",
+                        (identifier, PENDING, FAILED, CLAIMED)).fetchall():
+                    self._cancel(db, pending, "the fault was withdrawn before anything landed",
+                                 now_iso)
+            publication = adopted
             if trigger_key is not None:
                 publication = self._enqueue(db, identifier, trigger_key, now_iso,
                                             clears=policy["clears"])
+                reason = trigger_key.split(":")[0]
+                if reason == TRIGGER_REOPEN:
+                    self._queue_update(db, identifier, "reopen", None, now_iso)
+                if reason in (TRIGGER_OPEN, TRIGGER_REOPEN) and severity == BROKEN:
+                    self._notify(db, identifier, BLOCKING, cycle, now_iso)
             fresh = db.execute(
                 "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
         return {"faultId": identifier, "recorded": True, "state": fresh["state"],
@@ -867,39 +1212,163 @@ class FaultLedger:
                 "occurrenceCount": count, "suppression": suppression,
                 "publication": publication}
 
-    def _move(self, db, identifier, fact, now) -> None:
-        """Re-point this fault's unsent writes at the scope it now belongs to.
+    # ------------------------------------------------------------------ adoption
 
-        An uncertain write is deliberately left where it is: it may already have landed at the
-        old target, and re-pointing the row that is supposed to be reconciled against that
-        target would lose the only place somebody could go and look.
+    def adopt(self, identifier, *, external_ref, scope) -> dict:
+        """Adopt an existing issue for a recorded fault. See record(adopt=) for a first record."""
+        adoption = _read_adoption({"externalRef": external_ref, "scope": scope})
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._fault(db, identifier)
+            publication = self._adopt(db, row, adoption, now)
+            fresh = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                               (row["fault_id"],)).fetchone()
+            stored = db.execute("SELECT state FROM fault_adoptions WHERE fault_id = ?",
+                                (row["fault_id"],)).fetchone()
+            cancelled = [entry["publication_id"] for entry in db.execute(
+                "SELECT publication_id FROM fault_publications WHERE fault_id = ? AND kind = ?"
+                " AND state = ?", (row["fault_id"], OPEN_RECORD, CANCELLED))]
+        return {"faultId": row["fault_id"], "externalRef": fresh["external_ref"] or external_ref,
+                "state": stored["state"] if stored else None, "cancelled": cancelled,
+                "publication": publication}
+
+    def _adopt(self, db, row, adoption, now):
+        """Invariant 1 applied to an existing issue: the fault owns it, or nothing changes."""
+        ref, scope = adoption["externalRef"], adoption["scope"]
+        if row["external_ref"]:
+            if row["external_ref"] != ref:
+                raise FaultRefused(RefusalReason.FAULT_ADOPT_CONFLICT,
+                                   f"this fault already owns {row['external_ref']!r}")
+            return None
+        stored = db.execute("SELECT * FROM fault_adoptions WHERE fault_id = ?",
+                            (row["fault_id"],)).fetchone()
+        if stored is not None and stored["external_ref"] != ref:
+            raise FaultRefused(RefusalReason.FAULT_ADOPT_CONFLICT,
+                               f"this fault already adopts {stored['external_ref']!r}")
+        create = db.execute("SELECT * FROM fault_publications WHERE fault_id = ? AND kind = ?",
+                            (row["fault_id"], OPEN_RECORD)).fetchone()
+        if create is not None and create["state"] in (ISSUED, UNCERTAIN, CONFIRMED):
+            raise FaultRefused(
+                RefusalReason.FAULT_ADOPT_CONFLICT,
+                f"this fault's create is {create['state']}; reconcile it first, or two records"
+                f" would stand for one fault")
+        self._move(db, row, scope, now)
+        if create is not None and create["state"] in (PENDING, FAILED, CLAIMED):
+            self._cancel(db, create, f"adopted {ref}", now)
+        db.execute(
+            "INSERT INTO fault_adoptions (fault_id, external_ref, scope, state, created_at,"
+            "  updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(fault_id) DO NOTHING",
+            (row["fault_id"], ref, json.dumps(scope, ensure_ascii=False, sort_keys=True),
+             PENDING, now, now))
+        opened = row["state"] == OPEN or create is not None
+        if not opened:
+            return None
+        return self._materialize(db, row["fault_id"], now)
+
+    def _materialize(self, db, identifier, now):
+        adoption = db.execute(
+            "SELECT * FROM fault_adoptions WHERE fault_id = ? AND state = ?",
+            (identifier, PENDING)).fetchone()
+        if adoption is None:
+            return None
+        db.execute("UPDATE fault_ledger SET external_ref = ?, updated_at = ?"
+                   " WHERE fault_id = ? AND external_ref IS NULL",
+                   (adoption["external_ref"], now, identifier))
+        db.execute("UPDATE fault_adoptions SET state = 'materialized', updated_at = ?"
+                   " WHERE fault_id = ?", (now, identifier))
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        publication = self._insert_publication(db, fault, APPEND_COMMENT, TRIGGER_OPEN, now)
+        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
+        if target and target["projectRef"]:
+            # Whether the adopted issue sits in this scope's project is read back like any
+            # other write, never assumed.
+            self._relink(db, identifier, target["projectRef"], now)
+        return publication
+
+    # ------------------------------------------------------------------ policy (B12)
+
+    def _policy(self, db, product, fault_class, severity) -> dict:
+        policy = policy_for(fault_class, severity)
+        override = db.execute(
+            "SELECT threshold, window_seconds, reason, updated_at FROM fault_policies"
+            " WHERE product = ? AND fault_class = ? AND severity = ?",
+            (product, fault_class, severity)).fetchone()
+        policy["source"] = "built-in"
+        if override is not None:
+            if override["threshold"] is not None:
+                policy["threshold"] = override["threshold"]
+                policy["publish"] = True
+            if override["window_seconds"] is not None:
+                policy["window"] = override["window_seconds"]
+            policy["source"] = "override"
+            policy["overrideReason"] = override["reason"]
+        return policy
+
+    def set_policy(self, product, fault_class, severity, *, threshold=None, window=None,
+                   reason) -> dict:
+        """Adjust how many degraded observations file a fault, and inside what window.
+
+        Prospective: it decides the next occurrence recorded. A broken fault files at once and
+        a notice never files; changing either is refused, because both are the canonical rule.
         """
-        moved = db.execute("SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
-                           (fact["scopeKey"],)).fetchone()
-        db.execute(
-            "UPDATE fault_ledger SET scope = ?, scope_key = ?, updated_at = ?"
-            " WHERE fault_id = ?",
-            (json.dumps(fact["scope"], ensure_ascii=False, sort_keys=True), fact["scopeKey"],
-             now, identifier))
-        db.execute(
-            "UPDATE fault_publications SET tracker_ref = ?, updated_at = ?"
-            " WHERE fault_id = ? AND state IN (?,?)",
-            (moved["tracker_ref"] if moved else None, now, identifier, PENDING, FAILED))
+        _check_product(product)
+        policy_for(fault_class, severity)
+        if severity != DEGRADED:
+            raise FaultRefused(
+                RefusalReason.FAULT_POLICY_FIXED,
+                f"a {severity} fault's policy is fixed: a broken fault files at once and a notice"
+                f" never files")
+        if threshold is not None:
+            threshold = _bounded(threshold, "threshold", MAX_POLICY_THRESHOLD)
+        if window is not None:
+            if isinstance(window, bool) or not isinstance(window, (int, float)) or not (
+                    MIN_POLICY_WINDOW <= window <= MAX_POLICY_WINDOW):
+                raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                                   f"window is {MIN_POLICY_WINDOW:.0f}..{MAX_POLICY_WINDOW:.0f}s")
+            window = float(window)
+        if not _named(reason):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a policy change says why")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            previous = db.execute(
+                "SELECT threshold, window_seconds, reason FROM fault_policies WHERE product = ?"
+                " AND fault_class = ? AND severity = ?",
+                (product, fault_class, severity)).fetchone()
+            db.execute(
+                "INSERT INTO fault_policies (product, fault_class, severity, threshold,"
+                "  window_seconds, reason, updated_at) VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(product, fault_class, severity) DO UPDATE SET"
+                "   threshold = excluded.threshold, window_seconds = excluded.window_seconds,"
+                "   reason = excluded.reason, updated_at = excluded.updated_at",
+                (product, fault_class, severity, threshold, window, reason, now))
+            self.store.journal("fault_policy_set", f"{product}:{fault_class}:{severity}", {
+                "threshold": threshold, "window": window, "reason": reason,
+                "previous": dict(previous) if previous else None}, at=now)
+        return {"product": product, "faultClass": fault_class, "severity": severity,
+                "threshold": threshold, "window": window, "reason": reason,
+                "previous": dict(previous) if previous else None}
+
+    def policies(self, product) -> list:
+        _check_product(product)
+        with self.store.transaction() as db:
+            return [
+                {"product": product, "faultClass": name, "severity": severity,
+                 **{key: value for key, value in self._policy(db, product, name, severity).items()
+                    if key in ("threshold", "window", "publish", "source", "overrideReason",
+                               "clears")}}
+                for name in sorted(CLASS_POLICY) for severity in SEVERITIES]
 
     def _suppression(self, db, identifier, policy, now) -> dict:
-        """Whether this fault has earned a Linear record, counted inside the window.
-
-        The window is measured on the injected clock, which is the clock the delivery backoff
-        already schedules from. The ORDER of events is a separate question and is never asked
-        of a clock.
-        """
-        if policy["threshold"] is None:
+        """Whether this fault has earned a Linear record, counted inside the window."""
+        source = ("" if policy.get("source") != "override" else
+                  f" (product override: {policy.get('overrideReason')})")
+        if not policy["publish"] or policy["threshold"] is None:
             return {"publish": False, "threshold": None, "window": policy["window"],
                     "counted": None,
                     "reason": f"a {policy['severity']} is recorded for an operator and never"
-                              f" filed"}
-        # From the timeline, which is never pruned, so removing evidence an operator has
-        # finished reading cannot change what the next observation decides.
+                              f" filed{source}"}
         counted = db.execute(
             "SELECT COUNT(*) AS n FROM fault_timeline"
             " WHERE fault_id = ? AND kind = ? AND recorded_ts >= ?",
@@ -909,20 +1378,16 @@ class FaultLedger:
         return {
             "publish": publish, "threshold": policy["threshold"], "window": policy["window"],
             "counted": counted,
-            "reason": (f"{counted} observation(s) inside {int(policy['window'])}s reached the"
-                       f" threshold of {policy['threshold']}") if publish else
-                      (f"{counted} observation(s) inside {int(policy['window'])}s is under the"
-                       f" threshold of {policy['threshold']}"),
+            "reason": ((f"{counted} observation(s) inside {int(policy['window'])}s reached the"
+                        f" threshold of {policy['threshold']}") if publish else
+                       (f"{counted} observation(s) inside {int(policy['window'])}s is under the"
+                        f" threshold of {policy['threshold']}")) + source,
         }
 
     # ------------------------------------------------------------------ remediation
 
     def record_fix(self, identifier, *, ref, detail="") -> dict:
-        """Attach the change that is supposed to have fixed this. It resolves nothing.
-
-        Deliberately separate from resolve(): a fix is a claim about a change, and whether the
-        change worked is a different observation that has not been made yet.
-        """
+        """Attach the change that is supposed to have fixed this. It resolves nothing."""
         if not _named(ref):
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
                                "a fix names the change it is - a pull request, a commit")
@@ -931,11 +1396,7 @@ class FaultLedger:
                                trigger=TRIGGER_FIX)
 
     def record_reverification(self, identifier, *, method, ref, outcome, detail="") -> dict:
-        """State that the fault was looked for after the fix and what was found.
-
-        Structured rather than a sentence, because resolve() has to be able to tell a check
-        that ran from a claim that one did.
-        """
+        """State that the fault was looked for after the fix and what was found."""
         if method not in METHODS:
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
                                f"method {method!r} is not one of {METHODS}")
@@ -952,31 +1413,79 @@ class FaultLedger:
                                outcome=outcome, detail=detail, allowed=(FIX_PENDING,),
                                next_state=FIX_PENDING, trigger=None)
 
+    def record_stage(self, identifier, *, stage, ref, detail="") -> dict:
+        """Record acceptance, assignment, merge or installation as its own state.
+
+        Recording one runs, merges and installs nothing: it is what somebody else reports having
+        done. Accepted and assigned need an issue the fault owns; merged and installed need a fix
+        in this cycle, because a merge of nothing is not a step toward resolution.
+        """
+        if stage not in STAGES:
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"stage {stage!r} is not one of {STAGES}")
+        if not _named(ref):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a stage names what it refers to")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._fault(db, identifier)
+            if row["state"] in (RESOLVED, WITHDRAWN):
+                raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                   f"this fault is {row['state']}")
+            if stage in ("accepted", "assigned") and not row["external_ref"]:
+                raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                   f"{stage} is recorded against an issue the fault owns, and"
+                                   f" it owns none yet")
+            if stage in ("merged", INSTALLED) and db.execute(
+                    "SELECT 1 FROM fault_timeline WHERE fault_id = ? AND cycle = ? AND kind = ?",
+                    (row["fault_id"], row["cycle"], FIX)).fetchone() is None:
+                raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                   f"{stage} follows a fix, and none is recorded this cycle")
+            remediation_id = sha256_hex(
+                f"{row['fault_id']}|{row['cycle']}|{stage}|{ref}")[:ID_WIDTH]
+            recorded = db.execute(
+                "INSERT OR IGNORE INTO fault_remediations (remediation_id, fault_id, cycle,"
+                "  kind, ref, method, outcome, detail, recorded_at)"
+                " VALUES (?,?,?,?,?,NULL,NULL,?,?)",
+                (remediation_id, row["fault_id"], row["cycle"], stage, ref, detail, now),
+            ).rowcount == 1
+            if recorded:
+                db.execute(
+                    "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
+                    "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
+                    (row["fault_id"], row["cycle"], stage, remediation_id, ref, now,
+                     self.clock.now()))
+        return {"faultId": row["fault_id"], "stage": stage, "ref": ref, "recorded": recorded,
+                "remediationId": remediation_id}
+
+    def progress(self, identifier) -> dict:
+        """The newest of each stage recorded this cycle."""
+        with self.store.transaction() as db:
+            row = self._fault(db, identifier)
+            answer = {}
+            for stage in STAGES:
+                found = db.execute(
+                    "SELECT r.ref, r.recorded_at FROM fault_timeline t"
+                    "  JOIN fault_remediations r ON r.remediation_id = t.ref_id"
+                    " WHERE t.fault_id = ? AND t.cycle = ? AND t.kind = ?"
+                    " ORDER BY t.seq DESC LIMIT 1", (row["fault_id"], row["cycle"], stage)
+                ).fetchone()
+                if found is not None:
+                    answer[stage] = {"ref": found["ref"], "recordedAt": found["recorded_at"]}
+        return answer
+
     def _remediate(self, identifier, *, kind, ref, allowed, next_state, trigger, method=None,
                    outcome=None, detail="") -> dict:
         now = self.clock.iso()
         with self.store.transaction() as db:
-            row = self._row(identifier, db)
+            row = self._fault(db, identifier)
+            identifier = row["fault_id"]
             if row["state"] not in allowed:
                 raise FaultRefused(
                     RefusalReason.FAULT_STATE_CONFLICT,
                     f"a {kind} is recorded on a fault that is {allowed}, and this one is"
                     f" {row['state']}",
                 )
-            # The fix this remediation FOLLOWS is part of its identity. Without it, running
-            # the same command again after a second fix produced the first run's id,
-            # INSERT OR IGNORE dropped it, and resolve() then refused forever against a
-            # verification that predated the fix it was supposed to verify. Recording the
-            # identical check twice with no fix in between still converges, which is the
-            # idempotence worth keeping.
-            # Only a REVERIFICATION's meaning depends on what it follows. A fix's own identity
-            # must not, or recording the same fix twice would write two rows.
-            #
-            # It follows the newest REMEDIATION, not merely the newest fix. Keyed on the fix
-            # alone, failed -> passed -> failed produced the first failure's id for the last
-            # one, INSERT OR IGNORE dropped it, and resolve() then accepted a pass that a
-            # later run had already contradicted. Repeating one check with nothing in between
-            # still converges, by the identical-predecessor test below.
             after = None
             if kind == REVERIFICATION:
                 latest = db.execute(
@@ -989,7 +1498,6 @@ class FaultLedger:
                 if latest is not None:
                     if (latest["kind"] == REVERIFICATION and latest["ref"] == ref
                             and latest["method"] == method and latest["outcome"] == outcome):
-                        # The same check, run again with nothing in between. One execution.
                         return {"faultId": identifier, "recorded": False,
                                 "remediationId": latest_id(db, latest["seq"]),
                                 "state": row["state"],
@@ -1011,13 +1519,10 @@ class FaultLedger:
             db.execute(
                 "INSERT INTO fault_timeline (fault_id, cycle, kind, ref_id, detail,"
                 "  recorded_at, recorded_ts) VALUES (?,?,?,?,?,?,?)",
-                (identifier, row["cycle"], kind, remediation_id, ref, now,
-                 self.clock.now()),
+                (identifier, row["cycle"], kind, remediation_id, ref, now, self.clock.now()),
             )
-            db.execute(
-                "UPDATE fault_ledger SET state = ?, updated_at = ? WHERE fault_id = ?",
-                (next_state, now, identifier),
-            )
+            db.execute("UPDATE fault_ledger SET state = ?, updated_at = ? WHERE fault_id = ?",
+                       (next_state, now, identifier))
             publication = None
             if trigger is not None:
                 remediation = {"kind": kind, "ref": ref, "method": method, "outcome": outcome,
@@ -1030,15 +1535,11 @@ class FaultLedger:
                 "state": next_state, "publication": publication}
 
     def resolve(self, identifier) -> dict:
-        """Close the loop, or refuse and say which half is missing.
-
-        Three refusals, because a caller's next action differs for each: there is no fix, the
-        only verification predates the fix it claims to verify, or the fault happened again
-        after that verification and is therefore not fixed whatever the check said.
-        """
+        """Close the loop, or refuse and say which half is missing."""
         now = self.clock.iso()
         with self.store.transaction() as db:
-            row = self._row(identifier, db)
+            row = self._fault(db, identifier)
+            identifier = row["fault_id"]
             if row["state"] == RESOLVED:
                 return {"faultId": identifier, "state": RESOLVED, "resolved": False,
                         "reason": "already resolved"}
@@ -1061,10 +1562,17 @@ class FaultLedger:
                 "SELECT MAX(seq) AS seq FROM fault_timeline"
                 " WHERE fault_id = ? AND cycle = ? AND kind = ? AND seq > ?",
                 (identifier, cycle, REVERIFICATION, fix)).fetchone()["seq"]
+            installed = db.execute(
+                "SELECT MAX(seq) AS seq FROM fault_timeline"
+                " WHERE fault_id = ? AND cycle = ? AND kind = ? AND seq > ?",
+                (identifier, cycle, INSTALLED, fix)).fetchone()["seq"]
+            if installed is not None and (verification is None or verification < installed):
+                raise FaultRefused(
+                    RefusalReason.FAULT_VERIFICATION_STALE,
+                    "the fix was installed after the newest reverification; a check of the"
+                    " code before its installation proves nothing about what is running",
+                )
             if verification is not None:
-                # The NEWEST one answers, and it has to have found the fault gone. A later
-                # check that reported it still happening is the most recent thing anybody
-                # knows, and resolving over it would be the false report this refuses.
                 found = db.execute(
                     "SELECT r.outcome AS outcome FROM fault_timeline t"
                     "  JOIN fault_remediations r ON r.remediation_id = t.ref_id"
@@ -1102,34 +1610,22 @@ class FaultLedger:
                     "the fault was observed again after that reverification, so it is not"
                     " fixed whatever the check reported",
                 )
-            # Resolving closes the episode as surely as a clear does. The next observation of
-            # the same underlying fact arrives under the key it always had, and without a new
-            # episode it would be recognised as one already recorded - leaving the fault
-            # resolved while its cause was back.
             db.execute(
                 "UPDATE fault_ledger SET state = ?, resolved_at = ?, updated_at = ?,"
                 "  episode = episode + 1 WHERE fault_id = ?",
                 (RESOLVED, now, now, identifier))
             publication = self._enqueue(db, identifier, f"{TRIGGER_RESOLVE}:{cycle}", now)
+            self._notify(db, identifier, RESOLVED_NOTICE, cycle, now)
         return {"faultId": identifier, "state": RESOLVED, "resolved": True, "cycle": cycle,
                 "publication": publication}
 
     def prune(self, identifier, *, keep) -> dict:
-        """Drop the middle of a fault's occurrence history, as an explicit operator act.
-
-        Not automatic and not silent. A store that discards its own evidence on a schedule is
-        worse than a large one, so this records in the journal how many rows it removed and
-        keeps the newest, which are the ones an operator is reading.
-
-        Pruning cannot resurrect an occurrence. Whether one has been seen is asked of the
-        timeline, which this never touches, so a pruned occurrence that is still visible in
-        its source is recognised on the next sweep rather than counted again.
-        """
-        if keep < 1:
+        """Drop the middle of a fault's occurrence history, as an explicit operator act."""
+        if isinstance(keep, bool) or not isinstance(keep, int) or keep < 1:
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "keep at least one")
         now = self.clock.iso()
         with self.store.transaction() as db:
-            self._row(identifier, db)
+            identifier = self._fault(db, identifier)["fault_id"]
             removed = db.execute(
                 "DELETE FROM fault_occurrences WHERE fault_id = ? AND rowid NOT IN"
                 "  (SELECT rowid FROM fault_occurrences WHERE fault_id = ?"
@@ -1141,242 +1637,740 @@ class FaultLedger:
                 "limits": "the ledger's occurrence_count still counts what was observed;"
                           " these rows are the evidence, not the count"}
 
-    # ------------------------------------------------------------------ publication
+    # ------------------------------------------------------------------ queuing
 
     def _enqueue(self, db, identifier, trigger_key, now, *, remediation=None, clears="") -> dict:
-        """Queue at most one write for this reason, inside the caller's transaction.
+        """The ledger's own writes: the opening one, and comments after it.
 
-        The kind is decided by whether this fault already owns an issue. The first publication
-        creates it; every later one is a comment on it, which is what keeps one fault to one
-        issue for its whole life.
+        Invariant 1 decides the opening one. A pending adoption materializes as a comment on
+        the adopted issue; a fault that owns an issue comments on it; otherwise the one
+        open_record row this fault may ever have is queued, or revived if a clear cancelled it.
         """
-        row = db.execute(
-            "SELECT * FROM fault_ledger WHERE fault_id = ?", (identifier,)).fetchone()
-        # At most ONE create per fault for its whole life. Choosing the kind from external_ref
-        # alone was not enough: between queuing the create and confirming it, the ledger has
-        # no reference yet, so a fix or a resolve arriving in that window queued a SECOND
-        # create under its own trigger and the fault would have owned two issues.
-        opened = db.execute(
-            "SELECT publication_id FROM fault_publications WHERE fault_id = ? AND kind = ?",
-            (identifier, OPEN_RECORD)).fetchone()
-        if trigger_key != TRIGGER_OPEN and not row["external_ref"] and opened is None:
-            # This fault has never earned a Linear record: the threshold never let it open
-            # one. Recording a fix or a resolution against it is useful locally and must not
-            # be the thing that files the issue suppression already refused - a notice would
-            # otherwise reach Linear through the back door.
+        row = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                         (identifier,)).fetchone()
+        reason = trigger_key.split(":")[0]
+        create = db.execute("SELECT * FROM fault_publications WHERE fault_id = ? AND kind = ?",
+                            (identifier, OPEN_RECORD)).fetchone()
+        if reason == TRIGGER_OPEN:
+            adopted = self._materialize(db, identifier, now)
+            if adopted is not None:
+                return adopted
+            if row["external_ref"]:
+                return self._insert_publication(db, row, APPEND_COMMENT, trigger_key, now,
+                                                remediation=remediation, clears=clears)
+            if create is not None and create["state"] != CANCELLED:
+                return {"publicationId": create["publication_id"], "kind": OPEN_RECORD,
+                        "trigger": trigger_key, "queued": False, "awaitingTarget": False,
+                        "awaitingRecord": False, "reason": "the create is already queued"}
+            return self._insert_publication(db, row, OPEN_RECORD, TRIGGER_OPEN, now,
+                                            remediation=remediation, clears=clears)
+        if not row["external_ref"] and (create is None or create["state"] == CANCELLED):
             return {"publicationId": None, "kind": None, "trigger": trigger_key,
-                    "queued": False, "awaitingTarget": target_missing(db, row),
-                    "awaitingRecord": False,
+                    "queued": False, "awaitingTarget": False, "awaitingRecord": False,
                     "reason": "this fault has never been published, so nothing is written for"
                               " it; suppression decides that, not a remediation"}
-        kind = OPEN_RECORD if (not row["external_ref"] and opened is None) else APPEND_COMMENT
+        return self._insert_publication(db, row, APPEND_COMMENT, trigger_key, now,
+                                        remediation=remediation, clears=clears)
+
+    def _insert_publication(self, db, fault, kind, trigger_key, now, *, payload=None,
+                            remediation=None, clears="") -> dict:
+        spec = KINDS[kind]
+        identifier = fault["fault_id"]
         publication = publication_id(identifier, kind, trigger_key)
-        target = db.execute(
-            "SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
-            (row["scope_key"],)).fetchone()
+        target, why = (self._owned_target(db, fault["product"], fault["scope_key"])
+                       if spec["target"] else (None, None))
+        team = target["team"] if target else None
+        project = target["projectRef"] if (target and spec["target"] == "team+project") else None
         occurrences = [_occurrence(entry) for entry in db.execute(
             "SELECT * FROM fault_occurrences WHERE fault_id = ? ORDER BY rowid DESC LIMIT ?",
             (identifier, RENDERED_OCCURRENCES)).fetchall()]
-        summary = render_summary(row, trigger_key=trigger_key, occurrences=occurrences,
+        summary = render_summary(fault, trigger_key=trigger_key, occurrences=occurrences,
                                  remediation=remediation, clears=clears,
                                  publication=publication)
-        queued = db.execute(
-            "INSERT OR IGNORE INTO fault_publications (publication_id, fault_id, kind,"
-            "  trigger_key, cycle, tracker_ref, external_ref, summary, identity_digest,"
-            "  state, attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)",
-            (publication, identifier, kind, trigger_key, row["cycle"],
-             target["tracker_ref"] if target else None, row["external_ref"], summary,
-             identity_digest(identifier, kind, trigger_key, row["cycle"]), PENDING, now, now),
-        ).rowcount == 1
+        existing = db.execute("SELECT state FROM fault_publications WHERE publication_id = ?",
+                              (publication,)).fetchone()
+        digest = identity_digest(identifier, kind, trigger_key, fault["cycle"])
+        if existing is None:
+            db.execute(
+                "INSERT INTO fault_publications (publication_id, fault_id, kind, trigger_key,"
+                "  cycle, tracker_ref, external_ref, summary, identity_digest, state, attempts,"
+                "  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)",
+                (publication, identifier, kind, trigger_key, fault["cycle"], team,
+                 fault["external_ref"], summary, digest, PENDING, now, now))
+            queued, detail = True, "queued"
+        elif existing["state"] == CANCELLED:
+            # Revived under the same id: a write that was cancelled before anything reached the
+            # connector is offered again, and the fault still has one row for it, ever.
+            db.execute(
+                "UPDATE fault_publications SET state = ?, cycle = ?, tracker_ref = ?,"
+                "  external_ref = ?, summary = ?, identity_digest = ?, attempts = 0,"
+                "  next_attempt_at = NULL, claim_token = NULL, lease_owner = NULL,"
+                "  lease_until = NULL, issued_at = NULL, last_error = NULL, updated_at = ?"
+                " WHERE publication_id = ?",
+                (PENDING, fault["cycle"], team, fault["external_ref"], summary, digest, now,
+                 publication))
+            queued, detail = True, "revived"
+        else:
+            queued, detail = False, "this reason was already queued"
+        if queued:
+            _payload_set(db, publication, now, project_ref=project,
+                         payload=payload if payload is not None else _UNCHANGED)
         return {
             "publicationId": publication, "kind": kind, "trigger": trigger_key,
             "queued": queued,
-            "awaitingTarget": target is None,
-            "awaitingRecord": kind == APPEND_COMMENT and not row["external_ref"],
-            "reason": ("queued" if queued else "this reason was already queued") + (
-                "" if target is not None else
-                f"; no tracker is configured for {row['scope_key']}, so it waits rather than"
-                f" being filed somewhere guessed"),
+            "awaitingTarget": bool(spec["target"]) and target is None,
+            "awaitingRecord": spec["requires_issue"] and not fault["external_ref"],
+            "reason": detail + ("" if not (spec["target"] and target is None) else
+                                f"; no target owned by {fault['product']} for"
+                                f" {fault['scope_key']} ({why}), so it waits rather than being"
+                                f" filed somewhere guessed"),
         }
 
+    def queue(self, identifier, *, kind, trigger, payload=None) -> dict:
+        """Queue any registered kind, on any recorded fault. The issue create is not among them.
+
+        An explicit caller act, so the rule that a remediation on a never-opened fault queues
+        nothing does not apply. Only suppression opens a fault's issue (invariant 1).
+        """
+        spec = _kind(kind)
+        if kind == OPEN_RECORD:
+            raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                               "only suppression opens a fault's issue; queue() never creates one")
+        if not _named(trigger) or "|" in trigger:
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a trigger is a non-blank string without '|'")
+        problems = spec["validate"](payload) if spec["validate"] else []
+        if problems:
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "; ".join(problems))
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            fault = self._fault(db, identifier)
+            trigger_key = "create" if spec["creates"] else trigger
+            if spec["creates"]:
+                live = db.execute(
+                    "SELECT publication_id FROM fault_publications WHERE fault_id = ?"
+                    " AND kind = ? AND state != ?", (fault["fault_id"], kind, CANCELLED)).fetchone()
+                if live is not None:
+                    return {"publicationId": live["publication_id"], "kind": kind,
+                            "trigger": trigger_key, "queued": False,
+                            "reason": f"one {kind} per fault; this one is already queued"}
+            return self._insert_publication(db, fault, kind, trigger_key, now, payload=payload)
+
+    def request_update(self, identifier, *, op, value) -> dict:
+        """One idempotent update on the issue this fault owns."""
+        problems = _validate_update({"op": op, "value": value})
+        if problems:
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "; ".join(problems))
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            fault = self._fault(db, identifier)
+            if op == "set_project":
+                return self._relink(db, fault["fault_id"], value, now, force=True)
+            return self._queue_update(db, fault["fault_id"], op, value, now)
+
+    def _queue_update(self, db, identifier, op, value, now, *, trigger_key=None):
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        if not fault["external_ref"]:
+            return None
+        if trigger_key is None:
+            trigger_key = f"update:{op}:{evidence_digest(value)[:12]}:{fault['cycle']}"
+        return self._insert_publication(db, fault, UPDATE_RECORD, trigger_key, now,
+                                        payload={"op": op, "value": value})
+
+    def _relink(self, db, identifier, project_ref, now, *, force=False):
+        """Invariant 11: queue the write that puts the owned issue in project_ref.
+
+        Each relink increments the link's revision, which is part of the write's identity, and
+        cancels any earlier set_project that has not been issued. One already read back in that
+        project needs nothing.
+        """
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        if not fault["external_ref"] or not project_ref:
+            return None
+        link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
+                          (identifier,)).fetchone()
+        if link is None:
+            db.execute(
+                "INSERT INTO fault_links (fault_id, external_ref, project_ref,"
+                "  observed_project_ref, state, revision, updated_at) VALUES (?,?,?,?,?,0,?)",
+                (identifier, fault["external_ref"], project_ref, None, UNLINKED, now))
+            link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
+                              (identifier,)).fetchone()
+        if link["observed_project_ref"] == project_ref and not force:
+            db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
+                       " WHERE fault_id = ?", (project_ref, LINKED, now, identifier))
+            return None
+        if link["project_ref"] == project_ref and link["state"] == UNLINKED and not force:
+            live = db.execute(
+                "SELECT p.publication_id FROM fault_publications p"
+                "  JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+                " WHERE p.fault_id = ? AND p.kind = ? AND p.state NOT IN (?,?)"
+                "   AND p.trigger_key = ?",
+                (identifier, UPDATE_RECORD, CANCELLED, CONFIRMED,
+                 f"update:set_project:{project_ref}:r{link['revision']}")).fetchone()
+            if live is not None:
+                return None
+        for stale in db.execute(
+                "SELECT p.* FROM fault_publications p WHERE p.fault_id = ? AND p.kind = ?"
+                " AND p.trigger_key LIKE 'update:set_project:%' AND p.state IN (?,?,?)",
+                (identifier, UPDATE_RECORD, PENDING, FAILED, CLAIMED)).fetchall():
+            self._cancel(db, stale, "superseded by a later target", now)
+        revision = link["revision"] + 1
+        db.execute(
+            "UPDATE fault_links SET project_ref = ?, state = ?, revision = ?, updated_at = ?"
+            " WHERE fault_id = ?", (project_ref, UNLINKED, revision, now, identifier))
+        return self._queue_update(db, identifier, "set_project", project_ref, now,
+                                  trigger_key=f"update:set_project:{project_ref}:r{revision}")
+
+    def _relink_where(self, db, now, *, scope_key=None, limit=RELINK_PER_CALL):
+        """Relink owned issues whose link is not their product's current target project."""
+        clause = " AND f.scope_key = ?" if scope_key is not None else ""
+        params = (scope_key,) if scope_key is not None else ()
+        query = (
+            "SELECT f.fault_id, p.project_ref FROM fault_ledger f"
+            "  JOIN fault_target_projects p ON p.scope_key = f.scope_key AND p.product = f.product"
+            "  LEFT JOIN fault_links l ON l.fault_id = f.fault_id"
+            " WHERE f.external_ref IS NOT NULL AND p.project_ref IS NOT NULL"
+            "   AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref)" + clause)
+        rows = db.execute(query + " ORDER BY f.rowid LIMIT ?", (*params, limit + 1)).fetchall()
+        done = 0
+        for row in rows[:limit]:
+            self._relink(db, row["fault_id"], row["project_ref"], now)
+            done += 1
+        pending = db.execute("SELECT COUNT(*) AS n FROM (" + query + ")", params).fetchone()["n"]
+        return done, pending
+
+    def relink(self, *, limit=RELINK_PER_CALL) -> dict:
+        """Continue what set_target() left over: at most limit owned issues per call."""
+        limit = _bounded(limit, "limit")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            done, pending = self._relink_where(db, now, limit=limit)
+        return {"relinked": done, "relinkPending": pending}
+
+    # ------------------------------------------------------------------ reads
+
+    def publication(self, publication) -> dict:
+        with self.store.transaction() as db:
+            return self._publication_view(db, self._publication_row(db, publication))
+
+    def publications(self, identifier, *, kind=None, state=None, limit=SHOWN_PER_FAULT,
+                     after=None) -> list:
+        limit = _bounded(limit, "limit")
+        with self.store.transaction() as db:
+            identifier = self._canonical(db, identifier)
+            rows = db.execute(
+                "SELECT * FROM fault_publications WHERE fault_id = ?"
+                " AND (? IS NULL OR kind = ?) AND (? IS NULL OR state = ?) AND rowid > ?"
+                " ORDER BY rowid LIMIT ?",
+                (identifier, kind, kind, state, state, after or 0, limit)).fetchall()
+            return [self._publication_view(db, row) for row in rows]
+
+    def _publication_view(self, db, row) -> dict:
+        record = _publication(row)
+        extra = db.execute("SELECT * FROM fault_publication_payloads WHERE publication_id = ?",
+                           (row["publication_id"],)).fetchone()
+        record["payload"] = (json.loads(extra["payload"]) if extra and extra["payload"]
+                             else None)
+        record["target"] = {"team": row["tracker_ref"],
+                            "projectRef": extra["project_ref"] if extra else None}
+        record["holdReason"] = extra["hold_reason"] if extra else None
+        record["history"] = self._attempts(db, row["publication_id"], 3)
+        return record
+
+    def attempts(self, publication, *, limit=SHOWN_PER_FAULT) -> list:
+        limit = _bounded(limit, "limit")
+        with self.store.transaction() as db:
+            return self._attempts(db, publication, limit)
+
+    def _attempts(self, db, publication, limit):
+        rows = db.execute(
+            "SELECT attempt, owner, takeover, claimed_at, issued_at, outcome, error, ended,"
+            "  ended_at FROM fault_publication_attempts WHERE publication_id = ?"
+            " ORDER BY attempt_id DESC LIMIT ?", (publication, limit)).fetchall()
+        return [dict(entry) for entry in reversed(rows)]
+
+    # ------------------------------------------------------------------ budgets (B7)
+
+    def _budget(self, db, product, kind, moment) -> dict:
+        row = db.execute("SELECT max_count, window_seconds FROM fault_limits"
+                         " WHERE product = ? AND kind = ?", (product, kind)).fetchone()
+        if row is not None:
+            limit, window, source = row["max_count"], row["window_seconds"], "override"
+        else:
+            limit, window = DEFAULT_LIMITS.get(kind, DEFAULT_KIND_LIMIT)
+            source = "default"
+        used = db.execute(
+            "SELECT COUNT(*) AS n FROM fault_budget_uses WHERE product = ? AND kind = ?"
+            " AND used_ts > ?", (product, kind, moment - window)).fetchone()["n"]
+        return {"product": product, "kind": kind, "limit": limit, "window": window,
+                "used": used, "remaining": max(0, limit - used), "source": source}
+
+    def _consume(self, db, product, kind, ref, moment, stamp) -> dict:
+        already = db.execute("SELECT 1 FROM fault_budget_uses WHERE product = ? AND kind = ?"
+                             " AND ref = ?", (product, kind, ref)).fetchone()
+        budget = self._budget(db, product, kind, moment)
+        if already is not None:
+            return {"consumed": True, "remaining": budget["remaining"],
+                    "reason": "this ref was already consumed"}
+        if budget["remaining"] <= 0:
+            return {"consumed": False, "remaining": 0, "reason": "budget_spent"}
+        db.execute("INSERT INTO fault_budget_uses (product, kind, ref, used_at, used_ts)"
+                   " VALUES (?,?,?,?,?)", (product, kind, ref, stamp, moment))
+        return {"consumed": True, "remaining": budget["remaining"] - 1, "reason": "consumed"}
+
+    def budget(self, product, kind, *, now=None) -> dict:
+        _check_product(product)
+        moment = self.clock.now() if now is None else now
+        with self.store.transaction() as db:
+            return self._budget(db, product, kind, moment)
+
+    def consume(self, product, kind, *, ref, now=None) -> dict:
+        """Check and consume one unit of a product's budget. One ref is consumed once."""
+        _check_product(product)
+        if not _named(kind) or not _named(ref):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a budget use names its kind and ref")
+        moment = self.clock.now() if now is None else now
+        with self.store.transaction() as db:
+            return self._consume(db, product, kind, ref, moment, self.clock.iso())
+
+    def set_limit(self, product, kind, *, max_count, window) -> dict:
+        _check_product(product)
+        if not _named(kind):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "kind is a name")
+        max_count = _bounded(max_count, "max_count", MAX_BUDGET)
+        if isinstance(window, bool) or not isinstance(window, (int, float)) or not (
+                MIN_POLICY_WINDOW <= window <= MAX_POLICY_WINDOW):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"window is {MIN_POLICY_WINDOW:.0f}..{MAX_POLICY_WINDOW:.0f}s")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO fault_limits (product, kind, max_count, window_seconds, updated_at)"
+                " VALUES (?,?,?,?,?) ON CONFLICT(product, kind) DO UPDATE SET"
+                "   max_count = excluded.max_count, window_seconds = excluded.window_seconds,"
+                "   updated_at = excluded.updated_at",
+                (product, kind, max_count, float(window), now))
+            self.store.journal("fault_limit_set", f"{product}:{kind}",
+                               {"maxCount": max_count, "window": window}, at=now)
+        return {"product": product, "kind": kind, "maxCount": max_count, "window": float(window)}
+
+    def limits(self, product) -> list:
+        _check_product(product)
+        moment = self.clock.now()
+        kinds = sorted(set(KINDS) | {NOTIFICATION})
+        with self.store.transaction() as db:
+            return [self._budget(db, product, kind, moment) for kind in kinds]
+
+    # ------------------------------------------------------------------ selection (7a)
+
+    def _selectable(self):
+        creates = [name for name, spec in KINDS.items()]
+        issue = [name for name, spec in KINDS.items() if spec["requires_issue"]]
+        targeted = [name for name, spec in KINDS.items() if spec["target"]]
+        projected = [name for name, spec in KINDS.items() if spec["target"] == "team+project"]
+        return creates, issue, targeted, projected
+
+    def _spent(self, db, moment) -> dict:
+        pairs = db.execute(
+            "SELECT DISTINCT f.product, p.kind FROM fault_publications p"
+            "  JOIN fault_ledger f ON f.fault_id = p.fault_id WHERE p.state = ? LIMIT 500",
+            (PENDING,)).fetchall()
+        return {(row["product"], row["kind"]): self._budget(db, row["product"], row["kind"],
+                                                           moment)["remaining"]
+                for row in pairs}
+
     def next(self, *, limit=4, now=None) -> list:
-        """The publications a caller may act on. An issued or uncertain row is never among them."""
+        """The writes a caller may act on now, fairly across products.
+
+        A spent product and kind pair is excluded INSIDE the query, and the rest are taken
+        round-robin by product, so one capped product's backlog never hides another's work. An
+        issued or uncertain row is never among them, nor one of a kind this process has not
+        registered.
+        """
         moment = self.clock.now() if now is None else now
         limit = _bounded(limit, "limit")
-        # A comment on an issue that does not exist yet is not work anybody can do. It waits
-        # here rather than being handed out and failing at the connector.
-        rows = self.store.all(
-            "SELECT p.* FROM fault_publications p"
-            "  JOIN fault_ledger f ON f.fault_id = p.fault_id"
-            " WHERE p.state = ? AND p.tracker_ref IS NOT NULL"
-            "   AND (p.kind = ? OR f.external_ref IS NOT NULL)"
-            "   AND (p.next_attempt_at IS NULL OR p.next_attempt_at <= ?)"
-            " ORDER BY p.rowid LIMIT ?", (PENDING, OPEN_RECORD, moment, limit))
-        return [_publication(row) for row in rows]
+        with self.store.transaction() as db:
+            return [self._publication_view(db, row) for row in self._ready(db, moment, limit)]
 
-    def claim(self, publication, *, owner, now=None) -> dict:
-        """A lease plus a per-claim token, which is what fences complete and fail."""
+    def _ready(self, db, moment, limit):
+        remaining = self._spent(db, moment)
+        spent = [f"{product}|{kind}" for (product, kind), left in remaining.items() if left <= 0]
+        kinds, issue, targeted, projected = self._selectable()
+
+        def listed(values):
+            return "(" + ",".join("?" * len(values)) + ")"
+
+        query = (
+            "SELECT * FROM (SELECT p.*, f.product AS fault_product, p.rowid AS seq,"
+            "   ROW_NUMBER() OVER (PARTITION BY f.product ORDER BY p.rowid) AS turn"
+            "  FROM fault_publications p JOIN fault_ledger f ON f.fault_id = p.fault_id"
+            "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
+            "  LEFT JOIN fault_target_projects tp"
+            "    ON tp.scope_key = f.scope_key AND tp.product = f.product"
+            " WHERE p.state = ? AND (p.next_attempt_at IS NULL OR p.next_attempt_at <= ?)"
+            "   AND p.kind IN " + listed(kinds) +
+            "   AND (f.product || '|' || p.kind) NOT IN " + listed(spent) +
+            "   AND (p.kind NOT IN " + listed(issue) + " OR f.external_ref IS NOT NULL)"
+            "   AND (p.kind != ? OR f.external_ref IS NULL)"
+            "   AND (p.kind NOT IN " + listed(targeted) +
+            "        OR (t.scope_key IS NOT NULL AND tp.scope_key IS NOT NULL"
+            "            AND NOT EXISTS (SELECT 1 FROM fault_ledger o"
+            "                             WHERE o.scope_key = f.scope_key"
+            "                               AND o.product != f.product)))"
+            "   AND (p.kind NOT IN " + listed(projected) + " OR tp.project_ref IS NOT NULL))"
+            " ORDER BY turn, seq LIMIT ?")
+        rows = db.execute(query, (PENDING, moment, *kinds, *spent, *issue, OPEN_RECORD,
+                                  *targeted, *projected, limit * 4)).fetchall()
+        chosen = []
+        for row in rows:
+            pair = (row["fault_product"], row["kind"])
+            if remaining.get(pair, 1) <= 0:
+                continue
+            remaining[pair] = remaining.get(pair, 1) - 1
+            chosen.append(row)
+            if len(chosen) >= limit:
+                break
+        return chosen
+
+    def queue_state(self, *, limit=SHOWN_PER_PAGE, now=None) -> dict:
+        """What is ready, what is held and why, and each pending product's budget."""
         moment = self.clock.now() if now is None else now
+        limit = _bounded(limit, "limit")
+        with self.store.transaction() as db:
+            ready = self._ready(db, moment, limit)
+            chosen = {row["publication_id"] for row in ready}
+            held = []
+            for row in db.execute(
+                    "SELECT p.*, f.product AS fault_product FROM fault_publications p"
+                    "  JOIN fault_ledger f ON f.fault_id = p.fault_id WHERE p.state = ?"
+                    " ORDER BY p.rowid LIMIT ?", (PENDING, limit * 4)).fetchall():
+                if row["publication_id"] in chosen:
+                    continue
+                held.append({"publicationId": row["publication_id"], "kind": row["kind"],
+                             "product": row["fault_product"],
+                             "reason": self._held_reason(db, row, moment) or "budget_spent"})
+                if len(held) >= limit:
+                    break
+            budgets = [self._budget(db, product, kind, moment)
+                       for (product, kind) in self._spent(db, moment)]
+            return {"ready": [self._publication_view(db, row) for row in ready],
+                    "held": held, "budgets": budgets}
+
+    def _held_reason(self, db, row, moment):
+        spec = KINDS.get(row["kind"])
+        if spec is None:
+            return "kind_unregistered"
+        if row["next_attempt_at"] is not None and row["next_attempt_at"] > moment:
+            return "backing_off"
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (row["fault_id"],)).fetchone()
+        if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+            return "issue_owned"
+        if spec["requires_issue"] and not fault["external_ref"]:
+            return "awaiting_record"
+        if spec["target"]:
+            target, why = self._owned_target(db, fault["product"], fault["scope_key"])
+            if target is None:
+                return why
+            if spec["target"] == "team+project" and not target["projectRef"]:
+                return "awaiting_target"
+        if self._budget(db, fault["product"], row["kind"], moment)["remaining"] <= 0:
+            return "budget_spent"
+        return None
+
+    # ------------------------------------------------------------------ writing (invariants 2-4)
+
+    def claim(self, publication, *, owner, takeover=False, now=None) -> dict:
+        """A lease plus a per-claim token, which is what fences operation, complete and fail.
+
+        The first claimant is the write's owner. Another needs takeover=True, which is recorded.
+        One unit of the product's budget for this kind is consumed; a spent budget holds the
+        write pending and drops nothing.
+        """
+        if not _named(owner):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "a claim names its owner")
+        moment = self.clock.now() if now is None else now
+        stamp = self.clock.iso()
         token = secrets.token_hex(8)
+        refusal = None
         with self.store.transaction() as db:
             row = self._publication_row(db, publication)
+            spec = _kind(row["kind"])
             if row["state"] != PENDING:
                 raise FaultRefused(
                     RefusalReason.FAULT_NOT_CLAIMABLE,
                     f"publication {publication} is {row['state']}" + (
-                        ". An uncertain create is not reclaimed; reconcile it by reporting"
-                        " what you observed" if row["state"] == UNCERTAIN else ""),
+                        ". An uncertain write is not reclaimed; reconcile it by reporting what"
+                        " you observed" if row["state"] == UNCERTAIN else ""),
                 )
-            if row["tracker_ref"] is None:
-                raise FaultRefused(
-                    RefusalReason.FAULT_NOT_CLAIMABLE,
-                    "no tracker is configured for this fault's scope yet",
-                )
-            if row["next_attempt_at"] is not None and row["next_attempt_at"] > moment:
-                # next() already refuses to offer this row. Checking it here too, because a
-                # caller holding an identifier can claim without asking the queue, and a
-                # backoff only one of the two paths honours is not a backoff.
-                raise FaultRefused(
-                    RefusalReason.FAULT_NOT_CLAIMABLE,
-                    f"this publication backs off until {row['next_attempt_at']}",
-                )
-            fault = db.execute("SELECT external_ref FROM fault_ledger WHERE fault_id = ?",
+            fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                                (row["fault_id"],)).fetchone()
-            if row["kind"] == APPEND_COMMENT and not fault["external_ref"]:
-                raise FaultRefused(
-                    RefusalReason.FAULT_NOT_CLAIMABLE,
-                    "this fault owns no issue yet, so there is nothing to comment on. Its"
-                    " create is queued and this waits for it",
-                )
-            db.execute(
-                "UPDATE fault_publications SET state = ?, claim_token = ?, lease_owner = ?,"
-                "  lease_until = ?, attempts = attempts + 1, updated_at = ?"
-                " WHERE publication_id = ?",
-                (CLAIMED, token, owner, moment + LEASE_SECONDS, self.clock.iso(), publication),
-            )
+            if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+                self._cancel(db, row, "the fault already owns an issue", stamp)
+                refusal = FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                       "this fault owns an issue, so its create was cancelled")
+            else:
+                reason = self._held_reason(db, row, moment)
+                if reason == "budget_spent":
+                    raise FaultRefused(RefusalReason.FAULT_BUDGET_SPENT,
+                                       f"{fault['product']}'s {row['kind']} budget is spent;"
+                                       f" the write stays pending")
+                if reason is not None:
+                    raise FaultRefused(RefusalReason.FAULT_NOT_CLAIMABLE,
+                                       f"publication {publication} is not claimable: {reason}")
+                writer = db.execute(
+                    "SELECT owner FROM fault_publication_attempts WHERE publication_id = ?"
+                    " ORDER BY attempt_id LIMIT 1", (publication,)).fetchone()
+                if writer is not None and writer["owner"] != owner and not takeover:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_WRITER_CONFLICT,
+                        f"this write belongs to {writer['owner']!r}; pass takeover to reassign it")
+                attempt = row["attempts"] + 1
+                used = self._consume(db, fault["product"], row["kind"],
+                                     f"{publication}:{attempt}", moment, stamp)
+                if not used["consumed"]:
+                    raise FaultRefused(RefusalReason.FAULT_BUDGET_SPENT,
+                                       f"{fault['product']}'s {row['kind']} budget is spent")
+                db.execute(
+                    "UPDATE fault_publications SET state = ?, claim_token = ?, lease_owner = ?,"
+                    "  lease_until = ?, attempts = ?, updated_at = ? WHERE publication_id = ?",
+                    (CLAIMED, token, owner, moment + LEASE_SECONDS, attempt, stamp, publication))
+                db.execute(
+                    "INSERT INTO fault_publication_attempts (publication_id, attempt, owner,"
+                    "  takeover, claimed_at, claimed_ts) VALUES (?,?,?,?,?,?)",
+                    (publication, attempt, owner,
+                     1 if (writer is not None and writer["owner"] != owner) else 0,
+                     stamp, moment))
+        if refusal is not None:
+            raise refusal
         return {"publicationId": publication, "claimToken": token, "owner": owner,
                 "leaseUntil": moment + LEASE_SECONDS}
 
     def operation(self, publication, *, claim_token) -> dict:
         """The exact thing to execute, and the point after which a retry is not automatic.
 
-        Handing this out marks the row issued. That is the whole mechanism behind the one
-        promise this module makes about creates: from here on, only somebody who has LOOKED
-        can move the row, because a create whose response was lost and a create that never
-        happened are the same observation from in here.
+        Before anything is issued: an issue create for a fault that owns an issue is cancelled
+        (invariant 1); a target-bound write whose target is no longer its product's current one
+        is re-pointed and returned to pending (invariant 8); then the kind's own pre_issue check
+        runs, read-only, inside a savepoint that is always rolled back. Only then is the row
+        issued, and from there only somebody who has LOOKED can move it.
         """
+        moment = self.clock.now()
         now = self.clock.iso()
+        outcome = None
         with self.store.transaction() as db:
-            row = self._publication_row(db, publication)
-            if row["state"] != CLAIMED:
-                raise FaultRefused(
-                    RefusalReason.FAULT_NOT_CLAIMABLE,
-                    f"an operation is handed out for a claimed publication; this one is"
-                    f" {row['state']}",
-                )
-            if row["claim_token"] != claim_token:
-                raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
-                                   "this claim token is not the current one")
-            db.execute(
-                "UPDATE fault_publications SET state = ?, issued_at = ?, updated_at = ?"
-                " WHERE publication_id = ?", (ISSUED, now, now, publication))
-            fault = db.execute(
-                "SELECT * FROM fault_ledger WHERE fault_id = ?", (row["fault_id"],)).fetchone()
-            # The row's own cycle, not the ledger's current one: this write describes the
-            # moment it was queued, and its identity digest was computed then.
-            block = render_block({**dict(row), "product": fault["product"],
-                                  "fault_class": fault["fault_class"]})
-        return {
+            row = self._claimed(db, publication, claim_token)
+            spec = _kind(row["kind"])
+            fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                               (row["fault_id"],)).fetchone()
+            extra = db.execute("SELECT * FROM fault_publication_payloads WHERE"
+                               " publication_id = ?", (publication,)).fetchone()
+            queued_project = extra["project_ref"] if extra else None
+            if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+                self._cancel(db, row, "the fault already owns an issue", now)
+                outcome = (RefusalReason.FAULT_STATE_CONFLICT,
+                           "this fault owns an issue, so its create was cancelled")
+            elif spec["target"]:
+                target, why = self._owned_target(db, fault["product"], fault["scope_key"])
+                wanted = (target["team"] if target else None,
+                          target["projectRef"] if (target and spec["target"] == "team+project")
+                          else None)
+                if target is None or wanted != (row["tracker_ref"], queued_project) or (
+                        spec["target"] == "team+project" and not wanted[1]):
+                    db.execute("UPDATE fault_publications SET tracker_ref = ? WHERE"
+                               " publication_id = ?", (wanted[0], publication))
+                    _payload_set(db, publication, now, project_ref=wanted[1])
+                    self._release(db, row, now, outcome="retargeted")
+                    outcome = (RefusalReason.FAULT_NOT_CLAIMABLE,
+                               f"the target changed since the claim ({why or 'retargeted'}); the"
+                               f" write was re-pointed and returned to pending, not issued")
+            if outcome is None and spec["requires_issue"] and not fault["external_ref"]:
+                raise FaultRefused(RefusalReason.FAULT_NOT_CLAIMABLE,
+                                   "this fault owns no issue yet")
+            if outcome is None and spec["pre_issue"] is not None:
+                context = {"publication": self._publication_view(db, row),
+                           "fault": self._fault_view(db, fault), "db": db, "now": moment}
+                db.execute("SAVEPOINT fault_pre_issue")
+                before = db.total_changes
+                try:
+                    answer = spec["pre_issue"](context)
+                finally:
+                    wrote = db.total_changes != before
+                    db.execute("ROLLBACK TO fault_pre_issue")
+                    db.execute("RELEASE fault_pre_issue")
+                if wrote:
+                    raise FaultRefused(
+                        RefusalReason.FAULT_NOT_CLAIMABLE,
+                        f"the {row['kind']} pre-issue check wrote to the store; its writes were"
+                        f" discarded and nothing was issued")
+                if isinstance(answer, dict) and "cancel" in answer:
+                    self._cancel(db, row, str(answer["cancel"]), now)
+                    outcome = (RefusalReason.FAULT_NOT_CLAIMABLE,
+                               f"cancelled before issue: {answer['cancel']}")
+                elif isinstance(answer, dict) and "hold" in answer:
+                    seconds = answer.get("seconds", HOLD_SECONDS)
+                    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or (
+                            seconds <= 0):
+                        seconds = HOLD_SECONDS
+                    self._release(db, row, now, outcome="held",
+                                  next_attempt_at=moment + float(seconds),
+                                  hold_reason=str(answer["hold"]))
+                    outcome = (RefusalReason.FAULT_NOT_CLAIMABLE,
+                               f"held before issue: {answer['hold']}")
+                elif answer is not None:
+                    raise FaultRefused(RefusalReason.FAULT_NOT_CLAIMABLE,
+                                       f"the {row['kind']} pre-issue check answered {answer!r}")
+            if outcome is None:
+                db.execute(
+                    "UPDATE fault_publications SET state = ?, issued_at = ?, updated_at = ?"
+                    " WHERE publication_id = ?", (ISSUED, now, now, publication))
+                db.execute(
+                    "UPDATE fault_publication_attempts SET issued_at = ?, issued_ts = ?"
+                    " WHERE publication_id = ? AND attempt = ?",
+                    (now, moment, publication, row["attempts"]))
+                view = self._publication_view(db, row)
+                block = render_block({**dict(row), "product": fault["product"],
+                                      "fault_class": fault["fault_class"]})
+        if outcome is not None:
+            raise FaultRefused(*outcome)
+        answer = {
             "publicationId": publication,
             "kind": row["kind"],
             "trackerRef": row["tracker_ref"],
-            # From the ledger, not from the row: a comment queued before the issue existed
-            # carries no reference of its own, and the ledger is where the issue this fault
-            # owns is recorded once its create confirmed.
+            "projectRef": queued_project,
             "externalRef": fault["external_ref"] or row["external_ref"],
             "title": title_for(fault),
-            "block": block,
-            "startMarker": start_marker(publication),
-            "endMarker": end_marker(publication),
             "identityDigest": row["identity_digest"],
-            "protocol": _protocol(row["kind"]),
+            "protocol": _protocol(row["kind"], spec),
             "note": "the connector's create takes no idempotency key, so a create can succeed"
                     " and lose its response. This row is now issued: if you cannot report an"
                     " outcome it becomes uncertain, and no second create is made until"
                     " somebody reports what they observed.",
         }
+        if spec["evidence"] == "block":
+            answer.update(block=block, startMarker=start_marker(publication),
+                          endMarker=end_marker(publication))
+        answer["payload"] = view["payload"]
+        if row["kind"] == UPDATE_RECORD:
+            answer["update"] = view["payload"]
+        return answer
 
-    def reconcile(self, publication, observed_text, *, searched=False) -> dict:
-        """Did this write already land? Answered from what was observed, before rewriting."""
+    def _claimed(self, db, publication, claim_token):
+        """Invariant 3: a transition that belongs to the claim needs the current token."""
+        row = self._publication_row(db, publication)
+        if row["state"] != CLAIMED:
+            raise FaultRefused(
+                RefusalReason.FAULT_NOT_CLAIMABLE,
+                f"an operation is handed out for a claimed publication; this one is"
+                f" {row['state']}")
+        if row["claim_token"] != claim_token:
+            raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
+                               "this claim token is not the current one")
+        return row
+
+    def reconcile(self, publication, observed_text=None, *, searched=False, observed=None,
+                  prior_ended=False, reason=None) -> dict:
+        """Did this write land? Answered from what was observed, before anything is rewritten.
+
+        An absence frees an issued or uncertain write only when somebody attests the issuing
+        request has ENDED (invariant 2): its holder's fail(..., ended=True), or prior_ended with
+        a reason, which is recorded. A timeout or a plain failure after issue proves nothing.
+        """
         now = self.clock.iso()
+        moment = self.clock.now()
         with self.store.transaction() as db:
             row = self._publication_row(db, publication)
-            found = read_block(observed_text, publication)
-            if found["duplicated"]:
-                return {"publicationId": publication, "outcome": "duplicate",
-                        "state": row["state"],
-                        "detail": "more than one block for this publication is present; that is"
-                                  " not one unique record and must be repaired before"
-                                  " confirming"}
-            if found["found"]:
-                if found["problems"]:
-                    return {"publicationId": publication, "outcome": "malformed",
-                            "state": row["state"], "problems": found["problems"],
-                            "detail": "a partial block is not proof that nothing landed, and"
-                                      " must not be written over"}
-                return {"publicationId": publication, "outcome": "present",
-                        "state": row["state"],
-                        "detail": "this write already landed; complete from this observation"
-                                  " rather than writing again"}
-            if not searched:
-                return {"publicationId": publication, "outcome": "absent_unattested",
-                        "state": row["state"],
+            spec = _kind(row["kind"])
+            fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                               (row["fault_id"],)).fetchone()
+            base = {"publicationId": publication, "state": row["state"]}
+            if spec["evidence"] == "block":
+                found = read_block(observed_text, publication)
+                if found["duplicated"]:
+                    return {**base, "outcome": "duplicate",
+                            "detail": "more than one block for this publication is present;"
+                                      " repair it before confirming"}
+                if found["found"]:
+                    if found["problems"]:
+                        return {**base, "outcome": "malformed", "problems": found["problems"],
+                                "detail": "a partial block is not proof that nothing landed"}
+                    return {**base, "outcome": "present",
+                            "detail": "this write already landed; complete from this observation"}
+                attested = searched
+            else:
+                if not isinstance(observed, dict) or observed.get("issue") != fault["external_ref"]:
+                    return {**base, "outcome": "absent_unattested",
+                            "detail": "fields are attested only by a readback naming the issue"
+                                      " this fault owns"}
+                problems = spec["confirm"](self._publication_view(db, row), observed)
+                if not problems:
+                    return {**base, "outcome": "present",
+                            "detail": "the owned issue already reads as this update; complete"
+                                      " from this observation"}
+                attested = True
+            if not attested:
+                return {**base, "outcome": "absent_unattested",
                         "detail": "no block was observed, and nobody attested that the search"
-                                  " covered where it would be. A negative read is not proof of"
-                                  " absence unless somebody says what they read"}
-            state = row["state"]
-            if state in (ISSUED, UNCERTAIN):
-                # Re-pointed on the way back to pending. An uncertain row deliberately keeps
-                # the tracker it may have landed on while it is being reconciled, but once an
-                # attested absence says nothing landed, reissuing it against a tracker the
-                # fault has since left would file it where nobody is looking.
-                current = db.execute(
-                    "SELECT t.tracker_ref AS tracker_ref FROM fault_ledger f"
-                    "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
-                    " WHERE f.fault_id = ?", (row["fault_id"],)).fetchone()
+                                  " covered where it would be"}
+            if row["state"] == CLAIMED:
+                return {**base, "outcome": "absent",
+                        "detail": "nothing was issued under this claim; its holder may write"}
+            if row["state"] == ISSUED and row["lease_until"] is not None and (
+                    row["lease_until"] > moment):
+                return {**base, "outcome": "absent_in_flight",
+                        "detail": "the write is still held under a live lease; an absence read"
+                                  " now proves nothing about a request that may still land"}
+            if row["state"] not in (ISSUED, UNCERTAIN):
+                return {**base, "outcome": "absent", "detail": "nothing is outstanding"}
+            if prior_ended and not _named(reason):
+                raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                                   "an attested end says what ended the request")
+            latest = db.execute(
+                "SELECT attempt, ended FROM fault_publication_attempts WHERE publication_id = ?"
+                " ORDER BY attempt_id DESC LIMIT 1", (publication,)).fetchone()
+            ended = bool(latest and latest["ended"])
+            if prior_ended and latest is not None:
                 db.execute(
-                    "UPDATE fault_publications SET state = ?, tracker_ref = ?,"
-                    "  claim_token = NULL, lease_owner = NULL, lease_until = NULL,"
-                    "  updated_at = ? WHERE publication_id = ?",
-                    (PENDING, current["tracker_ref"] if current else None, now, publication))
-                state = PENDING
-            # Reported as the state the row is actually in. A claimed row is not released by
-            # an attested absence - its holder still holds it and can simply write - and
-            # answering pending described a row nobody could pick up.
-            return {"publicationId": publication, "outcome": "absent", "state": state,
-                    "detail": "the attested search found nothing, so one further write is"
-                              " permitted" if state == PENDING else
-                              "the attested search found nothing; this claim still holds, so"
-                              " write it"}
+                    "UPDATE fault_publication_attempts SET ended = 1, ended_at = ?,"
+                    "  error = COALESCE(error || '; ', '') || ? WHERE publication_id = ?"
+                    " AND attempt = ?", (now, f"attested end: {reason}", publication,
+                                         latest["attempt"]))
+            if not (ended or prior_ended):
+                return {**base, "outcome": "absent_unproven",
+                        "detail": "nobody attested that the issuing request ended, and one still"
+                                  " travelling can land after this search; the write stays"
+                                  " uncertain"}
+            db.execute(
+                "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
+                "  lease_until = NULL, updated_at = ? WHERE publication_id = ?",
+                (PENDING, now, publication))
+            if latest is not None:
+                db.execute("UPDATE fault_publication_attempts SET outcome = 'reconciled_absent'"
+                           " WHERE publication_id = ? AND attempt = ?",
+                           (publication, latest["attempt"]))
+            self._repoint(db, row["fault_id"], now)
+            return {**base, "outcome": "absent", "state": PENDING,
+                    "detail": "the attested search found nothing after the request ended, so one"
+                              " further write is permitted"}
 
-    def complete(self, publication, *, readback, claim_token=None, external_ref=None,
-                 now=None) -> dict:
-        """Confirmed against this publication's own block, by exact field.
+    def complete(self, publication, *, readback=None, claim_token=None, external_ref=None,
+                 project_ref=None, observed=None, now=None) -> dict:
+        """Confirmed against this publication's own evidence.
 
-        A claim token is required while the row is claimed or issued, and NOT required from
-        uncertain: there the proof is the readback itself, and demanding a lease nobody holds
-        any more would leave a write that provably landed permanently unconfirmable.
+        A block kind confirms from the readback text by exact field; a fields kind from what was
+        read back of the owned issue. An issue create also needs the project the saved issue
+        reads back as, and is linked against the project its scope targets NOW.
         """
         moment = self.clock.iso()
         with self.store.transaction() as db:
             row = self._publication_row(db, publication)
             if row["state"] == CONFIRMED:
-                return _publication(row) | {"confirmed": False,
-                                            "reason": "already confirmed"}
+                return _publication(row) | {"confirmed": False, "reason": "already confirmed"}
             if row["state"] not in (CLAIMED, ISSUED, UNCERTAIN):
-                # PENDING in particular. A reconciliation that attested the block was ABSENT
-                # returns the row to pending, and accepting a readback captured before that
-                # would confirm a write somebody has already established is not there.
                 raise FaultRefused(
                     RefusalReason.FAULT_STATE_CONFLICT,
                     f"a {row['state']} publication has no write outstanding to confirm;"
@@ -1385,59 +2379,99 @@ class FaultLedger:
             if row["state"] in (CLAIMED, ISSUED) and row["claim_token"] != claim_token:
                 raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
                                    "this claim token is not the current one")
-            found = read_block(readback, publication)
-            fault = db.execute(
-                "SELECT * FROM fault_ledger WHERE fault_id = ?", (row["fault_id"],)).fetchone()
-            problems = _block_mismatch(row, fault, found)
-            if problems:
-                raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH, "; ".join(problems))
-            reference = external_ref or row["external_ref"] or fault["external_ref"]
-            if row["kind"] == APPEND_COMMENT:
-                # Against the issue this fault owns, and nothing else. The readback proves a
-                # block is present somewhere; only this comparison ties it to the record the
-                # fault is supposed to be commenting on.
-                owned = fault["external_ref"]
-                if not owned:
-                    raise FaultRefused(
-                        RefusalReason.FAULT_STATE_CONFLICT,
-                        "this fault owns no issue yet, so a comment on it cannot be confirmed",
-                    )
-                if reference != owned:
+            spec = _kind(row["kind"])
+            fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                               (row["fault_id"],)).fetchone()
+            view = self._publication_view(db, row)
+            if spec["evidence"] == "block":
+                problems = _block_mismatch(row, fault, read_block(readback, publication))
+                if problems:
+                    raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH, "; ".join(problems))
+                reference = external_ref or row["external_ref"]
+                if row["kind"] == APPEND_COMMENT:
+                    owned = fault["external_ref"]
+                    reference = reference or owned
+                    if not owned:
+                        raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                           "this fault owns no issue yet, so a comment on it"
+                                           " cannot be confirmed")
+                    if reference != owned:
+                        raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH,
+                                           f"this comment names {reference!r}, and the fault"
+                                           f" owns {owned!r}")
+                elif spec["creates"] and not reference:
+                    raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH,
+                                       "a confirmed create must name what it created")
+                if row["kind"] == OPEN_RECORD and not _named(project_ref):
                     raise FaultRefused(
                         RefusalReason.FAULT_READBACK_MISMATCH,
-                        f"this comment names {reference!r}, and the fault owns {owned!r}",
-                    )
-            if row["kind"] == OPEN_RECORD and not reference:
-                # Confirming a create without the identifier it created leaves the ledger
-                # owning no issue, and every later comment then waits forever for a reference
-                # that will never arrive. The write landed; what is missing is the caller
-                # saying WHAT it landed as.
-                raise FaultRefused(
-                    RefusalReason.FAULT_READBACK_MISMATCH,
-                    "a confirmed create must name the issue it created, or every later"
-                    " comment on this fault is queued against nothing",
-                )
+                        "a confirmed issue create must name the project the saved issue reads"
+                        " back as; a create is not confirmed into an unknown project")
+                if row["kind"] not in (OPEN_RECORD, APPEND_COMMENT):
+                    problems = spec["confirm"](view, {"externalRef": reference,
+                                                      **(observed or {})})
+                    if problems:
+                        raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH,
+                                           "; ".join(problems))
+            else:
+                if not isinstance(observed, dict) or observed.get("issue") != fault["external_ref"]:
+                    raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH,
+                                       "an update is confirmed from a readback naming the issue"
+                                       " this fault owns")
+                problems = spec["confirm"](view, observed)
+                if problems:
+                    raise FaultRefused(RefusalReason.FAULT_READBACK_MISMATCH, "; ".join(problems))
+                reference = fault["external_ref"]
             db.execute(
                 "UPDATE fault_publications SET state = ?, external_ref = ?, confirmed_at = ?,"
                 "  claim_token = NULL, lease_owner = NULL, lease_until = NULL,"
                 "  last_error = NULL, updated_at = ? WHERE publication_id = ?",
                 (CONFIRMED, reference, moment, moment, publication))
-            if row["kind"] == OPEN_RECORD and reference:
-                # The issue this fault now owns. Every later publication is a comment on it,
-                # which is what makes "one fault, one issue" survive a restart.
+            db.execute(
+                "UPDATE fault_publication_attempts SET outcome = 'confirmed', ended = 1,"
+                "  ended_at = ? WHERE publication_id = ? AND attempt = ?",
+                (moment, publication, row["attempts"]))
+            if row["kind"] == OPEN_RECORD:
                 db.execute(
                     "UPDATE fault_ledger SET external_ref = ?, published_at = ?,"
                     "  updated_at = ? WHERE fault_id = ? AND external_ref IS NULL",
                     (reference, moment, moment, row["fault_id"]))
+                self._observe_link(db, row["fault_id"], reference, project_ref, moment)
+            elif row["kind"] == UPDATE_RECORD and (view["payload"] or {}).get("op") == "set_project":
+                self._observe_link(db, row["fault_id"], reference, view["payload"]["value"],
+                                   moment)
             fresh = self._publication_row(db, publication)
         return _publication(fresh) | {"confirmed": True}
 
-    def fail(self, publication, *, claim_token, error, now=None) -> dict:
-        """Record that this write did not report success, and decide what may follow it.
+    def _observe_link(self, db, identifier, reference, observed_project, now):
+        """What the owned issue read back as, compared with the target as it is NOW."""
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        target, _ = self._owned_target(db, fault["product"], fault["scope_key"])
+        wanted = target["projectRef"] if target else None
+        link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?", (identifier,)).fetchone()
+        state = LINKED if (wanted is None or observed_project == wanted) else UNLINKED
+        if link is None:
+            db.execute(
+                "INSERT INTO fault_links (fault_id, external_ref, project_ref,"
+                "  observed_project_ref, state, revision, updated_at) VALUES (?,?,?,?,?,0,?)",
+                (identifier, reference, wanted, observed_project, state, now))
+        else:
+            db.execute(
+                "UPDATE fault_links SET external_ref = ?, observed_project_ref = ?, state = ?,"
+                "  updated_at = ? WHERE fault_id = ?",
+                (reference, observed_project, state if link["project_ref"] in (None, wanted)
+                 else UNLINKED, now, identifier))
+        if state == UNLINKED:
+            self._relink(db, identifier, wanted, now)
 
-        A row that was only claimed never reached the connector, so it goes back to pending
-        with backoff. A row that was ISSUED may have landed, and that is the whole difference:
-        it becomes uncertain, and stays there until somebody reports what they observed.
+    def fail(self, publication, *, claim_token, error, ended=False, now=None) -> dict:
+        """This write did not report success. What may follow depends on whether it was issued.
+
+        A claimed row never reached the connector: it goes back to pending with backoff. An
+        issued one may have landed and becomes uncertain. ended=True is the holder attesting that
+        the connector answered with a definitive refusal, which is what later lets an attested
+        absence free it.
         """
         moment = self.clock.now() if now is None else now
         stamp = self.clock.iso()
@@ -1455,7 +2489,14 @@ class FaultLedger:
                     "UPDATE fault_publications SET state = ?, last_error = ?, claim_token ="
                     "  NULL, lease_owner = NULL, lease_until = NULL, updated_at = ?"
                     " WHERE publication_id = ?", (UNCERTAIN, str(error), stamp, publication))
+                db.execute(
+                    "UPDATE fault_publication_attempts SET outcome = 'uncertain', error = ?,"
+                    "  ended = ?, ended_at = ? WHERE publication_id = ? AND attempt = ?",
+                    (str(error), 1 if ended else 0, stamp if ended else None, publication,
+                     row["attempts"]))
                 state = UNCERTAIN
+                self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
+                             reason=f"write:{publication}:{UNCERTAIN}")
             else:
                 backoff = min(MAX_BACKOFF, BASE_BACKOFF * (2 ** max(0, row["attempts"] - 1)))
                 terminal = row["attempts"] >= MAX_ATTEMPTS
@@ -1466,35 +2507,100 @@ class FaultLedger:
                     "  lease_until = NULL, updated_at = ? WHERE publication_id = ?",
                     (state, str(error), None if terminal else moment + backoff, stamp,
                      publication))
+                db.execute(
+                    "UPDATE fault_publication_attempts SET outcome = 'failed_before_issue',"
+                    "  error = ?, ended = 1, ended_at = ? WHERE publication_id = ? AND attempt = ?",
+                    (str(error), stamp, publication, row["attempts"]))
+                if terminal:
+                    self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
+                                 reason=f"write:{publication}:{FAILED}")
         return {"publicationId": publication, "state": state, "error": str(error),
                 "detail": "an issued write may have landed, so it is uncertain rather than"
                           " retried" if state == UNCERTAIN else ""}
 
-    def expire_leases(self, *, now=None) -> dict:
-        """What an expired lease means, which is not the same answer for both states.
+    def cancel(self, publication, *, reason) -> dict:
+        """Cancel a write nothing has reached the connector with (invariant 4)."""
+        if not _named(reason):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "a cancel says why")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            row = self._publication_row(db, publication)
+            self._cancel(db, row, reason, now)
+        return {"publicationId": publication, "state": CANCELLED, "reason": reason}
 
-        A claimed row never reached the connector, so it is safe to offer again. An issued one
-        may have landed, and offering it again is exactly how one fault becomes two issues.
-        """
+    def _cancel(self, db, row, reason, now):
+        """Invariant 4: pending, failed and claimed-not-issued only. A claimed one refunds its
+        own attempt and budget; nothing earlier is refunded."""
+        if row["state"] not in (PENDING, FAILED, CLAIMED):
+            raise FaultRefused(
+                RefusalReason.FAULT_NOT_CLAIMABLE,
+                f"a {row['state']} write may already have reached the connector; it is"
+                f" reconciled, never cancelled")
+        if row["state"] == CLAIMED:
+            self._refund(db, row, "cancelled")
+        db.execute(
+            "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
+            "  lease_until = NULL, last_error = ?, updated_at = ?,"
+            "  attempts = ? WHERE publication_id = ?",
+            (CANCELLED, reason, now,
+             row["attempts"] - (1 if row["state"] == CLAIMED else 0), row["publication_id"]))
+
+    def _refund(self, db, row, outcome):
+        fault = db.execute("SELECT product FROM fault_ledger WHERE fault_id = ?",
+                           (row["fault_id"],)).fetchone()
+        db.execute("DELETE FROM fault_budget_uses WHERE product = ? AND kind = ? AND ref = ?",
+                   (fault["product"], row["kind"], f"{row['publication_id']}:{row['attempts']}"))
+        db.execute(
+            "UPDATE fault_publication_attempts SET outcome = ?, ended = 1 WHERE"
+            " publication_id = ? AND attempt = ?",
+            (outcome, row["publication_id"], row["attempts"]))
+
+    def _release(self, db, row, now, *, outcome, next_attempt_at=None, hold_reason=None):
+        """Back to pending before anything was issued, with this claim's attempt refunded."""
+        self._refund(db, row, outcome)
+        db.execute(
+            "UPDATE fault_publications SET state = ?, claim_token = NULL, lease_owner = NULL,"
+            "  lease_until = NULL, attempts = ?, next_attempt_at = ?, updated_at = ?"
+            " WHERE publication_id = ?",
+            (PENDING, row["attempts"] - 1, next_attempt_at, now, row["publication_id"]))
+        _payload_set(db, row["publication_id"], now, hold_reason=hold_reason)
+
+    def expire_leases(self, *, now=None) -> dict:
+        """A lapsed claim was never issued and is offered again; a lapsed issue is uncertain."""
         moment = self.clock.now() if now is None else now
         stamp = self.clock.iso()
+        released = uncertain = 0
         with self.store.transaction() as db:
-            released = db.execute(
-                "UPDATE fault_publications SET state = ?, claim_token = NULL,"
-                "  lease_owner = NULL, lease_until = NULL, updated_at = ?"
-                " WHERE state = ? AND lease_until IS NOT NULL AND lease_until <= ?",
-                (PENDING, stamp, CLAIMED, moment)).rowcount
-            uncertain = db.execute(
-                "UPDATE fault_publications SET state = ?, claim_token = NULL,"
-                "  lease_owner = NULL, lease_until = NULL, updated_at = ?,"
-                "  last_error = COALESCE(last_error, 'the lease expired after the write was"
-                " issued')"
-                " WHERE state = ? AND lease_until IS NOT NULL AND lease_until <= ?",
-                (UNCERTAIN, stamp, ISSUED, moment)).rowcount
+            for row in db.execute(
+                    "SELECT * FROM fault_publications WHERE state IN (?,?)"
+                    " AND lease_until IS NOT NULL AND lease_until <= ?",
+                    (CLAIMED, ISSUED, moment)).fetchall():
+                if row["state"] == CLAIMED:
+                    db.execute(
+                        "UPDATE fault_publications SET state = ?, claim_token = NULL,"
+                        "  lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                        " WHERE publication_id = ?", (PENDING, stamp, row["publication_id"]))
+                    db.execute("UPDATE fault_publication_attempts SET outcome = 'lease_lapsed',"
+                               " ended = 1, ended_at = ? WHERE publication_id = ? AND attempt = ?",
+                               (stamp, row["publication_id"], row["attempts"]))
+                    released += 1
+                else:
+                    db.execute(
+                        "UPDATE fault_publications SET state = ?, claim_token = NULL,"
+                        "  lease_owner = NULL, lease_until = NULL, updated_at = ?,"
+                        "  last_error = COALESCE(last_error, 'the lease expired after the write"
+                        " was issued') WHERE publication_id = ?",
+                        (UNCERTAIN, stamp, row["publication_id"]))
+                    db.execute("UPDATE fault_publication_attempts SET outcome = 'uncertain'"
+                               " WHERE publication_id = ? AND attempt = ?",
+                               (row["publication_id"], row["attempts"]))
+                    self._notify(db, row["fault_id"], DECISION, row["cycle"], stamp,
+                                 reason=f"write:{row['publication_id']}:{UNCERTAIN}")
+                    uncertain += 1
         return {"released": released, "uncertain": uncertain}
 
     def retry(self, publication) -> dict:
-        """An operator's decision to offer a failed row again. Never reaches uncertain."""
+        """An operator's decision to offer a failed write again. Never reaches uncertain."""
         stamp = self.clock.iso()
         with self.store.transaction() as db:
             row = self._publication_row(db, publication)
@@ -1504,6 +2610,11 @@ class FaultLedger:
                     f"retry offers a failed publication again; this one is {row['state']}" + (
                         ". An uncertain write is reconciled, not retried"
                         if row["state"] == UNCERTAIN else ""))
+            owner = db.execute("SELECT external_ref FROM fault_ledger WHERE fault_id = ?",
+                               (row["fault_id"],)).fetchone()
+            if row["kind"] == OPEN_RECORD and owner["external_ref"]:
+                raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                   "this fault already owns an issue; its create is not retried")
             db.execute(
                 "UPDATE fault_publications SET state = ?, attempts = 0, next_attempt_at ="
                 "  NULL, updated_at = ? WHERE publication_id = ?", (PENDING, stamp, publication))
@@ -1518,31 +2629,430 @@ class FaultLedger:
                                f"no publication {publication!r}")
         return row
 
+    # ------------------------------------------------------------------ attention (B11)
+
+    def attention(self, *, now=None) -> dict:
+        """Everything unsent, and a warning an operator sees on the next status or tick."""
+        moment = self.clock.now() if now is None else now
+        with self.store.transaction() as db:
+            count = {}
+            for state in (FAILED, UNCERTAIN, ISSUED):
+                count[state] = db.execute(
+                    "SELECT COUNT(*) AS n FROM fault_publications WHERE state = ?",
+                    (state,)).fetchone()["n"]
+            claimed = db.execute(
+                "SELECT COUNT(*) AS n, SUM(CASE WHEN lease_until <= ? THEN 1 ELSE 0 END) AS lapsed"
+                " FROM fault_publications WHERE state = ?", (moment, CLAIMED)).fetchone()
+            pending = {"ready": 0, "awaitingTarget": 0, "held": 0, "awaitingRecord": 0,
+                       "scopeKeyContested": 0, "backingOff": 0, "kindUnregistered": 0,
+                       "issueOwned": 0}
+            names = {None: "ready", "awaiting_target": "awaitingTarget",
+                     "budget_spent": "held", "awaiting_record": "awaitingRecord",
+                     "scope_key_contested": "scopeKeyContested", "backing_off": "backingOff",
+                     "kind_unregistered": "kindUnregistered", "issue_owned": "issueOwned"}
+            for row in db.execute("SELECT * FROM fault_publications WHERE state = ?"
+                                  " ORDER BY rowid LIMIT 1000", (PENDING,)).fetchall():
+                pending[names[self._held_reason(db, row, moment)]] += 1
+            unlinked = db.execute("SELECT COUNT(*) AS n FROM fault_links WHERE state = ?",
+                                  (UNLINKED,)).fetchone()["n"]
+            notifications = {state: db.execute(
+                "SELECT COUNT(*) AS n FROM fault_notifications WHERE state = ?",
+                (state,)).fetchone()["n"] for state in (PENDING, RESERVED, UNCERTAIN)}
+        unsent = {**pending, "claimed": claimed["n"], "claimedLapsed": claimed["lapsed"] or 0,
+                  "issued": count[ISSUED], "failed": count[FAILED], "uncertain": count[UNCERTAIN]}
+        total = sum(value for key, value in unsent.items()
+                    if key not in ("claimedLapsed", "issued"))
+        warning = None
+        if total or unlinked or notifications[UNCERTAIN]:
+            parts = [f"{value} {key}" for key, value in unsent.items() if value]
+            if unlinked:
+                parts.append(f"{unlinked} issue(s) not in their project")
+            if notifications[UNCERTAIN]:
+                parts.append(f"{notifications[UNCERTAIN]} notification(s) uncertain")
+            warning = "fault writes need attention: " + ", ".join(parts)
+        return {"unsent": unsent, "unlinked": unlinked, "notifications": notifications,
+                "warning": warning}
+
+    # ------------------------------------------------------------------ notifications (B11)
+
+    def _notify(self, db, identifier, kind, cycle, now, *, reason=None, ref=None):
+        fault = db.execute("SELECT product FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        key = f"{identifier}|{kind}|{reason}" if reason else f"{identifier}|{kind}|{cycle}"
+        notification = sha256_hex(key)[:ID_WIDTH]
+        db.execute(
+            "INSERT OR IGNORE INTO fault_notifications (notification_id, fault_id, product,"
+            "  kind, reason, cycle, ref, state, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (notification, identifier, fault["product"], kind, reason, cycle, ref, PENDING,
+             now, now))
+        return notification
+
+    def raise_notification(self, identifier, *, reason, ref=None) -> dict:
+        """A caller's own decision, on the one notification path. Idempotent per fault and reason."""
+        if not _named(reason):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a raised notification names its reason")
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            fault = self._fault(db, identifier)
+            notification = self._notify(db, fault["fault_id"], DECISION, fault["cycle"], now,
+                                        reason=f"raised:{reason}", ref=ref)
+        return {"notificationId": notification, "faultId": fault["fault_id"], "kind": DECISION,
+                "reason": reason}
+
+    def _eligibility(self, db, identifier, moment) -> dict:
+        from . import supervision
+
+        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                           (identifier,)).fetchone()
+        relationship = _json(fault["signature"]).get("relationship")
+        row = None
+        if _named(relationship):
+            row = db.execute("SELECT status, parent_task_id FROM relationships"
+                             " WHERE relationship_id = ?", (relationship,)).fetchone()
+        issue = _json(fault["scope"]).get("issueKey")
+        if row is None and _named(issue):
+            row = db.execute(
+                "SELECT status, parent_task_id FROM relationships WHERE issue_key = ?"
+                " AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
+                (issue,)).fetchone()
+        if row is None:
+            return {"eligible": True, "reason": "no relationship whose wishes apply"}
+        if row["status"] in ("paused", "cancelled", "archived"):
+            return {"eligible": False, "reason": f"the relationship is {row['status']}"}
+        contact = supervision.contactable(self.store, row["parent_task_id"], now=moment)
+        if contact.get("contactable") is False:
+            return {"eligible": False, "reason": f"no contact: {contact.get('reason')}"}
+        if contact.get("contactable") is None and contact.get("asked", True):
+            return {"eligible": False,
+                    "reason": f"contact unmeasured: {contact.get('reason')}"}
+        return {"eligible": True, "reason": "reportable"}
+
+    def _lapse_notifications(self, db, moment, stamp):
+        db.execute("UPDATE fault_notifications SET state = ?, token = NULL, updated_at = ?"
+                   " WHERE state = ? AND lease_until <= ?", (UNCERTAIN, stamp, RESERVED, moment))
+
+    def notifications(self, *, state=None, limit=SHOWN_PER_PAGE, after=None) -> dict:
+        """Notifications in one state (pending by default), each with its delivery key and, for
+        pending ones, whether it may be delivered now."""
+        limit = _bounded(limit, "limit")
+        moment = self.clock.now()
+        with self.store.transaction() as db:
+            self._lapse_notifications(db, moment, self.clock.iso())
+            rows = db.execute(
+                "SELECT rowid AS seq, * FROM fault_notifications WHERE state = ? AND rowid > ?"
+                " ORDER BY rowid LIMIT ?", (state or PENDING, after or 0, limit + 1)).fetchall()
+            listed = []
+            for row in rows[:limit]:
+                entry = _notification(row)
+                if row["state"] == PENDING:
+                    entry["eligibility"] = self._eligibility(db, row["fault_id"], moment)
+                listed.append(entry)
+        return {"notifications": listed,
+                "next": rows[limit - 1]["seq"] if len(rows) > limit else None}
+
+    def reserve_notifications(self, *, owner, limit=SHOWN_PER_PAGE) -> dict:
+        """Take eligible notifications, consuming their product's budget, under a lease.
+
+        Eligibility and budget are decided here, atomically, so two reservers cannot together
+        exceed a budget and a withheld one is never taken.
+        """
+        if not _named(owner):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "a reservation has an owner")
+        limit = _bounded(limit, "limit")
+        moment = self.clock.now()
+        stamp = self.clock.iso()
+        reserved, withheld, held = [], 0, 0
+        with self.store.transaction() as db:
+            self._lapse_notifications(db, moment, stamp)
+            for row in db.execute("SELECT * FROM fault_notifications WHERE state = ?"
+                                  " ORDER BY rowid LIMIT ?", (PENDING, limit * 4)).fetchall():
+                if len(reserved) >= limit:
+                    break
+                if not self._eligibility(db, row["fault_id"], moment)["eligible"]:
+                    withheld += 1
+                    continue
+                used = self._consume(db, row["product"], NOTIFICATION,
+                                     f"{row['notification_id']}:{row['attempts'] + 1}",
+                                     moment, stamp)
+                if not used["consumed"]:
+                    held += 1
+                    continue
+                token = secrets.token_hex(8)
+                db.execute(
+                    "UPDATE fault_notifications SET state = ?, token = ?, owner = ?,"
+                    "  lease_until = ?, attempts = attempts + 1, updated_at = ?"
+                    " WHERE notification_id = ?",
+                    (RESERVED, token, owner, moment + LEASE_SECONDS, stamp,
+                     row["notification_id"]))
+                entry = _notification(db.execute(
+                    "SELECT * FROM fault_notifications WHERE notification_id = ?",
+                    (row["notification_id"],)).fetchone())
+                entry["token"] = token
+                reserved.append(entry)
+        return {"reserved": reserved, "withheld": withheld, "held": held}
+
+    def ack_notification(self, notification, *, token, ref) -> dict:
+        """Delivered. Accepted for the current token whatever happened to eligibility since."""
+        return self._settle_notification(notification, token=token, delivered=True, ref=ref)
+
+    def fail_notification(self, notification, *, token, error) -> dict:
+        """Not sent, as the deliverer knows. Back to pending with the error; nothing dropped."""
+        return self._settle_notification(notification, token=token, delivered=False, ref=error)
+
+    def reconcile_notification(self, notification, *, delivered, ref) -> dict:
+        """Settle an uncertain notification from what the deliverer can read back."""
+        return self._settle_notification(notification, token=None, delivered=delivered, ref=ref)
+
+    def _settle_notification(self, notification, *, token, delivered, ref):
+        stamp = self.clock.iso()
+        with self.store.transaction() as db:
+            self._lapse_notifications(db, self.clock.now(), stamp)
+            row = db.execute("SELECT * FROM fault_notifications WHERE notification_id = ?",
+                             (notification,)).fetchone()
+            if row is None:
+                raise FaultRefused(RefusalReason.FAULT_UNKNOWN, f"no notification {notification}")
+            if token is None:
+                if row["state"] != UNCERTAIN:
+                    raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
+                                       f"only an uncertain notification is reconciled; this one"
+                                       f" is {row['state']}")
+            elif row["state"] != RESERVED or row["token"] != token:
+                raise FaultRefused(RefusalReason.FAULT_CLAIM_STALE,
+                                   "this reservation token is not the current one")
+            if delivered:
+                db.execute("UPDATE fault_notifications SET state = ?, token = NULL,"
+                           " delivered_at = ?, ack_ref = ?, updated_at = ?"
+                           " WHERE notification_id = ?",
+                           (DELIVERED, stamp, ref, stamp, notification))
+            else:
+                db.execute("UPDATE fault_notifications SET state = ?, token = NULL,"
+                           " last_error = ?, updated_at = ? WHERE notification_id = ?",
+                           (PENDING, ref, stamp, notification))
+            fresh = db.execute("SELECT * FROM fault_notifications WHERE notification_id = ?",
+                               (notification,)).fetchone()
+        return _notification(fresh)
+
+def _json(text):
+    try:
+        value = json.loads(text) if text else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _exists(db, identifier):
+    return db.execute("SELECT 1 FROM fault_ledger WHERE fault_id = ?",
+                      (identifier,)).fetchone() is not None
+
+
+def _landed(db, identifier):
+    """Invariant 5: a write has landed, or may have, once it is issued."""
+    return db.execute(
+        "SELECT 1 FROM fault_publications WHERE fault_id = ? AND state IN (?,?,?) LIMIT 1",
+        (identifier, ISSUED, UNCERTAIN, CONFIRMED)).fetchone() is not None
+
+
+def _read_adoption(adopt):
+    if not isinstance(adopt, dict):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           "an adoption is {externalRef, scope}")
+    reference = adopt.get("externalRef")
+    if not _named(reference):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           "an adoption names the issue it adopts")
+    scope = _read_scope(adopt.get("scope"))
+    if not _named(scope.get("projectKey")):
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           "an adoption's scope carries the owner's projectKey")
+    return {"externalRef": reference, "scope": scope}
+
+
+_UNCHANGED = object()
+
+
+def _payload_set(db, publication, now, *, project_ref=_UNCHANGED, payload=_UNCHANGED,
+                 hold_reason=_UNCHANGED):
+    row = db.execute("SELECT * FROM fault_publication_payloads WHERE publication_id = ?",
+                     (publication,)).fetchone()
+    values = {"project_ref": row["project_ref"] if row else None,
+              "payload": row["payload"] if row else None,
+              "hold_reason": row["hold_reason"] if row else None}
+    if project_ref is not _UNCHANGED:
+        values["project_ref"] = project_ref
+    if payload is not _UNCHANGED:
+        values["payload"] = (None if payload is None else
+                             json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    if hold_reason is not _UNCHANGED:
+        values["hold_reason"] = hold_reason
+    db.execute(
+        "INSERT INTO fault_publication_payloads (publication_id, project_ref, payload,"
+        "  hold_reason, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(publication_id) DO UPDATE"
+        " SET project_ref = excluded.project_ref, payload = excluded.payload,"
+        "   hold_reason = excluded.hold_reason, updated_at = excluded.updated_at",
+        (publication, values["project_ref"], values["payload"], values["hold_reason"], now))
+
+
+def _notification(row) -> dict:
+    record = dict(row)
+    record.pop("token", None)
+    return {
+        "notificationId": record["notification_id"], "faultId": record["fault_id"],
+        "product": record["product"], "kind": record["kind"],
+        "reason": (record["reason"] or "").removeprefix("raised:") or None,
+        "cycle": record["cycle"], "ref": record["ref"], "state": record["state"],
+        "deliveryKey": f"relay-notification:{record['notification_id']}",
+        "owner": record["owner"], "attempts": record["attempts"],
+        "lastError": record["last_error"], "createdAt": record["created_at"],
+        "deliveredAt": record["delivered_at"], "ackRef": record["ack_ref"],
+    }
+
+
+# ------------------------------------------------------------------ publication kinds
+
+# Registered per process, by importing the module that declares a kind. A publication whose kind
+# is not registered in the acting process is never offered, claimed or issued (invariant 13).
+KINDS = {}
+BUILT_IN_KINDS = (OPEN_RECORD, APPEND_COMMENT, UPDATE_RECORD)
+
+
+def register_kind(name, *, creates, requires_issue, target, evidence, confirm, validate=None,
+                  pre_issue=None) -> dict:
+    """Declare a publication kind. What a registered create makes is recorded on its own
+    publication and never becomes the fault's issue: only open_record creates that."""
+    if not _named(name) or "|" in name:
+        raise ValueError("a kind is a non-blank name without '|'")
+    if name in BUILT_IN_KINDS and name in KINDS:
+        raise ValueError(f"{name!r} is built in")
+    if target not in (None, "team", "team+project"):
+        raise ValueError("target is None, 'team' or 'team+project'")
+    if evidence not in ("block", "fields"):
+        raise ValueError("evidence is 'block' or 'fields'")
+    for label, value in (("confirm", confirm), ("validate", validate), ("pre_issue", pre_issue)):
+        if value is not None and not callable(value):
+            raise ValueError(f"{label} is callable")
+    if not callable(confirm):
+        raise ValueError("a kind declares how a readback confirms it")
+    spec = {"name": name, "creates": bool(creates), "requires_issue": bool(requires_issue),
+            "target": target, "evidence": evidence, "confirm": confirm, "validate": validate,
+            "pre_issue": pre_issue}
+    KINDS[name] = spec
+    return {key: value for key, value in spec.items() if not callable(value)}
+
+
+def _kind(name):
+    spec = KINDS.get(name)
+    if spec is None:
+        raise FaultRefused(
+            RefusalReason.FAULT_KIND_UNREGISTERED,
+            f"kind {name!r} is not registered in this process; load the module that declares it"
+            f" (--kind-module) before acting on its writes")
+    return spec
+
+
+def _validate_update(payload):
+    if not isinstance(payload, dict):
+        return ["an update is {op, value}"]
+    op, value = payload.get("op"), payload.get("value")
+    if op not in UPDATE_OPS:
+        return [f"op {op!r} is not one of {UPDATE_OPS}"]
+    if op == "set_project" and not _named(value):
+        return ["set_project names a project"]
+    if op == "reopen" and value is not None:
+        return ["reopen takes no value"]
+    if op == "add_relation" and not (isinstance(value, dict) and _named(value.get("type"))
+                                     and _named(value.get("issue"))):
+        return ["add_relation is {type, issue}"]
+    if op == "add_label" and not _named(value):
+        return ["add_label names a label"]
+    return []
+
+
+def _confirm_update(expected, observed):
+    payload = expected.get("payload") or {}
+    op, value = payload.get("op"), payload.get("value")
+    if op == "set_project":
+        found = observed.get("projectId")
+        return [] if found == value else [f"the issue reads project {found!r}, not {value!r}"]
+    if op == "reopen":
+        return [] if observed.get("open") is True else ["the issue does not read as open"]
+    if op == "add_relation":
+        relations = observed.get("relations") or []
+        return [] if value in relations else [f"the issue has no relation {value!r}"]
+    if op == "add_label":
+        labels = observed.get("labels") or []
+        return [] if value in labels else [f"the issue has no label {value!r}"]
+    return [f"unknown update {op!r}"]
+
+
+def _set_project_is_current(context):
+    """set_project's built-in pre-issue check: a project the scope has left is cancelled."""
+    payload = context["publication"].get("payload") or {}
+    if payload.get("op") != "set_project":
+        return None
+    db, fault = context["db"], context["fault"]
+    row = db.execute(
+        "SELECT p.project_ref, p.product FROM fault_target_projects p WHERE p.scope_key = ?",
+        (fault["scope_key"],)).fetchone()
+    current = row["project_ref"] if row and row["product"] == fault["product"] else None
+    if current is not None and current != payload.get("value"):
+        return {"cancel": f"the scope now targets {current}, not {payload.get('value')}"}
+    return None
+
+
+KINDS[OPEN_RECORD] = {"name": OPEN_RECORD, "creates": True, "requires_issue": False,
+                      "target": "team+project", "evidence": "block",
+                      "confirm": lambda expected, observed: [], "validate": None,
+                      "pre_issue": None}
+KINDS[APPEND_COMMENT] = {"name": APPEND_COMMENT, "creates": False, "requires_issue": True,
+                         "target": None, "evidence": "block",
+                         "confirm": lambda expected, observed: [], "validate": None,
+                         "pre_issue": None}
+KINDS[UPDATE_RECORD] = {"name": UPDATE_RECORD, "creates": False, "requires_issue": True,
+                        "target": None, "evidence": "fields", "confirm": _confirm_update,
+                        "validate": _validate_update, "pre_issue": _set_project_is_current}
+
 
 def target_missing(db, row):
-    """Whether this fault's scope has a tracker, asked inside the caller's transaction."""
-    return db.execute("SELECT tracker_ref FROM fault_targets WHERE scope_key = ?",
-                      (row["scope_key"],)).fetchone() is None
+    """Whether this fault's scope has a target its product owns."""
+    found = db.execute(
+        "SELECT p.product FROM fault_targets t JOIN fault_target_projects p"
+        "  ON p.scope_key = t.scope_key WHERE t.scope_key = ?", (row["scope_key"],)).fetchone()
+    return found is None or found["product"] != row["product"]
 
 
-def _protocol(kind) -> list:
+def _protocol(kind, spec=None) -> list:
+    spec = spec or KINDS.get(kind) or {}
     if kind == OPEN_RECORD:
         return [
             "search the tracker for this publication's start marker BEFORE creating anything",
             "marker found: the create already landed. Complete from that observation and do"
             " NOT create again",
-            "marker absent: create one issue whose description carries this block verbatim",
+            "marker absent: create one issue IN projectRef whose description carries this block"
+            " verbatim",
             "read the created issue back and pass its full text to complete, with its"
-            " identifier as the external reference",
+            " identifier as the external reference and the project it reads back as",
             "response lost, or you cannot tell: report failure. The row becomes uncertain and"
-            " no second create is made until somebody reconciles it with what they observed",
+            " no second create is made until somebody attests the request ended and nothing"
+            " landed",
         ]
-    return [
-        "read the issue's comments and look for this publication's start marker",
-        "marker found: this comment already landed. Complete from that observation",
-        "marker absent: add one comment carrying this block verbatim",
-        "read it back and pass the comment text to complete",
-    ]
+    if kind == UPDATE_RECORD:
+        return [
+            "read the owned issue's current fields",
+            "already as requested: complete from that observation",
+            "otherwise apply the one update and read the issue back",
+            "pass what was read back to complete as observed, naming the issue",
+        ]
+    if kind == APPEND_COMMENT:
+        return [
+            "read the issue's comments and look for this publication's start marker",
+            "marker found: this comment already landed. Complete from that observation",
+            "marker absent: add one comment carrying this block verbatim",
+            "read it back and pass the comment text to complete",
+        ]
+    return [f"{kind}: follow the protocol its registering module documents",
+            "complete from what was read back; a lost response is uncertain, never repeated"]
 
 
 def _block_mismatch(row, fault, found) -> list:
@@ -1575,40 +3085,32 @@ def _block_mismatch(row, fault, found) -> list:
     return problems
 
 
-def _transition(state, cycle, *, cleared, publishable, escalated, severity, published=False):
+def _transition(state, cycle, *, cleared, publishable, escalated, severity, landed=False,
+                opened=False):
     """The next state, and the one reason a write is owed. Returns no reason for most calls.
 
-    Most observations change nothing anybody has to be told about, and saying so is the point:
-    a ledger that queued a write per observation would be the spray it exists to prevent.
+    Two different questions. landed - has any write for this fault been issued, may it have,
+    or has one confirmed - decides only what a CLEAR does: owning an issue is not landing, so an
+    adopted issue nobody has written to yet is withdrawn by a clear exactly like a create nobody
+    has claimed. opened - does the fault own an issue or have a live create - decides everything
+    else, because a fault whose create is queued has been opened and must not be opened again.
     """
     if cleared:
-        # Clearing withdraws a fault nobody was told about - including one a locally recorded
-        # fix moved to fix_pending, which is still a fault no Linear record carries. It does
-        # NOT close a published one: the cause may have stopped without having been fixed,
-        # and the closed loop is what decides that.
-        if published or state in (RESOLVED, WITHDRAWN):
+        if landed or state in (RESOLVED, WITHDRAWN):
             return state, cycle, False, None
         return WITHDRAWN, cycle, False, None
     if state == WITHDRAWN:
         state = OBSERVED
     if state == RESOLVED:
-        if not published:
-            # Resolved locally without ever having been filed. A reopen comment would be
-            # refused for want of an issue and nothing would ever queue again, so the
-            # threshold decides here exactly as it would have the first time.
+        if not opened:
             return OPEN, cycle + 1, True, (TRIGGER_OPEN if publishable else None)
         return OPEN, cycle + 1, True, f"{TRIGGER_REOPEN}:{cycle + 1}"
     if state == FIX_PENDING:
-        if not published:
-            # Never filed, so there is no record to tell that the fix did not hold. It goes
-            # back to open and the threshold decides, exactly as it would have.
+        if not opened:
             return OPEN, cycle, False, (TRIGGER_OPEN if publishable else None)
         return OPEN, cycle, False, f"{TRIGGER_RECUR}:{cycle}"
     if state == OPEN:
-        if not published and publishable:
-            # Open but never filed: a fix recorded before the threshold moved it here, and
-            # the OPEN branch alone would have left it forever open with no record. Reaching
-            # the threshold is what opens the record, whenever that happens.
+        if not opened and publishable:
             return OPEN, cycle, False, TRIGGER_OPEN
         return OPEN, cycle, False, (f"{TRIGGER_ESCALATE}:{severity}" if escalated else None)
     if publishable:
@@ -1630,4 +3132,6 @@ def _occurrence(row) -> dict:
 def _publication(row) -> dict:
     record = dict(row)
     record.pop("claim_token", None)
+    for helper in ("fault_product", "seq", "turn"):
+        record.pop(helper, None)
     return record

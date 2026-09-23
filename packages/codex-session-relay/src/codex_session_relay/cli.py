@@ -1496,7 +1496,9 @@ from .faults import METHODS as FAULT_METHODS, OUTCOMES as FAULT_OUTCOMES  # noqa
 
 
 def cmd_fault_target(services, args) -> dict:
-    return services.faults.set_target(args.scope, args.tracker_ref)
+    return services.faults.set_target(product=args.product, workspace=args.workspace,
+                                      project=args.project, team=args.team,
+                                      project_ref=args.project_ref)
 
 
 def cmd_fault_observe(services, args) -> dict:
@@ -1582,7 +1584,7 @@ def cmd_fault_next(services, args) -> dict:
 
 
 def cmd_fault_claim(services, args) -> dict:
-    return services.faults.claim(args.publication, owner=args.owner)
+    return services.faults.claim(args.publication, owner=args.owner, takeover=args.takeover)
 
 
 def cmd_fault_operation(services, args) -> dict:
@@ -1590,20 +1592,24 @@ def cmd_fault_operation(services, args) -> dict:
 
 
 def cmd_fault_reconcile(services, args) -> dict:
+    observed = _fault_json(args.observed_fields, "observed fields") if args.observed_fields         else None
     return services.faults.reconcile(args.publication, _read_text(args.observed),
-                                     searched=args.searched)
+                                     searched=args.searched, observed=observed,
+                                     prior_ended=args.prior_ended, reason=args.reason)
 
 
 def cmd_fault_complete(services, args) -> dict:
+    observed = _fault_json(args.observed_fields, "observed fields") if args.observed_fields         else None
     return services.faults.complete(
-        args.publication, claim_token=args.claim_token, readback=_read_text(args.readback),
-        external_ref=args.external_ref,
+        args.publication, claim_token=args.claim_token,
+        readback=_read_text(args.readback) if args.readback else None,
+        external_ref=args.external_ref, project_ref=args.project_ref, observed=observed,
     )
 
 
 def cmd_fault_fail(services, args) -> dict:
     return services.faults.fail(args.publication, claim_token=args.claim_token,
-                                error=args.error)
+                                error=args.error, ended=args.ended)
 
 
 def cmd_fault_retry(services, args) -> dict:
@@ -3691,8 +3697,13 @@ def build_parser() -> argparse.ArgumentParser:
     sync_progress.set_defaults(handler=cmd_sync_progress)
 
     fault_target = subparsers.add_parser("fault-target")
-    fault_target.add_argument("--scope", required=True, help="product:projectKey")
-    fault_target.add_argument("--tracker-ref", required=True)
+    fault_target.add_argument("--product", required=True)
+    fault_target.add_argument("--workspace")
+    fault_target.add_argument("--project", help="the scope's projectKey")
+    fault_target.add_argument("--team", required=True, help="the tracker team issues go to")
+    fault_target.add_argument("--project-ref",
+                              help="the project issue creates are filed in; without one no"
+                                   " issue is created for this scope")
     fault_target.set_defaults(handler=cmd_fault_target)
 
     fault_observe = subparsers.add_parser("fault-observe")
@@ -3743,6 +3754,8 @@ def build_parser() -> argparse.ArgumentParser:
     fault_claim = subparsers.add_parser("fault-claim")
     fault_claim.add_argument("--publication", required=True)
     fault_claim.add_argument("--owner", required=True)
+    fault_claim.add_argument("--takeover", action="store_true",
+                             help="take over a write another owner claimed first (recorded)")
     fault_claim.set_defaults(handler=cmd_fault_claim)
 
     fault_operation = subparsers.add_parser("fault-operation")
@@ -3752,7 +3765,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     fault_reconcile = subparsers.add_parser("fault-reconcile")
     fault_reconcile.add_argument("--publication", required=True)
-    fault_reconcile.add_argument("--observed", required=True, help="observed text, or @path")
+    fault_reconcile.add_argument("--observed", default="", help="observed text, or @path")
+    fault_reconcile.add_argument("--observed-fields",
+                                 help="JSON of the owned issue's fields read back, or @path")
+    fault_reconcile.add_argument("--prior-ended", action="store_true",
+                                 help="attest that the issuing request can no longer land")
+    fault_reconcile.add_argument("--reason", help="what ended the issuing request")
     fault_reconcile.add_argument(
         "--searched", action="store_true",
         help="attest that the search covered where the block would be. Without it a negative"
@@ -3763,14 +3781,20 @@ def build_parser() -> argparse.ArgumentParser:
     fault_complete = subparsers.add_parser("fault-complete")
     fault_complete.add_argument("--publication", required=True)
     fault_complete.add_argument("--claim-token")
-    fault_complete.add_argument("--readback", required=True, help="the text, or @path")
+    fault_complete.add_argument("--readback", help="the text, or @path")
     fault_complete.add_argument("--external-ref")
+    fault_complete.add_argument("--project-ref",
+                                help="the project the created issue reads back as")
+    fault_complete.add_argument("--observed-fields",
+                                help="JSON of the owned issue's fields read back, or @path")
     fault_complete.set_defaults(handler=cmd_fault_complete)
 
     fault_fail = subparsers.add_parser("fault-fail")
     fault_fail.add_argument("--publication", required=True)
     fault_fail.add_argument("--claim-token", required=True)
     fault_fail.add_argument("--error", required=True)
+    fault_fail.add_argument("--ended", action="store_true",
+                            help="the connector answered with a definitive refusal")
     fault_fail.set_defaults(handler=cmd_fault_fail)
 
     fault_retry = subparsers.add_parser("fault-retry")

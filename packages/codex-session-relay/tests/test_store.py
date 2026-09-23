@@ -19,6 +19,12 @@ EXPECTED_TABLES = {
     "acks", "attempts", "deliveries", "events", "generations", "journal", "observations",
     "recipient_lifecycle", "recipient_rate", "refusals", "relationships", "schema_meta",
     "verdicts", "verification_claims",
+    # The fault ledger: the merged tables and the corrected contract's, all created on open.
+    "fault_ledger", "fault_occurrences", "fault_timeline", "fault_remediations",
+    "fault_publications", "fault_targets", "fault_cursors", "fault_target_projects",
+    "fault_publication_payloads", "fault_links", "fault_adoptions", "fault_aliases",
+    "fault_publication_attempts", "fault_budget_uses", "fault_limits", "fault_notifications",
+    "fault_policies",
 }
 
 
