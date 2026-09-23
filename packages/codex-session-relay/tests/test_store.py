@@ -1261,6 +1261,84 @@ class DescriptorIdentity(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return done
 
+    def move_between_the_check_and_the_connect(self, nth):
+        """Move our database after a leg's last check and before SQLite opens it, then restore it.
+
+        The window PR115-RB1 was found in, reached the way its reviewer reached it. A live writer
+        holds the store open with a write-ahead log, as a running relay does. On the nth
+        sqlite3.connect only:
+
+          1. our database is renamed to `moved.sqlite3`, after the leg's `_relocation` has already
+             said the descriptor still names this store;
+          2. the real connect runs, so SQLite resolves the descriptor to the moved name;
+          3. the file is renamed back once the leg has run its first statement on that connection,
+             whether or not that statement raised, or at the latest when the leg closes it.
+
+        The pathname looks untouched afterwards, so the one trace a file-creating first statement
+        can leave is a `moved.sqlite3-*` sidecar. The wrapper decides when, never what: every
+        statement the leg runs is its own. The writer is opened before the seam is armed, so its
+        own connect is not counted.
+        """
+        from codex_session_relay import store as store_module
+
+        writer = Store(self.path)
+        self.addCleanup(writer.close)
+        writer.write_challenge(actor="writer")
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        real = store_module.sqlite3.connect
+        state = {"calls": 0, "moved": False, "restored": False}
+
+        def restore():
+            if state["moved"] and not state["restored"]:
+                os.rename(moved, self.path)
+                state["restored"] = True
+
+        class Restoring:
+            """The leg's connection, which puts the file back after its first statement."""
+
+            def __init__(self, connection):
+                object.__setattr__(self, "connection", connection)
+
+            def execute(self, *args, **kwargs):
+                try:
+                    return self.connection.execute(*args, **kwargs)
+                finally:
+                    restore()
+
+            def close(self):
+                try:
+                    return self.connection.close()
+                finally:
+                    restore()
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            def __setattr__(self, name, value):
+                # row_factory has to reach the real connection, or the leg reads plain tuples.
+                setattr(self.connection, name, value)
+
+        def wrapper(*args, **kwargs):
+            state["calls"] += 1
+            if state["calls"] != nth:
+                return real(*args, **kwargs)
+            os.rename(self.path, moved)
+            state["moved"] = True
+            try:
+                return Restoring(real(*args, **kwargs))
+            except BaseException:
+                restore()
+                raise
+
+        patcher = mock.patch.object(store_module.sqlite3, "connect", wrapper)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(restore)
+        return state
+
+    def sidecars_of_the_moved_name(self):
+        return [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")]
+
     def assertRefusedTheMove(self, detail):
         """The answer was withdrawn BECAUSE the store moved, whichever check noticed first.
 
@@ -1406,6 +1484,73 @@ class DescriptorIdentity(unittest.TestCase):
             [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")], [],
             "the refused write probe still opened the relocated name",
         )
+
+    def test_the_write_probe_asks_which_file_it_opened_before_it_can_write(self):
+        """PR115-RB1: the write probe began its transaction before asking where it was.
+
+        The move lands after the probe's second `_relocation` and before the write connection, so
+        SQLite opens the moved name. A transaction there creates `moved.sqlite3-wal` beside it,
+        and that file outlives both the refused probe and the restored pathname: a write from a
+        command that promises none. Asking the connection which file it opened creates nothing,
+        so it has to come first, and a mismatch ends the probe before BEGIN IMMEDIATE.
+        """
+        state = self.move_between_the_check_and_the_connect(2)
+        report = probe(resolve_state_dir(self.a))
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the write probe started a transaction on a name it had not checked",
+        )
+        self.assertFalse(report["access"]["dbWritable"], report)
+        self.assertRefusedTheMove(report["access"]["detail"])
+
+    def test_the_probe_read_leg_asks_before_its_first_select(self):
+        """The same seam on the probe's read connection, which already asks first.
+
+        dbWritable is deliberately not asserted. The file is back at its pathname before the
+        closing `_relocation`, so the write probe that follows opens the right name and may
+        succeed; what this case pins is that the refused read left nothing beside the moved name.
+        """
+        state = self.move_between_the_check_and_the_connect(1)
+        report = probe(resolve_state_dir(self.a))
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the probe read a name it had not checked",
+        )
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertIsNone(report["store"]["storeId"], report)
+        self.assertRefusedTheMove(report["access"]["detail"])
+
+    def test_read_only_rows_asks_before_the_callers_statement(self):
+        state = self.move_between_the_check_and_the_connect(1)
+        answer = read_only_rows(
+            resolve_state_dir(self.a), "SELECT written_by FROM store_challenge ORDER BY nonce",
+        )
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the caller's statement ran on a name that had not been checked",
+        )
+        self.assertFalse(answer["readable"], answer)
+        self.assertEqual(answer["rows"], [])
+        self.assertRefusedTheMove(answer["detail"])
+
+    def test_nonce_lookup_asks_before_it_looks(self):
+        state = self.move_between_the_check_and_the_connect(1)
+        answer = nonce_lookup(resolve_state_dir(self.a), self.written["nonce"])
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the nonce was looked up on a name that had not been checked",
+        )
+        self.assertFalse(answer["found"], answer)
+        self.assertFalse(answer["readable"], answer)
+        self.assertRefusedTheMove(answer["detail"])
 
     def test_the_ordinary_probe_describes_the_file_it_held(self):
         """The normal case, including where SQLite puts the log it needs.
