@@ -1641,6 +1641,52 @@ class TheRolePolicyTheServiceDeclares(StoreReception):
         self.assertEqual(code, cli.EXIT_REFUSED, answer)
         self.assertEqual(answer.get("reason"), "launch_policy_unreadable", answer)
 
+    def test_a_declaration_that_is_there_and_cannot_be_read_is_refused(self):
+        # Absence is the one answer that lets a check fall back to its shell's variable. A
+        # link to nothing was read as absence, so a shell still naming the policy the parent
+        # left judged its old callback pair current; undecodable bytes ended the check as a
+        # host failure, and a FIFO held it until something wrote to it.
+        import threading
+
+        from codex_session_relay.service import LAUNCH_POLICY
+        declaration = Path(self.state) / LAUNCH_POLICY
+        left = Path(self.tmp) / "left-policy"
+        left.mkdir()
+        roles = {**POLICY["roles"], "parent": {"model": SUPERSEDED_PARENT[0],
+                                               "reasoningEffort": SUPERSEDED_PARENT[1]}}
+        self.environment_names(write_policy(left, {"roles": roles}))
+        stale = self.first_assignment(dispatch="dispatch-1", issue=ISSUE, subject="stale",
+                                      callback=self.a_callback(pair=SUPERSEDED_PARENT))
+
+        def dangling():
+            declaration.symlink_to(Path(self.tmp) / "no-such-declaration.json")
+
+        def undecodable():
+            declaration.write_bytes(b'{"path": "\xff\xfe"}')
+
+        def fifo():
+            os.mkfifo(declaration)
+
+        for make in (dangling, undecodable, fifo):
+            with self.subTest(declaration=make.__name__):
+                declaration.unlink(missing_ok=True)
+                make()
+                self.addCleanup(declaration.unlink, missing_ok=True)
+                answers = []
+                worker = threading.Thread(
+                    target=lambda: answers.append(self.packet_check(stale, receiver_id=CHILD)),
+                    daemon=True)
+                worker.start()
+                worker.join(10)
+                if worker.is_alive():
+                    # Release the reader blocked on the FIFO before failing, so the suite ends.
+                    os.close(os.open(declaration, os.O_WRONLY | os.O_NONBLOCK))
+                    worker.join(10)
+                    self.fail("the check waited on a declaration that is not a regular file")
+                code, answer = answers[0]
+                self.assertEqual(code, cli.EXIT_REFUSED, answer)
+                self.assertEqual(answer.get("reason"), "launch_policy_unreadable", answer)
+
 
 class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
     def setUp(self):
