@@ -261,6 +261,10 @@ SUMMARIES = {
     ("service.py", None, "_worker_identified", "function"):
         ((False,), (("return: False", 3),), ()),
     ("service.py", None, "alive", "function"): ((False,), (), ()),
+    # Roots are a list of text, so the false side is reachable from either input alone:
+    # anything that is not a list, and any list holding a member that is not text.
+    # test_supervisor_live_findings.py hands the record and the answer each shape.
+    ("settings.py", None, "_text_list", "function"): ((False,), (), ()),
     # A name is a non-blank string, so the false side is reachable from either input alone:
     # anything that is not a string, and any string that is blank.
     ("supervision.py", None, "_named", "function"): ((False,), (), ()),

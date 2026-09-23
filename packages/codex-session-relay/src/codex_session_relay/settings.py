@@ -140,11 +140,13 @@ class TaskSettings:
     copy it onto the wire and only the host could then say what it had done with it.
     Nor can one whose approvalPolicy is not the authorized literal, and that one is refused for
     a different reason: it is not a value the host answers for at all, because this transport
-    cannot service an interactive approval. require_usable() decides all three. It does NOT type
-    runtimeWorkspaceRoots or environments, and
-    saying so is not a claim that a wrong shape is caught further on: `runtimeWorkspaceRoots`
-    of "abc" passes here and `list()` turns it into ["a", "b", "c"] on the wire. What those
-    two hold is simply a separate question from this one.
+    cannot service an interactive approval. require_usable() decides all three, and it types
+    runtimeWorkspaceRoots and environments as well: it used not to, and `runtimeWorkspaceRoots`
+    of "/a/bc" then passed here, went on the wire as ["/", "a", "/", "b", "c"], and let the
+    narrower-only comparison after a settings-free load read a host root "/" as one the record
+    names (the CRW-215 live-findings review). Roots are a list of text; environments are a list
+    of objects whose environmentId and cwd are text and whose roots, where given, are a list of
+    text.
 
     JUN-92 populates this from the creation result Run already receives; it is not a separate
     handshake and it asks for nothing the host did not already report at creation.
@@ -174,7 +176,10 @@ class TaskSettings:
         return absent
 
     def mistyped(self) -> list:
-        """Recorded fields the resume contract types as strings, and this record does not.
+        """Recorded fields whose shape this record does not hold.
+
+        The three the resume contract types as strings, and the two lists every comparison
+        reads (runtimeWorkspaceRoots, environments: see environments_problem).
 
         Presence was never the whole question. resume_params copies each of these values
         straight into ThreadResumeParams, so a recorded `cwd: 7` used to be built and sent, and
@@ -199,7 +204,25 @@ class TaskSettings:
             wrong.append("model")
         if not isinstance(self.data["reasoningEffort"], str):
             wrong.append("reasoningEffort")
+        # The two fields every comparison reads as lists. Typed here and not only where they are
+        # compared, because a record that holds text where a list belongs is read by list() as
+        # its characters, and every comparison after that - exact on a transmitted resume,
+        # narrower-only after a settings-free load - would be answering about the characters.
+        if not _text_list(self.data["runtimeWorkspaceRoots"]):
+            wrong.append("runtimeWorkspaceRoots")
+        if environments_problem(self.data["environments"]) is not None:
+            wrong.append("environments")
         return wrong
+
+    def _mistyped_detail(self, field) -> str:
+        """What a mistyped field holds, in the words an operator re-records it from."""
+        value = self.data[field]
+        if field == "runtimeWorkspaceRoots":
+            return f"runtimeWorkspaceRoots is {_shape(value)}, not a list of str"
+        if field == "environments":
+            where, what = environments_problem(value)
+            return f"environments{where} {what}"
+        return f"{field} is {type(value).__name__}, not str"
 
     def require_usable(self) -> None:
         absent = self.missing()
@@ -216,9 +239,7 @@ class TaskSettings:
             # once, like missing(), so a hand-edited row costs one round rather than three.
             raise DeliveryRefused(
                 RefusalReason.SETTINGS_MISTYPED,
-                "; ".join(
-                    f"{field} is {type(self.data[field]).__name__}, not str" for field in wrong
-                ),
+                "; ".join(self._mistyped_detail(field) for field in wrong),
             )
         if self.data["approvalPolicy"] != AUTHORIZED_APPROVAL_POLICY:
             # Meaning, after shape, and FIRST among the meaning gates, because mismatches()
@@ -357,6 +378,13 @@ class TaskSettings:
         record authorizes, a wider one is not.
         """
         found = []
+        if not isinstance(response, dict):
+            # Total over the answer, like normalise_policy: this runs BEFORE turn/start, and an
+            # exception here is recorded as an unknown outcome for a send that was in fact
+            # withheld. A shape the comparison cannot read is a setting it cannot observe.
+            return [{"code": SETTING_UNOBSERVABLE, "field": "response",
+                     "expected": "a resume response object", "returned": None,
+                     "returnedShape": type(response).__name__}]
         returned_policy = response.get("approvalPolicy")
         if returned_policy is None:
             # Not the closed-channel case: a policy we cannot see is not a policy we know is
@@ -372,7 +400,14 @@ class TaskSettings:
                           "returnedShape": type(returned_policy).__name__})
             return found
 
-        thread = response.get("thread") or {}
+        thread = response.get("thread")
+        if thread is None:
+            thread = {}
+        if not isinstance(thread, dict):
+            found.append({"code": SETTING_UNOBSERVABLE, "field": "environments",
+                          "expected": self.data["environments"], "returned": None,
+                          "returnedShape": "thread is " + type(thread).__name__})
+            return found
         returned_environments = thread.get("environments")
         if returned_environments is None:
             # Thread.environments documents null as not loaded OR the server does not expose its
@@ -380,18 +415,37 @@ class TaskSettings:
             found.append({"code": ENVIRONMENTS_UNKNOWN, "field": "environments",
                           "expected": self.data["environments"], "returned": None})
             return found
-        expected_environments = normalise_environments(self.data["environments"])
+        unreadable = environments_problem(returned_environments)
+        if unreadable is not None:
+            # Reported, but not as a selection this comparison can read: no more an answer
+            # about the environments than a null is, and never a reason to raise.
+            found.append({"code": SETTING_UNOBSERVABLE, "field": "environments",
+                          "expected": self.data["environments"], "returned": None,
+                          "returnedShape": "environments" + " ".join(unreadable)})
+            return found
         got_environments = normalise_environments(returned_environments)
-        if not (_environments_within(got_environments, expected_environments)
-                if not transmitted else got_environments == expected_environments):
+        if environments_problem(self.data["environments"]) is not None:
+            # require_usable() refuses such a record before any send; this is the same rule
+            # where the comparison stands on its own, so an unreadable record is never measured
+            # through its characters and never granted the narrower-only allowance.
             found.append({"code": SETTINGS_NOT_PRESERVED, "field": "environments",
-                          "expected": expected_environments,
+                          "expected": self.data["environments"],
                           "returned": got_environments})
+        else:
+            expected_environments = normalise_environments(self.data["environments"])
+            if not (_environments_within(got_environments, expected_environments)
+                    if not transmitted else got_environments == expected_environments):
+                found.append({"code": SETTINGS_NOT_PRESERVED, "field": "environments",
+                              "expected": expected_environments,
+                              "returned": got_environments})
 
+        recorded_roots = self.data["runtimeWorkspaceRoots"]
+        roots_readable = _text_list(recorded_roots)
         expectations = {
             "sandbox": normalise_policy(self.data["sandbox"]),
             "cwd": self.data["cwd"],
-            "runtimeWorkspaceRoots": list(self.data["runtimeWorkspaceRoots"]),
+            # An unreadable record is compared as it is, so it matches no list a host reports.
+            "runtimeWorkspaceRoots": list(recorded_roots) if roots_readable else recorded_roots,
             "model": self.data["model"],
             "reasoningEffort": self.data["reasoningEffort"],
         }
@@ -413,8 +467,14 @@ class TaskSettings:
                               "returned": raw})
                 continue
             if field == "runtimeWorkspaceRoots":
+                if not _text_list(returned):
+                    # list(123) raised here, and list("/a/b") compared characters.
+                    found.append({"code": SETTING_UNOBSERVABLE, "field": field,
+                                  "expected": expected, "returned": None,
+                                  "returnedShape": _shape(returned)})
+                    continue
                 returned = list(returned)
-                if not transmitted and _roots_within(returned, expected):
+                if not transmitted and roots_readable and _roots_within(returned, expected):
                     continue
             if expected != returned:
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": field,
@@ -428,6 +488,43 @@ class TaskSettings:
                           "expected": self.data.get("expectedPermissionProfile"),
                           "returned": profile})
         return found
+
+
+def _shape(value) -> str:
+    """A value's shape in one phrase: its type, or for a list the first member that is not text."""
+    if isinstance(value, list):
+        for one in value:
+            if not isinstance(one, str):
+                return "a list holding " + ("None" if one is None else type(one).__name__)
+        return "a list of str"
+    return "absent" if value is None else type(value).__name__
+
+
+def _text_list(value) -> bool:
+    """A list whose every member is text: the only roots shape either side may hold."""
+    return isinstance(value, list) and all(isinstance(one, str) for one in value)
+
+
+def environments_problem(environments):
+    """Why an environment selection cannot be read, as (where, what), or None when it can.
+
+    Readable is a list of objects, each with an environmentId and a cwd that are text and, where
+    given, runtimeWorkspaceRoots that are a list of text (an omitted list defaults to the cwd).
+    An empty list is readable: it is a selection of none. The caller decides what None means
+    before asking; here it is simply not a list.
+    """
+    if not isinstance(environments, list):
+        return ("", f"is {_shape(environments)}, not a list of environment objects")
+    for index, entry in enumerate(environments):
+        if not isinstance(entry, dict):
+            return (f"[{index}]", f"is {_shape(entry)}, not an object")
+        for key in ("environmentId", "cwd"):
+            if not isinstance(entry.get(key), str):
+                return (f"[{index}].{key}", f"is {_shape(entry.get(key))}, not str")
+        roots = entry.get("runtimeWorkspaceRoots")
+        if roots is not None and not _text_list(roots):
+            return (f"[{index}].runtimeWorkspaceRoots", f"is {_shape(roots)}, not a list of str")
+    return None
 
 
 def _roots_within(returned, recorded) -> bool:

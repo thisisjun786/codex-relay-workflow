@@ -2179,11 +2179,12 @@ class ParticipantAccessReceipts(CliBase):
         problem in a SEPARATE field, which was true of a send whose outcome depended on what the
         host did with the value, and is no longer true of one that is never made.
 
-        The first four are written past the validating recorder deliberately: registration
-        refuses them, so the only way a store holds one is an older writer or a hand edit,
-        which is the case this helper says it supports. The fifth needs no hand edit at all -
-        `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
-        so this row can arrive through the ordinary recorder and still fail every send.
+        All five are written past the validating recorder deliberately: registration refuses
+        them, so the only way a store holds one is an older writer or a hand edit, which is the
+        case this helper says it supports. The fifth, roots recorded as a number, used to need
+        no hand edit at all - `require_usable()` did not type the list fields, so the ordinary
+        recorder took it and every send then failed on list(7). It now refuses it as mistyped,
+        and the doctor says so in delivery's own words rather than as an unexpected TypeError.
         """
         from pathlib import Path
 
@@ -2195,9 +2196,8 @@ class ParticipantAccessReceipts(CliBase):
         # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
         incomplete = dict(self.settings(self.root))
         del incomplete["cwd"]
-        # Complete, supported, and still not sendable: require_usable() types the three fields
-        # the resume contract declares as strings and says nothing about this one, while
-        # resume_params calls list() on it.
+        # Complete and supported, and not a list: require_usable() types the list fields as
+        # well as the three strings, so resume_params is never asked to call list() on it.
         unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
         # Complete and supported too, and refused one gate earlier than that: present is not
         # the same as usable, and no host answer could tell us what it did with cwd: 7.
@@ -2218,8 +2218,8 @@ class ParticipantAccessReceipts(CliBase):
             "an approval policy this transport cannot carry": (
                 interactive, "unsupported_approval_policy", "'on-request'",
             ),
-            "a field the params construction cannot use": (
-                unusable_roots, "unexpected", "TypeError",
+            "a list field recorded as something else": (
+                unusable_roots, "settings_mistyped", "runtimeWorkspaceRoots is int, not a list",
             ),
         }
         for label, (stale, expected_reason, detail_says) in cases.items():

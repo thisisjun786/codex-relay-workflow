@@ -22,9 +22,12 @@ import unittest
 from pathlib import Path
 
 from codex_session_relay import rolepolicy, supervision
+from codex_session_relay.errors import DeliveryRefused, RefusalReason
+from codex_session_relay.fakehost import FakeHostAdapter
 from codex_session_relay.settings import TaskSettings
 from codex_session_relay.transport import (
     DISPATCHED,
+    SETTINGS_REFUSALS,
     WITHHELD_PRE_SEND,
     classify_operation_receipt,
 )
@@ -248,6 +251,130 @@ class F4AnOmissionSaysWhatItIs(StoreOmissionCase):
         self.assertIn(reading["reason"], written, written)
         self.assertIn("generation " + str(reading["executionGeneration"]), written, written)
         self.assertIn(reading["selectors"]["turn"], written, written)
+
+
+class F2EveryShapeTheComparisonReads(_Seam):
+    """The post-load comparison reads lists on both sides; any other shape is a named refusal.
+
+    Found by the fresh-context review of ac6cd1f9. A record whose roots were the TEXT "/a/bc"
+    passed recording, and the narrower-only allowance then iterated its characters, so a host
+    root "/" read as within the record and the send started. And a host that answered roots 123
+    raised inside the comparison, which the transport records as an unknown outcome rather than
+    the refusal before sending that it was. One rule closes both: every value the comparison
+    reads is the shape it assumes, on the record when it is recorded and on the answer when it
+    arrives, or nothing starts and the refusal says which.
+    """
+
+    MALFORMED_RECORDS = {
+        "roots as text": {"runtimeWorkspaceRoots": "/a/bc"},
+        "roots as a number": {"runtimeWorkspaceRoots": 7},
+        "a root that is not text": {"runtimeWorkspaceRoots": [seam.WORKTREE, 7]},
+        "environments as text": {"environments": "local"},
+        "an environment that is not an object": {"environments": ["local"]},
+        "an environment id that is not text": {
+            "environments": [{"environmentId": 7, "cwd": seam.WORKTREE}]},
+        "an environment without a cwd": {"environments": [{"environmentId": "local"}]},
+        "environment roots as text": {"environments": [
+            {"environmentId": "local", "cwd": seam.WORKTREE, "runtimeWorkspaceRoots": "/a/bc"}]},
+    }
+
+    @staticmethod
+    def _answer(**overrides):
+        return seam.authorized_resume_response(**overrides)
+
+    def malformed_answers(self):
+        not_an_object = self._answer()
+        not_an_object["thread"] = "thread-1"
+        return {
+            "roots as a number": self._answer(runtimeWorkspaceRoots=123),
+            "roots as text": self._answer(runtimeWorkspaceRoots=seam.WORKTREE),
+            "a root that is not text": self._answer(runtimeWorkspaceRoots=[123]),
+            "environments as text": self._answer(thread={"environments": "local"}),
+            "an environment that is not an object": self._answer(thread={"environments": [7]}),
+            "an environment without an id": self._answer(
+                thread={"environments": [{"cwd": seam.WORKTREE}]}),
+            "environment roots as a number": self._answer(thread={"environments": [
+                {"environmentId": "local", "cwd": seam.WORKTREE, "runtimeWorkspaceRoots": 123}]}),
+            "a thread that is not an object": not_an_object,
+        }
+
+    def test_a_record_the_comparison_cannot_read_is_refused_when_recorded(self):
+        for label, override in self.MALFORMED_RECORDS.items():
+            with self.subTest(label):
+                view = TaskSettings(dict(seam.AUTHORIZED.data, **override))
+                self.assertEqual(view.missing(), [], "complete, so only the shape can refuse it")
+                try:
+                    view.require_usable()
+                except DeliveryRefused as refused:
+                    self.assertEqual(refused.reason, RefusalReason.SETTINGS_MISTYPED)
+                    self.assertIn(next(iter(override)), refused.detail)
+                else:
+                    self.fail("a record the comparison cannot read was accepted: " + label)
+
+    def test_a_record_read_as_characters_never_admits_a_wider_root(self):
+        """The review's reproducer, at the real adapter, past the recorder: "/" must not start."""
+        wider = ["/"]
+        cases = {
+            "top-level roots": (
+                {"runtimeWorkspaceRoots": "/a/bc"},
+                self._answer(runtimeWorkspaceRoots=wider)),
+            "environment roots": (
+                {"environments": [{"environmentId": "local", "cwd": seam.WORKTREE,
+                                   "runtimeWorkspaceRoots": "/a/bc"}]},
+                self._answer(thread={"environments": [
+                    {"environmentId": "local", "cwd": seam.WORKTREE,
+                     "runtimeWorkspaceRoots": wider}]})),
+        }
+        for number, (label, (override, answer)) in enumerate(cases.items(), start=1):
+            with self.subTest(label):
+                adapter, calls = self._adapter(resume=answer, status="notLoaded")
+                receipt = adapter.send_message(
+                    f"sup-30000000000{number}-a1", "thread-1", "hi",
+                    record_based(dict(seam.AUTHORIZED.data, **override)))
+                self.assertNotIn("turn/start", self._methods(calls),
+                                 "a root wider than the record was admitted")
+                self.assertEqual(receipt["status"], "failed", receipt)
+                self.assertIn(receipt["rpcError"]["code"], SETTINGS_REFUSALS)
+
+    def test_an_answer_the_comparison_cannot_read_is_a_named_refusal_before_any_turn(self):
+        """On both routes: a pair no policy derived, and a pair policy derived."""
+        for number, (label, answer) in enumerate(self.malformed_answers().items(), start=1):
+            for flagged in (True, False):
+                with self.subTest(label, settings_free=flagged):
+                    settings = (record_based() if flagged
+                                else TaskSettings(dict(seam.AUTHORIZED.data)))
+                    adapter, calls = self._adapter(resume=answer, status="notLoaded")
+                    try:
+                        receipt = adapter.send_message(
+                            f"sup-4{int(flagged)}{number:010d}-a1", "thread-1", "hi", settings)
+                    except Exception as error:  # noqa: BLE001 - the defect is an exception
+                        self.fail(f"the comparison raised {error!r} on {label}")
+                    self.assert_withheld_before_any_turn(receipt, calls, "setting_unobservable")
+
+    def test_the_comparison_never_raises_on_a_shape_it_cannot_read(self):
+        """The fake host calls the same comparison, so this is its route as well."""
+        for label, answer in self.malformed_answers().items():
+            for transmitted in (True, False):
+                with self.subTest(label, transmitted=transmitted):
+                    try:
+                        findings = TaskSettings(dict(seam.AUTHORIZED.data)).mismatches(
+                            answer, transmitted=transmitted)
+                    except Exception as error:  # noqa: BLE001 - the defect is an exception
+                        self.fail(f"the comparison raised {error!r} on {label}")
+                    self.assertTrue(findings, "an unreadable answer read as agreement")
+                    self.assertEqual(findings[0]["code"], "setting_unobservable", findings)
+
+    def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
+        host = FakeHostAdapter(clock=None)
+        host.add_thread("thread-1", status="notLoaded",
+                        loaded_settings=self._answer(runtimeWorkspaceRoots=123))
+        try:
+            receipt = host.send_message("sup-500000000001-a1", "thread-1", "hi", record_based())
+        except Exception as error:  # noqa: BLE001 - the defect is an exception
+            self.fail(f"the fake host raised {error!r}")
+        self.assertEqual(receipt["status"], "failed", receipt)
+        self.assertEqual(receipt["rpcError"]["code"], "setting_unobservable")
+        self.assertEqual(host.threads["thread-1"].status, "notLoaded", "nothing was started")
 
 
 if __name__ == "__main__":
