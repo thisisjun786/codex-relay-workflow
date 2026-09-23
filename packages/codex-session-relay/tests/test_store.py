@@ -1277,7 +1277,9 @@ class DescriptorIdentity(unittest.TestCase):
         The pathname looks untouched afterwards, so the one trace a file-creating first statement
         can leave is a `moved.sqlite3-*` sidecar. The wrapper decides when, never what: every
         statement the leg runs is its own. The writer is opened before the seam is armed, so its
-        own connect is not counted.
+        own connect is not counted. The leg gets a real connection, of a subclass that only adds
+        the restore, so everything else it does to the connection - row_factory included -
+        behaves as it does unpatched.
         """
         from codex_session_relay import store as store_module
 
@@ -1293,30 +1295,20 @@ class DescriptorIdentity(unittest.TestCase):
                 os.rename(moved, self.path)
                 state["restored"] = True
 
-        class Restoring:
+        class Restoring(store_module.sqlite3.Connection):
             """The leg's connection, which puts the file back after its first statement."""
-
-            def __init__(self, connection):
-                object.__setattr__(self, "connection", connection)
 
             def execute(self, *args, **kwargs):
                 try:
-                    return self.connection.execute(*args, **kwargs)
+                    return super().execute(*args, **kwargs)
                 finally:
                     restore()
 
             def close(self):
                 try:
-                    return self.connection.close()
+                    return super().close()
                 finally:
                     restore()
-
-            def __getattr__(self, name):
-                return getattr(self.connection, name)
-
-            def __setattr__(self, name, value):
-                # row_factory has to reach the real connection, or the leg reads plain tuples.
-                setattr(self.connection, name, value)
 
         def wrapper(*args, **kwargs):
             state["calls"] += 1
@@ -1325,7 +1317,7 @@ class DescriptorIdentity(unittest.TestCase):
             os.rename(self.path, moved)
             state["moved"] = True
             try:
-                return Restoring(real(*args, **kwargs))
+                return real(*args, factory=Restoring, **kwargs)
             except BaseException:
                 restore()
                 raise
