@@ -30,6 +30,7 @@ from unittest import mock
 from codex_session_relay import cli, intent, marker, omitted, supervision
 from codex_session_relay import supervisorchannel as channel_module
 from codex_session_relay.admission import admit_explicitly
+from codex_session_relay.daemon import RelayDaemon
 from codex_session_relay.receipts import ObservationOutcome
 from codex_session_relay.store import resolve_state_dir
 from codex_session_relay.supervisorchannel import SUPERSEDED_HOLD, SupervisorChannel
@@ -584,5 +585,79 @@ class AMarkerTheMarkerReaderCannotReadRecordsNoCapability(StoreOmissionCase):
         self.assertEqual((stored(claimed).get("state"), stored(claimed).get("reason")),
                          ("not_recorded", "marker_unreadable"))
         self.assertEqual(self.store.all("SELECT session_id FROM reporting_sessions"), [])
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])
+
+class ADeclarationRacingTheDaemon(StoreOmissionCase):
+    """Review 4 on ebae6a3b: a tick between the marker publication and the store record.
+
+    The disposition was published to the marker and recorded in the store a moment later, and
+    a daemon tick in between derived an omission for a turn the child had just declared. The
+    command now holds the store's write lock across both, so the other process's staging waits
+    for it - here, with a short busy timeout, it gives up - and nothing is sent.
+    """
+
+    def a_second_process(self, ready, go, done, outcome):
+        """A daemon over its own connection to the same store, ticking when told to."""
+        from codex_session_relay.ack import AckService
+        from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.linkage import Linkage
+        from codex_session_relay.receipts import ReceiptIntake
+        from codex_session_relay.reconcile import Reconciler
+        from codex_session_relay.registry import Registry
+        from codex_session_relay.store import Store
+
+        store = None
+        try:
+            store = Store(self.store.path)
+            store.db.execute("PRAGMA busy_timeout = 300")
+            registry = Registry(store, self.clock)
+            intake = ReceiptIntake(store, registry, self.clock)
+            delivery = DeliveryService(store, registry, intake, self.clock)
+            daemon = RelayDaemon(store, registry, intake, delivery,
+                                 AckService(store, registry, intake, delivery, self.clock),
+                                 Reconciler(store, registry, delivery, self.clock),
+                                 self.adapter, clock=self.clock)
+            daemon.supervisor_channel = SupervisorChannel(
+                store, registry, Linkage(store, self.clock), self.clock,
+                settings=lambda task, runtime=None: {"authorized": task})
+            ready.set()
+            go.wait(60)
+            daemon.tick()
+        except Exception as error:  # noqa: BLE001 - a locked store is the expected answer
+            outcome["error"] = repr(error)
+        finally:
+            ready.set()
+            if store is not None:
+                store.close()
+            done.set()
+
+    def test_a_tick_between_the_marker_and_the_store_record_wakes_nobody(self):
+        import threading
+
+        self.claim_through_cli()
+        self.the_turn_ends()
+        self.clock.advance(self.grace + 1)
+        ready, go, done, outcome = (threading.Event(), threading.Event(), threading.Event(),
+                                    {})
+        worker = threading.Thread(target=self.a_second_process,
+                                  args=(ready, go, done, outcome), daemon=True)
+        worker.start()
+        self.assertTrue(ready.wait(60), outcome)
+        publish = intent.publish_disposition
+
+        def publish_then_let_the_other_process_tick(*args, **kwargs):
+            answer = publish(*args, **kwargs)
+            go.set()
+            done.wait(60)
+            return answer
+
+        with mock.patch.object(intent, "publish_disposition",
+                               publish_then_let_the_other_process_tick):
+            declared = self.declare_through_cli("in_progress")
+        worker.join(60)
+        self.assertEqual(stored(declared).get("state"), "recorded")
+        self.assertEqual(self.upward(), [], "declared in_progress, yet the supervisor was woken")
+        self.tick(advance=60)
         self.assertEqual(self.omissions(), [])
         self.assertEqual(self.upward(), [])

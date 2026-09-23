@@ -198,7 +198,10 @@ on (`declarations.py`):
   intent declared for that workspace. A marker `reporting-show` would answer `unmeasured` about
   records nothing, and the session stays a legacy admission;
 - `intent-disposition` records the turn's declared outcome in `turn_declarations`,
-  create-once like the marker file.
+  create-once like the marker file, holding the store's write lock across the marker
+  publication and the record (`declarations.Held`): a staging, claim or transport start that
+  could act on the turn's omission takes the same lock, so it waits and sees the declaration
+  instead of reading the moment between the two.
 
 The store to write is the one the coordinator recorded in the intent (`dbPath`), the same one
 the Stop hook reads receipts from. Both commands answer with a `storeRecord` beside the marker

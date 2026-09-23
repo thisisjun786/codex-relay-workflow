@@ -459,9 +459,12 @@ def cmd_reporting_derive(services, args) -> dict:
     """
     from . import omitted
 
-    if not services.selection.db_path.exists():
+    try:
+        services.selection.db_path.stat()
+    except FileNotFoundError:
         # Opening Services.store would create and migrate an empty store here, turning the
-        # absence this read should report into a database that says nothing happened.
+        # absence this read should report into a database that says nothing happened. Only
+        # absence answers here; a store that cannot be looked at fails where it is opened.
         return {"schema": omitted.SCHEMA, "source": omitted.STORE_SOURCE,
                 "reportingState": "unmeasured", "reason": "store_absent",
                 "relationshipId": args.relationship, "observedAt": services.clock.iso(),
@@ -3163,37 +3166,51 @@ def cmd_intent_claim(services, args) -> dict:
 
 
 def cmd_intent_disposition(services, args) -> dict:
-    published = intent.publish_disposition(
-        _marker_root(args),
-        workspace=args.workspace,
-        assignment=args.assignment,
-        session_id=args.session,
-        turn_id=args.turn,
-        outcome=args.outcome,
-        at=services.clock.iso(),
-    )
-    # And in the relay store, after the marker, mirroring the disposition the marker now stands
-    # on: after a create-once conflict that is the first one, as it is for every marker reader.
     from . import declarations
 
-    directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
-    facts, unreadable = marker.read_assignment(directory)
-    standing, readable = marker.read_disposition(
-        directory, published["sessionId"], published["turnId"])
-    # Only the facts this record rests on: the intent (which store) and this disposition.
-    if ("intent" in unreadable or not readable or not standing
-            or intent.malformed_disposition(standing)):
-        record = declarations.failure(
-            "marker_unreadable", "the intent or the disposition could not be read back from"
-            " the marker after it was published, so what the marker stands on is unknown",
-            None)
-    else:
-        record = declarations.record_disposition(
-            declarations.store_of(facts), assignment=args.assignment,
-            session_id=published["sessionId"], turn_id=published["turnId"],
-            outcome=standing.get("outcome"), declared_at=standing.get("at") or "",
-            at=services.clock.iso())
-    return _with_store_record(published, record)
+    # The store the intent names, read before anything is published so its write lock can be
+    # held across the publication: see declarations.Held. A marker this cannot even locate names
+    # no store, and the publication below answers for itself.
+    try:
+        directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
+        before, unreadable_before = marker.read_assignment(directory)
+    except (ValueError, OSError):
+        directory, before, unreadable_before = None, {}, []
+    with declarations.Held(declarations.store_of(before)) as held:
+        published = intent.publish_disposition(
+            _marker_root(args),
+            workspace=args.workspace,
+            assignment=args.assignment,
+            session_id=args.session,
+            turn_id=args.turn,
+            outcome=args.outcome,
+            at=services.clock.iso(),
+        )
+        # Mirroring the disposition the marker now stands on: after a create-once conflict that
+        # is the first one, as it is for every marker reader.
+        if directory is None:
+            directory = marker.assignment_dir(_marker_root(args), args.workspace,
+                                              args.assignment)
+        facts, unreadable = marker.read_assignment(directory)
+        standing, readable = marker.read_disposition(
+            directory, published["sessionId"], published["turnId"])
+        # Only the facts this record rests on: the intent (which store) and this disposition.
+        if ("intent" in unreadable or "intent" in unreadable_before or not readable
+                or not standing or intent.malformed_disposition(standing)):
+            record = declarations.failure(
+                "marker_unreadable", "the intent or the disposition could not be read back from"
+                " the marker after it was published, so what the marker stands on is unknown",
+                None)
+        elif declarations.store_of(facts) != declarations.store_of(before):
+            record = declarations.failure(
+                "store_changed", "the intent named another store while this was being"
+                " recorded, so the record was not written to either", None)
+        else:
+            record = held.disposition(
+                assignment=args.assignment, session_id=published["sessionId"],
+                turn_id=published["turnId"], outcome=standing.get("outcome"),
+                declared_at=standing.get("at") or "", at=services.clock.iso())
+    return _with_store_record(published, held.settled(record))
 
 
 def _resolved(path) -> str:
