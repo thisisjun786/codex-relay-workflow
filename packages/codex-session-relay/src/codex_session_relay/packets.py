@@ -838,6 +838,11 @@ UNREADABLE = "unreadable"
 # is what a first assignment names.
 RELATION_STATUS = "relationStatus"
 DISPATCH_REQUEST = "dispatchRequestId"
+# The answered task's recorded pair judged against the current role policy for its own role:
+# the pairs refused there, as refusedPolicies holds the child's. The parent's record keeps the
+# pair it was recorded with until something re-records it, so agreeing with that record is
+# not enough to make a callback current.
+CALLBACK_REFUSALS = "refusedCallbackPolicies"
 # The generation the registration that began the current tenure opened. A tenure is one
 # registration of the child on the relationship; a returning registration reuses the id.
 TENURE_GENERATION = "tenureGeneration"
@@ -1101,6 +1106,23 @@ def _callback_agreement(one, record, problems, gaps) -> None:
                  "the task being answered is authorised to run another pair now; a callback"
                  " naming the old one is refused for its settings, not retried as a provider"
                  " failure or worked around with another child")
+    # And whether the pair its record holds is still one its role may run. Unread, whether
+    # this callback is current is unchecked, never "nothing refused".
+    if CALLBACK_REFUSALS not in record or _refusals_unreadable(record, CALLBACK_REFUSALS):
+        gaps.append(mismatch(UNREADABLE, CALLBACK, expected=None, found=stated,
+                             reason="the receiver has no readable judgement of the answered"
+                                    " task's recorded pair against the current role policy,"
+                                    " so whether this callback pair is still authorised is"
+                                    " unchecked"))
+        return
+    for pair in record[CALLBACK_REFUSALS]:
+        if pair["model"] == stated.get("model") and pair["effort"] == stated.get("effort"):
+            problems.append(mismatch(
+                STALE_CALLBACK, "callback.model/effort", expected=None,
+                found={"model": stated.get("model"), "effort": stated.get("effort")},
+                reason=pair.get("reason") or "the current role policy has moved the answered"
+                " task's role off this pair, even though its own record still holds it"))
+            return
 
 
 def _policy_agreement(one, record, problems, gaps) -> None:
@@ -1349,16 +1371,17 @@ def _settings_gaps(one, record) -> list:
     return []
 
 
-def _refusals_unreadable(record) -> bool:
+def _refusals_unreadable(record, key="refusedPolicies") -> bool:
     """A refusal list the reading holds and cannot read: not read as "none refused".
 
     Present as null, not a list, or holding an entry that is not a model and effort pair of
     text. An empty list is a reading - nothing refused - and an absent key is handled as an
-    absence by _settings_gaps.
+    absence by its caller (_settings_gaps for the child's, _callback_agreement for the
+    answered task's).
     """
-    if "refusedPolicies" not in record:
+    if key not in record:
         return False
-    held = record["refusedPolicies"]
+    held = record[key]
     return not isinstance(held, list) or any(
         not isinstance(pair, dict)
         or not all(isinstance(pair.get(name), str) and pair[name].strip()

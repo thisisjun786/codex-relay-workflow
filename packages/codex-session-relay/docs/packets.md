@@ -72,7 +72,11 @@ section is refused naming it, exactly as an assignment missing a DISPATCH-TASK-0
 task being answered is currently authorized to run. It is an object because the pair is what
 goes stale. A parent whose model the user changed on 2026-09-23 runs another pair from then on,
 and a packet still naming the old one must not pass; a string such as "parent task X" could not
-be compared at all.
+be compared at all. Agreeing with the answered task's record is not enough: that record keeps
+the pair it was recorded with until something re-records it, so the receiver also judges it
+against the current role policy for that task's role (`refusedCallbackPolicies`), and a
+callback naming a pair refused there is `stale_callback`. A reading without that judgement,
+or with one it cannot read, leaves the callback a gap.
 
 **The policy.** Model, effort, workflow and **mode** (`loop`, `non_loop` or `coordination`),
 with sandbox and approval where stated. The mode is the machine-readable form of what the
@@ -176,6 +180,7 @@ unread.
 | policy | `authorized_settings` of the child: model, effort, the sandbox policy with its declared defaults, and the approval policy |
 | callback | the relationship's parent and its `authorized_settings` |
 | refusedPolicies | the role policy (`rolepolicy.check_record`) for the child's bound role |
+| refusedCallbackPolicies | the role policy for the parent's bound role, against the parent's recorded pair |
 | mode | the receiver's reception ledger (below) |
 | repository, prNumber, headSha, artifactPath, artifactDigest | only `--observation` |
 

@@ -472,33 +472,42 @@ def _read_settings(rows, row, answer, notes):
             "model": _recorded_text(parent_settings, "model", parent, notes),
             "effort": _recorded_text(parent_settings, "reasoningEffort", parent, notes)},
                "relationships.parent_task_id + authorized_settings[" + parent + "]")
-    bound = rolepolicy.bound_role(rows, child)
+    # Each recorded pair judged against the current role policy for that task's own role: the
+    # child's for the policy a packet states, the parent's for the callback. A record agrees
+    # with a packet naming the pair it was recorded with even after the policy has moved that
+    # role on, and nothing re-records a task when the policy moves.
+    _role_refusals(rows, child, child_settings, "refusedPolicies", answer, notes)
+    _role_refusals(rows, parent, parent_settings, packets.CALLBACK_REFUSALS, answer, notes)
+
+
+def _role_refusals(rows, task_id, settings, key, answer, notes):
+    bound = rolepolicy.bound_role(rows, task_id)
     if bound is None:
-        answer("refusedPolicies", [], "rolepolicy: " + child + " holds no bound role, so no"
-                                      " role pair applies")
+        answer(key, [], "rolepolicy: " + task_id + " holds no bound role, so no role pair"
+                        " applies")
         return
     if isinstance(bound, rolepolicy.Contested):
-        notes.append(child + " is bound to more than one role, so its pair is unchecked")
+        notes.append(task_id + " is bound to more than one role, so its pair is unchecked")
         return
-    if child_settings is None:
+    if settings is None:
         return
     policy = rolepolicy.declared()
     if not policy:
-        notes.append("no role policy resolved in this process, so whether the recorded pair is"
-                     " authorised for " + bound + " is unchecked")
+        notes.append("no role policy resolved in this process, so whether the recorded pair of "
+                     + task_id + " is authorised for " + bound + " is unchecked")
         return
-    model, effort = rolepolicy.recorded_pair(child_settings)
+    model, effort = rolepolicy.recorded_pair(settings)
     if any(value is not None and not isinstance(value, str) for value in (model, effort)):
         # Not a pair any writer records, so not one the role policy can judge: unread, and
         # never folded into the refusal list the answer prints.
-        notes.append("the recorded pair of " + child + " is not text, so whether it is"
+        notes.append("the recorded pair of " + task_id + " is not text, so whether it is"
                      " authorised for " + bound + " is unchecked")
         return
-    finding = rolepolicy.check_record(child_settings, bound, policy)
+    finding = rolepolicy.check_record(settings, bound, policy)
     refused = [] if finding is None else [{
         "model": model, "effort": effort, "code": finding.get("code"),
         "reason": rolepolicy.describe(finding)}]
-    answer("refusedPolicies", refused, "rolepolicy " + str(policy.digest) + " for " + bound)
+    answer(key, refused, "rolepolicy " + str(policy.digest) + " for " + bound)
 
 
 # ------------------------------------------------------------------------- the seven states

@@ -628,7 +628,9 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         code, answer = self.packet_check(one, receiver_id=CHILD, observation=self.observed())
         self.assertEqual(code, 0, answer)
         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
-        self.assertEqual(self.gap_fields(answer), ["callback.model"])
+        # And a pair that is not text cannot be judged against the role policy either, so
+        # whether the callback is still authorised is unread as well.
+        self.assertEqual(self.gap_fields(answer), ["callback", "callback.model"])
 
     def test_an_envelope_of_the_wrong_shape_is_refused_as_a_packet(self):
         relationship = self.registered()
