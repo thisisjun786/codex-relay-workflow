@@ -104,6 +104,20 @@ class Validation(unittest.TestCase):
             products.read_binding(binding("alpha-notes", "issue", "ALN-21",
                                           followUpOf=[{"issue": "ALN-9", "checks": []}]))
 
+    def test_numbers_without_json_text_are_refused_everywhere_a_scalar_is_read(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                with self.assertRaises(products.RouteRefused):
+                    incident(evidence=[{"kind": "event", "ref": "e", "observed": {"score": value}}])
+                with self.assertRaises(products.RouteRefused):
+                    incident(cause={"product": "crw", "faultId": "0" * 32,
+                                    "signature": {"turn": value}})
+                with self.assertRaises(products.RouteRefused):
+                    products.canonical({"score": value})
+        kept = incident(evidence=[{"kind": "event", "ref": "e",
+                                   "observed": {"score": 0.5, "count": 2, "ok": True}}])
+        self.assertEqual({"score": 0.5, "count": 2, "ok": True}, kept["evidence"][0]["observed"])
+
     def test_a_named_causes_signature_is_identity_bounded_and_never_rewritten(self):
         # The shape the ledger records, including a padded value: returned exactly as given so
         # it still compares equal to the stored signature.
@@ -862,9 +876,13 @@ class RouteRows(RelayTestCase):
     def test_a_route_keeps_its_newest_incidents_and_its_highest_claimed_severity(self):
         from codex_session_relay import routes
 
-        self.upsert("a" * 32, claimed_severity="broken")
-        self.upsert("a" * 32, claimed_severity="notice")
-        self.assertEqual("broken", routes.get(self.store, "a" * 32)["claimed_severity"])
+        # The highest any source claimed, notice < degraded < broken.
+        for claimed, kept in (("notice", "notice"), ("degraded", "degraded"),
+                              ("notice", "degraded"), ("broken", "broken"),
+                              ("degraded", "broken"), ("notice", "broken")):
+            self.upsert("a" * 32, claimed_severity=claimed)
+            with self.subTest(claimed=claimed):
+                self.assertEqual(kept, routes.get(self.store, "a" * 32)["claimed_severity"])
         with self.store.transaction() as db:
             for n in range(routes.MAX_STORED_INCIDENTS + 4):
                 routes.store_incident(db, self.clock, "a" * 32,

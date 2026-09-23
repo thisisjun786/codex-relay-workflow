@@ -30,16 +30,36 @@ class ProductRouter:
     # ------------------------------------------------------------------ registry
 
     def register_product(self, record) -> dict:
-        """Record what routing knows about one product. Replaces the previous record whole."""
+        """Record what routing knows about one product. Replaces the previous record whole.
+
+        The workspace is part of every routed fault's identity, so a product that has routes
+        keeps its workspace: a registry naming another would file the same defects again under
+        new identities. Every other field can change, and the product's held routes, and filed
+        ones whose fault owns no issue yet, are decided again against the new record in the
+        same transaction, as a binding decides them. A product nothing was routed for yet
+        touches no ledger at all.
+        """
         registry = products.read_registry(record)
         now = self.clock.iso()
-        with self.store.transaction() as db:
+        with self.store.composing() as db:
+            previous = db.execute("SELECT record FROM product_registry WHERE product_key = ?",
+                                  (registry["product"],)).fetchone()
+            before = json.loads(previous["record"]) if previous else None
+            if before is not None and before["workspace"] != registry["workspace"] and db.execute(
+                    "SELECT 1 FROM incident_routes WHERE product_key = ? LIMIT 1",
+                    (registry["product"],)).fetchone():
+                products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                                f"{registry['product']} has routed faults in workspace"
+                                f" {before['workspace']}; the workspace is part of their"
+                                f" identity, so a registry naming {registry['workspace']} would"
+                                f" file the same defects again")
             db.execute(
                 "INSERT INTO product_registry (product_key, record, recorded_at) VALUES (?,?,?)"
                 " ON CONFLICT(product_key) DO UPDATE SET record = excluded.record,"
                 "   recorded_at = excluded.recorded_at",
                 (registry["product"], products.canonical(registry), now))
-        return registry
+            redecided = intake.redecide(self, registry["product"]) if before else []
+        return {**registry, "redecided": redecided}
 
     def registry(self, product):
         row = self.store.one(

@@ -17,6 +17,7 @@ rather than ignored.
 """
 
 import json
+import math
 import re
 
 from .errors import RefusalReason, RelayError
@@ -467,8 +468,8 @@ def read_evidence(values) -> list:
                 _key(key, f"{name}.observed key")
                 if isinstance(reading, str):
                     _text(reading, f"{name}.observed.{key}", limit=256)
-                elif reading is not None and not isinstance(reading, (bool, int, float)):
-                    malformed(f"{name}.observed.{key} is a scalar reading")
+                else:
+                    _scalar(reading, f"{name}.observed.{key} is a scalar reading")
             entry["observed"] = dict(observed)
         entries.append(entry)
     if len(canonical(entries).encode("utf-8")) > MAX_EVIDENCE_BYTES:
@@ -494,13 +495,28 @@ def read_cause_signature(value) -> dict:
         if isinstance(reading, str):
             if len(reading) > 256:
                 malformed(f"{name}.{key} is longer than 256 characters")
-        elif reading is not None and not isinstance(reading, (bool, int, float)):
-            malformed(f"{name}.{key} is a scalar; a signature names a failure domain")
+        else:
+            _scalar(reading, f"{name}.{key} is a scalar; a signature names a failure domain")
     if len(canonical(value).encode("utf-8")) > MAX_SIGNATURE_BYTES:
         malformed(f"{name} is larger than {MAX_SIGNATURE_BYTES} bytes")
     return dict(value)
 
 
+def _scalar(value, refusal):
+    """Null, a boolean or a finite number, else refused with the given text. NaN and the
+    infinities are floats JSON has no text for."""
+    if value is None or isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    malformed(refusal)
+
+
 def canonical(value) -> str:
-    """Sorted keys and no spaces, so one record is one string whoever built it."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    """Sorted keys and no spaces, so one record is one string whoever built it. A value with no
+    JSON text (NaN, an infinity) is refused rather than stored as text JSON readers reject."""
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                          allow_nan=False)
+    except ValueError as error:
+        malformed(f"a value has no JSON text: {error}")

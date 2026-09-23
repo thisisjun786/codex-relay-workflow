@@ -322,6 +322,28 @@ class ControlGroups(ProductRoutingCase):
         self.holder.run()
         self.assertNotIn("open", [i["state"] for i in self.linear.issues.values()])
 
+    def test_a_withdrawn_claim_leaves_an_open_mismatch_standing_without_a_new_occurrence(self):
+        first = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
+        (entry,) = first["recorded"]
+        self.holder.run()
+        count = self.router.port.get(entry["faultId"])["occurrence_count"]
+        # The subject was taken back out of Done: that answers nothing about the evidence.
+        withdrawn = self.router.check_completion(reading(
+            "ALN-9", observedAt="reopened", claims={"linearDone": False, "prMerged": True}))
+        self.assertEqual("mismatch", withdrawn["verdict"])
+        acceptance = {c["check"]: c for c in withdrawn["checks"]}["acceptance"]
+        self.assertEqual("claim_withdrawn_without_closure", acceptance["verdict"])
+        self.assertEqual([("acceptance", "standing")],
+                         [(e["check"], e["recorded"]) for e in withdrawn["recorded"]])
+        self.assertEqual(count, self.router.port.get(entry["faultId"])["occurrence_count"])
+        self.assertEqual("open", self.router.port.get(entry["faultId"])["state"])
+        attention = self.router.show(attention=True)["routes"]
+        self.assertIn(entry["faultId"], [r["faultId"] for r in attention])
+        # Nothing open, nothing claimed: not applicable, as before.
+        clean = self.router.check_completion(reading(
+            "ALN-3", claims={"linearDone": False, "prMerged": False}))
+        self.assertEqual(("consistent", []), (clean["verdict"], clean["recorded"]))
+
 
 def reading(subject, **fields):
     record = {"schema": "completion-reading/1", "product": "alpha-notes", "subject": subject,
@@ -850,6 +872,40 @@ class PlanAuditScenarios(ProductRoutingCase):
         self.assertEqual(("filed", created), stages[third["faultId"]])
 
 
+
+
+class RegistryChanges(ProductRoutingCase):
+    """A registry replaced whole: identity stays, placement follows the new record."""
+
+    def test_a_routed_product_keeps_its_workspace_and_an_unrouted_one_may_move(self):
+        first = self.route()
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.register_product(dict(ALPHA, workspace="other-ws"))
+        self.assertEqual("route_state_conflict", caught.exception.reason.value)
+        self.assertEqual(WORKSPACE, self.router.registry("alpha-notes")["workspace"])
+        again = self.route(occurrenceKey="run-2")
+        self.assertEqual(first["faultId"], again["faultId"])
+        moved = self.router.register_product(dict(GAMMA, workspace="other-ws"))
+        self.assertEqual(("other-ws", []), (moved["workspace"], moved["redecided"]))
+
+    def test_a_new_triage_project_places_a_defect_held_for_want_of_one(self):
+        held = Projects.gamma(self, "cache", "stale", "g1", goal=False)
+        self.assertEqual("no_project", held["hold"])
+        answer = self.router.register_product(dict(GAMMA, triageProject="proj-gmk-triage"))
+        self.assertEqual([held["faultId"]], [r["faultId"] for r in answer["redecided"]])
+        self.holder.run()
+        (ref, issue), = self.issues_of("GMK").items()
+        self.assertEqual("proj-gmk-triage", issue["project"])
+
+    def test_a_team_change_reaches_a_create_not_yet_written(self):
+        answer = self.route(product="beta-meter", repository="example-org/beta-meter",
+                            surface="real_use", phase="in_use", component="billing",
+                            symptom="charge_twice")
+        self.assertIsNone(self.router.port.get(answer["faultId"])["external_ref"])
+        self.router.register_product(dict(BETA, team="BTX"))
+        self.assertEqual("BTX", routes.get(self.store, answer["faultId"])["target"]["team"])
+        self.holder.run()
+        self.assertEqual(({}, 1), (self.issues_of("BTM"), len(self.issues_of("BTX"))))
 
 
 class TheContractIsBound(unittest.TestCase):

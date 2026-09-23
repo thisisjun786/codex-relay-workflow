@@ -50,12 +50,15 @@ EXCEPTED = "excepted"
 EXCEPTION_UNVERIFIED = "exception_unverified"
 NOT_APPLICABLE = "not_applicable"
 REQUIREMENT_CHANGED = "requirement_changed_without_approval"
+# A claim (Done, merged, ended) withdrawn while its check's mismatch is open: nothing closed it,
+# so the mismatch stands, as it does when the requirement is dropped.
+CLAIM_WITHDRAWN = "claim_withdrawn_without_closure"
 # The overall verdict when every check now agrees but an open mismatch still lacks the fix and
 # verification references that would close it: nothing is wrong any more, and nothing is closed.
 CLOSURE_PENDING = "closure_pending"
 # The verdicts that keep a subject flagged. A claimed exception nobody could verify and a
 # requirement dropped after a mismatch both leave the mismatch where it was.
-OPEN_VERDICTS = (MISMATCH, EXCEPTION_UNVERIFIED, REQUIREMENT_CHANGED)
+OPEN_VERDICTS = (MISMATCH, EXCEPTION_UNVERIFIED, REQUIREMENT_CHANGED, CLAIM_WITHDRAWN)
 
 READING_KEYS = ("schema", "product", "subject", "claims", "requires", "observed", "evidence",
                 "exceptions", "origin", "observedAt")
@@ -146,10 +149,18 @@ def _exception(reading, check, bindings):
 
 
 def _check(reading, check, context):
-    if not reading["claims"][CLAIM_FOR[check]]:
-        return NOT_APPLICABLE, f"nothing claims {CLAIM_FOR[check]}"
-    verdict, reason = _observed(reading, check, context)
-    if verdict not in (MISMATCH, REQUIREMENT_CHANGED, UNVERIFIED):
+    claim = CLAIM_FOR[check]
+    if reading["claims"][claim]:
+        verdict, reason = _observed(reading, check, context)
+    elif check in context["openMismatches"]:
+        # Withdrawing the claim answers nothing: a mismatch closes only on a fix and its
+        # verification, which the claim made again with the evidence will carry, or on an
+        # approved exception.
+        verdict, reason = CLAIM_WITHDRAWN, (f"{claim} is no longer claimed, and nothing closed"
+                                            f" the open mismatch, so it stands")
+    else:
+        return NOT_APPLICABLE, f"nothing claims {claim}"
+    if verdict not in (MISMATCH, REQUIREMENT_CHANGED, CLAIM_WITHDRAWN, UNVERIFIED):
         return verdict, reason
     excepted = _exception(reading, check, context["bindings"])
     if excepted is None:
@@ -378,7 +389,12 @@ def check(router, record) -> dict:
                             evidence=_evidence(reading, name, key))
             owner = routes.plain_target(team=team, project=project, owner=reading["subject"])
             replayed = _replayed(router.store, ids["closed"], key)
-            if verdict in OPEN_VERDICTS and replayed:
+            if verdict == CLAIM_WITHDRAWN:
+                # The open mismatch stands and is reported so, but a withdrawn claim is not a
+                # new failure: a subject reopened and being worked on is not observed again.
+                written.append({"check": name, "faultId": ids["mismatch"], "recorded": "standing",
+                                "ledgerState": (ids["mismatchRow"] or {}).get("state")})
+            elif verdict in OPEN_VERDICTS and replayed:
                 # A reading an earlier round already recorded, handed in again after that round
                 # closed. Old evidence is not a new failure, so it opens nothing.
                 written.append({"check": name, "faultId": replayed, "recorded": "replayed"})

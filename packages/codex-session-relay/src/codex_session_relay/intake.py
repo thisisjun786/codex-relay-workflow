@@ -394,14 +394,18 @@ def _again(router, route, registry, bindings):
         # this one; that is decided when the incident arrives, never by moving a record later.
         return None
     current = route["target"]
-    if (decision["project"], decision["owner"], decision["hold"]) == (
-            current["project"], current["owner"], current["hold"]):
-        return None
     target = routes.target(decision, registry, incident,
                            obligations=_obligations(decision, route, current.get("cause"),
                                                     labels=placement.issue_labels(incident)),
                            cause=current.get("cause"),
                            unverified_cause=current.get("unverifiedCause"))
+    # The team counts only where a project is named: that is where the ledger's target for the
+    # scope carries it, and a registry that moved the product to another team re-points there.
+    if (target["project"], target["owner"], target["hold"],
+            target["team"] if target["project"] else None) == (
+            current["project"], current["owner"], current["hold"],
+            current["team"] if current["project"] else None):
+        return None
     place = scope(route["workspace"], decision["project"])
     try:
         with router.store.composing() as db:

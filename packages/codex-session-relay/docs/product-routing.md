@@ -44,6 +44,8 @@ Evidence is a few references, never a transcript. Each entry has a `kind`, a `re
 a `source` and a flat `observed` object of scalar readings; at most sixteen entries and 4096
 bytes in all. Nested structure, long text or anything past the bound is refused, so an intake
 cannot become a copy of the conversation, file or personal data a source happened to hold.
+Numbers JSON has no text for (NaN, the infinities) are refused too, and nothing routing stores
+can hold one.
 The signature an incident gives for a named cause is read the same way: a flat object of at
 most sixteen scalar fields and 1024 bytes, the shape of the signatures routing and the ledger's
 own sweeps record. It is kept exactly as given so it can be compared with the stored one.
@@ -127,6 +129,14 @@ stored incidents, so the new record's occurrence count is a count of replayed ob
 Identity carries the Linear workspace. A resolved product uses its registry workspace, and an
 incident declaring another is refused. A pending incident uses the workspace it declares, or
 `unassigned`, so two workspaces never share a pending record.
+
+`product-register` replaces a product's record whole. A product with routes keeps its workspace:
+a record naming another would give the same defects new identities and file them again, so it is
+refused. Any other change is applied to what is not filed yet: the product's held routes, and
+filed ones whose fault owns no issue yet, are decided again in the same transaction, as
+`product-bind` decides them. A new triage project places what was held for want of one, and a new
+team re-points the ledger's target for their project, so a create not yet written goes to the
+new team. An issue already written stays where it is.
 
 ## Shared causes
 
@@ -251,10 +261,13 @@ matter.
 A mismatch closes only on evidence. A later reading can carry a fix reference and a verification
 reference; then the fix is recorded, a reverification that passed is recorded, and the record is
 resolved. An approved exception closes it the same way, with the exception as the fix. A
-requirement quietly dropped after a mismatch keeps it open. An unverified check is cleared by a
-later reading that establishes it either way. A reading where every check now agrees, but an open
-mismatch still lacks its fix and verification references, answers `closure_pending` rather than
-`consistent`: nothing is wrong any more, and nothing is closed. A legitimate Done produces no
+requirement quietly dropped after a mismatch keeps it open. So does a claim withdrawn while the
+mismatch is open, a subject taken back out of Done for instance: the check answers
+`claim_withdrawn_without_closure` and records no new occurrence, because a subject taken back is
+not a new failure. The claim made again with its evidence closes it. An unverified check is cleared
+by a later reading that establishes it either way. A reading where every check now agrees, but an
+open mismatch still lacks its fix and verification references, answers `closure_pending` rather
+than `consistent`: nothing is wrong any more, and nothing is closed. A legitimate Done produces no
 write at all.
 
 Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
@@ -314,7 +327,7 @@ read.
 | `product_registry` | one validated registry record per product |
 | `product_bindings` | projects and issues as read back from Linear |
 | `routing_policy` | the explicit project creation policy and its basis |
-| `incident_routes` | per routed fault: disposition, stage, target, hold, origin, classification, the last reported snapshot |
+| `incident_routes` | per routed fault: disposition, stage, target, hold, origin, the highest severity any source claimed, classification, the last reported snapshot |
 | `route_incidents` | the newest incidents per route, the input redecide and classification replay read |
 
 ## Commands
