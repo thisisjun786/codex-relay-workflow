@@ -183,7 +183,10 @@ names this request. Creation needs no suitable project for the members' componen
 completion criteria. Sharing the goal means declaring the same criteria for it: defects that give
 one goal key different criteria are different contracts, so they make no project. The pre-issue
 check counts only members declaring the criteria the create carries, and cancels the create when
-any defect held under the goal since declares other criteria. Issue, file or error counts
+any defect held under the goal since declares other criteria. A create's payload is checked for
+its whole shape, whoever queues it through the ledger: refused when queued, and cancelled before
+issue, if it is not the closed set of names and lists the check, the confirmation and the binding
+read. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope

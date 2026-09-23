@@ -455,6 +455,20 @@ class Projects(ProductRoutingCase):
         self.assertEqual(1, len(self.router.show("gamma-kit")["projects"]))
         self.assertEqual([], self.router.show("gamma-kit", attention=True)["projects"])
 
+    def test_a_malformed_project_create_is_refused_when_it_is_queued(self):
+        port = self.router.port
+        fault = port.record(port.observation(
+            product="gamma-kit", workspace=WORKSPACE, fault_class=products.PROJECT_NEEDED,
+            severity="notice", signature={"goal": "g9"}, occurrence_key="need:g9",
+            project=projects.PROJECTS_SCOPE))["faultId"]
+        payload = {"product": "gamma-kit", "workspace": WORKSPACE, "team": "GMK",
+                   "familyLabel": "product:gamma-kit", "goal": "g9", "criteria": "works",
+                   "name": "gamma · g9", "members": 2, "components": ["cache"]}
+        with self.assertRaises(faults.FaultRefused) as caught:
+            port.queue(fault, kind=projects.KIND, trigger="need:g9", payload=payload)
+        self.assertEqual("fault_observation_malformed", caught.exception.reason.value)
+        self.assertEqual([], port.publications(fault, kind=projects.KIND))
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

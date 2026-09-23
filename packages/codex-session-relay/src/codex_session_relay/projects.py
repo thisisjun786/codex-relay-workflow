@@ -34,11 +34,29 @@ PAYLOAD_KEYS = ("product", "workspace", "team", "familyLabel", "goal", "criteria
 
 
 def _validate(payload) -> list:
+    """Why this payload is not a project create; empty when it is. Total over any JSON, since the
+    ledger's generic queue hands a caller's payload here as well as routing's own: every field
+    the pre-issue check, the confirmation and the binding read is checked for its shape."""
     if not isinstance(payload, dict):
         return ["a project_create payload is an object"]
-    problems = [f"payload lacks {key}" for key in PAYLOAD_KEYS if payload.get(key) in (None, "")]
-    if isinstance(payload.get("members"), list) and len(set(payload["members"])) < 2:
-        problems.append("a project needs at least two independent fixes")
+    problems = []
+    unknown = sorted(str(key) for key in set(payload) - set(PAYLOAD_KEYS))
+    if unknown:
+        problems.append(f"payload carries keys this kind does not define: {unknown}")
+    for key in PAYLOAD_KEYS:
+        value = payload.get(key)
+        if key in ("members", "components"):
+            if not isinstance(value, list) or not value or not all(
+                    isinstance(item, str) and item.strip() for item in value):
+                problems.append(f"payload.{key} is a non-empty list of names")
+        elif not isinstance(value, str) or not value.strip():
+            problems.append(f"payload.{key} is a non-blank string")
+    members = payload.get("members")
+    if isinstance(members, list) and all(isinstance(item, str) for item in members):
+        if len(set(members)) != len(members):
+            problems.append("payload.members names a fix twice")
+        elif len(members) < 2:
+            problems.append("a project needs at least two independent fixes")
     return problems
 
 
@@ -129,7 +147,10 @@ def eligibility(db, payload) -> list:
 
 
 def _pre_issue(context):
-    problems = eligibility(context["db"], context["publication"]["payload"])
+    payload = context["publication"]["payload"]
+    # A payload that is not a project create is cancelled, not evaluated: its shape was checked
+    # when it was queued, and is checked again here rather than trusted.
+    problems = _validate(payload) or eligibility(context["db"], payload)
     return {"cancel": "; ".join(problems)} if problems else None
 
 

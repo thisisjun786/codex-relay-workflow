@@ -1011,6 +1011,21 @@ class ProjectEligibility(RouteRows):
         self.router.register_product(dict(ALPHA, team="ALX"))
         self.assertEqual(["alpha-notes's team is now 'ALX', not 'ALN'"], self.problems())
 
+    def test_a_project_create_payload_is_checked_whatever_json_it_is(self):
+        from codex_session_relay import projects
+
+        good = dict(self.payload, workspace="example-ws", name="Alpha Notes · offline_sync")
+        self.assertEqual([], projects._validate(good))
+        for change in ({"members": 2}, {"members": [{"x": 1}, "d" * 32]},
+                       {"members": ["c" * 32, "c" * 32]}, {"members": ["c" * 32]},
+                       {"components": "cache"}, {"components": []}, {"name": ""},
+                       {"team": 5}, {"extra": 1}):
+            with self.subTest(change=change):
+                self.assertTrue(projects._validate(dict(good, **change)))
+        for bad in (None, [], "payload", 3):
+            with self.subTest(bad=bad):
+                self.assertTrue(projects._validate(bad))
+
     def test_members_that_declare_other_criteria_for_the_goal_do_not_count(self):
         self.policy()
         self.upsert("c" * 32)
