@@ -1374,8 +1374,17 @@ def slot_name(slot):
     return slot[0] + "/" + slot[1] + ".json"
 
 
+def _record_bytes(document):
+    """The bytes this adapter writes for a record: sorted keys, one line, a newline, UTF-8.
+
+    The one definition both writers use and the reading of the journal compares against, so a
+    file holding the same content in any other bytes is not one the adapter wrote.
+    """
+    return (json.dumps(document, sort_keys=True, default=str) + "\n").encode("utf-8")
+
+
 def _write_whole(handle, document):
-    payload = (json.dumps(document, sort_keys=True, default=str) + "\n").encode("utf-8")
+    payload = _record_bytes(document)
     written = 0
     while written < len(payload):
         written += os.write(handle, payload[written:])
@@ -1561,7 +1570,7 @@ def journal(config, record, slot=None):
             # than it was given, and a truncated record is worse than none: it survives under a
             # name nothing will reuse and is counted as an invocation whose contents no longer
             # read back.
-            payload = (json.dumps(record, sort_keys=True, default=str) + "\n").encode("utf-8")
+            payload = _record_bytes(record)
             written = 0
             while written < len(payload):
                 written += os.write(handle, payload[written:])
@@ -1713,11 +1722,38 @@ def _within(value, since, until):
     return (since is None or value >= since) and (until is None or value < until)
 
 
-def _read_json(path):
+def _read_record(path):
+    """A record as the reading finds it: (content, readable, exact).
+
+    Readable only for a regular file reached without following a link: the adapter creates every
+    record with O_EXCL, which never makes a link and refuses to follow one, so a link in a record's
+    place was put there by something else, whatever it points at. Exact only when the file holds
+    the bytes the adapter's writers produce for that content (_record_bytes); the same content in
+    other bytes -- reformatted, reordered, a key given twice -- was written by something else too.
+    """
     try:
-        return json.loads(Path(path).read_bytes().decode("utf-8")), True
+        handle = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except (OSError, ValueError):
-        return None, False
+        return None, False, False
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return None, False, False
+        chunks = []
+        while True:
+            chunk = os.read(handle, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    except OSError:
+        return None, False, False
+    finally:
+        os.close(handle)
+    raw = b"".join(chunks)
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None, False, False
+    return body, True, raw == _record_bytes(body)
 
 
 # The outcomes run() records before any guard is asked, and those that report asking one.
@@ -2139,8 +2175,8 @@ def _read_row(root, named):
     if not _slot(named):
         return None
     parts = named.split("/")
-    body, readable = _read_json(Path(root) / parts[0] / parts[1])
-    return body if readable and isinstance(body, dict) else None
+    body, readable, exact = _read_record(Path(root) / parts[0] / parts[1])
+    return body if readable and exact and isinstance(body, dict) else None
 
 
 def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=None):
@@ -2246,10 +2282,14 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
             for found in sorted(os.scandir(str(root)), key=lambda e: e.name):
                 if found.name == LEDGER_DIRECTORY:
                     continue
-                if found.is_dir() and JOURNAL_DAY.match(found.name):
+                # A link is nothing mkdir made, even one that leads to a day directory.
+                if found.is_dir(follow_symlinks=False) and JOURNAL_DAY.match(found.name):
                     days.append(found.name)
                 else:
                     answer["foreignJournalEntries"].append(str(root / found.name))
+            if os.path.islink(str(root / LEDGER_DIRECTORY)):
+                raise NotADirectoryError(str(root / LEDGER_DIRECTORY)
+                                         + " is a link, which the adapter never makes")
             if (root / LEDGER_DIRECTORY).is_dir():
                 ledger = sorted(e.name for e in os.scandir(str(root / LEDGER_DIRECTORY)))
             elif os.path.lexists(str(root / LEDGER_DIRECTORY)):
@@ -2275,8 +2315,8 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
             else:
                 answer["foreignLedgerEntries"].append(str(path))
                 continue
-            body, readable = _read_json(path)
-            if not readable or not _ledger_shape(body, key, table is outcomes):
+            body, readable, exact = _read_record(path)
+            if not readable or not exact or not _ledger_shape(body, key, table is outcomes):
                 answer["ledgerUnreadable"].append(str(path))
                 continue
             table[key] = body
@@ -2289,7 +2329,7 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 # And every entry of the day: journal() writes only <32 hex>.json files there.
                 names = []
                 for found in sorted(os.scandir(str(root / day)), key=lambda e: e.name):
-                    if found.is_file() and JOURNAL_NAME.match(found.name):
+                    if found.is_file(follow_symlinks=False) and JOURNAL_NAME.match(found.name):
                         names.append(found.name)
                     else:
                         answer["foreignJournalEntries"].append(str(root / day / found.name))
@@ -2299,12 +2339,14 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 break
             for name in names:
                 where = str(root / day / name)
-                row, readable = _read_json(root / day / name)
+                row, readable, exact = _read_record(root / day / name)
+                # A row from before event identity is counted, never judged, so only a current
+                # row is held to its writer's bytes.
                 if (not readable or not isinstance(row, dict)
                         or not (_exact(row.get("recordVersion"), 1)
                                 or _exact(row.get("recordVersion"), RECORD_VERSION))
                         or (row.get("recordVersion") == RECORD_VERSION
-                            and not _row_shape(row))):
+                            and not (exact and _row_shape(row)))):
                     answer["rowsUnreadable"].append(where)
                     continue
                 rows.append((str(root), where, row))
@@ -2356,8 +2398,8 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 answer["foreignLedgerEntries"].append(path)
                 continue
             key = name[:-len(".json")]
-            body, readable = _read_json(Path(path))
-            if not readable or not _host_shape(body, key):
+            body, readable, exact = _read_record(Path(path))
+            if not readable or not exact or not _host_shape(body, key):
                 answer["ledgerUnreadable"].append(path)
                 continue
             host_files.setdefault(key, []).append((identity, path, body))

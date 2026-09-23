@@ -279,6 +279,11 @@ class RealPathControls(unittest.TestCase):
         self.assertEqual(host.acceptances(), ["accepted"] * 3 + ["duplicate"] * 3)
 
 
+def written(document):
+    """A record as the adapter's writers put it on disk: sorted keys, one line, a newline."""
+    return json.dumps(document, sort_keys=True, default=str) + "\n"
+
+
 def verify(*roots, **window):
     """The CLI, as an operator runs it, and the function it prints."""
     argv = [sys.executable, str(VERIFIER)]
@@ -372,7 +377,7 @@ class VerifierTests(unittest.TestCase):
         day = host.journal / "20260921"
         day.mkdir(parents=True)
         for index in range(2):
-            (day / ("%032x.json" % index)).write_text(json.dumps(
+            (day / ("%032x.json" % index)).write_text(written(
                 {"recordVersion": 1, "sessionId": "s", "turnId": "t", "at": "2026-09-21T00:00:00Z",
                  "stopHookActive": bool(index)}), encoding="utf-8")
         code, answer = verify(host.journal)
@@ -394,10 +399,10 @@ class VerifierTests(unittest.TestCase):
         self.turn_of_three(host)
         key = "f" * 64
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(
-            json.dumps({"ledgerVersion": 1, "eventKey": key, "sessionId": "s", "turnId": "t",
-                        "at": "2026-09-23T00:00:00Z", "adapterOutcome": "guard_answered",
-                        "guardDecision": "release", "guardState": "unmanaged",
-                        "journalPolicy": "faults_only", "held": False, "attemptRow": None}),
+            written({"ledgerVersion": 1, "eventKey": key, "sessionId": "s", "turnId": "t",
+                     "at": "2026-09-23T00:00:00Z", "adapterOutcome": "guard_answered",
+                     "guardDecision": "release", "guardState": "unmanaged",
+                     "journalPolicy": "faults_only", "held": False, "attemptRow": None}),
             encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
@@ -490,7 +495,7 @@ class ReviewRoundOneControls(unittest.TestCase):
         run_one(host.checkout(), at_stop(host, self.document, 0))
         stop = self.document["stops"][0]["payload"]
         key = "e" * 64
-        (host.journal / "accepted" / (key + ".outcome.json")).write_text(json.dumps(
+        (host.journal / "accepted" / (key + ".outcome.json")).write_text(written(
             {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
              "turnId": stop["turn_id"], "at": "2026-09-23T00:00:00Z", "attemptRow": None,
              "adapterOutcome": "guard_answered", "guardDecision": "release",
@@ -517,7 +522,7 @@ class ReviewRoundOneControls(unittest.TestCase):
         host = self.fresh("malformed-row")
         run_one(host.checkout(), at_stop(host, self.document, 0))
         day = next(p for p in host.journal.iterdir() if p.name.isdigit())
-        (day / ("f" * 32 + ".json")).write_text(json.dumps(
+        (day / ("f" * 32 + ".json")).write_text(written(
             {"recordVersion": 2, "acceptance": "accepted", "sessionId": "s", "turnId": "t",
              "at": "2026-09-23T00:00:00Z"}), encoding="utf-8")
         code, answer = verify(host.journal)
@@ -597,7 +602,7 @@ class ReviewRoundTwoControls(unittest.TestCase):
         path = self.outcome_path(host)
         body = json.loads(path.read_text(encoding="utf-8"))
         body["sessionId"] = "another-session"
-        path.write_text(json.dumps(body), encoding="utf-8")
+        path.write_text(written(body), encoding="utf-8")
         self.assertNotEqual(verify(host.journal)[0], 0)
 
     def test_an_outcome_without_its_time_is_not_vouched_for(self):
@@ -606,7 +611,7 @@ class ReviewRoundTwoControls(unittest.TestCase):
         path = self.outcome_path(host)
         body = json.loads(path.read_text(encoding="utf-8"))
         body.pop("at")
-        path.write_text(json.dumps(body), encoding="utf-8")
+        path.write_text(written(body), encoding="utf-8")
         self.assertNotEqual(verify(host.journal)[0], 0)
 
     def test_an_accepted_row_that_is_gone_under_every_invocation_is_not_vouched_for(self):
@@ -630,7 +635,7 @@ class ReviewRoundTwoControls(unittest.TestCase):
         row = next(day.iterdir())
         body = json.loads(row.read_text(encoding="utf-8"))
         body["recordVersion"] = 3
-        row.write_text(json.dumps(body), encoding="utf-8")
+        row.write_text(written(body), encoding="utf-8")
         self.assertNotEqual(verify(host.journal)[0], 0)
 
 
@@ -668,14 +673,14 @@ class DevinRoundTwoControls(unittest.TestCase):
         claim = host.journal / "accepted" / host.ledger()[0][0]
         body = json.loads(claim.read_text(encoding="utf-8"))
         body["ledgerVersion"] = 9
-        claim.write_text(json.dumps(body), encoding="utf-8")
+        claim.write_text(written(body), encoding="utf-8")
         self.assertNotEqual(verify(host.journal)[0], 0)
 
     def test_a_window_does_not_hide_a_malformed_row(self):
         host = self.fresh("row-window")
         run_one(host.checkout(), at_stop(host, self.document, 0))
         day = next(p for p in host.journal.iterdir() if p.name.isdigit())
-        (day / ("d" * 32 + ".json")).write_text(json.dumps(
+        (day / ("d" * 32 + ".json")).write_text(written(
             {"recordVersion": 2, "acceptance": "accepted"}), encoding="utf-8")
         for window in ({}, {"since": "2000-01-01T00:00:00Z"},
                        {"session": self.document["stops"][0]["payload"]["session_id"]}):
@@ -752,7 +757,7 @@ class ReviewRoundThreeControls(unittest.TestCase):
         run_one(host.checkout(), at_stop(host, self.document, 0))
         day = host.journal / "20000101"
         day.mkdir(parents=True)
-        (day / ("%032x.json" % 7)).write_text(json.dumps(
+        (day / ("%032x.json" % 7)).write_text(written(
             {"recordVersion": 1, "sessionId": "s", "turnId": "t", "at": "2000-01-01T00:00:00Z",
              "stopHookActive": False}), encoding="utf-8")
         code, answer = verify(host.journal)
@@ -768,7 +773,7 @@ class ReviewRoundThreeControls(unittest.TestCase):
         claim = host.journal / "accepted" / host.ledger()[0][0]
         body = json.loads(claim.read_text(encoding="utf-8"))
         body["answerItem"] = "msg_another_answer"
-        claim.write_text(json.dumps(body), encoding="utf-8")
+        claim.write_text(written(body), encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["ledgerUnreadable"], [str(claim)])
@@ -779,7 +784,7 @@ class ReviewRoundThreeControls(unittest.TestCase):
         [path] = host.row_paths()
         row = json.loads(path.read_text(encoding="utf-8"))
         row["sessionId"] = "01a0cd4a-0000-7000-8000-000000000000"
-        path.write_text(json.dumps(row), encoding="utf-8")
+        path.write_text(written(row), encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["rowsUnreadable"], [str(path)])
@@ -793,7 +798,7 @@ class ReviewRoundThreeControls(unittest.TestCase):
                   if json.loads(p.read_text(encoding="utf-8")).get("acceptance") == "duplicate"]
         row = json.loads(path.read_text(encoding="utf-8"))
         row["turnId"] = "01a0cd4a-0000-7000-8000-000000000001"
-        path.write_text(json.dumps(row), encoding="utf-8")
+        path.write_text(written(row), encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["rowsUnreadable"], [str(path)])
@@ -875,7 +880,7 @@ class ReviewRoundFourControls(unittest.TestCase):
         key, identity = completion.event_identity(stop)
         self.assertIsNotNone(key)
         marker = host_ledger_of(host) / (key + ".json")
-        marker.write_text(json.dumps(
+        marker.write_text(written(
             {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
              "turnId": stop["turn_id"], "stopHookActive": stop["stop_hook_active"],
              "answerItem": identity["answerItem"], "claimedAt": "2026-09-23T00:00:00Z",
@@ -892,7 +897,7 @@ class ReviewRoundFourControls(unittest.TestCase):
         body = json.loads(outcome.read_text(encoding="utf-8"))
         body["at"] = "2000-01-01T00:00:00Z"
         body["sessionId"] = "wrong-session"
-        outcome.write_text(json.dumps(body), encoding="utf-8")
+        outcome.write_text(written(body), encoding="utf-8")
         code, answer = verify(host.journal, since="2020-01-01T00:00:00Z")
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["ledgerUnreadable"], [str(outcome)])
@@ -913,7 +918,7 @@ class ReviewRoundFourControls(unittest.TestCase):
         row = json.loads(path.read_text(encoding="utf-8"))
         for field in ("guardInvoked", "adapterOutcome", "acceptedAs"):
             row.pop(field)
-        path.write_text(json.dumps(row), encoding="utf-8")
+        path.write_text(written(row), encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["rowsUnreadable"], [str(path)])
@@ -952,7 +957,7 @@ class OneEventRecords:
     def change(self, path, change):
         body = json.loads(path.read_text(encoding="utf-8"))
         change(body)
-        path.write_text(json.dumps(body), encoding="utf-8")
+        path.write_text(written(body), encoding="utf-8")
 
 
 class ReviewRoundFiveControls(OneEventRecords, unittest.TestCase):
@@ -1327,3 +1332,69 @@ class ReviewRoundElevenControls(OneEventRecords, unittest.TestCase):
                 self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
                                  place.__name__ + " was skipped and the reading vouched for")
                 self.assertTrue(answer["foreignJournalEntries"], place.__name__ + " was not listed")
+
+
+class ReviewRoundTwelveControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the twelfth review round (CRW-212, PR #144).
+
+    A record is what the adapter's create produced: a regular file made with O_EXCL, which never
+    makes or follows a link, in directories mkdir made, holding exactly the bytes json.dumps with
+    sorted keys and a newline gives for its content. Anything else in a record's place was put
+    there by something other than the adapter, whatever it parses to.
+    """
+
+    WHICH = ("accepted", "duplicate", "claim", "outcome", "host")
+
+    def test_a_record_that_is_a_link_is_not_vouched_for(self):
+        for which in self.WHICH:
+            with self.subTest(record=which):
+                host, records = self.one_event()
+                elsewhere = self.base / ("elsewhere-%d.json" % self.count)
+                shutil.copyfile(records[which], elsewhere)
+                records[which].unlink()
+                records[which].symlink_to(elsewhere)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 which + " replaced by a link was vouched for")
+
+    def test_a_linked_directory_is_not_vouched_for(self):
+        for which in ("day", "accepted"):
+            with self.subTest(directory=which):
+                host, records = self.one_event()
+                real = records["accepted"].parent if which == "day" else records["claim"].parent
+                moved = self.base / ("moved-%d" % self.count)
+                real.rename(moved)
+                real.symlink_to(moved, target_is_directory=True)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 "a linked " + which + " directory was vouched for")
+
+    def test_bytes_its_writer_never_produces_are_not_vouched_for(self):
+        def indented(body):
+            return json.dumps(body, sort_keys=True, indent=1) + "\n"
+        def unsorted(body):
+            return json.dumps(dict(reversed(list(body.items())))) + "\n"
+        def no_newline(body):
+            return written(body)[:-1]
+        def duplicate_key(body):
+            first = sorted(body)[0]
+            return '{"' + first + '": "decoy", ' + written(body)[1:]
+        for which in self.WHICH:
+            for form in (indented, unsorted, no_newline, duplicate_key):
+                with self.subTest(record=which, form=form.__name__):
+                    host, records = self.one_event()
+                    body = json.loads(records[which].read_text(encoding="utf-8"))
+                    records[which].write_text(form(body), encoding="utf-8")
+                    code, answer = verify(host.journal)
+                    self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                     which + " in " + form.__name__ + " bytes was vouched for")
+
+    def test_a_record_in_its_writers_own_bytes_still_reads_true(self):
+        for which in self.WHICH:
+            with self.subTest(record=which):
+                host, records = self.one_event()
+                body = json.loads(records[which].read_text(encoding="utf-8"))
+                records[which].write_text(written(body), encoding="utf-8")
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (0, "TRUE"),
+                                 which + " rewritten in its writer's own bytes was refused")

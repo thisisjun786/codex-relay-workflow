@@ -1847,8 +1847,12 @@ means an event was accepted more than once: claims for one key in two roots, two
 one key, an accepted row whose claim is missing, or a duplicate that asked the guard. `UNREADABLE`
 (exit 3) means the reading cannot vouch for what it read:
 
-- a listing that failed, including an `accepted` or host ledger path that is not a directory;
-- a row, claim, outcome or host file that does not parse or is not one the adapter writes: a
+- a listing that failed, including an `accepted` or host ledger path that is not a directory, and an
+  `accepted` that is a link;
+- a row, claim, outcome or host file that does not parse or is not one the adapter writes: a link
+  or anything but a regular file in a record's place (the adapter creates each with `O_EXCL`, which
+  never makes or follows a link), bytes other than the ones its writers produce for that content
+  (sorted keys, one line, a newline, so a reformatted file or a key given twice is refused), a
   missing field its path writes, an outcome its acceptance never ends in (a duplicate is only a
   `duplicate_invocation`, an unowned release only `arbitration_failed`), a guard outcome that does
   not follow from the process ending, exit code and stdout reading it records, a decision, state,
@@ -1868,8 +1872,8 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   item only where that reason is reached after them;
 - a row version it does not know, an entry in a ledger that is not one of its records, or an entry
   in a journal root or a day directory that the adapter never writes there
-  (`foreignJournalEntries`): the root holds only day directories and `accepted`, a day only
-  `<32 hex>.json` rows. These are listed whatever the window, so a copy of a row kept under
+  (`foreignJournalEntries`): the root holds only real day directories (never a link to one) and
+  `accepted`, a day only `<32 hex>.json` rows. These are listed whatever the window, so a copy of a row kept under
   another name is not skipped, and a journal root shared with other files never reads `TRUE`;
 - an outcome without its claim, naming another session or turn than its claim, or without the
   accepted row it names (or with none under `every_invocation`), and a claim without its outcome
@@ -1905,8 +1909,11 @@ The guarantee holds among the registrations of one Codex home, which is every re
 host starts for a Stop. Registrations that do not share it, or an adapter from before the host's
 file existed, each accept an event in their own root; a reading given both roots says `FALSE`.
 The claim files are never removed, like the rows. The reading checks that records are ones the
-adapter writes and that the records of one event agree; it does not order their timestamps, and it
-cannot contradict the values the adapter observed once and recorded in one place (timings, the
+adapter writes and that the records of one event agree, and it does not order their timestamps. It
+judges what each file holds and that it is the regular file the adapter creates, with exactly its
+writer's bytes; a regular file holding those same bytes, put in a record's place, is not told
+apart from the one the adapter wrote, since inode, owner, mode and times are not judged. It cannot
+contradict the values the adapter observed once and recorded in one place (timings, the
 transcript path, the guard's stderr and detail, the configuration path, which of the two modes the
 settings named, and the receipt values an answer carries). It checks the types of those the adapter
 forms itself and the time format, not the values; the receipt values are copied from the guard's
