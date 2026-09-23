@@ -1028,9 +1028,23 @@ class FaultLedger:
         elif link is None:
             record["linkState"], record["linkedProject"] = UNLINKED, None
         else:
-            record["linkState"] = link["state"]
+            record["linkState"] = self._link_state(db, row, link)
             record["linkedProject"] = link["observed_project_ref"]
         return record
+
+    def _link_state(self, db, row, link):
+        """Linked only while the issue reads back in the project its scope targets NOW.
+
+        Decided when read, against the product's current owned target, and never taken from the
+        stored state alone: a target change relinks a bounded batch per call, and an issue the
+        batch has not reached yet is in a project its scope has left - or has none to be in.
+        """
+        if link["state"] != LINKED:
+            return link["state"]
+        target, _ = self._owned_target(db, row["product"], row["scope_key"])
+        wanted = target["projectRef"] if target else None
+        return (LINKED if wanted is not None and link["observed_project_ref"] == wanted
+                else UNLINKED)
 
     def occurrences(self, identifier, *, limit=RENDERED_OCCURRENCES, newest=True) -> list:
         limit = _bounded(limit, "limit")
@@ -1920,8 +1934,8 @@ class FaultLedger:
         """Relink owned issues whose link is not their product's current target project, and
         unlink those whose scope no longer targets any project their product owns."""
         clause = " AND f.scope_key = ?" if scope_key is not None else ""
-        params = (UNLINKED, UNLINKED, scope_key) if scope_key is not None else (UNLINKED,
-                                                                                  UNLINKED)
+        params = (UNLINKED, UPDATE_RECORD, ISSUED, UNCERTAIN, UNLINKED,
+                  *(() if scope_key is None else (scope_key,)))
         query = (
             "SELECT f.fault_id, p.project_ref FROM fault_ledger f"
             "  LEFT JOIN fault_target_projects p"
@@ -1932,7 +1946,21 @@ class FaultLedger:
             "         AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref"
             # Unlinked while a conflicting write was outstanding, with a readback that already
             # matches: asked again, so it is linked once that write has been settled.
-            "              OR (l.state = ? AND l.observed_project_ref IS p.project_ref)))"
+            "              OR (l.state = ? AND l.observed_project_ref IS p.project_ref"
+            # ...but only once nothing it is waiting on is outstanding. An issued or uncertain
+            # set_project to another project may still land, so relinking cannot move it until
+            # that write settles - and its settling re-evaluates the link itself. Selected
+            # meanwhile, a hundred such rows at the head of the order took every batch and the
+            # issues behind them were never relinked. Every other selected row moves on when
+            # relinked: its link's project becomes the target.
+            "                  AND NOT EXISTS (SELECT 1 FROM fault_publications op"
+            "                LEFT JOIN fault_publication_payloads opp"
+            "                  ON opp.publication_id = op.publication_id"
+            "               WHERE op.fault_id = f.fault_id AND op.kind = ? AND op.state IN (?,?)"
+            "                 AND op.trigger_key LIKE 'update:set_project:%'"
+            "                 AND (CASE WHEN json_valid(opp.payload)"
+            "                      THEN json_extract(opp.payload, '$.value') END)"
+            "                     IS NOT p.project_ref))))"
             "        OR (p.project_ref IS NULL"
             "            AND (l.fault_id IS NULL OR l.project_ref IS NOT NULL OR l.state != ?)))"
             + clause)
@@ -2860,8 +2888,20 @@ class FaultLedger:
             pending["unclassified"] = db.execute(
                 "SELECT COUNT(*) AS n FROM fault_publications WHERE state = ?",
                 (PENDING,)).fetchone()["n"] - classified
-            unlinked = db.execute("SELECT COUNT(*) AS n FROM fault_links WHERE state = ?",
-                                  (UNLINKED,)).fetchone()["n"]
+            # The rule _link_state() reads a link by: linked only while it reads back in the
+            # project its product's current owned target names. A target change relinks a
+            # bounded batch per call, so a stored 'linked' the batch has not reached is not.
+            unlinked = db.execute(
+                "SELECT COUNT(*) AS n FROM fault_links l"
+                "  JOIN fault_ledger f ON f.fault_id = l.fault_id"
+                "  LEFT JOIN fault_targets t ON t.scope_key = f.scope_key"
+                "  LEFT JOIN fault_target_projects tp ON tp.scope_key = f.scope_key"
+                " WHERE NOT (l.state = ? AND t.scope_key IS NOT NULL"
+                "   AND tp.product IS f.product AND tp.project_ref IS NOT NULL"
+                "   AND l.observed_project_ref IS tp.project_ref"
+                "   AND NOT EXISTS (SELECT 1 FROM fault_ledger o"
+                "                    WHERE o.scope_key = f.scope_key AND o.product != f.product))",
+                (LINKED,)).fetchone()["n"]
             notifications = {state: db.execute(
                 "SELECT COUNT(*) AS n FROM fault_notifications WHERE state = ?",
                 (state,)).fetchone()["n"] for state in (PENDING, RESERVED, UNCERTAIN)}

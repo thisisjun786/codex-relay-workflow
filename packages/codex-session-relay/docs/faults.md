@@ -66,8 +66,10 @@ a path that reaches the outcome without passing through that function is a defec
     project its product owns, an owned issue is unlinked - awaiting a target - and never
     reported linked; nor is it reported linked while a `set_project` to another project is issued
     or uncertain, because that write may still land (`_moving_elsewhere()`, which reads at most
-    one row). A target returning to the project the issue already sits in cancels every unsent
-    `set_project` at once. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`,
+    one row). Link state is decided when read, against the product's current owned target
+    (`_link_state()` for `get()` and `snapshot()`, the same rule in `attention()`), so an issue a
+    bounded relink batch has not reached yet is never reported linked. A target returning to the
+    project the issue already sits in cancels every unsent `set_project` at once. Enforced by `_relink()` and `_unlink()` through `_link_to_target()`,
     and the built-in `set_project` pre-issue check.
 12. **Budgets hold, never drop, and never starve another product.** A budget is decided per
     candidate inside the selection query of `next()` and of `reserve_notifications()`, and
@@ -210,7 +212,14 @@ a path that reaches the outcome without passing through that function is a defec
   or uncertain. While one is, the issue stays unlinked and no second write is queued: that
   write's own readback (`complete()`, or `reconcile()` then `complete()`) decides, and a repair is
   queued on the same issue from there. A stale relink cancelled before issue re-evaluates the
-  link, and `relink()` settles one whose readback already matches.
+  link, and `relink()` settles one whose readback already matches - once no write it waits on
+  is outstanding. While one is, `relink()` passes it over, so issues waiting on writes that may
+  still land never take the batch from the issues behind them; the outstanding write's own
+  readback re-evaluates the link.
+- `linkState` from `get()` and `snapshot()`, and `attention()`'s `unlinked` count, are decided when
+  read: an issue is linked only while it reads back in the project its product's current owned
+  target names. A stored link a relink batch has not reached yet, or one whose scope no longer
+  targets any project, is reported unlinked.
 
 ### Owning an issue is not the same as a write having landed
 

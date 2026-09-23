@@ -1632,6 +1632,59 @@ class RepointingNeverDependsOnTheCallingProcess(ContractCase):
         self.assertEqual(1, lapsed["notifications"].get("reservedLapsed"))
 
 
+class EveryIssueIsReadAgainstTheCurrentTarget(ContractCase):
+    """Final review round six (invariants 11 and 14, criterion 7, the project-linkage correction).
+
+    A target change relinks a bounded batch per call, so an issue is reported linked only while
+    it reads back in the project its scope targets now; and issues waiting on a write that may
+    still land never hold the relink batch against the issues behind them.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for kind in (faults.OPEN_RECORD, faults.UPDATE_RECORD):
+            capability(self, self.ledger, "set_limit")(PRODUCT, kind, max_count=1000,
+                                                       window=3600)
+
+    def published(self, count, *, project_ref=PROJECT, start=0):
+        identifiers = []
+        for n in range(start, start + count):
+            first = self.ledger.record(observation(
+                f"k{n}", signature={"relationship": f"r{n}", "turn": "t"}))
+            self.publish(first["publication"]["publicationId"], external_ref=f"REL-{n}",
+                         project_ref=project_ref)
+            identifiers.append(first["faultId"])
+        return identifiers
+
+    def test_an_issue_the_relink_batch_has_not_reached_is_not_reported_linked(self):
+        count = faults.RELINK_PER_CALL + 1
+        identifiers = self.published(count)
+        get = capability(self, self.ledger, "get")
+        attention = capability(self, self.ledger, "attention")
+        for project_ref in (None, "P2"):
+            self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM,
+                                   project_ref=project_ref)
+            self.assertEqual(faults.UNLINKED, get(identifiers[-1])["linkState"],
+                             f"an issue in {PROJECT} while the scope targets {project_ref}")
+            self.assertEqual(count, attention()["unlinked"], f"targeting {project_ref}")
+
+    def test_issues_waiting_on_an_outstanding_write_do_not_starve_the_ones_behind(self):
+        self.published(faults.RELINK_PER_CALL)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        for row in self.store.all(
+                "SELECT publication_id FROM fault_publications WHERE kind = ? AND state = ?",
+                (faults.UPDATE_RECORD, faults.PENDING)):
+            self.created(row["publication_id"])  # issued: each may still land in P2
+        last = self.published(1, project_ref="P2", start=faults.RELINK_PER_CALL)[0]
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT)
+        answer = self.ledger.relink()
+        queued = [entry["payload"]["value"] for entry in capability(
+            self, self.ledger, "publications")(last, kind="update_record")
+            if entry["state"] == faults.PENDING]
+        self.assertEqual([PROJECT], queued, "the issue behind the waiting ones is relinked")
+        self.assertEqual(0, answer["relinkPending"])
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 
