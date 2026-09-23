@@ -490,7 +490,9 @@ class Completion(unittest.TestCase):
 
 
 class LedgerPortBeforeBinding(RelayTestCase):
-    """The port binds only to CRW-205's corrected contract, and on this checkout it is absent."""
+    """The port binds only to CRW-205's corrected contract. A port built while any part of it is
+    absent refuses everything, whichever checkout runs this; the gate itself is tested against
+    synthetic contracts."""
 
     @staticmethod
     def call_shape(method):
@@ -512,7 +514,7 @@ class LedgerPortBeforeBinding(RelayTestCase):
         return args, kwargs
 
     def test_every_port_method_refuses_by_name_while_the_contract_is_absent(self):
-        port = ledger_port.LedgerPort(self.store, self.clock)
+        port = closed_port(self.store, self.clock)
         self.assertIn("FaultLedger.adopt", port.missing)
         for name in ledger_port.CAPABILITIES:
             method = getattr(port, name)
@@ -524,14 +526,19 @@ class LedgerPortBeforeBinding(RelayTestCase):
         self.assertEqual(0, self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"])
 
     def test_a_kind_is_not_registered_while_the_contract_is_absent(self):
-        self.assertIn("faults.register_kind", ledger_port.register_kind("project_create",
-                                                                         creates=True))
+        from unittest import mock
 
-    def test_the_gate_names_what_this_checkout_lacks(self):
-        gaps = ledger_port.missing()
+        with mock.patch.object(ledger_port, "missing", return_value=list(ABSENT)), \
+                mock.patch.object(ledger_port.faults, "register_kind",
+                                  create=True) as registering:
+            gaps = ledger_port.register_kind("project_create", creates=True)
+        self.assertEqual(ABSENT, gaps)
+        registering.assert_not_called()
+
+    def test_the_gate_names_what_a_contract_lacks(self):
+        gaps = ledger_port.missing(synthetic_contract(absent={"adopt"}, unassigned="nobody"))
         self.assertIn("FaultLedger.adopt", gaps)
-        self.assertIn("FaultLedger.record(adopt=)", gaps)
-        self.assertIn("faults.UNASSIGNED", gaps)
+        self.assertIn("faults.UNASSIGNED == 'unassigned'", gaps)
 
     def test_the_gate_opens_only_for_every_name_and_keyword(self):
         complete = synthetic_contract()
@@ -604,6 +611,19 @@ def synthetic_contract(*, drop=frozenset(), absent=frozenset(), unassigned="unas
         UNASSIGNED=unassigned, FaultLedger=ledger,
         **{name: function(name, keywords)
            for name, keywords in ledger_port.MODULE_FUNCTIONS.items()})
+
+
+# What a port built before the corrected contract is complete reports. Forced rather than read
+# from this checkout, so the refusal paths are tested the same way before and after CRW-205's
+# corrected ledger lands.
+ABSENT = ["FaultLedger.adopt", "FaultLedger.record(adopt=)", "faults.UNASSIGNED"]
+
+
+def closed_port(store, clock):
+    from unittest import mock
+
+    with mock.patch.object(ledger_port, "missing", return_value=list(ABSENT)):
+        return ledger_port.LedgerPort(store, clock)
 
 
 class CommandLine(RelayTestCase):
@@ -686,14 +706,16 @@ class ExceptionsOnlyForOpenChecks(Completion):
 
 
 class RoutingBeforeBinding(RelayTestCase):
-    """Every ledger-backed routing path refuses on this checkout, and refuses before writing."""
+    """Every ledger-backed routing path refuses while the contract is absent, and refuses
+    before writing."""
 
     TABLES = ("incident_routes", "route_incidents", "fault_ledger", "fault_publications",
               "product_bindings", "product_registry", "routing_policy")
 
     def setUp(self):
         super().setUp()
-        self.router = ProductRouter(self.store, self.clock)
+        self.router = ProductRouter(self.store, self.clock,
+                                    port=closed_port(self.store, self.clock))
         self.router.register_product(ALPHA)
         self.router.register_product(BETA)
         for record in ALPHA_BINDINGS:
@@ -768,6 +790,7 @@ class RoutingBeforeBinding(RelayTestCase):
     def test_the_route_commands_answer_the_refusal(self):
         import contextlib
         import io
+        from unittest import mock
 
         from codex_session_relay import cli
 
@@ -775,7 +798,8 @@ class RoutingBeforeBinding(RelayTestCase):
                      ("route-show", "--attention"), ("route-digest",),
                      ("route-projects", "--product", "alpha-notes")):
             buffer = io.StringIO()
-            with self.subTest(command=argv[0]), contextlib.redirect_stdout(buffer):
+            with self.subTest(command=argv[0]), contextlib.redirect_stdout(buffer), \
+                    mock.patch.object(ledger_port, "missing", return_value=list(ABSENT)):
                 code = cli.main(["--state", str(self.store.path.parent), *argv])
             self.assertEqual(2, code)
             self.assertEqual("route_ledger_pending", json.loads(buffer.getvalue())["reason"])
@@ -924,11 +948,12 @@ class ProjectEligibility(RouteRows):
 
 
 class FoldedReviewFindings(RouteRows):
-    """What the intermediate review of the ledger-backed paths found, held on this checkout."""
+    """What the intermediate review of the ledger-backed paths found, held without a ledger."""
 
     def setUp(self):
         super().setUp()
-        self.router = ProductRouter(self.store, self.clock)
+        self.router = ProductRouter(self.store, self.clock,
+                                    port=closed_port(self.store, self.clock))
         self.router.register_product(ALPHA)
         self.router.register_product(BETA)
 
@@ -1018,6 +1043,34 @@ class ClosurePending(Completion):
             "verification": {"ref": "suite#4", "source": "ci"}}}),
             open_mismatches=["acceptance"])
         self.assertEqual(completion.CONSISTENT, closed["verdict"])
+
+
+class ProposalRotation(RouteRows):
+    """The digest checks outstanding project proposals in rotation, from routing's own rows."""
+
+    def test_each_check_moves_a_proposal_to_the_back_so_every_one_is_reached(self):
+        from codex_session_relay import routes
+
+        for n, goal in enumerate(("sync_a", "sync_b", "sync_c")):
+            self.upsert(f"{n}" * 32, disposition=products.PROJECT_PROPOSAL,
+                        stage=products.STAGE_FILED, goal=goal,
+                        target=routes.plain_target(team="ALN"))
+        self.upsert("9" * 32, goal="sync_a")  # a held member, never a proposal
+        seen = []
+        for _ in range(3):
+            reached, unreached = routes.outstanding_proposals(self.store, 1)
+            (route,) = reached
+            seen.append(route["goal"])
+            self.assertEqual({"sync_a", "sync_b", "sync_c"} - {route["goal"]},
+                             {goal for _, goal in unreached})
+            with self.store.transaction() as db:
+                routes.checked(db, route["fault_id"])
+        self.assertEqual(["sync_a", "sync_b", "sync_c"], seen)
+        with self.store.transaction() as db:
+            routes.settle(db, self.clock, "1" * 32, "created and bound")
+        reached, unreached = routes.outstanding_proposals(self.store, 5)
+        self.assertEqual({"sync_a", "sync_c"}, {r["goal"] for r in reached})
+        self.assertEqual(set(), unreached)
 
 if __name__ == "__main__":
     unittest.main()

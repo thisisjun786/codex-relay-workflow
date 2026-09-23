@@ -241,12 +241,15 @@ named the same way everywhere:
 | `project_proposed` | a project proposal whose project is not bound yet |
 
 `route-digest` answers a midpoint check. It first binds the projects that confirmed creates
-made, reading at most `--limit` outstanding proposals. Binding one moves its member defects
-wherever they sit in the listing, and reporting a member as held in the same answer would announce
-a decision already made. When more proposals are outstanding than the limit, that digest holds
-back routes held for want of a project and answers `proposalsSettled: false`. Then, for each
-route it reads, it discharges what that route owes, reads the route again, and compares it with
-the snapshot it last reported. It answers only what changed: new severe records, new decisions,
+made. Binding one moves its member defects wherever they sit in the listing, and reporting a
+member as held in the same answer would announce a decision already made. It checks at most
+`--limit` outstanding proposals, least recently checked first, and moves each to the back of the
+rotation. A proposal waiting on a slow create therefore cannot keep a later confirmed one from
+being bound: successive digests reach every one. A defect held for want of a project whose own
+goal has an outstanding proposal this digest did not reach is reported by the digest that
+reaches it; `proposalsUnreached` counts those proposals. Then, for each route it reads, it
+discharges what that route owes, reads the route again, and compares it with the snapshot it
+last reported. It answers only what changed: new severe records, new decisions,
 resolutions of records that owned an issue, and routine accumulation summarized per product.
 Each new decision is also raised as a ledger notification under its
 decision name. The ledger keeps one notification per record and reason, so a decision is

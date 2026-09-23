@@ -1190,6 +1190,10 @@ CREATE TABLE IF NOT EXISTS incident_routes (
     superseded_by    TEXT,
     reported         TEXT,
     detail           TEXT,
+    -- For an outstanding project proposal: when the digest last checked its create, as a
+    -- sequence, so each digest checks the least recently checked ones first and no proposal
+    -- waiting on a slow create can keep a later one from being bound.
+    checked_seq      INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
 );

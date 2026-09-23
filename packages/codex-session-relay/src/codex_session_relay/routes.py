@@ -139,6 +139,31 @@ def settle(db, clock, fault_id, detail):
                " WHERE fault_id = ?", (products.STAGE_OBSERVED, detail, clock.iso(), fault_id))
 
 
+def outstanding_proposals(store, limit):
+    """(checked now, the product and goal of every one not reached): at most limit outstanding
+    project proposals, least recently checked first. The second part is a small grouped read
+    of routing's own rows, so a caller can tell which held defects a proposal it did not reach
+    might still move."""
+    rows = store.all(
+        "SELECT rowid AS seq, * FROM incident_routes WHERE stage = ? AND disposition = ?"
+        " ORDER BY checked_seq, rowid LIMIT ?",
+        (products.STAGE_FILED, products.PROJECT_PROPOSAL, min(max(int(limit), 1), 5000)))
+    reached = [_decode(row) for row in rows]
+    placeholders = ",".join("?" * len(reached)) or "''"
+    waiting = store.all(
+        "SELECT DISTINCT product_key, goal FROM incident_routes WHERE stage = ?"
+        " AND disposition = ? AND fault_id NOT IN (" + placeholders + ") LIMIT 5000",
+        (products.STAGE_FILED, products.PROJECT_PROPOSAL, *(r["fault_id"] for r in reached)))
+    return reached, {(row["product_key"], row["goal"]) for row in waiting}
+
+
+def checked(db, fault_id):
+    """Move a proposal to the back of the digest's rotation."""
+    db.execute("UPDATE incident_routes SET checked_seq ="
+               " (SELECT COALESCE(MAX(checked_seq), 0) + 1 FROM incident_routes)"
+               " WHERE fault_id = ?", (fault_id,))
+
+
 def set_reported(db, clock, fault_id, snapshot):
     db.execute("UPDATE incident_routes SET reported = ?, updated_at = ? WHERE fault_id = ?",
                (products.canonical(snapshot), clock.iso(), fault_id))
