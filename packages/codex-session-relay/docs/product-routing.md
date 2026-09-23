@@ -44,6 +44,9 @@ Evidence is a few references, never a transcript. Each entry has a `kind`, a `re
 a `source` and a flat `observed` object of scalar readings; at most sixteen entries and 4096
 bytes in all. Nested structure, long text or anything past the bound is refused, so an intake
 cannot become a copy of the conversation, file or personal data a source happened to hold.
+The signature an incident gives for a named cause is read the same way: a flat object of at
+most sixteen scalar fields and 1024 bytes, the shape every ledger signature has, kept exactly as
+given so it can be compared with the stored one.
 
 `surface` is one of `dev_run`, `verification`, `user_report` and `real_use`. Each product's
 registry record says which of them are watched and how they are collected. An incident from a
@@ -128,6 +131,11 @@ incident declaring another is refused. A pending incident uses the workspace it 
 When an incident names a cause in another product, typically a CRW fault that broke a product's
 run, the cause is verified first. The fault must exist, belong to the named product, and match
 the signature the incident gives for it. An unverified cause is held and merges nothing.
+
+A cause also counts only incidents of its own origin. A simulated incident that names a real
+fault, or an observed one that names a fault recording simulated events, is held as unverified:
+it records nothing on the cause and owes no relation to it. A test can therefore never make a
+real fault recur, notify or reopen, and a real effect never counts toward a test fault.
 
 A verified cause produces two records in one transaction, linked once both own issues. The cause
 fault gains an occurrence at its own current severity, with evidence naming the affected product;

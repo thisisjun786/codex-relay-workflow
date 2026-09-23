@@ -114,7 +114,12 @@ def _forward(router, route, incident) -> dict:
 
 def _shared_cause(router, incident, registry, workspace) -> dict:
     """A cause in another product: verified, it gains an occurrence at its own severity and the
-    affected product's defect is filed as usual and linked; unverified, nothing merges."""
+    affected product's defect is filed as usual and linked; unverified, nothing merges.
+
+    A cause counts only incidents of its own origin. A simulated incident naming a real fault,
+    or an observed one naming a simulated fault, is held unverified: it records nothing on the
+    cause and owes no relation to it, so a test can never make a real fault recur, notify or
+    reopen, and a real effect never counts toward a test fault."""
     port = router.port
     cause = incident["cause"]
     row = port.get(cause["faultId"]) if cause["faultId"] else None
@@ -123,6 +128,11 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
                      or _stored(row["signature"]) == cause["signature"]))
     if not verified:
         return file(router, incident, registry, workspace, hold=products.CAUSE_UNVERIFIED)
+    theirs = _origin(row)
+    if theirs != incident["origin"]:
+        return file(router, incident, registry, workspace, hold=products.CAUSE_UNVERIFIED,
+                    note=f"a {incident['origin']} incident never counts against a {theirs}"
+                         f" fault")
     placed = _stored(row.get("scope"))
     # One transaction: the cause's occurrence says a product was affected, and it stands only
     # together with that product's own filing. A filing that fails takes the occurrence back
@@ -139,7 +149,15 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
         return file(router, incident, registry, workspace, cause_fault=cause["faultId"])
 
 
-def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) -> dict:
+def _origin(row):
+    """Whether a ledger fault records simulated events. Routing puts the simulated mark into
+    every simulated signature it builds, as part of identity; a fault without it is real."""
+    signature = _stored(row["signature"])
+    return products.SIMULATED if signature.get("simulated") is True else products.OBSERVED
+
+
+def file(router, incident, registry, workspace, *, hold=None, cause_fault=None,
+         note=None) -> dict:
     """Decide, then record: the one place a product incident becomes a ledger observation."""
     port = router.port
     product = registry["product"]
@@ -148,7 +166,7 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) 
     if hold is not None:
         decision = {**decision, "disposition": products.HELD, "stage": products.STAGE_HELD,
                     "hold": hold, "project": None, "owner": None,
-                    "reason": f"{hold}; " + decision["reason"]}
+                    "reason": f"{hold}; " + (f"{note}; " if note else "") + decision["reason"]}
     observe = decision["disposition"] == products.OBSERVE
     fault_class = products.EXPECTED_STATE if observe else products.DEFECT
     signature = placement.defect_signature(

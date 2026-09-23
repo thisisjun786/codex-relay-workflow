@@ -55,6 +55,8 @@ MAX_TEXT = 600
 MAX_EVIDENCE_ENTRIES = 16
 MAX_EVIDENCE_BYTES = 4096
 EVIDENCE_KEYS = ("kind", "ref", "source", "observed")
+MAX_SIGNATURE_FIELDS = 16
+MAX_SIGNATURE_BYTES = 1024
 
 # Fault classes this module defines. They are registered with the ledger through ledger_port,
 # which is the only module allowed to reach it; each names what clears it, because a class
@@ -394,11 +396,9 @@ def read_incident(record) -> dict:
     if cause is not None:
         _closed(cause, CAUSE_KEYS, "cause")
         signature = cause.get("signature")
-        if signature is not None and (not isinstance(signature, dict) or not signature):
-            malformed("cause.signature is a non-empty object")
         cause = {"product": _product(cause.get("product"), "cause.product"),
                  "faultId": _text(cause.get("faultId"), "cause.faultId", optional=True),
-                 "signature": dict(signature) if signature else None}
+                 "signature": None if signature is None else read_cause_signature(signature)}
     goal = record.get("goal")
     if goal is not None:
         _closed(goal, GOAL_KEYS, "goal")
@@ -473,6 +473,30 @@ def read_evidence(values) -> list:
         malformed(f"evidence is larger than {MAX_EVIDENCE_BYTES} bytes; it names where to look,"
                   f" not the thing looked at")
     return entries
+
+
+def read_cause_signature(value) -> dict:
+    """The signature an incident gives for the cause it names, to compare with the ledger's own.
+
+    A signature names a failure domain and carries nothing, so it is read like every signature
+    the ledger records: a flat object of at most sixteen scalar fields and 1024 bytes. Its values
+    are checked, never rewritten, so it still compares equal to the stored signature it names.
+    Anything nested, long or past the bound is refused before anything is written, because an
+    incident held for an unverified cause keeps exactly what it was given.
+    """
+    name = "cause.signature"
+    if not isinstance(value, dict) or not value or len(value) > MAX_SIGNATURE_FIELDS:
+        malformed(f"{name} is a non-empty object of at most {MAX_SIGNATURE_FIELDS} fields")
+    for key, reading in value.items():
+        _key(key, f"{name} key")
+        if isinstance(reading, str):
+            if len(reading) > 256:
+                malformed(f"{name}.{key} is longer than 256 characters")
+        elif reading is not None and not isinstance(reading, (bool, int, float)):
+            malformed(f"{name}.{key} is a scalar; a signature names a failure domain")
+    if len(canonical(value).encode("utf-8")) > MAX_SIGNATURE_BYTES:
+        malformed(f"{name} is larger than {MAX_SIGNATURE_BYTES} bytes")
+    return dict(value)
 
 
 def canonical(value) -> str:

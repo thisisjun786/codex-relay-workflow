@@ -104,6 +104,25 @@ class Validation(unittest.TestCase):
             products.read_binding(binding("alpha-notes", "issue", "ALN-21",
                                           followUpOf=[{"issue": "ALN-9", "checks": []}]))
 
+    def test_a_named_causes_signature_is_identity_bounded_and_never_rewritten(self):
+        # The shape the ledger records, including a padded value: returned exactly as given so
+        # it still compares equal to the stored signature.
+        given = {"relationship": "rel-1", "turn": 3, "targetRef": None, "errorCode": " E1 "}
+        kept = incident(cause={"product": "crw", "faultId": "f" * 32, "signature": given})
+        self.assertEqual(given, kept["cause"]["signature"])
+        for signature in (
+                {"recipient": "x" * 100_000},
+                {"recipient": {"transcript": "the whole conversation"}},
+                {"recipient": ["rel-1", "rel-2"]},
+                {f"k{n}": "v" for n in range(17)},
+                {f"k{n}": "v" * 200 for n in range(6)},
+                {"not a key": "v"},
+                {}):
+            with self.subTest(size=len(json.dumps(signature))), \
+                    self.assertRaises(products.RouteRefused) as caught:
+                incident(cause={"product": "crw", "faultId": "0" * 32, "signature": signature})
+            self.assertEqual(RefusalReason.ROUTE_INPUT_MALFORMED, caught.exception.reason)
+
 
 class Coverage(unittest.TestCase):
     def test_every_surface_is_listed_and_an_unconnected_one_reads_unobserved(self):

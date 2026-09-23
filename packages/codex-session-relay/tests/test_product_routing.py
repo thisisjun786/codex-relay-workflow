@@ -427,6 +427,39 @@ class SimulatedAndObserved(ProductRoutingCase):
         self.holder.run()
         self.assertEqual({"ALN", "TST"}, {i["team"] for i in self.linear.issues.values()})
 
+    def crw_fault(self, *, simulated):
+        self.ledger.set_target(product="crw", team="CRW", project="relay",
+                               project_ref="proj-crw-relay")
+        signature = {"recipient": "rel-1", **({"simulated": True} if simulated else {})}
+        recorded = self.ledger.record(faults.observation(
+            product="crw", fault_class="delivery_stalled", severity="degraded",
+            signature=signature, occurrence_key="crw-1", scope={"projectKey": "relay"}))
+        return recorded["faultId"], signature
+
+    def test_a_cause_counts_only_incidents_of_its_own_origin(self):
+        real, real_signature = self.crw_fault(simulated=False)
+        fake, fake_signature = self.crw_fault(simulated=True)
+        before = {f: self.router.port.get(f)["occurrence_count"] for f in (real, fake)}
+        crossed = [
+            self.route(origin="simulated", occurrenceKey="sim-1",
+                       cause={"product": "crw", "faultId": real, "signature": real_signature}),
+            self.route(occurrenceKey="real-1",
+                       cause={"product": "crw", "faultId": fake, "signature": fake_signature})]
+        self.assertEqual(["cause_unverified"] * 2, [a["hold"] for a in crossed])
+        self.assertEqual(before, {f: self.router.port.get(f)["occurrence_count"]
+                                  for f in (real, fake)})
+        for answer in crossed:
+            target = routes.get(self.store, answer["faultId"])["target"]
+            self.assertIsNone(target["cause"])
+            self.assertEqual([], [o for o in target["obligations"] if o["toFault"]])
+        # The same origin on both sides is a verified cause, test target included.
+        matched = self.route(origin="simulated", occurrenceKey="sim-2",
+                             cause={"product": "crw", "faultId": fake,
+                                    "signature": fake_signature})
+        self.assertIsNone(matched["hold"])
+        self.assertEqual(before[fake] + 1, self.router.port.get(fake)["occurrence_count"])
+        self.assertEqual(before[real], self.router.port.get(real)["occurrence_count"])
+
 
 
 class FoldedReviewScenarios(ProductRoutingCase):
