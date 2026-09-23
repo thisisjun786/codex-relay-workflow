@@ -872,6 +872,73 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         with open(ledger, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["assignments"], {})
 
+    def test_a_returned_tenure_with_a_damaged_generation_is_unread_not_a_host_failure(self):
+        relationship = self.registered(project=None)
+        ledger = os.path.join(self.tmp, "return-ledger.json")
+        self.returned(relationship)
+        self.store.db.execute("UPDATE relationships SET execution_generation = 'damaged'"
+                              " WHERE relationship_id = ?", (relationship["relationshipId"],))
+        code, answer = self.packet_check(
+            self.resume_for(relationship, CHILD, ISSUE, "resume-damaged"),
+            receiver_id=CHILD, observation=self.observed(), ledger=ledger)
+        self.assertEqual(code, 0, answer)
+        self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
+
+    def test_a_store_value_of_the_wrong_shape_never_ends_as_a_host_failure(self):
+        # Every column the reader reads, holding what SQLite lets any column hold. The answer
+        # is a refusal or a reading that says what it could not read - never a host error -
+        # and a compared column of the wrong shape never agrees.
+        columns = (("relationships", "execution_generation", True),
+                   ("relationships", "issue_key", True),
+                   ("relationships", "parent_task_id", True),
+                   ("relationships", "status", True),
+                   ("relationships", "supersedes", False),
+                   ("generations", "dispatch_request_id", True),
+                   ("generations", "execution_generation", True),
+                   ("generations", "reason", False),
+                   ("scope_links", "revision", True),
+                   ("scope_links", "status", True),
+                   ("scope_links", "lower_task_id", True),
+                   ("scope_links", "superseded_by", True),
+                   ("authorized_settings", "settings", True))
+        number = 0
+        for table, column, compared in columns:
+            for shape in ("damaged", 7, 2.5):
+                number += 1
+                with self.subTest(table=table, column=column, shape=shape):
+                    child, issue = CHILD + "-shape%d" % number, "REL-SHAPE-%d" % number
+                    relationship = self.registered(child=child, issue=issue,
+                                                   dispatch="dispatch-shape-%d" % number)
+                    rid = relationship["relationshipId"]
+                    ledger = os.path.join(self.tmp, "shape-%d.json" % number)
+                    self.packet_check(self.first_assignment(dispatch="dispatch-shape-%d" % number,
+                                                            issue=issue, subject=issue),
+                                      receiver_id=child, ledger=ledger)
+                    resume = self.resume_for(relationship, child, issue, "resume-%d" % number)
+                    if table == "scope_links":
+                        link = self.linkage.attachment(rid)["link"]["linkId"]
+                        where, key = "link_id = ?", link
+                    elif table == "authorized_settings":
+                        where, key = "task_id = ?", PARENT
+                        shape = json.dumps({"model": shape})
+                    else:
+                        where, key = "relationship_id = ?", rid
+                    try:
+                        self.store.db.execute("UPDATE %s SET %s = ? WHERE %s"
+                                              % (table, column, where), (shape, key))
+                    except Exception:  # noqa: BLE001 - a shape the schema itself refuses
+                        continue
+                    code, answer = self.packet_check(resume, receiver_id=child,
+                                                     observation=self.observed(), ledger=ledger)
+                    self.assertNotEqual(code, cli.EXIT_HOST, answer)
+                    if compared and code == 0:
+                        self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
+                    if table == "authorized_settings":
+                        record_settings(self.store, self.clock, PARENT,
+                                        task_settings("/parent", model=PARENT_MODEL,
+                                                      reasoningEffort=PARENT_EFFORT),
+                                        source="creation_result")
+
     def test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted(self):
         relationship = self.registered(project=None)
         ledger = os.path.join(self.tmp, "return-ledger.json")
