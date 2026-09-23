@@ -75,6 +75,9 @@ OFFLINE_COMMANDS = (
     "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
     "fault-reverify", "fault-resolve", "fault-next", "fault-claim", "fault-operation",
     "fault-reconcile", "fault-complete", "fault-fail", "fault-retry", "fault-prune",
+    # Product routing's registry reads and writes this store alone: the registry, the bindings
+    # a credential holder read back from Linear, and the project creation policy.
+    "product-register", "product-bind", "product-show", "route-policy",
     "service status", "service enable", "service disable", "service stop",
     # Records which execution policy file this service's daemon is launched with. It writes
     # one small file next to the intent and reaches no host, so an operator can configure a
@@ -140,6 +143,7 @@ class Services:
         self._reconciler = None
         self._sync = None
         self._faults = None
+        self._router = None
         self._assignments = None
         self._linkage = None
         self._merge_turn = None
@@ -261,6 +265,14 @@ class Services:
 
             self._faults = FaultLedger(self.store, self.clock)
         return self._faults
+
+    @property
+    def router(self):
+        if self._router is None:
+            from .routing import ProductRouter
+
+            self._router = ProductRouter(self.store, self.clock)
+        return self._router
 
     @property
     def assignments(self):
@@ -1612,6 +1624,41 @@ def cmd_fault_retry(services, args) -> dict:
 
 def cmd_fault_prune(services, args) -> dict:
     return services.faults.prune(args.fault, keep=args.keep)
+
+
+def _route_json(value, what):
+    """Caller-supplied JSON for product routing, or a routing refusal naming what was wrong.
+
+    A missing @path is as much a malformed argument as unreadable JSON; letting either escape
+    as a generic error would report an outage for a typo.
+    """
+    from .errors import RefusalReason
+    from .products import RouteRefused
+
+    try:
+        return json.loads(_read_text(value))
+    except OSError as error:
+        raise RouteRefused(RefusalReason.ROUTE_INPUT_MALFORMED,
+                           f"the {what} file cannot be read: {error}") from error
+    except ValueError as error:
+        raise RouteRefused(RefusalReason.ROUTE_INPUT_MALFORMED,
+                           f"the {what} is not readable JSON: {error}") from error
+
+
+def cmd_product_register(services, args) -> dict:
+    return services.router.register_product(_route_json(args.record, "registry record"))
+
+
+def cmd_product_bind(services, args) -> dict:
+    return services.router.bind(_route_json(args.record, "binding"))
+
+
+def cmd_product_show(services, args) -> dict:
+    return services.router.show_products(args.product)
+
+
+def cmd_route_policy(services, args) -> dict:
+    return services.router.set_policy(_route_json(args.record, "routing policy"))
 
 
 def _read_text(value: str) -> str:
@@ -3781,6 +3828,23 @@ def build_parser() -> argparse.ArgumentParser:
     fault_prune.add_argument("--fault", required=True)
     fault_prune.add_argument("--keep", type=int, default=20)
     fault_prune.set_defaults(handler=cmd_fault_prune)
+
+    product_register = subparsers.add_parser("product-register")
+    product_register.add_argument("--record", required=True,
+                                  help="product-registry/1 JSON, or @path")
+    product_register.set_defaults(handler=cmd_product_register)
+
+    product_bind = subparsers.add_parser("product-bind")
+    product_bind.add_argument("--record", required=True, help="product-binding/1 JSON, or @path")
+    product_bind.set_defaults(handler=cmd_product_bind)
+
+    product_show = subparsers.add_parser("product-show")
+    product_show.add_argument("--product")
+    product_show.set_defaults(handler=cmd_product_show)
+
+    route_policy = subparsers.add_parser("route-policy")
+    route_policy.add_argument("--record", required=True, help="routing-policy/1 JSON, or @path")
+    route_policy.set_defaults(handler=cmd_route_policy)
 
 
     show = subparsers.add_parser("show")

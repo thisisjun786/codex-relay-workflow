@@ -7,6 +7,7 @@ target through the ledger are exercised by the scenario suite once the ledger's 
 contract is bound; until then the adapter refuses them by name, which is asserted here.
 """
 
+import json
 import unittest
 
 from codex_session_relay import completion, ledger_port, placement, products
@@ -508,6 +509,60 @@ class LedgerPortBeforeBinding(RelayTestCase):
             with self.subTest(module=name):
                 self.assertNotIn("faults", imported)
                 self.assertNotIn("faultsweep", imported)
+
+
+class CommandLine(RelayTestCase):
+    """In process, like test_faults.CommandLine, so this measures no wall time."""
+
+    def invoke(self, *argv):
+        import contextlib
+        import io
+
+        from codex_session_relay import cli
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = cli.main(["--state", str(self.store.path.parent), *argv])
+        return code, json.loads(buffer.getvalue())
+
+    def test_a_product_is_registered_bound_and_shown_from_the_command_line(self):
+        code, registered = self.invoke("product-register", "--record", json.dumps(ALPHA))
+        self.assertEqual(0, code)
+        self.assertEqual("alpha-notes", registered["product"])
+        record = self.artifact("binding.json", json.dumps(ALPHA_BINDINGS[0]))
+        code, bound = self.invoke("product-bind", "--record", "@" + record)
+        self.assertEqual(0, code)
+        self.assertEqual("proj-aln-editor", bound["ref"])
+        code, shown = self.invoke("product-show", "--product", "alpha-notes")
+        self.assertEqual(0, code)
+        entry = shown["products"][0]
+        self.assertEqual("watched", entry["coverage"]["dev_run"]["state"])
+        self.assertEqual("unobserved", entry["coverage"]["real_use"]["state"])
+        self.assertEqual(["proj-aln-editor"], [b["ref"] for b in entry["bindings"]])
+
+    def test_a_binding_for_an_unregistered_product_is_a_refusal(self):
+        code, refusal = self.invoke("product-bind", "--record", json.dumps(ALPHA_BINDINGS[0]))
+        self.assertEqual(2, code)
+        self.assertEqual("route_product_unknown", refusal["reason"])
+
+    def test_unreadable_json_and_a_missing_file_are_refusals_not_outages(self):
+        for argument in ("{not json", "@" + self.tmp + "/absent.json"):
+            with self.subTest(argument=argument):
+                code, refusal = self.invoke("product-register", "--record", argument)
+                self.assertEqual(2, code)
+                self.assertEqual("route_input_malformed", refusal["reason"])
+
+    def test_a_policy_without_its_basis_is_refused(self):
+        policy = {"schema": "routing-policy/1", "policy": "project_creation", "enabled": True,
+                  "minIndependentFixes": 2, "requireSharedGoal": True,
+                  "requireCompletionCriteria": True, "basis": ""}
+        code, refusal = self.invoke("route-policy", "--record", json.dumps(policy))
+        self.assertEqual(2, code)
+        self.assertEqual("route_input_malformed", refusal["reason"])
+        code, stored = self.invoke("route-policy", "--record",
+                                   json.dumps(dict(policy, basis="CRW-206, Jun 2026-09-22")))
+        self.assertEqual(0, code)
+        self.assertEqual("CRW-206, Jun 2026-09-22", stored["basis"])
 
 
 if __name__ == "__main__":
