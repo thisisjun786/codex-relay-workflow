@@ -7,9 +7,11 @@ be judged against, that a correction without the generation it opens produces a 
 relay then refuses, or that a resume omitting the workflow has dropped the one field no
 transport carries.
 
-`packets.py` is the other half, for the parent and child relation. `relay-packet/1`.
+`packets.py` is the other half. `relay-packet/1`, for the parent-child relation and for what a
+parent owes the level above; a supervisor's instruction downward is still carried by the
+envelope alone.
 
-## Eleven occasions, not two
+## Fourteen occasions, not two
 
 The envelope shipped with one purpose in each direction, so five different child reports and
 six different parent messages rendered as two words. A blocked turn and a candidate offered
@@ -28,6 +30,9 @@ for review both said completion; the message that STARTS the work had no name at
 | child to parent | blocked | request | issue, evidence |
 | child to parent | decision_request | decision | issue, decision, evidence |
 | child to parent | progress | notification | issue |
+| parent to supervisor | completion | notification | issue, generation, evidence |
+| parent to supervisor | blocked | notification | issue, evidence |
+| parent to supervisor | decision_request | decision | issue, decision, evidence |
 
 The restraint is load-bearing in two rows. An **assignment** does not require a generation,
 because a newly created child's registration needs a task id creation has not returned yet
@@ -39,6 +44,14 @@ A **resume** requires the policy for the opposite reason. Model, effort, sandbox
 travel as settings and a receipt reads them back. The workflow has no transport field
 anywhere, so a message that does not say it has not deferred it - it has dropped it, and the
 compacted child it reaches resumes under whatever it still happens to remember.
+
+The three upward rows are the ones [the supervisor channel](supervisor-channel.md) sends. A
+completion upward is NOT required to carry an artifact, because a noop completion has none and
+a research assignment may have only a locator; it carries the pull request when the work report
+names one whole. `status_response` has no row at all, and the absence is deliberate: `body`
+here is a dispatch instruction checked against DISPATCH-TASK-01, so requiring it of an answer
+would refuse every real answer, and an occasion with no field it cannot do without would be a
+row that admits anything. That occasion is carried by the envelope alone.
 
 ## The artifact is one of two things and never a blank
 
@@ -116,7 +129,10 @@ normal state as a finding.
 
 ## Scope of these claims
 
-Source-implemented and covered by `tests/test_child_packets.py`. That is evidence about this
-source. It is not an installed runtime, an activated service, or any packet reaching any task
-on any host, and the round trip in that file is a read-only replay over records held in
-memory: no store is opened, no delivery is claimed and no acknowledgement row is written.
+Source-implemented and covered by `tests/test_child_packets.py`, and for the upward rows by
+`tests/test_supervisor_channel.py`. That is evidence about this source. It is not an installed
+runtime, an activated service, or any packet reaching any task on any host. The round trip in
+the first file is a read-only replay over records held in memory: no store is opened, no
+delivery is claimed and no acknowledgement row is written. The round trip in the second opens a
+store and a fake host, and what it establishes is bounded in
+[the channel document](supervisor-channel.md).

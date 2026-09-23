@@ -902,7 +902,15 @@ class AnExplicitRequestIsItsOwnPath(ReportingTestCase):
 
 
 class TheUpwardEnvelope(ReportingTestCase):
-    def test_the_supervisor_direction_claims_no_receipt(self):
+    def test_a_composed_region_claims_nothing_the_channel_has_not_answered(self):
+        """supervision composes; it does not send, and it never fills in a stage itself.
+
+        The two stages that now have a record answer unmeasured here, which is the honest
+        starting ladder: this module opens no queue and reads no host, so nothing about how
+        far a message got has been established at the moment it is composed. The three with
+        no mechanism stay not_applicable whatever the channel does, because a supervisor
+        agreeing, acting or confirming is not a fact this store holds.
+        """
         event_id = self.reported()
         one = self.obligation_for(event_id)
         region = supervision.envelope_for(
@@ -910,7 +918,9 @@ class TheUpwardEnvelope(ReportingTestCase):
             scope="project CRW, issue REL-1", observed_at=self.clock.iso())
         self.assertEqual(region["kind"], envelope.NOTIFICATION)
         self.assertEqual(region["sender"]["role"], "parent")
-        for name in envelope.STAGES:
+        for name in (envelope.TRANSPORT_ACCEPTED, envelope.RECEIVED):
+            self.assertEqual(region["reach"][name]["state"], envelope.UNMEASURED)
+        for name in (envelope.AGREED, envelope.APPLIED, envelope.VERIFIED):
             self.assertEqual(region["reach"][name]["state"], envelope.IMPOSSIBLE)
 
     def test_a_decision_envelope_has_to_name_what_is_being_decided(self):
@@ -971,8 +981,12 @@ class TheCommandsAParentActuallyRuns(ReportingTestCase):
             self.store, self.clock, self.delivery = case.store, case.clock, case.delivery
             self.linkage = linkage
             from codex_session_relay.assignment import AssignmentView
+            from codex_session_relay.supervisorchannel import SupervisorChannel
             self.assignments = AssignmentView(case.store, case.registry, case.clock,
                                               linkage=linkage)
+            # supervisor-standing adds the omissions this store derives, through the channel.
+            self.supervisor_channel = SupervisorChannel(case.store, case.registry, linkage,
+                                                        case.clock)
 
     def services(self):
         from codex_session_relay.linkage import Linkage

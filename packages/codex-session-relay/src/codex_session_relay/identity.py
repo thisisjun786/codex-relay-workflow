@@ -15,6 +15,11 @@ OUTCOMES = ("ready_for_review", "failed", "interrupted", "blocked_needs_input")
 RELATIONSHIP_ID_RE = re.compile(r"^rel-[0-9a-f]{16}$")
 EVENT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 REQUEST_ID_RE = re.compile(r"^del-[0-9a-f]{12}-a([0-9]+)$")
+# An envelope message id, which is the same width as an event id and is NOT one: it is derived
+# from a direction, a relation, a purpose and a subject rather than from a revision. Spelled
+# separately so a reader of either regex can see which identity is being checked.
+MESSAGE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+SUPERVISOR_REQUEST_ID_RE = re.compile(r"^sup-[0-9a-f]{12}-a([0-9]+)$")
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -107,6 +112,36 @@ def ack_proof(event: str, ack_turn_id: str) -> str:
     if not isinstance(ack_turn_id, str) or not ack_turn_id.strip():
         raise ValueError("ack_turn_id must be a non-empty string")
     return sha256_hex(f"{event}|{ack_turn_id}")
+
+
+def supervisor_request_id(message: str, attempt_no: int) -> str:
+    """One transport attempt at one supervisor-bound message.
+
+    Its own prefix rather than del-, because these attempts live in their own table and are
+    never claimed by the parent-child engine. A shared spelling would make a request id from
+    one queue look like a row the other could settle.
+    """
+    if not MESSAGE_ID_RE.match(message or ""):
+        raise ValueError("message id must be 32 lowercase hex characters")
+    if not isinstance(attempt_no, int) or isinstance(attempt_no, bool) or attempt_no < 1:
+        raise ValueError("attempt_no must be a positive integer")
+    return f"sup-{message[:12]}-a{attempt_no}"
+
+
+def supervisor_read_proof(message: str, read_turn_id: str) -> str:
+    """Computed by the supervisor over its OWN turn id, which the message cannot contain.
+
+    The same construction as ack_proof and for the same reason. The delivered bytes carry the
+    message id, because a recipient has to be able to quote it; they cannot carry the turn the
+    recipient will read them in, because that turn does not exist until it reads them. So a
+    reply that echoes every delivered field still cannot produce this value, and a stored
+    dispatch cannot be turned into evidence that anybody read anything.
+    """
+    if not MESSAGE_ID_RE.match(message or ""):
+        raise ValueError("message id must be 32 lowercase hex characters")
+    if not isinstance(read_turn_id, str) or not read_turn_id.strip():
+        raise ValueError("read_turn_id must be a non-empty string")
+    return sha256_hex(f"{message}|{read_turn_id}")
 
 
 def revision_request_event_id(relationship: str, source_event_id: str, verdict_turn_id: str) -> str:

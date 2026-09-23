@@ -49,9 +49,14 @@ EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
     "service restart", "verify-acks", "managed-start",
+    # A report upward resumes the supervisor's thread, and a readback is checked against the
+    # host's own turn list and the recipient's transcript. Neither can answer without one.
+    "supervisor-send", "supervisor-read",
 )
-# Every command that touches the managed marker and nothing else. Listed once so the store-selection
-# refusal and the doctor reachability report cannot drift apart.
+# Every command that touches the managed marker and no store this invocation would have to select.
+# intent-claim and intent-disposition also record into the store the INTENT names, after the marker
+# write (declarations.py), which is a store the coordinator chose rather than one discovery guessed.
+# Listed once so the store-selection refusal and the doctor reachability report cannot drift apart.
 MARKER_COMMANDS_BY_NAME = (
     "intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim",
     "intent-disposition", "intent-resolve", "intent-show", "guard-evaluate",
@@ -75,6 +80,10 @@ OFFLINE_COMMANDS = (
     "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
     "fault-reverify", "fault-resolve", "fault-next", "fault-claim", "fault-operation",
     "fault-reconcile", "fault-complete", "fault-fail", "fault-retry", "fault-prune",
+    "fault-adopt", "fault-move", "fault-queue", "fault-update", "fault-cancel", "fault-stage",
+    "fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications",
+    "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack",
+    "fault-notification-fail", "fault-notification-reconcile",
     # Product routing's registry reads and writes this store alone: the registry, the bindings
     # a credential holder read back from Linear, and the project creation policy. The route
     # commands reach the fault ledger in the same store; the Linear writes they cause are
@@ -104,6 +113,11 @@ OFFLINE_COMMANDS = (
     # none of the three reaches the host, so leaving them out under-reported what an operator
     # can run with no App Server.
     "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # The reading the automatic pass derives an omission from, read from this store alone.
+    "reporting-derive",
+    # Staging writes the message and the journal entry for it and reaches no host, and
+    # showing one reads the rows back. Sending and reading back are in the host list above.
+    "supervisor-stage", "supervisor-show",
     # Compares a packet against a reading the caller supplies. It opens no store, reaches no
     # host and decides nothing about delivery, so it runs wherever the two files are.
     "packet-check",
@@ -153,6 +167,7 @@ class Services:
         self._merge_turn = None
         self._capacity = None
         self._edit_regions = None
+        self._supervisor_channel = None
 
     @property
     def state_directory(self):
@@ -247,6 +262,23 @@ class Services:
             service.sync = self.sync
             self._ack = service
         return self._ack
+
+    @property
+    def supervisor_channel(self):
+        """What a parent owes the level above, staged, sent and read back.
+
+        The linkage is passed because who supervises a project lives nowhere else: unlike a
+        delivery, this channel has no frozen row to fall back on and must not acquire one.
+        """
+        if self._supervisor_channel is None:
+            from .supervisorchannel import SupervisorChannel
+
+            self._supervisor_channel = SupervisorChannel(
+                self.store, self.registry, self.linkage, self.clock,
+                # What every line the channel writes for a later step selects: this
+                # invocation's store, and the host this invocation reaches.
+                state_directory=self.state_directory, socket_path=self.socket_path)
+        return self._supervisor_channel
 
     @property
     def reconciler(self):
@@ -435,6 +467,36 @@ def cmd_reporting_show(services, args) -> dict:
         )
     except ValueError as error:
         raise SystemExit2(str(error), EXIT_USAGE) from error
+
+
+def cmd_reporting_derive(services, args) -> dict:
+    """The reading this store alone gives for one relationship's turn, written nowhere.
+
+    What the automatic supervisor pass stages an omission from, and what supervisor-show prints
+    as the recheck of one it staged: omitted.derive, through the same predicate reporting-show
+    uses, over the declarations the child's relay recorded in this store. --grace defaults to
+    the pass's own, so this answers what the pass would.
+    """
+    from . import omitted
+
+    try:
+        services.selection.db_path.stat()
+    except FileNotFoundError:
+        # Opening Services.store would create and migrate an empty store here, turning the
+        # absence this read should report into a database that says nothing happened. Only
+        # absence answers here; a store that cannot be looked at fails where it is opened.
+        return {"schema": omitted.SCHEMA, "source": omitted.STORE_SOURCE,
+                "reportingState": "unmeasured", "reason": "store_absent",
+                "relationshipId": args.relationship, "observedAt": services.clock.iso(),
+                "owed": False, "owedReason": omitted.NOT_AN_OMISSION,
+                "detail": "no relay store exists at " + str(services.selection.db_path)
+                          + "; nothing was created"}
+    policy = services.supervisor_channel.policy
+    return omitted.derive(
+        services.store, args.relationship, state_directory=services.state_directory,
+        now=services.clock.iso(),
+        grace=policy.omission_grace_seconds if args.grace is None else args.grace,
+        turn=args.turn)
 
 
 def cmd_register(services, args) -> dict:
@@ -812,6 +874,126 @@ def cmd_supervisor_select(services, args) -> dict:
     return services.delivery.supervisor_selection(args.event, recipient=args.recipient)
 
 
+
+def cmd_supervisor_stage(services, args) -> dict:
+    """Freeze what is owed upward, before anything is sent.
+
+    Staging is not sending. What this writes is the message and the record that a report was
+    produced for the fact behind it; whether a supervisor ever sees it is two more commands
+    and a host away.
+    """
+    from . import supervision
+    from .report import read as read_work_report
+
+    reading = None
+    if args.project:
+        if args.recipient:
+            raise SystemExit2(
+                "--recipient names the supervisor ONE message is addressed to, and --project"
+                " stages every standing obligation, each resolved through its own"
+                " relationship. Ignoring the one you typed is how a caller learns too late"
+                " that it was never checked", EXIT_USAGE)
+        readings = [_observation_file(path) for path in args.observation or []]
+        return services.supervisor_channel.stage_standing(
+            args.project, observations=readings)
+    if args.event:
+        if args.observation:
+            raise SystemExit2(
+                "--event and --observation are two different subjects: one obligation comes"
+                " from an event in this store and the other from a turn that left no event at"
+                " all. Name one", EXIT_USAGE)
+        obligation = supervision.from_event(
+            services.store, args.event, read_work_report(services.store, args.event))
+        about = "event " + repr(args.event)
+    elif args.observation and len(args.observation) == 1:
+        reading = _observation_file(args.observation[0])
+        obligation = supervision.from_observation(reading)
+        about = "the observation at " + repr(args.observation[0])
+    elif args.observation:
+        raise SystemExit2(
+            "one obligation is one message, so a single staging takes one observation. Pass"
+            " --project to stage several, where each reading is placed by the relationship it"
+            " names", EXIT_USAGE)
+    else:
+        raise SystemExit2(
+            "supervisor-stage needs a subject: --event for one event's obligation, --project"
+            " for everything a project owes, or one --observation for the obligation a turn"
+            " left by ending without reporting", EXIT_USAGE)
+    if obligation is None:
+        raise SystemExit2(
+            about + " raises no obligation, so there is nothing to stage. An event has to be"
+            " a completion, a new block or a decision the user owes, and an observation has"
+            " to report state unreported", EXIT_USAGE)
+    return services.supervisor_channel.stage(
+        obligation, expect_recipient=args.recipient,
+        reading=reading if args.observation else None)
+
+
+def cmd_supervisor_send(services, args) -> dict:
+    """One attempt at one staged message. Nothing here is automatic.
+
+    It reaches the host only past its own guards: a message that is held, inside its backoff or
+    already sent answers sent: false without the adapter being touched.
+    """
+    from . import supervisorchannel as channel_module
+
+    _require_host(services, "supervisor-send",
+                  "a send observes the recipient's lifecycle and resumes its thread. Without"
+                  " a host every read fails, which reads as an unmeasured recipient and would"
+                  " record a withholding that describes this process rather than the task")
+    record = services.supervisor_channel.attempt(args.message, _LazyAdapter(services))
+    if record is None:
+        row = services.supervisor_channel.get(args.message)
+        return {"attempted": False, "sent": False, "messageId": args.message,
+                "state": row["state"],
+                "holdReason": row["hold_reason"],
+                "nextEligibleAt": row["next_eligible_at"],
+                "detail": "nothing was sent and nothing is wrong: a busy recipient, a"
+                          " backoff still running, or a message already sent"}
+    # sent is read off the receipt rather than asserted. An attempt that was made and refused
+    # answers sendAttempted no, and reporting that as a send made a transport refusal read as
+    # a delivery - the one reading this command exists to prevent.
+    return {"attempted": True,
+            "sent": record["deliveryState"] in channel_module.DELIVERED,
+            **record}
+
+
+def cmd_supervisor_read(services, args) -> dict:
+    """The recipient answering a message it was sent.
+
+    The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain,
+    so an echo cannot produce it. That is all it establishes: nothing authenticates the caller
+    and nothing shows the named turn produced the proof, so answering from inside your own turn
+    is an instruction rather than a property this checks.
+
+    A message that already has a verified readback answers from the stored row, before the
+    proof is checked and without reaching the host.
+    """
+    _require_host(services, "supervisor-read",
+                  "a readback is checked against the host's own turn list and the recipient's"
+                  " transcript. Without a host it would record an unverified readback, which"
+                  " is a statement about this process and reads as one about the recipient")
+    return services.supervisor_channel.read_back(
+        args.message, read_turn_id=args.turn, proof=args.proof,
+        adapter=_LazyAdapter(services), asserted_by=args.asserted_by)
+
+
+def cmd_supervisor_show(services, args) -> dict:
+    """One staged message whole: what it says, every attempt, and what came back."""
+    return services.supervisor_channel.show(args.message)
+
+
+def _require_host(services, command, why) -> None:
+    """Refuse a host-required command that was given no host, before it writes anything.
+
+    HOST_REQUIRED_COMMANDS is a description doctor reports; it enforces nothing. Without this
+    the absence of --socket does not stop the command, it changes what the command records:
+    every host read fails, and the refusal that follows is written down as a fact about the
+    recipient. A missing host is a fact about this invocation and is reported as one.
+    """
+    if not services.adapter_requested:
+        raise SystemExit2(command + " needs --socket: " + why, EXIT_USAGE)
+
 def cmd_packet_check(services, args) -> dict:
     """Whether a packet agrees with the record its receiver read. It decides nothing else.
 
@@ -879,10 +1061,14 @@ def cmd_supervisor_standing(services, args) -> dict:
 
     An observation is passed in with --observation because a turn that ended without reporting
     writes no row this store can find; reporting-show is what produces one.
+
+    The omissions this store can derive itself - from the declarations a child's relay
+    recorded here - are added beside them, as the automatic pass would stage them.
     """
     from . import supervision
 
     readings = [_observation_file(path) for path in args.observation or []]
+    readings += services.supervisor_channel.store_readings(args.project, readings)
     return supervision.status_answer(
         services.store, services.linkage, services.assignments, args.project,
         observations=readings)
@@ -1512,11 +1698,14 @@ from .faults import METHODS as FAULT_METHODS, OUTCOMES as FAULT_OUTCOMES  # noqa
 
 
 def cmd_fault_target(services, args) -> dict:
-    return services.faults.set_target(args.scope, args.tracker_ref)
+    return services.faults.set_target(product=args.product, workspace=args.workspace,
+                                      project=args.project, team=args.team,
+                                      project_ref=args.project_ref)
 
 
 def cmd_fault_observe(services, args) -> dict:
-    return services.faults.record(_fault_json(args.observation, "observation"))
+    adopt = _fault_json(args.adopt, "adoption") if args.adopt else None
+    return services.faults.record(_fault_json(args.observation, "observation"), adopt=adopt)
 
 
 def cmd_fault_sweep(services, args) -> dict:
@@ -1524,13 +1713,22 @@ def cmd_fault_sweep(services, args) -> dict:
     from . import faultsweep
 
     readings = _fault_json(args.readings, "readings") if args.readings else []
+    after = args.readings_after
+    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+        from .errors import RefusalReason
+        from .faults import FaultRefused
+
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"--readings-after is a non-negative integer, not {after!r}")
     batch = faultsweep.sweep(
         services.store, product=args.product,
         scope={"projectKey": args.project} if args.project else {}, readings=readings,
+        readings_after=after,
     )
     recorded = faultsweep.record_all(services.faults, batch, store=services.store)
     return {"read": recorded["read"], "recorded": recorded["recorded"],
             "queued": recorded["queued"], "gaps": recorded["gaps"],
+            "readingsNext": batch["readingsNext"], "readingsTotal": batch["readingsTotal"],
             "limits": batch["limits"]}
 
 
@@ -1566,14 +1764,38 @@ def cmd_fault_show(services, args) -> dict:
     # One validated bound, applied on both branches. The listing branch used to take no bound
     # at all, so the flag an operator passed to keep the answer small reached nothing.
     limit = _positive(args.limit, "--limit")
+    # One fault, one write, or a filtered listing. A listing filter beside a single selection
+    # was ignored and the command still succeeded, answering a question the caller had not
+    # asked; argparse keeps --fault and --publication apart, and this refuses the rest.
+    if args.fault or args.publication:
+        ignored = [flag for flag, value in (
+            ("--product", args.product), ("--fault-class", args.fault_class),
+            ("--scope", args.scope), ("--fault-state", args.fault_state),
+            ("--after", args.after)) if value is not None]
+        if ignored:
+            from .errors import RefusalReason
+            from .faults import FaultRefused
+
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               f"{', '.join(ignored)} filter a listing and would be ignored"
+                               f" beside {'--fault' if args.fault else '--publication'}")
+    if args.publication:
+        # One write: its kind, state, trigger, target, payload, what it created, and its
+        # newest attempts - the read a kind's caller uses to find what a create made.
+        shown = services.faults.publication(args.publication)
+        shown["attempts"] = services.faults.attempts(args.publication, limit=limit)
+        return shown
     if args.fault:
         record = services.faults.get(args.fault)
         if record is None:
             raise PayloadExit({"faultId": args.fault, "found": False}, EXIT_REFUSED)
         record["occurrences"] = services.faults.occurrences(args.fault, limit=limit)
         record["remediations"] = services.faults.remediations(args.fault, limit=limit)
+        record["publications"] = services.faults.publications(args.fault, limit=limit)
+        record["progress"] = services.faults.progress(args.fault)
         return record
-    return services.faults.snapshot(scope_key=args.scope, state=args.fault_state,
+    return services.faults.snapshot(product=args.product, fault_class=args.fault_class,
+                                    scope_key=args.scope, state=args.fault_state,
                                     limit=limit, after=args.after)
 
 
@@ -1593,12 +1815,15 @@ def cmd_fault_resolve(services, args) -> dict:
 
 
 def cmd_fault_next(services, args) -> dict:
+    """What a writer may act on now, and why everything else pending waits."""
     services.faults.expire_leases()
-    return {"publications": services.faults.next(limit=_positive(args.limit, "--limit"))}
+    state = services.faults.queue_state(limit=_positive(args.limit, "--limit"))
+    return {"publications": state["ready"], "held": state["held"],
+            "budgets": state["budgets"], "budgetsTruncated": state["budgetsTruncated"]}
 
 
 def cmd_fault_claim(services, args) -> dict:
-    return services.faults.claim(args.publication, owner=args.owner)
+    return services.faults.claim(args.publication, owner=args.owner, takeover=args.takeover)
 
 
 def cmd_fault_operation(services, args) -> dict:
@@ -1606,20 +1831,24 @@ def cmd_fault_operation(services, args) -> dict:
 
 
 def cmd_fault_reconcile(services, args) -> dict:
+    observed = _fault_json(args.observed_fields, "observed fields") if args.observed_fields         else None
     return services.faults.reconcile(args.publication, _read_text(args.observed),
-                                     searched=args.searched)
+                                     searched=args.searched, observed=observed,
+                                     prior_ended=args.prior_ended, reason=args.reason)
 
 
 def cmd_fault_complete(services, args) -> dict:
+    observed = _fault_json(args.observed_fields, "observed fields") if args.observed_fields         else None
     return services.faults.complete(
-        args.publication, claim_token=args.claim_token, readback=_read_text(args.readback),
-        external_ref=args.external_ref,
+        args.publication, claim_token=args.claim_token,
+        readback=_read_text(args.readback) if args.readback else None,
+        external_ref=args.external_ref, project_ref=args.project_ref, observed=observed,
     )
 
 
 def cmd_fault_fail(services, args) -> dict:
     return services.faults.fail(args.publication, claim_token=args.claim_token,
-                                error=args.error)
+                                error=args.error, ended=args.ended)
 
 
 def cmd_fault_retry(services, args) -> dict:
@@ -1630,6 +1859,135 @@ def cmd_fault_prune(services, args) -> dict:
     return services.faults.prune(args.fault, keep=args.keep)
 
 
+def cmd_fault_adopt(services, args) -> dict:
+    return services.faults.adopt(args.fault, external_ref=args.external_ref,
+                                 scope=_fault_json(args.scope, "scope"))
+
+
+def cmd_fault_move(services, args) -> dict:
+    return services.faults.move(args.fault, scope=_fault_json(args.scope, "scope"))
+
+
+def cmd_fault_queue(services, args) -> dict:
+    payload = _fault_json(args.payload, "payload") if args.payload else None
+    return services.faults.queue(args.fault, kind=args.kind, trigger=args.trigger,
+                                 payload=payload)
+
+
+def cmd_fault_update(services, args) -> dict:
+    value = _fault_json(args.value, "value") if args.value is not None else None
+    return services.faults.request_update(args.fault, op=args.op, value=value)
+
+
+def cmd_fault_cancel(services, args) -> dict:
+    return services.faults.cancel(args.publication, reason=args.reason)
+
+
+def cmd_fault_stage(services, args) -> dict:
+    return services.faults.record_stage(args.fault, stage=args.stage, ref=args.ref,
+                                        detail=args.detail or "")
+
+
+def cmd_fault_policy(services, args) -> dict:
+    """Read a product's suppression policies, or change one prospectively (with a reason)."""
+    if args.fault_class is None:
+        page = services.faults.policies(args.product, **_page(args))
+        return {"product": args.product, "policies": page["policies"], "next": page["next"]}
+    _no_paging(args, "--fault-class")
+    if args.severity is None or args.reason is None:
+        raise SystemExit2("changing a policy names --fault-class, --severity and --reason",
+                          EXIT_USAGE)
+    return services.faults.set_policy(args.product, args.fault_class, args.severity,
+                                      threshold=args.threshold, window=args.window,
+                                      reason=args.reason)
+
+
+def cmd_fault_limit(services, args) -> dict:
+    """Read a product's write budgets, or set one kind's."""
+    if args.kind is None:
+        page = services.faults.limits(args.product, **_page(args))
+        return {"product": args.product, "limits": page["limits"], "next": page["next"]}
+    _no_paging(args, "--kind")
+    if args.max_count is None or args.window is None:
+        raise SystemExit2("setting a budget names --kind, --max-count and --window",
+                          EXIT_USAGE)
+    return services.faults.set_limit(args.product, args.kind, max_count=args.max_count,
+                                     window=args.window)
+
+
+def _page(args) -> dict:
+    """A listing's page size and cursor, the size validated before it reaches the ledger."""
+    return {"limit": _positive(20 if args.limit is None else args.limit, "--limit"),
+            "after": args.after}
+
+
+def _no_paging(args, selector):
+    """Paging options list; beside a change they would be ignored, so they are refused."""
+    given = [flag for flag, value in (("--limit", args.limit), ("--after", args.after))
+             if value is not None]
+    if given:
+        from .errors import RefusalReason
+        from .faults import FaultRefused
+
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"{', '.join(given)} page a listing and would be ignored beside"
+                           f" {selector}")
+
+
+def cmd_fault_attention(services, args) -> dict:
+    return services.faults.attention()
+
+
+def cmd_fault_relink(services, args) -> dict:
+    return services.faults.relink(limit=_positive(args.limit, "--limit"))
+
+
+def cmd_fault_notifications(services, args) -> dict:
+    return services.faults.notifications(state=args.notification_state,
+                                         limit=_positive(args.limit, "--limit"),
+                                         after=args.after)
+
+
+def cmd_fault_notification_raise(services, args) -> dict:
+    return services.faults.raise_notification(args.fault, reason=args.reason, ref=args.ref)
+
+
+def cmd_fault_notification_reserve(services, args) -> dict:
+    return services.faults.reserve_notifications(owner=args.owner,
+                                                 limit=_positive(args.limit, "--limit"))
+
+
+def cmd_fault_notification_ack(services, args) -> dict:
+    return services.faults.ack_notification(args.notification, token=args.token, ref=args.ref)
+
+
+def cmd_fault_notification_fail(services, args) -> dict:
+    return services.faults.fail_notification(args.notification, token=args.token,
+                                             error=args.error)
+
+
+def cmd_fault_notification_reconcile(services, args) -> dict:
+    return services.faults.reconcile_notification(args.notification,
+                                                  delivered=args.delivered == "yes",
+                                                  ref=args.ref)
+
+
+def _import_kind_modules(args) -> None:
+    """--kind-module: import the modules that register publication kinds in THIS process.
+
+    A kind is registered by importing the module that declares it, and a publication whose
+    kind this process has not registered is never offered, claimed or issued (invariant 13).
+    So a writer handling another product's kind names that module here, and one that does not
+    simply never sees those writes.
+    """
+    import importlib
+
+    for name in getattr(args, "kind_module", None) or ():
+        try:
+            importlib.import_module(name)
+        except ImportError as error:
+            raise SystemExit2(f"--kind-module {name!r} could not be imported: {error}",
+                              EXIT_USAGE) from error
 def _route_json(value, what):
     """Caller-supplied JSON for product routing, or a routing refusal naming what was wrong.
 
@@ -1882,6 +2240,10 @@ def cmd_status(services, args) -> dict:
     unenforced = getattr(services.store, "unenforced_indexes", [])
     if unenforced:
         payload["unenforcedIndexes"] = unenforced
+    # Fault writes nobody has sent, uncertain ones, and issues outside their project. Shown
+    # where status is read, so a write stuck behind a missing target or a spent budget does
+    # not wait for somebody to think of asking the ledger.
+    payload["faults"] = services.faults.attention()
     return payload
 
 
@@ -2642,6 +3004,12 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 # pass records and queues; the Linear write itself needs a credential this
                 # process does not hold.
                 faults=services.faults,
+                # And so this relay's own managed turns are read for what they owe, through
+                # the same CRW-180 projection reporting-show uses, a few per tick.
+                fault_selection=services.selection,
+                # So what a project owes the level above goes up without the parent having to
+                # remember it (CRW-215): the same staging and send path a parent runs by hand.
+                supervisor_channel=services.supervisor_channel,
             )
             try:
                 service.publish_worker_policy(rolepolicy.snapshot_record())
@@ -2926,8 +3294,10 @@ def _reachability(services, report) -> dict:
 # ------------------------------------------------------------------ managed marker
 
 # The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
-# Store writes on open; every command below writes only to the marker filesystem and records
-# nothing in the relay's tables. intent-register is the one that does more than read: it holds the
+# Store writes on open; every command below writes to the marker filesystem, and only two record
+# anything in the relay's tables: intent-claim and intent-disposition, which after the marker write
+# mirror the fact it stands on into the store the intent's dbPath names (declarations.py), so the
+# relay can derive an omission without reading the marker. intent-register does more than read: it holds the
 # relay's write lock across its generation check and its publication, so an advance cannot commit
 # between them, then releases it with a rollback having written nothing. The state directory is
 # still resolved, because the coordinator is the party that knows where the store it registered
@@ -3001,7 +3371,7 @@ def cmd_intent_register(services, args) -> dict:
 
 
 def cmd_intent_claim(services, args) -> dict:
-    return intent.publish_claim(
+    published = intent.publish_claim(
         _marker_root(args),
         workspace=args.workspace,
         assignment=args.assignment,
@@ -3010,18 +3380,122 @@ def cmd_intent_claim(services, args) -> dict:
         first_turn_id=args.first_turn,
         at=services.clock.iso(),
     )
+    # And in the relay store, after the marker: this session's relay records its declarations
+    # there, which is what lets the store derive an omission for its turns at all. Recorded only
+    # for the claim the marker now stands on, so a claim the marker refused records nothing.
+    from . import declarations
+
+    directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
+    facts, unreadable = marker.read_assignment(directory)
+    standing = next((claim for claim in facts.get("claims", [])
+                     if intent.claimant(claim) == published["sessionId"]), None)
+    # The record is made only from a marker the marker reader itself could read: every fact
+    # readable and the right shape, the claim standing and correlated, the intent declared for
+    # this workspace. A marker reporting-show would answer unmeasured about is not one the store
+    # may derive from, so the store stays silent - the legacy answer - rather than the two
+    # readers disagreeing about whether a turn can be classified at all.
+    if unreadable:
+        record = declarations.not_recorded(
+            "marker_unreadable", "the marker could not be read whole after the claim ("
+            + ", ".join(sorted(unreadable)) + "), so this session records nothing about how it"
+            " reports; running the claim again once the marker reads records it")
+    elif intent.malformed(facts):
+        # The marker reader answers unmeasured for a marker that is not the shape a fact must
+        # be, so nothing the store could derive from it is recorded either.
+        record = declarations.not_recorded(
+            "marker_malformed", "the marker's " + str(intent.malformed(facts)) + " is not the"
+            " shape a fact must be, so this session records nothing about how it reports")
+    elif published["outcome"] == intent.CONFLICT or standing is None or (
+            standing.get("dispatchRequestId") != args.dispatch_request_id):
+        record = declarations.not_recorded(
+            "claim_not_standing", "the marker does not stand on this claim, so this session"
+            " records nothing about how it reports")
+    elif (not intent.correlated(facts, published["sessionId"], args.assignment)
+          or not (facts.get("intent") or {}).get("workspace")
+          or _resolved(facts["intent"]["workspace"]) != _resolved(args.workspace)):
+        # The same preconditions the marker reader checks before it classifies anything:
+        # the claim correlates with the intent, and the intent was declared for this
+        # workspace. A claim the marker reader would refuse to read is not recorded as one
+        # the store may derive from.
+        record = declarations.not_recorded(
+            "claim_uncorrelated", "the claim does not correlate with the intent declared for"
+            " this workspace, so the store derives nothing for this session")
+    else:
+        record = declarations.record_claim(
+            declarations.store_of(facts), assignment=args.assignment,
+            session_id=published["sessionId"], dispatch_request_id=args.dispatch_request_id,
+            marker_root=_resolved(_marker_root(args)), workspace=_resolved(args.workspace),
+            issue_key=(facts.get("intent") or {}).get("issueKey"), at=services.clock.iso())
+    return _with_store_record(published, record)
 
 
 def cmd_intent_disposition(services, args) -> dict:
-    return intent.publish_disposition(
-        _marker_root(args),
-        workspace=args.workspace,
-        assignment=args.assignment,
-        session_id=args.session,
-        turn_id=args.turn,
-        outcome=args.outcome,
-        at=services.clock.iso(),
-    )
+    from . import declarations
+
+    # The store the intent names, read before anything is published so its write lock can be
+    # held across the publication: see declarations.Held. A marker this cannot even locate names
+    # no store, and the publication below answers for itself.
+    try:
+        directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
+        before, unreadable_before = marker.read_assignment(directory)
+    except (ValueError, OSError):
+        directory, before, unreadable_before = None, {}, []
+    with declarations.Held(declarations.store_of(before)) as held:
+        published = intent.publish_disposition(
+            _marker_root(args),
+            workspace=args.workspace,
+            assignment=args.assignment,
+            session_id=args.session,
+            turn_id=args.turn,
+            outcome=args.outcome,
+            at=services.clock.iso(),
+        )
+        # Mirroring the disposition the marker now stands on: after a create-once conflict that
+        # is the first one, as it is for every marker reader.
+        if directory is None:
+            directory = marker.assignment_dir(_marker_root(args), args.workspace,
+                                              args.assignment)
+        facts, unreadable = marker.read_assignment(directory)
+        standing, readable = marker.read_disposition(
+            directory, published["sessionId"], published["turnId"])
+        # Only the facts this record rests on: the intent (which store) and this disposition.
+        if ("intent" in unreadable or "intent" in unreadable_before or not readable
+                or not standing or intent.malformed_disposition(standing)):
+            record = declarations.failure(
+                "marker_unreadable", "the intent or the disposition could not be read back from"
+                " the marker after it was published, so what the marker stands on is unknown",
+                None)
+        elif declarations.store_of(facts) != declarations.store_of(before):
+            record = declarations.failure(
+                "store_changed", "the intent named another store while this was being"
+                " recorded, so the record was not written to either", None)
+        else:
+            record = held.disposition(
+                assignment=args.assignment, session_id=published["sessionId"],
+                turn_id=published["turnId"], outcome=standing.get("outcome"),
+                declared_at=standing.get("at") or "", at=services.clock.iso())
+    return _with_store_record(published, held.settled(record))
+
+
+def _resolved(path) -> str:
+    """A path as omitted.observe spells it, so both readers name one marker the same way."""
+    return str(Path(path).expanduser().resolve())
+
+
+def _with_store_record(published, record) -> dict:
+    """The marker answer with the store record beside it; a failed record fails the command.
+
+    Exit non-zero with the whole answer, because the marker write DID happen and the caller has
+    to be able to see that as well as what did not. Running the command again is safe: the
+    marker fact answers unchanged and only the store record is retried.
+    """
+    from . import declarations
+
+    payload = {**published, "storeRecord": record}
+    if record.get("state") == declarations.FAILED:
+        raise PayloadExit({**payload, "detail": "the marker fact was published and the relay"
+                           " store record was not: " + str(record["detail"])}, EXIT_REFUSED)
+    return payload
 
 
 def cmd_intent_resolve(services, args) -> dict:
@@ -3343,6 +3817,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-session-relay")
     parser.add_argument("--state")
     parser.add_argument("--socket")
+    parser.add_argument("--kind-module", action="append", default=[],
+                        help="import a module that registers a fault publication kind"
+                             " (repeatable); a kind this process has not registered is never"
+                             " offered, claimed or issued")
     parser.add_argument("--json", action="store_true", default=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -3367,6 +3845,20 @@ def build_parser() -> argparse.ArgumentParser:
     reporting_show.add_argument("--session", required=True)
     reporting_show.add_argument("--turn", required=True)
     reporting_show.set_defaults(handler=cmd_reporting_show)
+
+    reporting_derive = subparsers.add_parser(
+        "reporting-derive",
+        help="the reporting reading this store alone gives for one relationship's turn, from"
+             " the declarations its child's relay recorded here. Records nothing, and creates"
+             " no store where none exists")
+    reporting_derive.add_argument("--relationship", required=True)
+    reporting_derive.add_argument(
+        "--turn", help="the turn to read; the relationship's newest admitted turn by default")
+    reporting_derive.add_argument(
+        "--grace", type=float,
+        help="seconds an omission waits after settlement before it is owed; the automatic"
+             " pass's own by default")
+    reporting_derive.set_defaults(handler=cmd_reporting_derive)
 
     register = subparsers.add_parser("register")
     register.add_argument("--parent-task", required=True)
@@ -3563,8 +4055,9 @@ def build_parser() -> argparse.ArgumentParser:
     standing.add_argument("--observation", action="append",
                           help="a reporting-observation/1 file from reporting-show. A turn that"
                                " ended without reporting writes no row this store can find, so"
-                               " it is present only when its observation is passed in. Repeat"
-                               " once per reading")
+                               " it is present only when its observation is passed in or this"
+                               " store derives it from the declarations a child's relay"
+                               " recorded here. Repeat once per reading")
     standing.set_defaults(handler=cmd_supervisor_standing)
 
     recorded = subparsers.add_parser(
@@ -3581,6 +4074,61 @@ def build_parser() -> argparse.ArgumentParser:
     recorded.add_argument("--message", help="the envelope messageId the report was sent under")
     recorded.add_argument("--note")
     recorded.set_defaults(handler=cmd_supervisor_report_recorded)
+
+    stage = subparsers.add_parser(
+        "supervisor-stage",
+        help="freeze what is owed upward as a message, before anything is sent. Staging is"
+             " not sending: one obligation is one message, however often it is staged")
+    # Not required here: an observation on its own is a third subject, and it is checked in
+    # the handler so the refusal can say what the three are.
+    subject = stage.add_mutually_exclusive_group()
+    subject.add_argument("--event")
+    subject.add_argument("--project",
+                         help="stage every standing obligation in one project, which is what"
+                              " makes this one command rather than one decision per event")
+    # NOT in the exclusive group. A project-wide staging needs these readings most: a turn
+    # that ended without reporting writes no row any query over this store can find, so
+    # excluding them from --project left the one obligation nobody else can see unstageable
+    # by the command written to stage everything.
+    stage.add_argument("--observation", action="append",
+                       help="a reporting-observation/1 file from reporting-show. With"
+                            " --project, repeat once per reading; on its own it is the"
+                            " obligation a turn left by ending without reporting")
+    stage.add_argument("--recipient",
+                       help="the supervisor you believe this goes to. A disagreement with the"
+                            " linkage is refused rather than resolved by picking one")
+    stage.set_defaults(handler=cmd_supervisor_stage)
+
+    send = subparsers.add_parser(
+        "supervisor-send",
+        help="one attempt at one staged message, through the same host rules a delivery"
+             " obeys. A busy recipient is never interrupted, and a held, backed-off or"
+             " already-sent message answers sent: false without reaching the host")
+    send.add_argument("--message", required=True)
+    send.set_defaults(handler=cmd_supervisor_send)
+
+    readback = subparsers.add_parser(
+        "supervisor-read",
+        help="the recipient answering a message. The proof is sha256(messageId|your own turn"
+             " id), which the delivered bytes cannot contain, so an echo cannot produce it;"
+             " nothing authenticates the caller, so answering from your own turn is an"
+             " instruction rather than a checked property")
+    readback.add_argument("--message", required=True)
+    readback.add_argument("--turn", required=True, help="your own turn id")
+    readback.add_argument("--proof", required=True)
+    readback.add_argument("--as", dest="asserted_by", required=True,
+                          help="the task asserting this readback. Checked against the"
+                               " message's recipient and written down, which is a"
+                               " declaration rather than an authentication: nothing on this"
+                               " side can establish who is calling")
+    readback.set_defaults(handler=cmd_supervisor_read)
+
+    shown = subparsers.add_parser(
+        "supervisor-show",
+        help="one staged message whole: what it says, every attempt, and what came back")
+    shown.add_argument("--message", required=True)
+    shown.set_defaults(handler=cmd_supervisor_show)
+
 
     packet = subparsers.add_parser(
         "packet-check",
@@ -3823,22 +4371,38 @@ def build_parser() -> argparse.ArgumentParser:
     sync_progress.set_defaults(handler=cmd_sync_progress)
 
     fault_target = subparsers.add_parser("fault-target")
-    fault_target.add_argument("--scope", required=True, help="product:projectKey")
-    fault_target.add_argument("--tracker-ref", required=True)
+    fault_target.add_argument("--product", required=True)
+    fault_target.add_argument("--workspace")
+    fault_target.add_argument("--project", help="the scope's projectKey")
+    fault_target.add_argument("--team", required=True, help="the tracker team issues go to")
+    fault_target.add_argument("--project-ref",
+                              help="the project issue creates are filed in; without one no"
+                                   " issue is created for this scope")
     fault_target.set_defaults(handler=cmd_fault_target)
 
     fault_observe = subparsers.add_parser("fault-observe")
     fault_observe.add_argument("--observation", required=True, help="JSON, or @path")
+    fault_observe.add_argument("--adopt",
+                               help="JSON {externalRef, scope}, or @path: adopt this existing"
+                                    " issue at the first record instead of creating one")
     fault_observe.set_defaults(handler=cmd_fault_observe)
 
     fault_sweep = subparsers.add_parser("fault-sweep")
     fault_sweep.add_argument("--product", default="crw")
     fault_sweep.add_argument("--project")
     fault_sweep.add_argument("--readings", help="reporting-observation/1 JSON list, or @path")
+    fault_sweep.add_argument("--readings-after", type=int, default=0,
+                             help="continue a readings batch from the readingsNext the last"
+                                  " sweep returned")
     fault_sweep.set_defaults(handler=cmd_fault_sweep)
 
     fault_show = subparsers.add_parser("fault-show")
-    fault_show.add_argument("--fault")
+    selected = fault_show.add_mutually_exclusive_group()
+    selected.add_argument("--fault")
+    selected.add_argument("--publication",
+                          help="one write, with what it created and its newest attempts")
+    fault_show.add_argument("--product")
+    fault_show.add_argument("--fault-class")
     fault_show.add_argument("--scope")
     # NOT --state. That is the global option naming the store directory, and a subcommand
     # option of the same name overwrites it in the namespace, so every fault-show read an
@@ -3875,6 +4439,8 @@ def build_parser() -> argparse.ArgumentParser:
     fault_claim = subparsers.add_parser("fault-claim")
     fault_claim.add_argument("--publication", required=True)
     fault_claim.add_argument("--owner", required=True)
+    fault_claim.add_argument("--takeover", action="store_true",
+                             help="take over a write another owner claimed first (recorded)")
     fault_claim.set_defaults(handler=cmd_fault_claim)
 
     fault_operation = subparsers.add_parser("fault-operation")
@@ -3884,7 +4450,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     fault_reconcile = subparsers.add_parser("fault-reconcile")
     fault_reconcile.add_argument("--publication", required=True)
-    fault_reconcile.add_argument("--observed", required=True, help="observed text, or @path")
+    fault_reconcile.add_argument("--observed", default="", help="observed text, or @path")
+    fault_reconcile.add_argument("--observed-fields",
+                                 help="JSON of the owned issue's fields read back, or @path")
+    fault_reconcile.add_argument("--prior-ended", action="store_true",
+                                 help="attest that the issuing request can no longer land")
+    fault_reconcile.add_argument("--reason", help="what ended the issuing request")
     fault_reconcile.add_argument(
         "--searched", action="store_true",
         help="attest that the search covered where the block would be. Without it a negative"
@@ -3895,14 +4466,20 @@ def build_parser() -> argparse.ArgumentParser:
     fault_complete = subparsers.add_parser("fault-complete")
     fault_complete.add_argument("--publication", required=True)
     fault_complete.add_argument("--claim-token")
-    fault_complete.add_argument("--readback", required=True, help="the text, or @path")
+    fault_complete.add_argument("--readback", help="the text, or @path")
     fault_complete.add_argument("--external-ref")
+    fault_complete.add_argument("--project-ref",
+                                help="the project the created issue reads back as")
+    fault_complete.add_argument("--observed-fields",
+                                help="JSON of the owned issue's fields read back, or @path")
     fault_complete.set_defaults(handler=cmd_fault_complete)
 
     fault_fail = subparsers.add_parser("fault-fail")
     fault_fail.add_argument("--publication", required=True)
     fault_fail.add_argument("--claim-token", required=True)
     fault_fail.add_argument("--error", required=True)
+    fault_fail.add_argument("--ended", action="store_true",
+                            help="the connector answered with a definitive refusal")
     fault_fail.set_defaults(handler=cmd_fault_fail)
 
     fault_retry = subparsers.add_parser("fault-retry")
@@ -3914,6 +4491,109 @@ def build_parser() -> argparse.ArgumentParser:
     fault_prune.add_argument("--keep", type=int, default=20)
     fault_prune.set_defaults(handler=cmd_fault_prune)
 
+    fault_adopt = subparsers.add_parser("fault-adopt")
+    fault_adopt.add_argument("--fault", required=True)
+    fault_adopt.add_argument("--external-ref", required=True, help="the existing issue")
+    fault_adopt.add_argument("--scope", required=True,
+                             help="JSON of the issue's scope (its projectKey), or @path")
+    fault_adopt.set_defaults(handler=cmd_fault_adopt)
+
+    fault_move = subparsers.add_parser("fault-move")
+    fault_move.add_argument("--fault", required=True)
+    fault_move.add_argument("--scope", required=True, help="JSON, or @path")
+    fault_move.set_defaults(handler=cmd_fault_move)
+
+    fault_queue = subparsers.add_parser("fault-queue")
+    fault_queue.add_argument("--fault", required=True)
+    fault_queue.add_argument("--kind", required=True,
+                             help="a registered kind; the issue create is never queued here")
+    fault_queue.add_argument("--trigger", required=True)
+    fault_queue.add_argument("--payload", help="JSON, or @path")
+    fault_queue.set_defaults(handler=cmd_fault_queue)
+
+    fault_update = subparsers.add_parser("fault-update")
+    fault_update.add_argument("--fault", required=True)
+    fault_update.add_argument("--op", required=True, choices=list(faults_module.UPDATE_OPS))
+    fault_update.add_argument("--value", help="JSON, or @path (a string value is quoted)")
+    fault_update.set_defaults(handler=cmd_fault_update)
+
+    fault_cancel = subparsers.add_parser("fault-cancel")
+    fault_cancel.add_argument("--publication", required=True)
+    fault_cancel.add_argument("--reason", required=True)
+    fault_cancel.set_defaults(handler=cmd_fault_cancel)
+
+    fault_stage = subparsers.add_parser("fault-stage")
+    fault_stage.add_argument("--fault", required=True)
+    fault_stage.add_argument("--stage", required=True, choices=list(faults_module.STAGES))
+    fault_stage.add_argument("--ref", required=True)
+    fault_stage.add_argument("--detail")
+    fault_stage.set_defaults(handler=cmd_fault_stage)
+
+    fault_policy = subparsers.add_parser("fault-policy")
+    fault_policy.add_argument("--product", required=True)
+    fault_policy.add_argument("--fault-class")
+    fault_policy.add_argument("--severity", choices=list(faults_module.SEVERITIES))
+    fault_policy.add_argument("--threshold", type=int)
+    fault_policy.add_argument("--window", type=float, help="seconds")
+    fault_policy.add_argument("--reason")
+    fault_policy.add_argument("--limit", type=int, help="classes per page when listing")
+    fault_policy.add_argument("--after", help="continue a listing from the next it returned")
+    fault_policy.set_defaults(handler=cmd_fault_policy)
+
+    fault_limit = subparsers.add_parser("fault-limit")
+    fault_limit.add_argument("--product", required=True)
+    fault_limit.add_argument("--kind")
+    fault_limit.add_argument("--max-count", type=int)
+    fault_limit.add_argument("--window", type=float, help="seconds")
+    fault_limit.add_argument("--limit", type=int, help="budgets per page when listing")
+    fault_limit.add_argument("--after", help="continue a listing from the next it returned")
+    fault_limit.set_defaults(handler=cmd_fault_limit)
+
+    subparsers.add_parser("fault-attention").set_defaults(handler=cmd_fault_attention)
+
+    fault_relink = subparsers.add_parser("fault-relink")
+    fault_relink.add_argument("--limit", type=int, default=faults_module.RELINK_PER_CALL)
+    fault_relink.set_defaults(handler=cmd_fault_relink)
+
+    fault_notifications = subparsers.add_parser("fault-notifications")
+    # NOT --state, for the reason fault-show gives.
+    fault_notifications.add_argument("--notification-state")
+    fault_notifications.add_argument("--limit", type=int, default=20)
+    # An integer, so a cursor that is not one is refused as a usage error. SQLite compares a
+    # numeric string with the rowid as a number, but one that is not a number matches nothing,
+    # and the next page read as empty with a success exit.
+    fault_notifications.add_argument("--after", type=int,
+                                     help="continue from the next value the last page returned")
+    fault_notifications.set_defaults(handler=cmd_fault_notifications)
+
+    notification_raise = subparsers.add_parser("fault-notification-raise")
+    notification_raise.add_argument("--fault", required=True)
+    notification_raise.add_argument("--reason", required=True)
+    notification_raise.add_argument("--ref")
+    notification_raise.set_defaults(handler=cmd_fault_notification_raise)
+
+    notification_reserve = subparsers.add_parser("fault-notification-reserve")
+    notification_reserve.add_argument("--owner", required=True)
+    notification_reserve.add_argument("--limit", type=int, default=20)
+    notification_reserve.set_defaults(handler=cmd_fault_notification_reserve)
+
+    notification_ack = subparsers.add_parser("fault-notification-ack")
+    notification_ack.add_argument("--notification", required=True)
+    notification_ack.add_argument("--token", required=True)
+    notification_ack.add_argument("--ref", required=True)
+    notification_ack.set_defaults(handler=cmd_fault_notification_ack)
+
+    notification_fail = subparsers.add_parser("fault-notification-fail")
+    notification_fail.add_argument("--notification", required=True)
+    notification_fail.add_argument("--token", required=True)
+    notification_fail.add_argument("--error", required=True)
+    notification_fail.set_defaults(handler=cmd_fault_notification_fail)
+
+    notification_reconcile = subparsers.add_parser("fault-notification-reconcile")
+    notification_reconcile.add_argument("--notification", required=True)
+    notification_reconcile.add_argument("--delivered", required=True, choices=["yes", "no"])
+    notification_reconcile.add_argument("--ref", required=True)
+    notification_reconcile.set_defaults(handler=cmd_fault_notification_reconcile)
     product_register = subparsers.add_parser("product-register")
     product_register.add_argument("--record", required=True,
                                   help="product-registry/1 JSON, or @path")
@@ -4826,6 +5506,7 @@ def main(argv=None) -> int:
         # it cannot fail startup: an unreadable or absent policy resolves to Unresolved, which
         # withholds rather than raises.
         rolepolicy.declared()
+        _import_kind_modules(args)
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK

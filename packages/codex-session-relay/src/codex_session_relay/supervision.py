@@ -13,12 +13,14 @@ Nothing here is a new table, a new queue or a second send engine. An obligation 
 from rows that already exist, which is what lets the same reading survive a restart, a
 compaction and a service replacement with nothing remembered in between.
 
-What this module will not claim: that a supervisor received anything. The store holds no
-supervisor message, no supervisor acknowledgement and no supervisor receipt, because the relay
-carries no channel for one - OPS-7.4 says so and envelope.REACH_SOURCES encodes it. The one
+What this module will not claim: that a supervisor agreed to anything. It decides what is owed
+and nothing else - it opens no queue, reads no host and sends nothing. supervisorchannel.py is
+what carries a report upward and records the recipient's own readback, and even that stops at
+this attempt's request id being in the recipient's thread: arrival, not reading. The one
 discharge this can actually read is the Linear record the supervisor goes and reads for itself,
-and only when the synchronisation row says confirmed. A report whose Linear write failed leaves
-the obligation standing, which is the exact failure CRW-148 asks to be regression-tested.
+and only when the synchronisation row says confirmed. A report whose Linear write failed
+leaves the obligation standing, which is the exact failure CRW-148 asks to be regression-tested,
+and a report that was read leaves it standing too.
 """
 
 import json
@@ -235,10 +237,18 @@ def from_observation(reading) -> dict | None:
     Only reportingState == unreported raises anything. unmeasured in particular does not: a
     failed evidence read is the absence of an answer, and turning it into an obligation would
     be inventing the one thing the reading refused to assert.
+
+    Nor does an unreported reading that says nothing is owed. omitted.classify keeps the
+    diagnosis of a turn fixed and answers separately whether a report is still owed: a receipt
+    for the turn goes upward as its own fact, a later admitted turn means the work went on, and
+    an omission inside its grace has not yet had the chance to be answered. A reading carrying
+    no owed field predates that answer and is read as owed, which is what it always meant.
     """
     if not isinstance(reading, dict) or reading.get("schema") != OBSERVATION_SCHEMA:
         return None
     if reading.get("reportingState") != OBSERVED_OMISSION:
+        return None
+    if reading.get("owed") is False:
         return None
     relation = reading.get("relationshipId")
     turn = _turn_of(reading)
@@ -339,9 +349,12 @@ def _carry(gaps, gap) -> None:
 def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dict:
     """Whether the record the supervisor actually reads has this yet.
 
-    There is no supervisor receipt in this store and this does not pretend otherwise. What
-    exists is the Linear synchronisation row, which the supervisor reads for itself, and it
-    counts only at confirmed - the state reached after a readback verified what was written.
+    There is no supervisor acknowledgement in this store and this does not pretend otherwise.
+    A readback on the supervisor channel says one attempt's request id is in the recipient's
+    thread and that the turn it names is real there - not that anybody read it - and it
+    discharges nothing. What discharges one is the Linear synchronisation row, which the
+    supervisor reads for itself, and it counts only at confirmed - the state reached after a
+    readback verified what was written.
 
     pending, claimed, written and failed all leave the obligation standing, and failed is the
     one worth naming: SyncOutbox.fail flips to it after MAX_ATTEMPTS and drops the row out of
@@ -652,6 +665,11 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
         if state == OBSERVED_UNMEASURED:
             _carry(gaps, unmeasured_gap(reading))
             continue
+        if reading.get("owed") is False:
+            # Diagnosed as an omission, and nothing is owed because of it now: the turn's own
+            # receipt went upward, a later turn was admitted, or it is inside its grace. That is
+            # an ordinary reading, neither an obligation nor a gap.
+            continue
         one = from_observation(reading)
         if one is None:
             # unreported is the one state that needs an owner, because it is the one that
@@ -676,7 +694,10 @@ def standing_for(store, linkage, project_key, *, observations=()) -> dict:
             "limits": "derived from this store's rows only. It says what is owed upward, never"
                       " that a supervisor received anything, and never that the project is"
                       " complete. A turn that ended without reporting has no row here at all,"
-                      " so it is present only when its observation was passed in"}
+                      " so it is present only when a reading of it was passed in: one taken"
+                      " through the marker (reporting-show), or one this store derives from"
+                      " the declarations a child's relay recorded here (omitted.derive), which"
+                      " the supervisor channel and supervisor-standing pass in themselves"}
 
 
 def status_answer(store, linkage, assignments, project_key, *, observations=()) -> dict:

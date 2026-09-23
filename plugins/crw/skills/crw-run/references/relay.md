@@ -863,19 +863,23 @@ The message form both relations share is one of them. `relay-envelope/1` is defi
 package's own `docs/envelope.md`, with the workflow rule in
 [the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
-relay carries no supervisor channel, so nothing above the record itself is measured on that
-relation; and what discharges a reporting obligation is the Linear record the supervisor reads,
-confirmed, rather than a report having been written.
+a report upward is transported and read back and nothing further is measured on that relation -
+a supervisor agreeing, acting or confirming is not a fact the relay holds; and what discharges a
+reporting obligation is the Linear record the supervisor reads, confirmed, rather than a report
+having been written, sent or even read.
 
-Three commands make that readable rather than remembered. They are the whole surface; there is
-no daemon behind them and nothing wakes anybody.
+Three commands make that readable rather than remembered. None of them sends anything and none
+wakes anybody; four more below do the sending, and the relay daemon runs the same staging and
+sending on its own tick.
 
 ```bash
 # Is this event news for the level above? A read: it sends, queues and records nothing.
 codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
 
 # What does this project still owe upward? An explicit question, never suppressed.
-# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+# A turn that ended without reporting writes no event. The store derives it where the child's
+# relay recorded its claim here; for a child that claimed without that, pass its reporting-show
+# reading.
 codex-session-relay supervisor-standing --project <key> [--observation <file>]...
 
 # Record that a report was produced for this event's obligation, once.
@@ -904,6 +908,81 @@ than authorizing one.
 ran, and whether the supervisor acted are three further facts, and no row here carries any of
 them. Recording it is what makes the next reading of the same fact converge instead of waking
 the level above again, so record it when the report actually goes out.
+
+Four more are the channel CRW-215 added. A running relay daemon stages and sends what each
+project owes on its own tick, so a parent does not have to remember to; the commands are for an
+answer now, and they converge on the same messages. Only `supervisor-send` attempts a transport
+from the command line, and it answers `sent: false` without touching the host when the message
+is held, inside its backoff or already sent - including one the daemon sent first.
+`supervisor-stage` records the report itself, so a run that stages does not also call
+`supervisor-report-recorded`. A turn that ended without a receipt is staged by the daemon too,
+once `omission_grace_seconds` have passed since the relay settled it, from what the child's own
+relay recorded in the store: `intent-claim` records there that the session writes its
+declarations into it, and `intent-disposition` records each turn's declaration beside the
+marker file. Both answer a `storeRecord`, and `failed` exits 2 with the marker answer beside
+it; run the same command again, which retries only the store record. `reporting-derive
+--relationship <id>` prints the reading the daemon acts on. A child that claimed without that
+record - through an older relay - is never staged automatically; stage its omission with its
+`reporting-show` reading.
+
+After a supervisor handover, stage the project again. A report staged for the former
+supervisor and never sent is re-addressed to the live one under the same message; one that was
+already sent stays with the task it went to and is listed under `refused` as
+`relation_owner_drift`, which means the successor has not been told through this channel.
+
+A send whose response never came back is held as `held_uncertain` and is never resent. The
+supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
+that attempt's delivery token - its request id and a random part drawn when the send was claimed - in a turn that began no earlier than the transport; `supervisor-show` then records how it was settled.
+
+Once a message about an event has been sent upward, that event's work report no longer
+changes: the relay refuses a correction to it, in place, as a new submission or as a first
+report, because the bytes that went up described it and point at it for evidence. Before the send a
+correction lands and the send carries it, so send after the report is final. A message
+staged from the event before any report existed froze nothing, so the first report is still
+recorded; the send restates the message to the report that stands and sends that, and when the
+report turned the block into a decision, the block is held and staging the project stages the
+decision. Whatever a send carries is re-derived where its transport starts, so a staged message
+never goes out stale.
+
+```bash
+# Freeze what is owed upward as a message. Staging is not sending.
+codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
+codex-session-relay supervisor-stage --project <key> [--observation <file>]...
+codex-session-relay supervisor-stage --observation <file>
+
+# One attempt at one staged message. --socket is global and goes before the subcommand;
+# without it the command exits 4 and writes nothing.
+codex-session-relay --socket <path> supervisor-send --message <id>
+
+# The recipient answering, with the line the message carries: it names the store the report
+# was staged in (--state) and the socket it was sent through, and a bare --socket would open
+# another store. The message asks for a turn id of its own; nothing enforces it. --as names
+# the asserting task and is required; it is checked against the message's recipient.
+codex-session-relay --state <dir> --socket <path> supervisor-read --message <id> \
+  --turn <turn> --proof <p> --as <your task id>
+
+# What was staged, every attempt, and what came back. An omission's report points here: it
+# prints the observation the report was staged from, frozen, beside a line that re-reads it now.
+codex-session-relay --state <dir> supervisor-show --message <id>
+```
+
+The proof is `sha256(messageId|<your own turn id>)`, which the delivered bytes cannot contain,
+so quoting the message back does not produce it. That is the whole of what it rules out:
+nothing authenticates the caller and nothing establishes that the named turn produced it.
+
+A verified readback says a bounded scan of at most 200 of the recipient's items found that
+attempt's delivery token, and that the host can read the named turn on the recipient's thread and
+it carries a start time which is not CERTAINLY earlier than the send. That comparison applies
+to every candidate, including the turn the attempt names, because a send can steer an existing
+turn rather than open one. Where the readback names the turn the send itself opened, the
+delivered bytes have to be in that same turn: what the token is in is where the message
+landed. It does not say the turn answered, who computed the proof, or that anybody acted, and
+it discharges nothing: the obligation stands until Linear confirms. For the turn the send
+opened (`turnOrigin: relay_opened`, the ordinary case) a readback needs nothing from the
+supervisor, since that turn's id is already in the store, so it shows the report arrived
+rather than that it was read. Staging and sending are automatic - the relay daemon stages and
+sends what each project owes on its own tick - but the readback is not: only the supervisor,
+from a turn of its own, runs `supervisor-read`, and nothing reads back on its behalf.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another

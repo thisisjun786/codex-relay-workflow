@@ -426,6 +426,15 @@ status, including `paused` or `cancelled`, and does not wake the owner.
 This section describes the source command. An installed relay exposes `reporting-show` only after
 that version is installed and measured. Source tests do not establish installed-host behavior.
 
+`reporting-derive --relationship <id> [--turn <turn>] [--grace <seconds>]` gives the same reading
+from the store alone, through the same predicate (`omitted.classify`): the relay's settlement and
+admission, and the claim and turn declarations the child's own relay recorded in the store when
+it ran `intent-claim` and `intent-disposition`. It is what the daemon's supervisor pass stages an
+omission from. A child that claimed without that record is `unmeasured` /
+`declarations_not_recorded`, and nothing is derived for it. Both readings carry `owed` beside
+the diagnosis: false when the turn's own final receipt exists, when a later turn was admitted, or
+inside the grace. See [the supervisor channel](docs/supervisor-channel.md#an-omission-this-store-derives).
+
 ## Commands
 
 Global options come BEFORE the subcommand:
@@ -438,6 +447,7 @@ Global options come BEFORE the subcommand:
 | `managed-start` | reserve, create a standby, register and dispatch one recoverable assignment |
 | `managed-show` / `managed-release` | inspect a retained start; release only an unarmed reservation |
 | `reporting-show` | offline exact-turn reporting diagnosis; reads, never wakes or writes a report |
+| `reporting-derive` | the same reading from the store alone, the one the daemon stages an omission from |
 | `register --project` | the same, and the issue's whole lower level in one transaction |
 | `settings-record` / `settings-show` | record and inspect a task's authorized execution settings |
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |

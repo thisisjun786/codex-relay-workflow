@@ -19,6 +19,12 @@ EXPECTED_TABLES = {
     "acks", "attempts", "deliveries", "events", "generations", "journal", "observations",
     "recipient_lifecycle", "recipient_rate", "refusals", "relationships", "schema_meta",
     "verdicts", "verification_claims",
+    # The fault ledger: the merged tables and the corrected contract's, all created on open.
+    "fault_ledger", "fault_occurrences", "fault_timeline", "fault_remediations",
+    "fault_publications", "fault_targets", "fault_cursors", "fault_target_projects",
+    "fault_publication_payloads", "fault_links", "fault_adoptions", "fault_aliases",
+    "fault_publication_attempts", "fault_budget_uses", "fault_limits", "fault_notifications",
+    "fault_policies", "fault_overtaken_deliveries",
 }
 
 
@@ -1158,9 +1164,10 @@ class DescriptorIdentity(unittest.TestCase):
     because a replacement reverted inside it leaves both observations reporting the original
     inode while the rows came out of another file entirely.
 
-    What is closed is every relocation that has already happened when the read asks. SQLite
-    resolves the descriptor and opens the name it finds, so a rename timed inside that call is
-    not closed and is recorded as a limit rather than asserted away here.
+    What is closed is every relocation still in place when the read asks the descriptor.
+    SQLite resolves the descriptor and opens the name it finds, so a rename timed inside that
+    call, or a move and a return between two of those asks, is not closed and is recorded as a
+    limit rather than asserted away here.
     """
 
     def setUp(self):
@@ -1260,6 +1267,83 @@ class DescriptorIdentity(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return done
+
+    def move_between_the_check_and_the_connect(self, nth):
+        """Move our database after a leg's last check and before SQLite opens it, then restore it.
+
+        The window PR115-RB1 was found in, reached the way its reviewer reached it. A live writer
+        holds the store open with a write-ahead log, as a running relay does. On the nth
+        sqlite3.connect only:
+
+          1. our database is renamed to `moved.sqlite3`, after the leg's `_relocation` has already
+             said the descriptor still names this store;
+          2. the real connect runs, so SQLite resolves the descriptor to the moved name;
+          3. the file is renamed back once the leg has run its first statement on that connection,
+             whether or not that statement raised, or at the latest when the leg closes it.
+
+        The pathname looks untouched afterwards, so the one trace a file-creating first statement
+        can leave is a `moved.sqlite3-*` sidecar. The wrapper decides when, never what: every
+        statement the leg runs is its own. The writer is opened before the seam is armed, so its
+        own connect is not counted. The leg gets a real connection, of a subclass that only adds
+        the restore, so everything else it does to the connection - row_factory included -
+        behaves as it does unpatched.
+
+        Every statement the leg runs on that connection is also recorded. Whether a statement
+        leaves a file depends on the SQLite build: on the builds measured up to 3.38.5 (3.34.1,
+        3.37.2, 3.38.5) even `PRAGMA database_list` reads the schema and creates the moved name's
+        log, while newer builds answer it without touching the file. "Ran nothing" is the form of
+        "left nothing behind" that holds on every build, including the one this suite runs on.
+        """
+        from codex_session_relay import store as store_module
+
+        writer = Store(self.path)
+        self.addCleanup(writer.close)
+        writer.write_challenge(actor="writer")
+        moved = os.path.join(self.tmp, "moved.sqlite3")
+        real = store_module.sqlite3.connect
+        state = {"calls": 0, "moved": False, "restored": False, "statements": []}
+
+        def restore():
+            if state["moved"] and not state["restored"]:
+                os.rename(moved, self.path)
+                state["restored"] = True
+
+        class Restoring(store_module.sqlite3.Connection):
+            """The leg's connection, which puts the file back after its first statement."""
+
+            def execute(self, *args, **kwargs):
+                state["statements"].append(args[0] if args else kwargs.get("sql"))
+                try:
+                    return super().execute(*args, **kwargs)
+                finally:
+                    restore()
+
+            def close(self):
+                try:
+                    return super().close()
+                finally:
+                    restore()
+
+        def wrapper(*args, **kwargs):
+            state["calls"] += 1
+            if state["calls"] != nth:
+                return real(*args, **kwargs)
+            os.rename(self.path, moved)
+            state["moved"] = True
+            try:
+                return real(*args, factory=Restoring, **kwargs)
+            except BaseException:
+                restore()
+                raise
+
+        patcher = mock.patch.object(store_module.sqlite3, "connect", wrapper)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(restore)
+        return state
+
+    def sidecars_of_the_moved_name(self):
+        return [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")]
 
     def assertRefusedTheMove(self, detail):
         """The answer was withdrawn BECAUSE the store moved, whichever check noticed first.
@@ -1376,8 +1460,8 @@ class DescriptorIdentity(unittest.TestCase):
         The read connection and the write probe go through one descriptor, so a rename between
         them puts the write probe on a relocated name - the same failed read and the same stray
         log as above. That second question is also the CLOSING one for the read that just
-        happened: a store that moved during it leaves behind an identity a caller reads as "the
-        store at this path", so what the read published is withdrawn rather than reported.
+        happened: a store still moved when it asks leaves behind an identity a caller reads as
+        "the store at this path", so what the read published is withdrawn rather than reported.
         """
         from codex_session_relay import store as store_module
 
@@ -1406,6 +1490,82 @@ class DescriptorIdentity(unittest.TestCase):
             [name for name in os.listdir(self.tmp) if name.startswith("moved.sqlite3-")], [],
             "the refused write probe still opened the relocated name",
         )
+
+    def test_the_write_probe_asks_which_file_it_opened_before_it_can_write(self):
+        """PR115-RB1: the write probe began its transaction before asking where it was.
+
+        The move lands after the probe's second `_relocation` and before the write connection, so
+        SQLite opens the moved name. A transaction there creates `moved.sqlite3-wal` beside it,
+        and that file outlives both the refused probe and the restored pathname: a write from a
+        command that promises none. Asking the descriptor again with a readlink creates nothing on
+        any build, so it comes first, and a store still moved at that point ends the probe before
+        any statement, BEGIN IMMEDIATE included.
+        """
+        state = self.move_between_the_check_and_the_connect(2)
+        report = probe(resolve_state_dir(self.a))
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the write probe started a transaction on a name it had not checked",
+        )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
+        self.assertFalse(report["access"]["dbWritable"], report)
+        self.assertRefusedTheMove(report["access"]["detail"])
+
+    def test_the_probe_read_leg_asks_before_its_first_select(self):
+        """The same seam on the probe's read connection, which already asks first.
+
+        dbWritable is deliberately not asserted. The file is back at its pathname before the
+        closing `_relocation`, so the write probe that follows opens the right name and may
+        succeed; what this case pins is that the refused read left nothing beside the moved name.
+        """
+        state = self.move_between_the_check_and_the_connect(1)
+        report = probe(resolve_state_dir(self.a))
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the probe read a name it had not checked",
+        )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
+        self.assertFalse(report["access"]["dbReadable"], report)
+        self.assertIsNone(report["store"]["storeId"], report)
+        self.assertRefusedTheMove(report["access"]["detail"])
+
+    def test_read_only_rows_asks_before_the_callers_statement(self):
+        state = self.move_between_the_check_and_the_connect(1)
+        answer = read_only_rows(
+            resolve_state_dir(self.a), "SELECT written_by FROM store_challenge ORDER BY nonce",
+        )
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the caller's statement ran on a name that had not been checked",
+        )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
+        self.assertFalse(answer["readable"], answer)
+        self.assertEqual(answer["rows"], [])
+        self.assertRefusedTheMove(answer["detail"])
+
+    def test_nonce_lookup_asks_before_it_looks(self):
+        state = self.move_between_the_check_and_the_connect(1)
+        answer = nonce_lookup(resolve_state_dir(self.a), self.written["nonce"])
+        self.assertTrue(state["restored"], "the seam never fired, so this asserts nothing")
+
+        self.assertEqual(
+            self.sidecars_of_the_moved_name(), [],
+            "the nonce was looked up on a name that had not been checked",
+        )
+        self.assertEqual(
+            state["statements"], [], "a statement ran on a connection to a moved name")
+        self.assertFalse(answer["found"], answer)
+        self.assertFalse(answer["readable"], answer)
+        self.assertRefusedTheMove(answer["detail"])
 
     def test_the_ordinary_probe_describes_the_file_it_held(self):
         """The normal case, including where SQLite puts the log it needs.
@@ -1554,12 +1714,16 @@ class DescriptorIdentity(unittest.TestCase):
         )
 
     def test_a_store_that_moves_during_the_read_withdraws_the_answer(self):
-        """The closing question, which is what makes the answer about a whole read.
+        """The closing question, which carries the answer past the start of the read.
 
         The pre-connect check says the file was this store when the read started. Without a
-        closing one, a rename during the read still returns rows and an identity a caller reads
-        as "the store at this path". Together the two say the file was the one at this pathname
-        for the whole read, or there is no answer.
+        closing one, a rename during the read that is still in place returns rows and an
+        identity a caller reads as "the store at this path". Together the checks say the file
+        was the one at this pathname whenever one of them asked, or there is no answer.
+
+        The seam renames right after the connect returns, so since every connection asks the
+        descriptor again before running anything, this move is refused by that ask rather than
+        by the closing one. The closing question itself is not isolated by any case here.
         """
         from codex_session_relay import store as store_module
 

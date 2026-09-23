@@ -500,6 +500,12 @@ CREATE TABLE IF NOT EXISTS journal (
     subject TEXT,
     detail  TEXT
 );
+-- Read by the fault sweep's refusal source, which pages delivery_withheld rows by sequence and
+-- asks, per delivery, whether anything later ended the refusal streak. Each index also carries
+-- the sequence (the rowid), so both reads are range scans; without them every sweep scanned the
+-- whole journal.
+CREATE INDEX IF NOT EXISTS journal_kind ON journal (kind);
+CREATE INDEX IF NOT EXISTS journal_subject ON journal (subject);
 
 CREATE TABLE IF NOT EXISTS store_challenge (
     nonce      TEXT PRIMARY KEY,
@@ -974,6 +980,135 @@ CREATE UNIQUE INDEX IF NOT EXISTS managed_start_one_pending_issue
     ON managed_start_requests (issue_key)
     WHERE state IN ('reserved', 'create_armed');
 
+-- What a parent owes the level above, staged before it is sent, and what came back.
+--
+-- Three tables rather than a kind on deliveries. A supervisor message is not an event: it has
+-- no receipt, no manifest, no generation of its own and - for a turn that ended without
+-- reporting - no events row anywhere to be keyed on. Putting it in deliveries would mean
+-- loosening the claim statement that exists to refuse exactly those things, and the two queues
+-- would then be one queue with a discriminator. Appended at the END of the script for the
+-- reason the block above gives: a sibling adding tables elsewhere and this work cannot produce
+-- an overlapping hunk.
+--
+-- The message id is the envelope's, derived from the direction, the relation, the purpose and
+-- the subject, so one fact staged twice converges on one row instead of waking a supervisor
+-- twice. The packet is frozen HERE, before any send: what a crash between deciding and sending
+-- must not lose is the decision, and re-deriving it later would compose it out of rows that
+-- have moved on.
+CREATE TABLE IF NOT EXISTS supervisor_messages (
+    message_id        TEXT PRIMARY KEY,
+    obligation_id     TEXT NOT NULL,
+    obligation_kind   TEXT NOT NULL,
+    relationship_id   TEXT NOT NULL,
+    project_key       TEXT,
+    purpose           TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    sender_task_id    TEXT NOT NULL,
+    recipient_task_id TEXT NOT NULL,
+    subject           TEXT NOT NULL,
+    packet            TEXT NOT NULL,
+    state             TEXT NOT NULL,
+    attempt_count     INTEGER NOT NULL DEFAULT 0,
+    next_eligible_at  REAL,
+    hold_reason       TEXT,
+    lease_owner       TEXT,
+    lease_until       REAL,
+    staged_at         TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    -- The event and the work-report submission the packet was composed from, NULL for an
+    -- omission, which has neither. report.record refuses to change a report once a message
+    -- names its event, so the packet and the evidence it points at stay one fact.
+    event_id          TEXT,
+    submission_no     INTEGER,
+    -- The reporting-observation/1 reading an omission was staged from, exactly as staged, NULL
+    -- for an event. The observer's own answer can change afterwards - a late report reaches
+    -- the turn - so an omission's packet points at supervisor-show, which prints this frozen
+    -- reading, rather than at a command that re-reads the turn now.
+    reading           TEXT
+);
+
+-- One transport attempt at one of those messages, with the bytes that attempt froze. The bytes
+-- live here rather than beside the packet because they are per attempt: the request id is
+-- rendered into them, so attempt 2 does not say what attempt 1 said, and lost-response
+-- reconciliation searches a recipient for the token the message actually carried.
+--
+-- sent_at is when the attempt was CLAIMED and its bytes frozen. transport_started_at is the
+-- instant immediately before the transport was called, committed before the call, and NULL
+-- when the transport never started; a readback's chronology is measured from it and from
+-- nothing else. It was added before this table was ever released, so no store holds the table
+-- without it.
+CREATE TABLE IF NOT EXISTS supervisor_attempts (
+    request_id     TEXT PRIMARY KEY,
+    message_id     TEXT NOT NULL,
+    attempt_no     INTEGER NOT NULL,
+    message        TEXT NOT NULL,
+    state          TEXT NOT NULL,
+    send_attempted TEXT NOT NULL,
+    retry_safe     INTEGER NOT NULL DEFAULT 0,
+    turn_id        TEXT,
+    record         TEXT NOT NULL,
+    sent_at        TEXT NOT NULL,
+    transport_started_at TEXT,
+    observed_at    TEXT NOT NULL,
+    -- What a readback looks for in the recipient's transcript: the request id and a random part
+    -- drawn inside the claim, rendered into these bytes and nowhere else. The request id alone is
+    -- derived from the message and the attempt number, so a copy of it could be written into the
+    -- recipient's thread before the send and found there after a lost response.
+    delivery_token TEXT,
+    UNIQUE (message_id, attempt_no)
+);
+
+-- The recipient saying it read one, from inside its own turn. One row per message, because a
+-- second reading of the same message is the same fact; the proof and the turn are kept so a
+-- later reader can recompute the first rather than trust that somebody checked it.
+CREATE TABLE IF NOT EXISTS supervisor_readbacks (
+    message_id   TEXT PRIMARY KEY,
+    read_turn_id TEXT NOT NULL,
+    proof        TEXT NOT NULL,
+    verified     TEXT NOT NULL,
+    request_id   TEXT,
+    detail       TEXT,
+    read_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS supervisor_messages_eligible ON supervisor_messages
+    (state, next_eligible_at);
+CREATE INDEX IF NOT EXISTS supervisor_messages_recipient ON supervisor_messages
+    (recipient_task_id, staged_at);
+CREATE INDEX IF NOT EXISTS supervisor_messages_event ON supervisor_messages (event_id);
+
+-- What a child's own relay recorded here beside the marker facts it writes (declarations.py).
+-- The relay daemon reads no marker file, so a turn that ended without a report is invisible
+-- to it unless the declarations a child DID make are in this store as well. Both are written by
+-- the command that writes the marker fact, after it, and mirror the fact the marker stands on.
+--
+-- reporting_sessions is the cut-over. A session whose relay records its declarations here says
+-- so once, when it claims its assignment; a turn whose session has no row is a legacy admission
+-- whose declarations may exist only in the marker, and omitted.derive derives nothing for it.
+CREATE TABLE IF NOT EXISTS reporting_sessions (
+    assignment_id       TEXT NOT NULL,
+    session_id          TEXT NOT NULL,
+    dispatch_request_id TEXT NOT NULL,
+    marker_root         TEXT NOT NULL,
+    workspace           TEXT NOT NULL,
+    -- The issue the intent was declared for, so the store reader checks the registration
+    -- against the same declared identity the marker reader does.
+    issue_key           TEXT,
+    capability          TEXT NOT NULL,
+    recorded_at         TEXT NOT NULL,
+    PRIMARY KEY (assignment_id, session_id)
+);
+
+-- A turn's declared outcome, create-once like dispositions/<session>/<turn>.json.
+CREATE TABLE IF NOT EXISTS turn_declarations (
+    assignment_id TEXT NOT NULL,
+    session_id    TEXT NOT NULL,
+    turn_id       TEXT NOT NULL,
+    outcome       TEXT NOT NULL,
+    declared_at   TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    PRIMARY KEY (assignment_id, session_id, turn_id)
+);
+
 -- Operational faults: the machinery failing to do its job, as opposed to a child failing at
 -- its task. One row per distinct BREAKAGE and never one per incident, which is what makes
 -- the difference between a record somebody reads and a Linear project nobody can.
@@ -1069,6 +1204,15 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 -- Where each source got to last time. Without it every sweep re-read the same first page,
 -- so with more persistent faults than one page the ones past it were never observed again -
 -- the starvation shape the delivery window already keeps a per-parent cursor to avoid.
+--
+-- Shipped (installed at 0ffcc4d0): the text between CREATE and its closing parenthesis,
+-- in-body comments included, is stored verbatim by SQLite and compared by the runtime swap
+-- gate, so it never changes - even a comment. What changed since is said here instead:
+-- position now holds JSON {"at", "until"}, where the source's rotation stopped and the upper
+-- key it captured when the rotation started (a plain value written before rotations were
+-- bounded reads as a position with no bound yet); pages is no longer read, since counting
+-- full pages before a forced wrap starved every row past them, and it is kept because this
+-- store adds tables and never drops columns.
 CREATE TABLE IF NOT EXISTS fault_cursors (
     source     TEXT PRIMARY KEY,
     position   TEXT,
@@ -1142,6 +1286,158 @@ CREATE TABLE IF NOT EXISTS fault_timeline (
 );
 CREATE INDEX IF NOT EXISTS fault_timeline_fault ON fault_timeline (fault_id, kind);
 
+-- The corrected contract (docs/faults.md, "Corrected contract"). Every table below is NEW
+-- because this store has no migration path: CREATE TABLE IF NOT EXISTS runs on every open and
+-- nothing ever alters an existing table, so a column added to one of the tables above would
+-- simply be missing from every store created before it.
+--
+-- Which product set a target, and the project its issues are filed in. A target row above
+-- that has no row here was written before targets had owners, and nothing is issued through it.
+CREATE TABLE IF NOT EXISTS fault_target_projects (
+    scope_key   TEXT PRIMARY KEY,
+    product     TEXT NOT NULL,
+    project_ref TEXT,
+    recorded_at TEXT NOT NULL
+);
+
+-- What a queued write aims at beyond its tracker: the project an issue create files into, and
+-- a registered or update kind's payload. Kept in step with fault_publications.tracker_ref.
+-- target_mode is the kind's target requirement when the write was queued - 'team',
+-- 'team+project' or 'none' - so re-pointing a write never depends on whether the process doing
+-- it registered that kind. A row written before it existed is one of the built-in kinds, which
+-- every process registers.
+CREATE TABLE IF NOT EXISTS fault_publication_payloads (
+    publication_id TEXT PRIMARY KEY,
+    project_ref    TEXT,
+    payload        TEXT,
+    hold_reason    TEXT,
+    updated_at     TEXT NOT NULL,
+    target_mode    TEXT
+);
+
+-- Whether the issue a fault owns sits in the project its scope targets. revision is part of
+-- every set_project write's identity, so a later target always gets its own write.
+CREATE TABLE IF NOT EXISTS fault_links (
+    fault_id             TEXT PRIMARY KEY,
+    external_ref         TEXT NOT NULL,
+    project_ref          TEXT,
+    observed_project_ref TEXT,
+    state                TEXT NOT NULL,
+    revision             INTEGER NOT NULL DEFAULT 0,
+    updated_at           TEXT NOT NULL
+);
+
+-- An existing issue a recorded fault adopts. Pending until suppression opens the record.
+CREATE TABLE IF NOT EXISTS fault_adoptions (
+    fault_id     TEXT PRIMARY KEY,
+    external_ref TEXT NOT NULL,
+    scope        TEXT NOT NULL,
+    state        TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+-- An id that names a fault kept under another id: a workspace a fault moved into out of
+-- unassigned, or a workspace-bearing id for a fault recorded before workspace joined identity.
+CREATE TABLE IF NOT EXISTS fault_aliases (
+    alias_id   TEXT PRIMARY KEY,
+    fault_id   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- One row per claim, append-only. The first claimant is the write's owner; a takeover is a
+-- recorded act; ended marks an issued request somebody attested can no longer land.
+CREATE TABLE IF NOT EXISTS fault_publication_attempts (
+    attempt_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    publication_id TEXT NOT NULL,
+    attempt        INTEGER NOT NULL,
+    owner          TEXT NOT NULL,
+    takeover       INTEGER NOT NULL DEFAULT 0,
+    claimed_at     TEXT NOT NULL,
+    claimed_ts     REAL NOT NULL,
+    issued_at      TEXT,
+    issued_ts      REAL,
+    outcome        TEXT,
+    error          TEXT,
+    ended          INTEGER NOT NULL DEFAULT 0,
+    ended_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS fault_publication_attempts_publication
+    ON fault_publication_attempts (publication_id);
+
+-- A per-product sliding window per kind of write or notification. A use is consumed once per
+-- ref; what a spent budget holds stays pending and is never dropped.
+CREATE TABLE IF NOT EXISTS fault_budget_uses (
+    use_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    product TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    ref     TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    used_ts REAL NOT NULL,
+    UNIQUE (product, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS fault_budget_uses_window ON fault_budget_uses (product, kind, used_ts);
+
+CREATE TABLE IF NOT EXISTS fault_limits (
+    product        TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    max_count      INTEGER NOT NULL,
+    window_seconds REAL NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (product, kind)
+);
+
+-- What the level above is told: a broken fault opened, a decision somebody must make, a fault
+-- resolved. Eligibility is decided at reservation; a lapsed reservation is uncertain.
+CREATE TABLE IF NOT EXISTS fault_notifications (
+    notification_id TEXT PRIMARY KEY,
+    fault_id        TEXT NOT NULL,
+    product         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    reason          TEXT,
+    cycle           INTEGER NOT NULL,
+    ref             TEXT,
+    state           TEXT NOT NULL,
+    token           TEXT,
+    owner           TEXT,
+    lease_until     REAL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    delivered_at    TEXT,
+    ack_ref         TEXT,
+    -- The order in which reservation last examined this notification: a sequence, never a
+    -- time, so no two tie. Candidates are taken least recently examined first, so one withheld
+    -- or held at the head of the queue cannot hide the eligible ones behind it.
+    examined_seq    INTEGER
+);
+CREATE INDEX IF NOT EXISTS fault_notifications_state ON fault_notifications (state, product);
+CREATE INDEX IF NOT EXISTS fault_notifications_examined ON fault_notifications (examined_seq);
+
+-- Deliveries the send path's own rule (delivery.supersession_reason) found overtaken, as the
+-- fault sweep read them. Every such answer is permanent - a later generation, an answered or
+-- replaced revision, a regranted merge turn never come back - so a verdict is recorded once and
+-- excluded in SQL afterwards. That is what bounds the sweep's existence question: each call asks
+-- the live rule about a bounded number of deliveries it has not judged before, instead of all of
+-- them. Written only by the fault sweep, and never read as delivery state.
+CREATE TABLE IF NOT EXISTS fault_overtaken_deliveries (
+    event_id TEXT PRIMARY KEY,
+    reason   TEXT NOT NULL,
+    noted_at TEXT NOT NULL
+);
+
+-- A product's adjustment of a class's suppression, prospective and journaled.
+CREATE TABLE IF NOT EXISTS fault_policies (
+    product        TEXT NOT NULL,
+    fault_class    TEXT NOT NULL,
+    severity       TEXT NOT NULL,
+    threshold      INTEGER,
+    window_seconds REAL,
+    reason         TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (product, fault_class, severity)
+);
 -- CRW-206 product routing. The fault ledger owns identity, suppression, targets, limits and the
 -- outbox; these rows hold only what routing read back from Linear and what it decided, so none
 -- of them can become a second copy of anything the ledger decides.
@@ -1176,6 +1472,10 @@ CREATE TABLE IF NOT EXISTS routing_policy (
 
 -- One row per routed fault: where routing decided it belongs and why, what it is waiting for,
 -- and the snapshot the digest last reported. The fault itself lives in the ledger.
+-- checked_seq is, for an outstanding project proposal, when the digest last checked its create,
+-- as a sequence: each digest checks the least recently checked ones first, so no proposal waiting
+-- on a slow create can keep a later one from being bound. Explanations stay above the CREATE
+-- keyword: SQLite keeps a CREATE's text verbatim, and a shipped object's text never changes.
 CREATE TABLE IF NOT EXISTS incident_routes (
     fault_id         TEXT PRIMARY KEY,
     product_key      TEXT NOT NULL,
@@ -1190,9 +1490,6 @@ CREATE TABLE IF NOT EXISTS incident_routes (
     superseded_by    TEXT,
     reported         TEXT,
     detail           TEXT,
-    -- For an outstanding project proposal: when the digest last checked its create, as a
-    -- sequence, so each digest checks the least recently checked ones first and no proposal
-    -- waiting on a slow create can keep a later one from being bound.
     checked_seq      INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL,
     updated_at       TEXT NOT NULL
@@ -1792,8 +2089,9 @@ def _hold_database(db_path):
       name - and with a live write-ahead log that read raised `disk I/O error` and CREATED a
       stray `<newname>-wal`, because the log follows the pathname. A diagnostic that promises to
       write nothing must not reach that state, so a descriptor that no longer names this store
-      is refused before a connection is opened - every relocation that already happened, which
-      is the reachable case, though not one timed inside the call itself.
+      is refused before a connection is opened, and asked again once it is open - every
+      relocation still in place when it is asked, though not one timed inside a call or undone
+      between two asks.
 
     Returns `(fd, expected, None)` or `(None, None, detail)`. Never raises.
 
@@ -1822,14 +2120,22 @@ def _hold_database(db_path):
 def _relocation(fd, expected):
     """Why the held file is no longer this store, or None while it still is.
 
-    Asked immediately before EVERY connection rather than once at the open. `probe` opens a
-    read connection and then a write probe through one descriptor, and a rename between them
-    reaches the relocated-log case above, with its failed read and its stray sidecar.
+    Asked immediately before EVERY connection rather than once at the open, and again as soon
+    as the connection is open, before it runs anything. `probe` opens a read connection and
+    then a write probe through one descriptor, and a rename between them reaches the
+    relocated-log case above, with its failed read and its stray sidecar.
 
-    An observation, not a lock. A rename landing between this answer and SQLite's own open is
-    not caught - the same residual as SQLite resolving the descriptor and then opening the name
-    it found. What the check removes is every relocation that happened before it was asked,
-    which is the reachable case; what it cannot remove is a rename timed inside one call.
+    The second ask is what keeps a connection on a moved name from running anything, as long as
+    the store is still moved when it asks. SQLite resolves the descriptor inside the connect, so
+    a store moved before that and still moved after it was opened under the moved name, and the
+    first statement there creates that name's log - on the builds measured up to 3.38.5 even
+    `PRAGMA database_list` does. A readlink creates nothing on any build, which is why it runs
+    before any statement. Asked on both sides of the connect, it misses a move and a return that
+    both land inside the connect call; `_opened_elsewhere` answers that one.
+
+    An observation, not a lock. It refuses a store that is still moved when it asks. A rename
+    timed after its answer, or a move and a return that both land between two asks, is not
+    observed.
     """
     try:
         actual = os.readlink(f"{PROC_FD}/{fd}")
@@ -1940,6 +2246,17 @@ def _opened_elsewhere(connection, expected):
     `PRAGMA database_list` is the only view of that decision `sqlite3` exposes; it reports the
     main database's filename as SQLite computed it. A reading that cannot be obtained is itself
     a refusal, because an unverifiable open is not a verified one.
+
+    It is the first STATEMENT on every connection the diagnostics open, read or write, and it
+    comes after `_relocation` has been asked again on the open connection. SQLite creates the
+    write-ahead log beside whichever name it opened, on the first statement that touches the
+    file, and a log beside a moved name outlives the refusal. Whether this pragma is such a
+    statement depends on the build: measured on this host on 2026-09-23 on a moved store, it
+    created no file on SQLite 3.39.4, 3.40.1, 3.42.0, 3.44.0, 3.45.1, 3.46.1 and 3.53.1, while
+    on 3.34.1, 3.37.2 and 3.38.5 it read the schema and created the moved name's log. So the
+    readlink before it is what keeps a connection to a still-moved store from running anything.
+    What this adds is SQLite's own account of the name, which on the builds measured also
+    refuses a move and a return that both land inside the connect.
     """
     try:
         rows = connection.execute("PRAGMA database_list").fetchall()
@@ -2052,7 +2369,8 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "ro"), uri=True, timeout=5)
                             try:
                                 connection.row_factory = sqlite3.Row
-                                elsewhere = _opened_elsewhere(connection, expected)
+                                elsewhere = (_relocation(fd, expected)
+                                             or _opened_elsewhere(connection, expected))
                                 if elsewhere is not None:
                                     notes.append("database read failed: " + elsewhere)
                                 else:
@@ -2077,12 +2395,13 @@ def probe(selection: StateSelection) -> dict:
                             notes.append(
                                 f"database read failed: {type(error).__name__}: {error}")
 
-                    # Asked again, and it closes two things. A rename between the two
-                    # connections would put the write probe on a relocated name, where SQLite
-                    # was measured to fail AND leave a stray log behind. It is also the closing
-                    # question for the read that just happened: a store that moved during it
-                    # leaves an identity a caller reads as "the store at this path", so what
-                    # that read published is withdrawn rather than reported.
+                    # Asked again, and it closes two things. It is the closing question for the
+                    # read that just happened: a store still moved when it asks leaves an identity
+                    # a caller reads as "the store at this path", so what that read published is
+                    # withdrawn rather than reported. And a rename that already happened between
+                    # the two connections never reaches the write probe. One landing after this
+                    # answer is refused by the write connection's own checks if the store is still
+                    # moved when they ask; one landing after those is not observed.
                     moved = _relocation(fd, expected)
                     if moved is not None:
                         notes.append("the database moved while it was being read: " + moved)
@@ -2097,12 +2416,19 @@ def probe(selection: StateSelection) -> dict:
                                 _held_uri(fd, "rw"), uri=True, timeout=5, isolation_level=None
                             )
                             try:
-                                connection.execute("BEGIN IMMEDIATE")
-                                connection.execute("ROLLBACK")
-                                elsewhere = _opened_elsewhere(connection, expected)
+                                # Before the transaction, never after it. A move that lands
+                                # between the check above and this connect leaves SQLite on the
+                                # moved name, and BEGIN IMMEDIATE there creates its -wal, which
+                                # survives the refusal and the file's return (PR115-RB1). The
+                                # readlink goes first: on the builds measured up to 3.38.5 the
+                                # pragma creates that -wal too.
+                                elsewhere = (_relocation(fd, expected)
+                                             or _opened_elsewhere(connection, expected))
                                 if elsewhere is not None:
                                     notes.append("database write probe failed: " + elsewhere)
                                 else:
+                                    connection.execute("BEGIN IMMEDIATE")
+                                    connection.execute("ROLLBACK")
                                     # Acquiring a write transaction is evidence that this
                                     # process can write NOW. It is not a promise that a later
                                     # commit succeeds; a full disk still fails.
@@ -2155,15 +2481,17 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
-            # Before the statement runs: which file did SQLite itself open?
-            elsewhere = _opened_elsewhere(connection, expected)
+            # Before anything runs: does the descriptor still name this store, and which file
+            # did SQLite itself open?
+            elsewhere = _relocation(fd, expected) or _opened_elsewhere(connection, expected)
             if elsewhere is not None:
                 return {**unknown, "readable": False, "rows": [], "detail": elsewhere}
             rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
         except sqlite3.Error as error:
-            # Ask why before reporting what. A store moved out from under the read fails the
+            # Ask why before reporting what. A store still moved out from under the read fails the
             # statement too, and calling that a readable database whose query failed would
-            # describe the symptom while hiding the cause.
+            # describe the symptom while hiding the cause. A move already undone by the time this
+            # asks is not seen, and then the answer is exactly that: readable, no rows, the error.
             moved = _relocation(fd, expected)
             if moved is not None:
                 return {**unknown, "readable": False, "rows": [], "detail": moved}
@@ -2171,11 +2499,12 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         finally:
             connection.close()
-        # Asked once more, now that the read is over. The pre-connect answer says the file was
-        # this store when the read started; without this one, a rename during the read would
-        # still return rows and an identity a caller reads as "the store at this path". The
-        # claim these two make together is that the file was the one at this pathname for the
-        # whole read.
+        # Asked once more, now that the read is over. The earlier answers say the file was this
+        # store when the read started; without this one, a rename during the read that is still
+        # in place would return rows and an identity a caller reads as "the store at this path".
+        # The claim the checks make together is that the file was the one at this pathname
+        # whenever one of them asked. A move and a return that both land between two of them are
+        # not observed.
         moved = _relocation(fd, expected)
         if moved is not None:
             return {**unknown, "readable": False, "rows": [], "detail": moved}
@@ -2229,7 +2558,7 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
                     "detail": f"{type(error).__name__}: {error}"}
         try:
             connection.row_factory = sqlite3.Row
-            elsewhere = _opened_elsewhere(connection, expected)
+            elsewhere = _relocation(fd, expected) or _opened_elsewhere(connection, expected)
             if elsewhere is not None:
                 return {**unknown, "nonce": nonce, "found": False, "readable": False,
                         "detail": elsewhere}
@@ -2249,8 +2578,9 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         finally:
             connection.close()
         # The same closing question the row leg asks, and it matters more here: this answer is
-        # the only evidence compare_store grades as proof, so it must not survive the store
-        # moving out from under it mid-read.
+        # the only evidence compare_store grades as proof, so it must not survive a store that
+        # is still moved when this asks. A move and a return that both land inside the read are
+        # not observed.
         moved = _relocation(fd, expected)
         if moved is not None:
             return {**unknown, "nonce": nonce, "found": False, "readable": False,

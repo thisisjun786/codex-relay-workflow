@@ -653,44 +653,34 @@ def _with_handoff(store, *records: dict) -> list:
     return list(records)
 
 
-def required_for_candidate(store, *, relationship_id, repository, base_ref, head_sha) -> dict:
-    """What the candidate's own merge-readiness reading found the target requires, or why nothing.
+def current_reports(db, relationship_id) -> tuple:
+    """The work reports an assignment currently stands on: (generation, rows), or (None, []).
 
-    The merge-turn grant notice fills merge-turn-check --required from this. The relay never
-    contacts a forge and the process rendering the notice has no checkout of the target, so the
-    one declared source it can read is the reading the child already took: merge-evidence records
-    the branch's effective rules as requiredDeclared in the handoff this module stores. The names
-    are proposed to the parent, never enforced here; merge-turn-check still stores whatever
-    --required its caller declares.
+    The generation is the newest one with a report that names a head, and the rows are, for
+    EVERY event of that generation, that event's own latest head-bearing submission. Earlier
+    submissions and generations stay in work_reports as history; they are not candidates.
 
-    The readings are those of the newest generation that names a head, the generation
-    mergeturn._relationship_refusal compares the merge against, and within it the latest
-    head-bearing submission of EVERY event. Submission numbers count per event, so one maximum
-    taken across the generation kept only the event that happened to be resubmitted most: a
-    second event still declaring dev-gate at its first submission was dropped, and the notice
-    proposed the first event's smaller set as if it were the whole. All of those readings must
-    name the candidate and agree. Every narrowing below answers "not recorded" rather than
-    guessing. A wrong set proposed with confidence is worse than an empty one the parent is told
-    to fill, because the command it sits in is the one a parent runs as written.
+    Submission numbers count per event (work_reports is keyed on event_id and submission_no), so
+    the latest submission has to be chosen per event. One maximum taken across the generation
+    keeps only the event that happened to be resubmitted most and silently drops every other
+    current event, which is how the merge gate once let one of two current heads through and
+    how the grant notice once proposed one event's smaller required set as the whole.
 
-    Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
-    An empty list is a reading that found nothing required, which is not the same answer as None.
+    Both readers ask here: mergeturn._relationship_refusal compares the merge against these
+    heads, and required_for_candidate proposes the required checks from these readings. One
+    selection means the check and the notice cannot disagree about which reports are current.
+
+    db is a connection rather than a Store because the merge gate reads inside its own
+    transaction; this only runs SELECTs on whatever connection it is handed.
     """
-    def absent(reason):
-        return {"required": None, "reason": reason}
-
-    if not relationship_id:
-        return absent("the turn names no assignment")
-    if not head_sha:
-        return absent("the grant names no candidate head")
-    newest = store.one(
+    newest = db.execute(
         "SELECT MAX(execution_generation) AS generation FROM work_reports"
         "  WHERE relationship_id = ? AND head_sha IS NOT NULL",
         (relationship_id,),
-    )
+    ).fetchone()
     if newest is None or newest["generation"] is None:
-        return absent("no work report on this assignment names a head")
-    rows = store.all(
+        return None, []
+    rows = db.execute(
         "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.base_ref,"
         "       h.required_declared"
         "  FROM work_reports w LEFT JOIN work_report_handoffs h"
@@ -702,7 +692,40 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
         "                           WHERE l.event_id = w.event_id AND l.head_sha IS NOT NULL)"
         " ORDER BY w.event_id",
         (relationship_id, newest["generation"]),
-    )
+    ).fetchall()
+    return newest["generation"], rows
+
+
+def required_for_candidate(store, *, relationship_id, repository, base_ref, head_sha) -> dict:
+    """What the candidate's own merge-readiness reading found the target requires, or why nothing.
+
+    The merge-turn grant notice fills merge-turn-check --required from this. The relay never
+    contacts a forge and the process rendering the notice has no checkout of the target, so the
+    one declared source it can read is the reading the child already took: merge-evidence records
+    the branch's effective rules as requiredDeclared in the handoff this module stores. The names
+    are proposed to the parent, never enforced here; merge-turn-check still stores whatever
+    --required its caller declares.
+
+    The readings are current_reports: the latest head-bearing submission of EVERY event of the
+    newest generation that names a head, the same rows mergeturn._relationship_refusal compares
+    the merge against. All of those readings must name the candidate and agree. Every narrowing
+    below answers "not recorded" rather than guessing. A wrong set proposed with confidence is
+    worse than an empty one the parent is told to fill, because the command it sits in is the one
+    a parent runs as written.
+
+    Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
+    An empty list is a reading that found nothing required, which is not the same answer as None.
+    """
+    def absent(reason):
+        return {"required": None, "reason": reason}
+
+    if not relationship_id:
+        return absent("the turn names no assignment")
+    if not head_sha:
+        return absent("the grant names no candidate head")
+    generation, rows = current_reports(store.db, relationship_id)
+    if generation is None:
+        return absent("no work report on this assignment names a head")
     heads = sorted({row["head_sha"] for row in rows})
     if heads != [head_sha]:
         # repr, because a head is whatever the child's report stated and this reason is
@@ -877,7 +900,41 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
 
     Takes the transaction handle rather than the store, so this cannot be satisfied by a
     read that was already stale by the time the row was written.
+
+    And once a supervisor message composed from this report may have put its bytes anywhere,
+    the report does not change at all. That packet named this report's artifact and decision,
+    and its evidence pointer reads this event's report, so a correction - in place or as a new
+    submission - would leave bytes that went upward naming one pull request while their
+    evidence reads another.
     """
+    # Any message about this event, and only once one of its attempts reached the transport -
+    # including one staged before any report existed: its bytes went up saying there was none,
+    # and its evidence pointer reads this event, so even a FIRST report would change what that
+    # pointer returns under bytes that never said it. Before that the staged row is a proposal (I-247): the claim and the write
+    # that stamps the transport start re-derive it from the report that stands, so a correction
+    # made before the send is the one the send carries. The stamp is the line: it is committed
+    # in the write that lets the transport start, so this write and that one serialize - a
+    # correction committing first is restated and sent, and one committing after is refused. An
+    # attempt the transport refused before sending, retry-safe, put nothing anywhere.
+    frozen = db.execute(
+        "SELECT m.message_id, m.submission_no FROM supervisor_messages m"
+        " WHERE m.event_id = ?"
+        "   AND EXISTS (SELECT 1 FROM supervisor_attempts a"
+        "                WHERE a.message_id = m.message_id"
+        "                  AND a.transport_started_at IS NOT NULL"
+        "                  AND NOT (a.send_attempted = 'no' AND a.retry_safe = 1))"
+        " ORDER BY m.staged_at LIMIT 1",
+        (event_id,),
+    ).fetchone()
+    if frozen is not None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a supervisor report about this event was sent (message {frozen['message_id']},"
+            f" composed from submission {frozen['submission_no']}), and its evidence points at"
+            " this event; a changed report would leave those bytes saying one thing while"
+            " their evidence says another, so this report no longer changes. A correction the"
+            " level above needs is a new fact, reported as one",
+        )
     attempted = db.execute(
         "SELECT a.record, a.state, s.submission_no"
         "  FROM attempts a"

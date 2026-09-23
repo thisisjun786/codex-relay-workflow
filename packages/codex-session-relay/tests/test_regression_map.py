@@ -230,8 +230,6 @@ SUMMARIES = {
     ("criteria.py", None, "_same_registration", "function"): ((False,), (), ()),
     ("daemon.py", "TickReport", "quiet", "field"):
         ((False,), (("declaration default: True", 1),), ("notes", "skipped")),
-    ("delivery.py", None, "_rate_limited", "function"):
-        ((False,), (("return: False", 1), ("return: True", 1)), ()),
     # A stated absence is a dict carrying one key, so the false side is reachable from either
     # input alone - anything that is not a mapping, and any mapping without the key.
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
@@ -267,6 +265,8 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("daemon.py", None, "_reads_were_complete", "function"),
     ("daemon.py", None, "_worth_polling", "function"),
     ("envelope.py", None, "stage_holds", "function"),
+    ("faultsweep.py", None, "_current", "function"),
+    ("faultsweep.py", None, "_judged_here", "function"),
     ("guard.py", None, "receipt_matches", "function"),
     ("guard.py", None, "reserve_hold", "function"),
     ("hostadapter.py", "TokenScan", "exhausted", "field"),
@@ -285,6 +285,15 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    # Whether a message held because nobody could be addressed with it is addressed again:
+    # false on every path that finds the hierarchy still naming nobody, or somebody else.
+    ("supervisorchannel.py", None, "_reopen_if_addressed", "function"),
+    # And whether a held message is owed again: false on every path that finds it is not.
+    ("supervisorchannel.py", None, "_reopen_if_owed", "function"),
+    # A compare-and-set's rowcount: true only when every observed field still matched.
+    ("supervisorchannel.py", None, "_reschedule_in", "function"),
+    # The same kind of rowcount: true only when the never-sent row it rewrites still matched.
+    ("supervisorchannel.py", None, "_restate_in", "function"),
     ("transport.py", "TransportFacts", "retry_safe", "field"),
 )
 
@@ -294,6 +303,9 @@ FOLD_FREE_BOOLEANS = (
     ("assignment.py", None, "_any_receipt", "function"),
     ("assignment.py", None, "_claimed", "function"),
     ("daemon.py", None, "_alternate", "function"),
+    # One predicate now, shared with the supervisor channel's claim; the fold it used to do
+    # lives in delivery.send_refusal, which returns a reason rather than a boolean.
+    ("delivery.py", None, "_rate_limited", "function"),
     ("lifecycle.py", None, "is_busy", "function"),
     ("lifecycle.py", None, "may_send", "function"),
     ("scope.py", None, "at_least", "function"),
@@ -634,6 +646,34 @@ SUMMARY_SITES = (
      " attributable to the conditional and not to the stage being absent or unanswered. That"
      " distinction is the case: a conditional acceptance is the one value a reader is most"
      " likely to round up to yes"),
+    ("test_supervisor_channel.py",
+     "test_a_delivered_message_is_read_back_and_only_then_says_received", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(ladder, envelope.TRANSPORT_ACCEPTED))",
+     "true pins both conjuncts - the stage is present AND its state is yes - so the folding"
+     " cannot hide a missing stage here. The ladder is the one the channel derived from a"
+     " dispatched attempt, and the line below asserts received is still unmeasured, which is"
+     " what makes this the accepted-but-unread state rather than a reached one"),
+    ("test_supervisor_channel.py",
+     "test_a_delivered_message_is_read_back_and_only_then_says_received", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(ladder, envelope.RECEIVED))",
+     "the same folding after a verified readback, and true again pins both conjuncts. The"
+     " source is asserted on the next line, so this cannot be satisfied by a stage answered"
+     " from a record this direction does not read"),
+    ("test_supervisor_channel.py", "test_an_unverified_readback_cannot_replace_a_verified_one",
+     "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(self.channel.reach(message_id),"
+     " envelope.RECEIVED))",
+     "true pins both conjuncts, and the case is about what SURVIVED: the stored readback is"
+     " asserted host_read on the line above, so this reads the ladder derived from it rather"
+     " than from the unverified answer that arrived second"),
+    ("test_supervisor_channel.py",
+     "test_a_verified_readback_survives_a_racing_unverified_one", "stage_holds", True,
+     "self.assertTrue(envelope.stage_holds(self.channel.reach(message_id),"
+     " envelope.RECEIVED))",
+     "the same folding, in the case that reaches the in-transaction guard rather than the"
+     " precheck. The stored row is asserted host_read and the message state read on the two"
+     " lines above, so true here reads a ladder derived from the survivor; and the case fails"
+     " when the guard is mutated out, which is what says the assertion is load-bearing"),
     ("test_supervisor_envelope.py",
      "test_silence_is_never_agreement_and_a_state_needs_a_source", "stage_holds", False,
      "self.assertFalse(envelope.stage_holds(ladder, envelope.AGREED))",

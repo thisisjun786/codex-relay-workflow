@@ -453,3 +453,24 @@ class TheFormOfTheBound(unittest.TestCase):
         self.assertIsNone(_segment_seconds(args))
         args.segment_seconds = 1800.0
         self.assertEqual(_segment_seconds(args), 1800.0)
+
+
+class TheBoundedRunCollectsManagedReadings(unittest.TestCase):
+    """B5: the daemon _run_bounded starts is handed the ledger AND the store selection, so its
+    ticks read the relay's own managed turns through omitted.observe. Without the selection a
+    daemon collected only what the store derives by itself, and no CRW-180 reading reached it."""
+
+    def test_the_daemon_it_runs_is_given_the_ledger_and_the_selection(self):
+        services, args = build_services(self, max_ticks=1)
+        captured = {}
+
+        def run(daemon, *, max_ticks=None, deadline=None, stop=None, sleep=None):
+            captured["faults"] = daemon.faults
+            captured["selection"] = getattr(daemon, "fault_selection", None)
+            return []
+
+        with mock.patch.object(RelayDaemon, "run", run):
+            _run_bounded(services, _service_for(services), args, require_intent=False,
+                         monotonic=lambda: 5_000.0)
+        self.assertIs(services.faults, captured["faults"])
+        self.assertIs(services.selection, captured["selection"])
