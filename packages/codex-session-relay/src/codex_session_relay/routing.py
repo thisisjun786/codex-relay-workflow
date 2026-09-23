@@ -21,6 +21,18 @@ from .errors import RefusalReason
 from .ledger_port import LedgerPort
 
 
+def _simulated_use(db, product) -> list:
+    """What of this product lives on its test target: simulated routes and test bindings."""
+    used = [row["fault_id"] for row in db.execute(
+        "SELECT fault_id FROM incident_routes WHERE product_key = ? AND origin = ? LIMIT 5",
+        (product, products.SIMULATED)).fetchall()]
+    for row in db.execute("SELECT ref, record FROM product_bindings WHERE product_key = ?",
+                          (product,)).fetchall():
+        if json.loads(row["record"]).get("test"):
+            used.append(row["ref"])
+    return used
+
+
 class ProductRouter:
     def __init__(self, store, clock, port=None):
         self.store = store
@@ -53,13 +65,22 @@ class ProductRouter:
                                 f" {before['workspace']}; the workspace is part of their"
                                 f" identity, so a registry naming {registry['workspace']} would"
                                 f" file the same defects again")
+            if before is not None and before["testTarget"] != registry["testTarget"] and (
+                    _simulated_use(db, registry["product"])):
+                products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                                f"{registry['product']} has simulated routes or test bindings"
+                                f" on its test target {before['testTarget']}; they would be"
+                                f" left on a target the product no longer names")
             db.execute(
                 "INSERT INTO product_registry (product_key, record, recorded_at) VALUES (?,?,?)"
                 " ON CONFLICT(product_key) DO UPDATE SET record = excluded.record,"
                 "   recorded_at = excluded.recorded_at",
                 (registry["product"], products.canonical(registry), now))
             redecided = intake.redecide(self, registry["product"]) if before else []
-        return {**registry, "redecided": redecided}
+            revised = (projects.revise(self, registry["product"]) if before and any(
+                before[key] != registry[key] for key in ("team", "familyLabel")) else None)
+        return {**registry, "redecided": redecided,
+                "projectsRevised": revised or {"cancelled": [], "queued": []}}
 
     def registry(self, product):
         row = self.store.one(

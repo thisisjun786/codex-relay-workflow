@@ -165,10 +165,11 @@ def _check(reading, check, context):
     excepted = _exception(reading, check, context["bindings"])
     if excepted is None:
         return verdict, reason
-    if excepted[0] == EXCEPTION_UNVERIFIED and verdict == UNVERIFIED:
-        # Nothing was found wrong, so an exception nobody could verify turns nothing into a
-        # mismatch; the check stays as unestablished as it was.
-        return UNVERIFIED, f"{reason}; the claimed exception is unverified: {excepted[1]}"
+    if excepted[0] == EXCEPTION_UNVERIFIED and verdict in (UNVERIFIED, CLAIM_WITHDRAWN):
+        # Nothing new was found wrong, so an exception nobody could verify turns nothing into
+        # a new failure: an unestablished check stays unestablished, and a withdrawn claim's
+        # open mismatch stands as it was, with the unverified exception named.
+        return verdict, f"{reason}; the claimed exception is unverified: {excepted[1]}"
     return excepted
 
 

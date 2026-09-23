@@ -339,6 +339,14 @@ class ControlGroups(ProductRoutingCase):
         self.assertEqual("open", self.router.port.get(entry["faultId"])["state"])
         attention = self.router.show(attention=True)["routes"]
         self.assertIn(entry["faultId"], [r["faultId"] for r in attention])
+        # An exception nobody approved changes nothing: still standing, still not counted.
+        excused = self.router.check_completion(reading(
+            "ALN-9", observedAt="excused", claims={"linearDone": False, "prMerged": True},
+            exceptions=[{"check": "acceptance", "kind": "scope_reduction", "ref": "doc#1"}]))
+        acceptance = {c["check"]: c for c in excused["checks"]}["acceptance"]
+        self.assertEqual("claim_withdrawn_without_closure", acceptance["verdict"])
+        self.assertIn("exception is unverified", acceptance["reason"])
+        self.assertEqual(count, self.router.port.get(entry["faultId"])["occurrence_count"])
         # Nothing open, nothing claimed: not applicable, as before.
         clean = self.router.check_completion(reading(
             "ALN-3", claims={"linearDone": False, "prMerged": False}))
@@ -906,6 +914,30 @@ class RegistryChanges(ProductRoutingCase):
         self.assertEqual("BTX", routes.get(self.store, answer["faultId"])["target"]["team"])
         self.holder.run()
         self.assertEqual(({}, 1), (self.issues_of("BTM"), len(self.issues_of("BTX"))))
+
+    def test_a_team_change_cancels_a_project_create_not_yet_issued_and_queues_it_again(self):
+        self.router.set_policy(POLICY)
+        Projects.gamma(self, "cache", "stale", "g1")
+        Projects.gamma(self, "queue", "lost", "g2")
+        answer = self.router.register_product(dict(GAMMA, team="GMX"))
+        revised = answer["projectsRevised"]
+        self.assertEqual((1, 1), (len(revised["cancelled"]), len(revised["queued"])))
+        self.assertIn("team is now 'GMX'", revised["cancelled"][0]["reasons"][0])
+        self.holder.run()
+        self.assertEqual(["GMX"], [p["team"] for p in self.linear.projects.values()])
+
+    def test_a_product_using_its_test_target_keeps_it(self):
+        self.route(origin="simulated", occurrenceKey="sim-1")
+        for changed in (None, {"team": "TS2", "project": "proj-test-2"}):
+            with self.subTest(testTarget=changed),                     self.assertRaises(products.RouteRefused) as caught:
+                self.router.register_product(dict(ALPHA, testTarget=changed))
+            self.assertEqual("route_state_conflict", caught.exception.reason.value)
+        self.assertEqual({"team": "TST", "project": "proj-test"},
+                         self.router.registry("alpha-notes")["testTarget"])
+        # Nothing of beta-meter is on a test target, so it may name one.
+        moved = self.router.register_product(dict(BETA, testTarget={"team": "TST",
+                                                                    "project": "proj-test"}))
+        self.assertEqual("TST", moved["testTarget"]["team"])
 
 
 class TheContractIsBound(unittest.TestCase):

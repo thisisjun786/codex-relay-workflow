@@ -136,7 +136,10 @@ refused. Any other change is applied to what is not filed yet: the product's hel
 filed ones whose fault owns no issue yet, are decided again in the same transaction, as
 `product-bind` decides them. A new triage project places what was held for want of one, and a new
 team re-points the ledger's target for their project, so a create not yet written goes to the
-new team. An issue already written stays where it is.
+new team. A project create not yet issued that was queued for the old team or family label is
+cancelled and queued again under the new one. An issue or project already written stays where it
+is. A product with simulated routes or test bindings keeps its test target, because they live
+there.
 
 ## Shared causes
 
@@ -183,8 +186,9 @@ on one record and one write.
 
 Immediately before the write is issued, the kind's pre-issue check recomputes the whole predicate
 from this store inside the ledger's own transaction: the policy still enabled, enough members
-still held for want of a project under that goal, and no active project bound meanwhile that
-covers a member's component. Any failure cancels the unissued write and nothing is created.
+still held for want of a project under that goal, no active project bound meanwhile that
+covers a member's component, and the product's registry still naming the team and family label
+the create carries. Any failure cancels the unissued write and nothing is created.
 
 When the create confirms, `route-reconcile` binds the created project, and so does every digest
 before it reports anything. Binding decides the held members again, so they move into it, all in
@@ -264,11 +268,11 @@ resolved. An approved exception closes it the same way, with the exception as th
 requirement quietly dropped after a mismatch keeps it open. So does a claim withdrawn while the
 mismatch is open, a subject taken back out of Done for instance: the check answers
 `claim_withdrawn_without_closure` and records no new occurrence, because a subject taken back is
-not a new failure. The claim made again with its evidence closes it. An unverified check is cleared
-by a later reading that establishes it either way. A reading where every check now agrees, but an
-open mismatch still lacks its fix and verification references, answers `closure_pending` rather
-than `consistent`: nothing is wrong any more, and nothing is closed. A legitimate Done produces no
-write at all.
+not a new failure; an exception nobody could verify changes neither. The claim made again with its
+evidence closes it. An unverified check is cleared by a later reading that establishes it either
+way. A reading where every check now agrees, but an open mismatch still lacks its fix and
+verification references, answers `closure_pending` rather than `consistent`: nothing is wrong any
+more, and nothing is closed. A legitimate Done produces no write at all.
 
 Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
 after a fix in its current cycle, or open in a cycle after a resolution. The ledger has already

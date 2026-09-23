@@ -949,7 +949,8 @@ class ProjectEligibility(RouteRows):
         self.router.register_product(ALPHA)
         self.payload = {"product": "alpha-notes", "goal": "offline_sync",
                         "criteria": "edits made offline survive reconnect",
-                        "members": ["c" * 32, "d" * 32], "components": ["cache", "queue"]}
+                        "members": ["c" * 32, "d" * 32], "components": ["cache", "queue"],
+                        "team": ALPHA["team"], "familyLabel": ALPHA["familyLabel"]}
 
     def policy(self, enabled=True):
         self.router.set_policy({"schema": "routing-policy/1", "policy": "project_creation",
@@ -970,6 +971,13 @@ class ProjectEligibility(RouteRows):
         self.assertTrue(self.problems())
         self.policy()
         self.assertEqual([], self.problems())
+
+    def test_a_create_queued_for_the_products_old_team_is_refused(self):
+        self.policy()
+        self.upsert("c" * 32)
+        self.upsert("d" * 32)
+        self.router.register_product(dict(ALPHA, team="ALX"))
+        self.assertEqual(["alpha-notes's team is now 'ALX', not 'ALN'"], self.problems())
 
     def test_a_member_that_left_the_group_cancels_the_create(self):
         from codex_session_relay import routes

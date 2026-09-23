@@ -87,6 +87,18 @@ def eligibility(db, payload) -> list:
                         f" the policy needs {policy['minIndependentFixes']}")
     if not payload.get("criteria"):
         problems.append("the goal declares no completion criteria")
+    # A create carries the team and family label its product had when it was queued; a
+    # registry changed since then must not see a project made where the product no longer is.
+    row = db.execute("SELECT record FROM product_registry WHERE product_key = ?",
+                     (payload["product"],)).fetchone()
+    registry = json.loads(row["record"]) if row else None
+    if registry is None:
+        problems.append(f"{payload['product']} is no longer registered")
+    else:
+        for key, name in (("team", "team"), ("familyLabel", "family label")):
+            if registry[key] != payload.get(key):
+                problems.append(f"{payload['product']}'s {name} is now {registry[key]!r},"
+                                f" not {payload.get(key)!r}")
     for binding in db.execute("SELECT record FROM product_bindings WHERE product_key = ?"
                               " AND kind = 'project'", (payload["product"],)).fetchall():
         project = json.loads(binding["record"])
@@ -184,6 +196,39 @@ def evaluate(router, product) -> dict:
         queued.append({"goal": goal, "faultId": fault_id, "trigger": trigger,
                        "members": payload["members"]})
     return {"queued": queued, "skipped": skipped}
+
+
+REVISABLE = ("pending", "failed", "claimed")
+
+
+def revise(router, product) -> dict:
+    """Cancel the product's project creates that no longer qualify and that nothing has issued,
+    then evaluate again, so a goal that still qualifies is queued with the registry as it is.
+
+    The pre-issue check would refuse such a create anyway; this settles it when the registry
+    changes rather than whenever a holder next reaches it. A create already issued is the
+    ledger's to reconcile and is left alone.
+    """
+    port = router.port
+    cancelled, after = [], None
+    while True:
+        page = routes.listing(router.store, product=product, stages=(products.STAGE_FILED,),
+                              dispositions=(products.PROJECT_PROPOSAL,), limit=100, after=after)
+        for route in page["routes"]:
+            for row in port.publications(route["fault_id"], kind=KIND, limit=100):
+                if row.get("state") not in REVISABLE:
+                    continue
+                problems = eligibility(router.store.db, row.get("payload") or {})
+                if problems:
+                    port.cancel(row["publication_id"], reason="; ".join(problems))
+                    cancelled.append({"faultId": route["fault_id"],
+                                      "publicationId": row["publication_id"],
+                                      "reasons": problems})
+        after = page["next"]
+        if after is None:
+            break
+    evaluated = evaluate(router, product) if cancelled else {"queued": [], "skipped": []}
+    return {"cancelled": cancelled, "queued": evaluated["queued"]}
 
 
 def bind_confirmed(router, route) -> list:
