@@ -256,6 +256,28 @@ durable copy of the bridge executable and its arguments. The table standdown arc
 under the record's own `.superseded-` name before the bytes go, so a run interrupted between the
 two rebuilds the record from the archive instead of from the pointer default with no arguments.
 
+The same holds for the execution policy a plugin-owned record may name (see
+[the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
+Step 7 carries it forward from the live record when that record is the plugin's, and otherwise,
+with no live registration, from the newest retired record when that one was the plugin's. A rerun
+on such a host is therefore `already_done`, and a transition after `disable` rebuilds a record
+naming the same file and digest instead of one that starts a bridge checking no role. A user-owned
+record never names a policy, so nothing is invented for a manual install.
+
+The newest archive has to read as a record for that carry-forward. When it cannot be read, or is
+not a regular file at all, the rebuild is refused rather than taken from an older archive, because
+an older one can predate the policy.
+Every entry under the stem also has to carry a name `retire` writes, a real UTC moment stamped
+`YYYYMMDDTHHMMSSZ` with an optional collision suffix from `-001` up, padded to three digits. An entry whose name cannot be placed in that order might be the
+newest, so it refuses the rebuild by name instead of being ranked below the others.
+
+The file the carried reference names is read too, the way the launcher reads it at every start: it
+has to open as a regular file whose bytes hash to the recorded digest. A policy edited or removed
+since it was recorded, whether after a `disable` or under a live record, makes preflight refuse and
+name the repair (restore the file, or register the policy as it now stands). Writing the stale
+reference would leave a record no new thread's launcher starts, reported as settled, and dropping
+it would start a bridge that checks no role.
+
 ## Update
 
 Nothing here migrates a session. The settings record the adapter, the interpreter and the relay

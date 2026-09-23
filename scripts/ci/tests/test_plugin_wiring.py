@@ -10,24 +10,76 @@ relay is a file these cases create, and every command runs against a temporary C
 """
 
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
-from crw_runtime import bridgerecord, completion, hooks, reading
+from crw_runtime import bridgerecord, completion, hooks, hostrecord, reading
 
 import plugin
 
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
+BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
+BRIDGE_LAUNCHER = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+
+# The bridge's own policy module, loaded from this checkout. It imports nothing outside the
+# standard library, so the launcher's variables and digests are compared with the real reader
+# here rather than with a copy of its constants.
+sys.path.insert(0, str(BRIDGE_SOURCE))
+from codex_thread_bridge import execution  # noqa: E402
+
+# A policy the bridge's parser accepts, declaring roles and no allowlist.
+POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+                    "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}
+# Another valid policy, so a changed file is a different policy rather than a broken one.
+OTHER_POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+                          "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}
+
+# A launcher as it stood before record version 2, reduced to what it did with a record: stand down
+# for another owner, refuse any version but 1, and exec what the record names.
+V1_LAUNCHER = (
+    "import json, os, sys\n"
+    "from pathlib import Path\n"
+    "record = Path(os.environ['CODEX_HOME']) / 'crw-bridge-mcp.json'\n"
+    "document = json.loads(record.read_text())\n"
+    "if document.get('recordVersion') != 1:\n"
+    "    sys.stderr.write('crw bridge launcher: the record is version %r' %"
+    " document.get('recordVersion'))\n"
+    "    raise SystemExit(2)\n"
+    "executable = document['bridgeExecutable']\n"
+    "os.execv(executable, [executable, *document['args']])\n"
+)
+
+
+def write_policy(path, mapping=POLICY):
+    data = json.dumps(mapping, indent=2).encode("utf-8")
+    Path(path).write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_launcher():
+    """The packaged launcher as a module. Its main() runs only under __main__.
+
+    Compiled from its source rather than imported, because an import writes a __pycache__ into
+    the plugin root, and everything in that directory ships: the payload check then refuses it.
+    """
+    module = types.ModuleType("crw_bridge_mcp_under_test")
+    module.__file__ = str(BRIDGE_LAUNCHER)
+    exec(compile(BRIDGE_LAUNCHER.read_text(encoding="utf-8"), str(BRIDGE_LAUNCHER), "exec"),
+         module.__dict__)
+    return module
 
 try:  # The configuration reader arrived in 3.11 and this repository still supports 3.10.
     import tomllib  # noqa: F401
@@ -589,6 +641,872 @@ class BridgeRecordTest(unittest.TestCase):
                          bridgerecord.OWNER_USER)
 
 
+class BridgeRecordPolicyTest(unittest.TestCase):
+    """register-mcp --execution-policy: the record names the file and its digest, and nothing else.
+
+    The policy is judged by the bridge's own parser before anything is written, a rerun that
+    changes nothing writes nothing, and every other difference is refused like any other conflict.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Home(self.stack)
+        self.bridge = self.home.destination / "current" / "bin" / "codex-thread-bridge"
+        self.bridge.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.bridge.chmod(0o755)
+        self.policy = self.home.destination.parent / "execution-policy.json"
+        self.digest = write_policy(self.policy)
+
+    @property
+    def record(self):
+        return self.home.codex_home / bridgerecord.RECORD_NAME
+
+    def register(self, *extra, policy=None):
+        arguments = ["register-mcp", "--codex-home", str(self.home.codex_home),
+                     "--bridge-command", str(self.bridge), "--owner", "plugin"]
+        if policy is not False:
+            arguments += ["--execution-policy", str(policy or self.policy)]
+        return run(*arguments, *extra)
+
+    def install_package(self, launcher_text=None, *, marketplace="crw", plugin="crw",
+                        version="0.4.0"):
+        """A cached package; the shipped crw one unless a launcher is given."""
+        root = self.home.codex_home / "plugins" / "cache" / marketplace / plugin / version
+        shutil.copytree(ROOT / "plugins" / "crw", root)
+        if launcher_text is not None:
+            (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        return root / "wiring" / "crw_bridge_mcp.py"
+
+    def enable(self, *keys, enabled=True):
+        """Register plugins in the Codex configuration the way an installation does."""
+        text = "".join('[plugins."' + key + '"]\nenabled = ' + ("true" if enabled else "false")
+                       + "\n" for key in keys)
+        (self.home.codex_home / "config.toml").write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def older_launcher():
+        """A launcher from before version 2: it reads the record and starts only version 1."""
+        return V1_LAUNCHER
+
+    @staticmethod
+    def shipped_launcher_with(old, new):
+        """The shipped launcher with one behaviour taken away, still declaring version 2."""
+        shipped = BRIDGE_LAUNCHER.read_text(encoding="utf-8")
+        assert shipped.count(old) == 1, old
+        assert "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) in shipped
+        return shipped.replace(old, new)
+
+    def test_the_record_names_the_file_and_its_digest_and_nothing_it_says(self):
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        document = json.loads(self.record.read_text(encoding="utf-8"))
+        self.assertEqual(document["recordVersion"], bridgerecord.POLICY_RECORD_VERSION)
+        self.assertEqual(document["executionPolicy"],
+                         {"path": str(self.policy), "digest": self.digest})
+        self.assertEqual(bridgerecord.complaints(document), [])
+        # The record carries no policy content. The report carries what get_capabilities
+        # discloses anyway, the mode and the role pairs, and says whose parser judged it.
+        raw = self.record.read_text(encoding="utf-8")
+        for pair in POLICY["roles"].values():
+            self.assertNotIn(pair["model"], raw)
+        self.assertEqual(emitted["executionPolicy"]["digest"], self.digest)
+        self.assertEqual(emitted["executionPolicy"]["roles"],
+                         execution.ExecutionPolicy.from_mapping(POLICY).summary()["roles"])
+        self.assertIn(str(BRIDGE_SOURCE), emitted["executionPolicy"]["parsedWith"])
+        self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+
+    def test_a_plan_judges_the_policy_and_writes_nothing(self):
+        status, emitted, output = self.register()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.WOULD_CREATE, output)
+        self.assertEqual(emitted["executionPolicy"]["digest"], self.digest, output)
+        self.assertFalse(self.record.exists(), output)
+
+    def test_an_unchanged_rerun_is_unchanged_and_writes_nothing(self):
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.UNCHANGED, output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_an_edited_policy_is_a_different_registration_and_is_refused(self):
+        """Another VALID policy at the same path: the digest is what differs."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        write_policy(self.policy, OTHER_POLICY)
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.DIFFERS, output)
+        self.assertIn(bridgerecord.POLICY_FIELD, emitted["differingFields"], output)
+        self.assertIn("aside", emitted["repair"], output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_every_other_difference_in_the_policy_is_refused_too(self):
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        other = self.home.destination.parent / "other-policy.json"
+        write_policy(other)
+        for label, policy in (("another file with the same bytes", other),
+                              ("no policy at all", False)):
+            with self.subTest(label):
+                status, emitted, output = self.register("--apply", policy=policy)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], bridgerecord.DIFFERS, output)
+                self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_a_record_written_before_the_field_existed_is_not_rewritten_in_place(self):
+        """Adding a policy changes what the bridge starts under, so it is a conflict as well."""
+        self.assertEqual(self.register("--apply", policy=False)[0], 0)
+        before = self.record.read_bytes()
+        self.assertEqual(json.loads(before)["recordVersion"], bridgerecord.RECORD_VERSION)
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("aside", emitted["repair"], output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+        # The repair it names works: once the old record is out of the way, the same run lands.
+        self.record.rename(self.record.with_name(bridgerecord.RECORD_NAME + ".pre-policy"))
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(json.loads(self.record.read_text())["executionPolicy"]["digest"],
+                         self.digest)
+
+    def test_a_policy_the_bridge_would_refuse_is_never_recorded(self):
+        contradiction = {"allowed": [{"model": "devin/swe-2", "efforts": ["max"]}],
+                         "roles": POLICY["roles"]}
+        broken = self.home.destination.parent / "broken.json"
+        cases = {
+            "not JSON": (lambda: broken.write_text("{ not json", encoding="utf-8"), broken),
+            "a role pair its own allowlist omits":
+                (lambda: write_policy(broken, contradiction), broken),
+            "no such file": (lambda: None, self.home.destination.parent / "absent.json"),
+            # A file by the padded name exists and parses, so the padding is the only refusal.
+            "a padded path": (lambda: write_policy(Path(str(self.policy) + " ")),
+                              str(self.policy) + " "),
+            "an unknown user's home": (lambda: None, "~crw218-no-such-user/policy.json"),
+        }
+        for label, (prepare, policy) in cases.items():
+            with self.subTest(label):
+                prepare()
+                status, emitted, output = self.register("--apply", policy=policy)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "execution_policy_unreadable", output)
+                self.assertFalse(emitted["wrote"], output)
+                self.assertFalse(self.record.exists(), output)
+
+    def test_a_pipe_named_as_the_policy_is_refused_without_holding_the_lock(self):
+        """Registration decides under the ownership lock, so a read that blocks holds every run."""
+        pipe = self.home.destination.parent / "policy.fifo"
+        os.mkfifo(pipe)
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", str(pipe), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        emitted = json.loads(finished.stdout)
+        self.assertEqual(finished.returncode, 1, finished.stdout + finished.stderr)
+        self.assertEqual(emitted["outcome"], "execution_policy_unreadable")
+        self.assertIn("not a regular file", emitted["detail"])
+        self.assertFalse(self.record.exists())
+        # And the lock was released: the next run is not held up by the refused one.
+        self.assertEqual(self.register("--apply")[0], 0)
+
+    def test_a_path_this_system_cannot_encode_is_a_refusal_and_not_a_traceback(self):
+        import runtime_install
+        policy, why = runtime_install._execution_policy_reading(str(self.policy) + "\ud800")
+        self.assertIsNone(policy)
+        self.assertIn("encoded", why)
+        self.assertNotEqual(bridgerecord.policy_path_complaints("/p\ud800"), [])
+
+    def test_the_shared_readers_judge_the_descriptor_not_the_earlier_look(self):
+        """Every read under the ownership lock goes through reading.read_text or read_json.
+
+        Both looked at the path and then opened it by path; a pipe swapped in between blocked the
+        open. Now the bytes come from one non-blocking descriptor judged as a regular file.
+        """
+        for reader in ("read_text", "read_json"):
+            with self.subTest(reader):
+                target = self.home.destination.parent / ("swapped-" + reader + ".json")
+                target.write_text("{}", encoding="utf-8")
+                program = RegisterMcpDoesNotShadowADeclaredServer.SWAPS_A_PIPE_IN_AFTER_OBSERVE + (
+                    "print(getattr(reading, sys.argv[3])(sys.argv[4], 'the file').state)\n")
+                try:
+                    done = subprocess.run(
+                        [sys.executable, "-c", program, str(ROOT / "scripts"), target.name,
+                         reader, str(target)], capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self.fail(reader + " blocked on a file swapped for a pipe")
+                self.assertEqual(done.returncode, 0, done.stderr)
+                # Answered, and in the partition nothing is concluded from.
+                self.assertEqual(len(done.stdout.split()), 1, done.stdout)
+                self.assertIn(done.stdout.split()[0], reading.UNUSABLE, done.stdout)
+
+    def test_reading_a_record_that_is_a_pipe_answers_without_blocking(self):
+        """Every reader of the record goes through this, register-mcp and the transition too."""
+        pipe = self.home.destination.parent / "record.fifo"
+        os.mkfifo(pipe)
+        done = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\nsys.path.insert(0, sys.argv[1])\n"
+             "from crw_runtime import bridgerecord\n"
+             "for follow in (True, False):\n"
+             "    print(bridgerecord.read_json_without_blocking(sys.argv[2], 'x',"
+             " follow=follow).state)\n"
+             "print(bridgerecord.read(sys.argv[2])[1])\n",
+             str(ROOT / "scripts"), str(pipe)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["UNREADABLE"] * 3, done.stdout)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_cached_manifest_that_is_a_pipe_is_refused_without_blocking(self):
+        launcher = self.install_package()
+        manifest = launcher.parent.parent / ".codex-plugin" / "plugin.json"
+        manifest.unlink()
+        os.mkfifo(manifest)
+        self.enable("crw@crw")
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", str(self.policy), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        emitted = json.loads(finished.stdout)
+        self.assertEqual(finished.returncode, 1, finished.stdout + finished.stderr)
+        self.assertEqual(emitted["outcome"], "launcher_not_established")
+        self.assertFalse(self.record.exists())
+
+    GUARDED_OPEN = (
+        "import builtins, io, os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "path = sys.argv[2]\n"
+        "real = builtins.open\n"
+        "def watched(file, *args, **kwargs):\n"
+        "    if str(file) == path:\n"
+        "        raise AssertionError('a blocking open of ' + path)\n"
+        "    return real(file, *args, **kwargs)\n"
+        "builtins.open = watched\n"
+        "io.open = watched\n"
+    )
+
+    def test_a_failed_nonblocking_open_is_never_retried_as_a_blocking_one(self):
+        """A second, ordinary open is where a FIFO swapped in between would block the reader."""
+        path = self.home.destination.parent / "record.json"
+        path.write_text(json.dumps({"recordVersion": 1}), encoding="utf-8")
+        program = self.GUARDED_OPEN + (
+            "from crw_runtime import bridgerecord\n"
+            "real_open = os.open\n"
+            "def once(target, flags, *args, **kwargs):\n"
+            "    if str(target) == path:\n"
+            "        os.open = real_open\n"
+            "        raise FileNotFoundError(2, 'gone for a moment', target)\n"
+            "    return real_open(target, flags, *args, **kwargs)\n"
+            "os.open = once\n"
+            "found = bridgerecord.read_json_without_blocking(path, 'the record')\n"
+            "print(found.state)\n"
+            "print(found.detail)\n")
+        done = subprocess.run([sys.executable, "-c", program, str(ROOT / "scripts"), str(path)],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        state, detail = done.stdout.splitlines()[:2]
+        self.assertNotEqual(state, "PRESENT", done.stdout)
+        self.assertIn("changed while it was being read", detail)
+
+    def test_the_cached_manifest_is_read_without_a_blocking_open(self):
+        """register-mcp asks read_plugin under the ownership lock."""
+        launcher = self.install_package()
+        manifest = launcher.parent.parent / ".codex-plugin" / "plugin.json"
+        program = self.GUARDED_OPEN + (
+            "from crw_transition import inventory\n"
+            "answer = inventory.read_plugin(sys.argv[3])\n"
+            "print(answer['payload']['manifest'])\n")
+        done = subprocess.run([sys.executable, "-c", program, str(ROOT / "scripts"),
+                               str(manifest), str(self.home.codex_home)],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split()[-1:], ["True"], done.stdout + done.stderr)
+
+    # register-mcp in a process that rewrites the policy file at one of two points: on entering
+    # the record's lock ("lock"), after the policy was read and hashed and before anything is
+    # written, or inside the record write itself ("write"), after the last look before it.
+    EDITS_THE_POLICY = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "policy, where = sys.argv[2], sys.argv[3]\n"
+        "def edit():\n"
+        "    with open(policy, 'w', encoding='utf-8') as handle:\n"
+        "        handle.write('{\"roles\": {\"child\": {\"model\": \"a/b\",'\n"
+        "                     ' \"reasoningEffort\": \"low\"}}}\\n')\n"
+        "if where == 'lock':\n"
+        "    real_enter = hostrecord.Locked.__enter__\n"
+        "    def entered_then_edited(self):\n"
+        "        held = real_enter(self)\n"
+        "        if self.path.name.startswith('crw-bridge-mcp.json'):\n"
+        "            edit()\n"
+        "        return held\n"
+        "    hostrecord.Locked.__enter__ = entered_then_edited\n"
+        "else:\n"
+        "    real_write = hostrecord.atomic_write\n"
+        "    def edited_then_written(path, text):\n"
+        "        if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
+        "            edit()\n"
+        "        return real_write(path, text)\n"
+        "    hostrecord.atomic_write = edited_then_written\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[4:]))\n"
+    )
+
+    def register_while_the_policy_is_edited(self, where):
+        done = subprocess.run(
+            [sys.executable, "-c", self.EDITS_THE_POLICY, str(ROOT / "scripts"),
+             str(self.policy), where, "register-mcp", "--codex-home", str(self.home.codex_home),
+             "--bridge-command", str(self.bridge), "--owner", "plugin", "--execution-policy",
+             str(self.policy), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        self.assertNotEqual(hashlib.sha256(self.policy.read_bytes()).hexdigest(), self.digest,
+                            "the hook has to have changed the policy for this to prove anything")
+        return done.returncode, json.loads(done.stdout), output
+
+    def test_a_policy_edited_after_it_was_read_writes_nothing(self):
+        """Devin, PR #137: the digest was taken before the write and never asked again.
+
+        The launcher hashes the file at every start, so a record naming the old digest starts no
+        bridge on any new thread, and register-mcp answered created and exit 0 over it.
+        """
+        status, emitted, output = self.register_while_the_policy_is_edited("lock")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
+        self.assertIn("now hashes to", emitted.get("detail") or "", output)
+        self.assertFalse(self.record.exists(), "nothing is written over a changed policy: "
+                         + output)
+        # And the output claims nothing it did not do: no record written, no new thread served.
+        self.assertIs(emitted.get("wrote"), False, output)
+        self.assertNotIn("activation", emitted, output)
+        self.assertTrue((emitted.get("note") or "").startswith("Refused"), output)
+
+    def test_a_policy_edited_while_the_record_is_written_is_not_reported_installed(self):
+        """The edit that lands after the last look before the write is caught by the read-back.
+
+        The record this run wrote then stays, refused and with its repair named: it is never
+        removed, because a removal by path cannot exclude a writer that does not take the
+        ownership lock. The launcher refuses its stale digest at every start.
+        """
+        status, emitted, output = self.register_while_the_policy_is_edited("write")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
+        self.assertIn("now hashes to", emitted.get("detail") or "", output)
+        self.assertIs(emitted.get("wrote"), True, output)
+        self.assertIn("aside", emitted.get("repair") or "", output)
+        self.assertTrue((emitted.get("note") or "").startswith("Refused after the write"), output)
+        self.assertIn("the record this run wrote was in place", emitted.get("detail") or "",
+                      output)
+        self.assertNotIn("activation", emitted, output)
+        self.assertTrue(self.record.exists(), output)
+
+    def _write_with_a_replacement(self, replacement, when):
+        """bridgerecord.write with the policy edited inside the write and another writer
+        replacing the record at one point after it. Returns (answer, whether it acted).
+
+        "after read-back": at the next look at the policy. "after lstat": right after any lstat of
+        the record once the write has happened, which is where a check-then-unlink rollback looks
+        before it unlinks. The edit lands inside the write, after any look before it, so every
+        revision of write() that asks the policy after writing finds it changed.
+        """
+        wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
+                                       owner=bridgerecord.OWNER_PLUGIN,
+                                       execution_policy={"path": str(self.policy),
+                                                         "digest": self.digest})
+        real_write, real_check = hostrecord.atomic_write, bridgerecord.policy_file_complaints
+        real_lstat = os.lstat
+        state = {"written": False, "replaced": False}
+
+        def replace():
+            staged = self.record.with_name("theirs.tmp")
+            staged.write_bytes(replacement)
+            os.replace(staged, self.record)
+            state["replaced"] = True
+
+        def edited_then_written(path, text):
+            write_policy(self.policy, {"roles": {"child": {"model": "a/b",
+                                                           "reasoningEffort": "low"}}})
+            identity = real_write(path, text)
+            state["written"] = True
+            return identity
+
+        def replaced_at_the_next_look(reference):
+            if when == "after read-back" and state["written"] and not state["replaced"]:
+                replace()
+            return real_check(reference)
+
+        def replaced_after_lstat(path, *args, **kwargs):
+            found = real_lstat(path, *args, **kwargs)
+            if (when == "after lstat" and state["written"] and not state["replaced"]
+                    and str(path) == str(self.record)):
+                replace()
+            return found
+
+        hostrecord.atomic_write = edited_then_written
+        bridgerecord.policy_file_complaints = replaced_at_the_next_look
+        os.lstat = replaced_after_lstat
+        try:
+            answer = bridgerecord.write(self.record, wanted, apply=True)
+        finally:
+            hostrecord.atomic_write = real_write
+            bridgerecord.policy_file_complaints = real_check
+            os.lstat = real_lstat
+        return answer, state["replaced"]
+
+    def test_a_record_replaced_after_the_last_look_is_never_deleted(self):
+        """Devin, PR #137 (f743d438): the rollback compared the inode, then unlinked the path.
+
+        A file put there between the two -- by an editor, which takes no lock -- was the one
+        deleted. The rollback no longer removes anything by path, so whatever is at the record
+        path after the write survives.
+        """
+        theirs = json.dumps(bridgerecord.document(command=str(self.bridge),
+                                                  name="codex-thread-bridge",
+                                                  owner=bridgerecord.OWNER_PLUGIN),
+                            indent=2) + "\n"
+        answer, replaced = self._write_with_a_replacement(theirs.encode("utf-8"), "after lstat")
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertTrue(self.record.exists(), "a record at the path was deleted: "
+                        + json.dumps(answer))
+        if replaced:
+            self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
+
+    def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
+        """Review of 28f11c04: a removal by path took whatever was there by then.
+
+        Here another writer replaces the record after the read-back and before the last look at
+        the policy; its record has to survive.
+        """
+        theirs = json.dumps(bridgerecord.document(command=str(self.bridge),
+                                                  name="codex-thread-bridge",
+                                                  owner=bridgerecord.OWNER_PLUGIN),
+                            indent=2) + "\n"
+        answer, replaced = self._write_with_a_replacement(theirs.encode("utf-8"),
+                                                          "after read-back")
+        self.assertTrue(replaced, "the other writer has to have acted")
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertTrue(self.record.exists(), "another writer's record was deleted: "
+                        + json.dumps(answer))
+        self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
+        # And it says what it saw rather than what it wrote: the record there is not this run's.
+        self.assertIn("no longer held the record this run wrote", answer["detail"], answer)
+        self.assertNotIn("was in place", answer["detail"], answer)
+        self.assertIn("removed nothing", answer["detail"], answer)
+        self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
+                         [], "nothing is moved aside")
+
+    # register-mcp in a process where another writer puts a record at the path just as this run
+    # takes the record's lock, so the write is refused as changed underneath: a refusal that
+    # carries no repair field.
+    WRITES_A_RECORD_AT_THE_LOCK = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "real_enter = hostrecord.Locked.__enter__\n"
+        "def entered_then_written(self):\n"
+        "    held = real_enter(self)\n"
+        "    if self.path.name.startswith('crw-bridge-mcp.json'):\n"
+        "        (self.path.parent / 'crw-bridge-mcp.json').write_text('{}', encoding='utf-8')\n"
+        "    return held\n"
+        "hostrecord.Locked.__enter__ = entered_then_written\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[2:]))\n"
+    )
+
+    def test_a_refusal_points_at_a_repair_only_when_it_carries_one(self):
+        """Review of 829bed79: every refusal note said "repair says what to do", with or without one."""
+        done = subprocess.run(
+            [sys.executable, "-c", self.WRITES_A_RECORD_AT_THE_LOCK, str(ROOT / "scripts"),
+             "register-mcp", "--codex-home", str(self.home.codex_home), "--bridge-command",
+             str(self.bridge), "--owner", "plugin", "--execution-policy", str(self.policy),
+             "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        emitted = json.loads(done.stdout)
+        self.assertNotEqual(done.returncode, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CHANGED_UNDERNEATH, output)
+        self.assertNotIn("repair", emitted, "precondition: this refusal carries no repair")
+        self.assertNotIn("repair", emitted.get("note") or "", output)
+
+    def test_a_dry_run_makes_no_activation_claim(self):
+        """Review of be3ebe4c: a dry run counted as settled and claimed new threads would run under
+        a record that does not exist."""
+        status, emitted, output = self.register()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.WOULD_CREATE, output)
+        self.assertFalse(self.record.exists(), output)
+        self.assertNotIn("activation", emitted, output)
+
+    def test_a_rerun_that_writes_nothing_does_not_say_it_wrote(self):
+        """Review of f743d438: every outcome printed "The record was written"."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.UNCHANGED, output)
+        self.assertIs(emitted.get("wrote"), False, output)
+        note = emitted.get("note") or ""
+        self.assertNotIn("was written", note, output)
+        self.assertIn("already installed", note, output)
+        # No crw package is installed here, so the activation claim can only be a condition.
+        self.assertTrue(emitted.get("activation", "").startswith("Conditional, not observed"),
+                        output)
+
+    # register-mcp in a process whose record write lands truncated, so it cannot be read back.
+    TRUNCATES_THE_RECORD = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "real_write = hostrecord.atomic_write\n"
+        "def truncated(path, text):\n"
+        "    if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
+        "        text = text[:len(text) // 2]\n"
+        "    return real_write(path, text)\n"
+        "hostrecord.atomic_write = truncated\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[2:]))\n"
+    )
+
+    def test_a_write_that_cannot_be_read_back_is_reported_as_written_and_unverified(self):
+        """Review of f743d438: the refusal note said no record was installed over one that was."""
+        done = subprocess.run(
+            [sys.executable, "-c", self.TRUNCATES_THE_RECORD, str(ROOT / "scripts"),
+             "register-mcp", "--codex-home", str(self.home.codex_home), "--bridge-command",
+             str(self.bridge), "--owner", "plugin", "--execution-policy", str(self.policy),
+             "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        emitted = json.loads(done.stdout)
+        self.assertNotEqual(done.returncode, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.APPLIED_UNVERIFIED, output)
+        self.assertIs(emitted.get("wrote"), True, output)
+        note = emitted.get("note") or ""
+        self.assertIn("was written", note, output)
+        self.assertIn("could not be read back", note, output)
+        self.assertNotIn("activation", emitted, output)
+        self.assertTrue(self.record.exists(), output)
+
+    def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
+        """The path that writes nothing is settled against the file as it stands too."""
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        wanted = json.loads(self.record.read_text(encoding="utf-8"))
+        before = self.record.read_bytes()
+        write_policy(self.policy, {"roles": {"child": {"model": "a/b",
+                                                       "reasoningEffort": "low"}}})
+        answer = bridgerecord.write(self.record, wanted, apply=True)
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertNotIn(answer["outcome"], bridgerecord.SETTLED)
+        self.assertIn("now hashes to", answer["detail"])
+        self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
+
+    # register-mcp from a copy of this checkout, with argv[2] swapped for a pipe the moment the
+    # ownership lock is held: whatever the locked path imports from there after that would block.
+    SWAPS_A_MODULE_FOR_A_PIPE_UNDER_THE_LOCK = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "target = sys.argv[2]\n"
+        "real_enter = hostrecord.Locked.__enter__\n"
+        "def entered_then_swapped(self):\n"
+        "    held = real_enter(self)\n"
+        "    if self.path.name.startswith('crw-mcp-ownership') and os.path.isfile(target):\n"
+        "        os.unlink(target)\n"
+        "        os.mkfifo(target)\n"
+        "    return held\n"
+        "hostrecord.Locked.__enter__ = entered_then_swapped\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[3:]))\n"
+    )
+
+    def register_with_a_module_swapped_for_a_pipe(self, relative):
+        checkout = self.home.destination.parent / "checkout"
+        ignore = shutil.ignore_patterns("__pycache__")
+        for part in ("scripts", "plugins", "packages/codex-thread-bridge/src"):
+            shutil.copytree(ROOT / part, checkout / part, ignore=ignore)
+        target = checkout / relative
+        self.assertTrue(target.is_file(), target)
+        try:
+            done = subprocess.run(
+                [sys.executable, "-B", "-c", self.SWAPS_A_MODULE_FOR_A_PIPE_UNDER_THE_LOCK,
+                 str(checkout / "scripts"), str(target), "register-mcp", "--codex-home",
+                 str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+                 "plugin", "--execution-policy", str(self.policy), "--apply"],
+                capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("register-mcp blocked importing " + relative + " under the ownership lock")
+        self.assertTrue(stat.S_ISFIFO(os.lstat(target).st_mode), "the swap has to have happened")
+        return done, json.loads(done.stdout)
+
+    def test_the_policy_parser_is_imported_before_the_ownership_lock(self):
+        """Review of c647c09e: the bridge's parser was imported lazily under the lock."""
+        done, emitted = self.register_with_a_module_swapped_for_a_pipe(
+            "packages/codex-thread-bridge/src/codex_thread_bridge/execution.py")
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CREATED, done.stdout + done.stderr)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_package_selector_is_imported_before_the_ownership_lock(self):
+        """Review of c647c09e: crw_transition.inventory was imported lazily under the lock."""
+        self.install_package()
+        self.enable("crw@crw")
+        done, emitted = self.register_with_a_module_swapped_for_a_pipe(
+            "scripts/crw_transition/inventory.py")
+        self.assertEqual(emitted.get("outcome"), bridgerecord.CREATED, done.stdout + done.stderr)
+
+    def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
+        status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
+                                      "--bridge-command", str(self.bridge),
+                                      "--execution-policy", str(self.policy), "--apply")
+        self.assertEqual(status, 2, output)
+        self.assertIn("--execution-policy", emitted["detail"], output)
+        self.assertFalse(self.record.exists(), output)
+        self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+        with self.assertRaises(ValueError):
+            bridgerecord.document(command=str(self.bridge), owner=bridgerecord.OWNER_USER,
+                                  execution_policy={"path": str(self.policy),
+                                                    "digest": self.digest})
+
+    def test_a_relative_path_is_recorded_as_the_absolute_path_it_names(self):
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", self.policy.name, "--apply"],
+            capture_output=True, text=True, cwd=str(self.policy.parent))
+        self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
+        self.assertEqual(json.loads(self.record.read_text())["executionPolicy"]["path"],
+                         str(self.policy))
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_an_installed_launcher_that_predates_the_record_refuses_the_write(self):
+        """Written first, the record would stop every new thread's bridge until the update."""
+        old = self.install_package(launcher_text=self.older_launcher())
+        self.enable("crw@crw")
+        for extra in ((), ("--apply",)):
+            with self.subTest(extra or "plan"):
+                status, emitted, output = self.register(*extra)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "launcher_predates_policy", output)
+                self.assertIn(str(old), emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
+        # A record without a policy is what that launcher reads, and it is not held up.
+        self.assertEqual(self.register("--apply", policy=False)[0], 0)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_launcher_that_only_declares_the_version_is_asked_what_it_does(self):
+        """A constant proves nothing; each missing behaviour is found by running it."""
+        variants = {
+            "accepts only version 1": (
+                "    if version not in (RECORD_VERSION, POLICY_RECORD_VERSION):\n",
+                "    if version != RECORD_VERSION:\n", "did not start a bridge"),
+            "drops the policy on exec": (
+                "            os.execve(executable, [executable, *arguments], environment)\n",
+                "            os.execv(executable, [executable, *arguments])\n",
+                "without handing it the recorded policy"),
+            "ignores the digest": (
+                "    if actual != digest:\n", "    if False:\n",
+                "digest no longer matches"),
+            "starts the bridge without the policy when it cannot read it": (
+                "    except OSError as error:\n"
+                "        fail(\"the execution policy the record at \" + str(record) + \" names could"
+                " not be read (\"\n",
+                "    except OSError as error:\n"
+                "        return dict(os.environ)\n"
+                "        fail(\"the execution policy the record at \" + str(record) + \" names could"
+                " not be read (\"\n",
+                "when the policy the record names was missing"),
+            "looks for its record in HOME rather than where it is installed": (
+                "    named = os.environ.get(\"CODEX_HOME\")\n",
+                "    named = os.environ.get(\"CODEX_HOME\") or str(Path.home() / \".codex\")\n",
+                "did not start a bridge"),
+            "starts the bridge and then fails": (
+                "            os.execve(executable, [executable, *arguments], environment)\n",
+                "            __import__('subprocess').run([executable, *arguments], env=environment)\n"
+                "            raise SystemExit(2)\n",
+                "did not exit cleanly"),
+        }
+        for label, (old, new, reason) in variants.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                launcher = self.install_package(
+                    launcher_text=self.shipped_launcher_with(old, new))
+                self.enable("crw@crw")
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "launcher_predates_policy", output)
+                self.assertIn(str(launcher), emitted["detail"], output)
+                self.assertIn(reason, emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_launcher_is_probed_with_the_command_the_package_declares(self):
+        """Run with another interpreter, a declaration Codex could not start would pass."""
+        cases = {
+            "a command that cannot run it": ("sh", "launcher_predates_policy",
+                                             "did not start a bridge"),
+            "a command that does not resolve": ("crw218-no-such-interpreter",
+                                                "launcher_not_established", "does not resolve"),
+        }
+        for label, (command, outcome, reason) in cases.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                launcher = self.install_package()
+                declaration = launcher.parent / "mcp.json"
+                document = json.loads(declaration.read_text(encoding="utf-8"))
+                document["mcpServers"]["codex-thread-bridge"]["command"] = command
+                declaration.write_text(json.dumps(document), encoding="utf-8")
+                self.enable("crw@crw")
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], outcome, output)
+                self.assertIn(reason, emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_enabled_crw_launcher_decides_and_unrelated_packages_do_not(self):
+        """Another plugin may declare a server with the same name through an older launcher."""
+        self.install_package()
+        self.install_package(launcher_text=self.older_launcher(), marketplace="tools",
+                             plugin="other")
+        self.enable("crw@crw", "other@tools")
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.CREATED, output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_disabled_or_unregistered_crw_package_starts_nothing_and_holds_nothing_up(self):
+        self.install_package(launcher_text=self.older_launcher())
+        for label, keys, enabled in (("disabled", ("crw@crw",), False), ("unregistered", (), True)):
+            with self.subTest(label):
+                self.enable(*keys, enabled=enabled)
+                status, emitted, output = self.register()
+                self.assertEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], bridgerecord.WOULD_CREATE, output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_an_entry_that_omits_enabled_is_loaded_and_its_launcher_is_asked(self):
+        """Codex's PluginConfig defaults enabled to true, so this entry's launcher starts the record.
+
+        Pinned because standing the package down whenever enabled is not literally true was
+        proposed in review: it would write a version-2 record beside an older launcher Codex does
+        load, and every new thread would start without a bridge.
+        """
+        self.install_package(launcher_text=self.older_launcher())
+        (self.home.codex_home / "config.toml").write_text('[plugins."crw@crw"]\n',
+                                                           encoding="utf-8")
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), "launcher_predates_policy", output)
+        self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_crw_selection_that_is_ambiguous_or_unreadable_is_refused_by_name(self):
+        cases = {
+            "two cached versions": (lambda: (self.install_package(),
+                                             self.install_package(version="0.5.0"),
+                                             self.enable("crw@crw")), "more than one cached"),
+            "two marketplaces": (lambda: (self.install_package(),
+                                          self.enable("crw@crw", "crw@elsewhere")),
+                                 "more than one marketplace"),
+            "an unreadable configuration": (lambda: (self.install_package(),
+                                                     (self.home.codex_home / "config.toml")
+                                                     .write_text("[plugins\n", encoding="utf-8")),
+                                            "could not be read"),
+        }
+        for label, (prepare, reason) in cases.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                prepare()
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertFalse(self.record.exists(), output)
+                if label == "an unreadable configuration":
+                    # The ownership check reads the same file first and refuses on it too; either
+                    # refusal names the reason, and neither writes.
+                    self.assertIn("read", emitted["detail"], output)
+                    continue
+                self.assertEqual(emitted["outcome"], "launcher_not_established", output)
+                self.assertIn(reason, emitted["detail"], output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_cache_this_run_may_not_search_is_refused_and_not_read_as_empty(self):
+        """Review of 1c3f7a13: is_dir() answered False for a plugins directory it could not search.
+
+        That read as "nothing cached", the record was written, and once access came back the
+        enabled package's older launcher refused it on every new thread.
+        """
+        if os.geteuid() == 0:
+            self.skipTest("root searches a directory whatever its mode")
+        for closed in ("plugins", "plugins/cache"):
+            with self.subTest(closed):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                self.install_package(launcher_text=self.older_launcher())
+                self.enable("crw@crw")
+                directory = self.home.codex_home / closed
+                directory.chmod(0)
+                try:
+                    status, emitted, output = self.register("--apply")
+                finally:
+                    directory.chmod(0o755)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted.get("outcome"), "launcher_not_established", output)
+                self.assertIn("Permission", emitted.get("detail", ""), output)
+                self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_launcher_this_package_ships_accepts_the_write(self):
+        self.install_package()
+        self.enable("crw@crw")
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.CREATED, output)
+
+    @unittest.skipIf(TOML_READER, "the floor this repository supports has no configuration reader")
+    def test_on_the_floor_an_installed_package_is_refused_rather_than_guessed_at(self):
+        self.install_package()
+        self.enable("crw@crw")
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), output)
+
+    def test_the_policy_is_part_of_what_the_record_starts(self):
+        base = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                     name="codex-thread-bridge",
+                                     execution_policy={"path": "/p", "digest": "a" * 64})
+        for changed in (
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge"),
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge",
+                                      execution_policy={"path": "/q", "digest": "a" * 64}),
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge",
+                                      execution_policy={"path": "/p", "digest": "b" * 64})):
+            self.assertFalse(bridgerecord.same_registration(base, changed), changed)
+
+    def test_the_reader_refuses_every_shape_the_writer_never_produces(self):
+        good = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                     name="codex-thread-bridge",
+                                     execution_policy={"path": "/p", "digest": "a" * 64})
+        self.assertEqual(bridgerecord.complaints(good), [])
+        wrong = {
+            "version 1 naming a policy": dict(good, recordVersion=bridgerecord.RECORD_VERSION),
+            "version 2 naming none": {k: v for k, v in good.items() if k != "executionPolicy"},
+            "a user-owned policy record": dict(good, owner=bridgerecord.OWNER_USER),
+            "a padded path": dict(good, executionPolicy={"path": "/p ", "digest": "a" * 64}),
+            "a relative path": dict(good, executionPolicy={"path": "p", "digest": "a" * 64}),
+            "a bad digest": dict(good, executionPolicy={"path": "/p", "digest": "A" * 64}),
+            "an extra key": dict(good, executionPolicy={"path": "/p", "digest": "a" * 64,
+                                                        "roles": {}}),
+        }
+        for label, document in wrong.items():
+            with self.subTest(label):
+                self.assertNotEqual(bridgerecord.complaints(document), [])
+
+
 # ---------------------------------------------------------------- the packaged launchers
 
 
@@ -794,7 +1712,7 @@ class BridgeLauncherTest(unittest.TestCase):
         self.assertTrue(proof.exists(), done.stderr)
 
     def test_a_record_version_this_launcher_does_not_read_is_refused(self):
-        self.record(recordVersion=2)
+        self.record(recordVersion=bridgerecord.POLICY_RECORD_VERSION + 1)
         done = self.start()
         self.assertEqual(done.returncode, 2)
         self.assertIn("version", done.stderr)
@@ -820,8 +1738,14 @@ class BridgeLauncherTest(unittest.TestCase):
                       self.LAUNCHER.read_text(encoding="utf-8"))
 
     def test_the_launcher_and_the_writer_agree_on_the_record_version(self):
-        self.assertIn("RECORD_VERSION = " + str(bridgerecord.RECORD_VERSION),
-                      self.LAUNCHER.read_text(encoding="utf-8"))
+        """Compared as values, with the writer and with the bridge that reads the variables."""
+        launcher = load_launcher()
+        self.assertEqual((launcher.RECORD_VERSION, launcher.POLICY_RECORD_VERSION),
+                         bridgerecord.RECORD_VERSIONS)
+        self.assertEqual((launcher.POLICY_FIELD, tuple(launcher.POLICY_KEYS)),
+                         (bridgerecord.POLICY_FIELD, tuple(bridgerecord.POLICY_KEYS)))
+        self.assertEqual((launcher.POLICY_VARIABLE, launcher.DIGEST_VARIABLE),
+                         (execution.ENVIRONMENT_VARIABLE, execution.DIGEST_VARIABLE))
 
     def test_it_starts_the_executable_the_record_names_unchanged(self):
         proof = self.home / "started"
@@ -832,6 +1756,205 @@ class BridgeLauncherTest(unittest.TestCase):
         done = self.start()
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(proof.exists(), done.stderr)
+
+
+class BridgeLauncherPolicyTest(unittest.TestCase):
+    """A record naming the host's policy: the bridge gets it, or does not start.
+
+    Codex hands the launcher the App Server's bare environment, so these start it with nothing but
+    PATH and CODEX_HOME. The bridge it execs is a probe that asks the bridge's own policy module
+    what it would enforce, through from_environment -- the call the real server makes in main() --
+    and writes the answer down. A probe that never wrote anything was never started.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw218-")))
+        self.proof = self.home / "proof.json"
+        self.probe = self.home / "probe.py"
+        self.probe.write_text(
+            "import json, os, sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from codex_thread_bridge import execution\n"
+            "try:\n"
+            "    answer = {'summary': execution.ExecutionPolicy.from_environment(os.environ)"
+            ".summary()}\n"
+            "except execution.ExecutionPolicyError as error:\n"
+            "    answer = {'refused': str(error)}\n"
+            "answer['variables'] = {name: os.environ.get(name) for name in"
+            " (execution.ENVIRONMENT_VARIABLE, execution.DIGEST_VARIABLE)}\n"
+            "open(sys.argv[1], 'w').write(json.dumps(answer))\n" % str(BRIDGE_SOURCE),
+            encoding="utf-8")
+        self.policy = self.home / "execution-policy.json"
+        self.digest = write_policy(self.policy)
+
+    def reference(self, **overrides):
+        reference = {"path": str(self.policy), "digest": self.digest}
+        reference.update(overrides)
+        return reference
+
+    def record(self, **overrides):
+        document = {"recordVersion": bridgerecord.POLICY_RECORD_VERSION, "owner": "plugin",
+                    "serverName": "codex-thread-bridge", "bridgeExecutable": sys.executable,
+                    "args": [str(self.probe), str(self.proof)],
+                    "executionPolicy": self.reference()}
+        document.update(overrides)
+        for key in [name for name, value in document.items() if value is None]:
+            del document[key]
+        (self.home / bridgerecord.RECORD_NAME).write_text(json.dumps(document), encoding="utf-8")
+
+    def start(self, **environment):
+        return subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="",
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home),
+                                   **environment})
+
+    def answer(self):
+        return json.loads(self.proof.read_text(encoding="utf-8")) if self.proof.exists() else None
+
+    def assert_refused(self, done, *needles):
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIsNone(self.answer(), "a refused start must not reach the bridge")
+        for needle in needles:
+            self.assertIn(needle, done.stderr)
+
+    def test_the_bridge_is_started_under_the_policy_the_record_names(self):
+        self.record()
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        answer = self.answer()
+        self.assertEqual(answer["variables"], {execution.ENVIRONMENT_VARIABLE: str(self.policy),
+                                               execution.DIGEST_VARIABLE: self.digest})
+        self.assertEqual(answer["summary"]["digest"], self.digest)
+        self.assertEqual(answer["summary"]["roles"],
+                         execution.ExecutionPolicy.from_mapping(POLICY).summary()["roles"])
+        # The launcher's digest and the bridge's are the same function of the same bytes.
+        self.assertEqual(self.digest, execution.ExecutionPolicy.from_file(self.policy)
+                         .summary()["digest"])
+
+    def test_a_version_1_record_starts_with_no_policy_exactly_as_before(self):
+        self.record(recordVersion=bridgerecord.RECORD_VERSION, executionPolicy=None)
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        answer = self.answer()
+        self.assertEqual(answer["summary"], {"mode": "presence_only", "digest": None, "roles": {}})
+        self.assertEqual(answer["variables"], {execution.ENVIRONMENT_VARIABLE: None,
+                                               execution.DIGEST_VARIABLE: None})
+
+    def test_a_version_1_record_passes_its_environment_through_untouched(self):
+        """Exactly as before means a variable the host did set still reaches the bridge."""
+        self.record(recordVersion=bridgerecord.RECORD_VERSION, executionPolicy=None)
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: str(self.policy)})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["summary"]["digest"], self.digest)
+
+    def test_a_version_1_record_that_names_a_policy_is_refused(self):
+        """Started as version 1 it would run the bridge without the policy it names."""
+        self.record(recordVersion=bridgerecord.RECORD_VERSION)
+        self.assert_refused(self.start(), "version 2")
+
+    def test_a_policy_record_without_a_usable_reference_is_refused(self):
+        cases = {
+            "absent": None,
+            "not an object": "/etc/policy.json",
+            "no digest": {"path": str(self.policy)},
+            "an extra key": dict(self.reference(), note="x"),
+            "a relative path": self.reference(path="execution-policy.json"),
+            "a newline": self.reference(path=str(self.policy) + "\n"),
+            "an empty path": self.reference(path=""),
+            "a short digest": self.reference(digest=self.digest[:32]),
+            "an uppercase digest": self.reference(digest=self.digest.upper()),
+        }
+        for label, reference in cases.items():
+            with self.subTest(label):
+                self.record(executionPolicy=reference)
+                self.assert_refused(self.start())
+
+    def test_a_padded_path_is_refused_even_when_a_file_by_that_name_exists(self):
+        """The bridge strips the variable, so it would open the unpadded file instead.
+
+        The padded file exists and matches its digest, so only the padding check stands between
+        this record and a bridge started under a file other than the one the record names.
+        """
+        padded = Path(str(self.policy) + " ")
+        digest = write_policy(padded, OTHER_POLICY)
+        self.record(executionPolicy=self.reference(path=str(padded), digest=digest))
+        self.assert_refused(self.start(), "whitespace")
+
+    def test_a_policy_the_launcher_cannot_read_is_refused_naming_the_record(self):
+        absent = self.home / "absent.json"
+        directory = self.home / "a-directory"
+        directory.mkdir()
+        cases = [("absent", absent), ("a directory", directory)]
+        if os.geteuid() != 0:
+            # root reads through a mode of 000, so the case exists only for everyone else.
+            locked = self.home / "locked.json"
+            write_policy(locked)
+            locked.chmod(0)
+            self.addCleanup(locked.chmod, 0o600)
+            cases.append(("unreadable", locked))
+        for label, path in cases:
+            with self.subTest(label):
+                self.record(executionPolicy=self.reference(path=str(path)))
+                self.assert_refused(self.start(), str(self.home / bridgerecord.RECORD_NAME),
+                                    "register-mcp")
+
+    def test_a_pipe_named_as_the_policy_is_refused_without_blocking(self):
+        """Opening a FIFO for reading blocks until a writer arrives; the start must not wait."""
+        pipe = self.home / "policy.fifo"
+        os.mkfifo(pipe)
+        self.record(executionPolicy=self.reference(path=str(pipe)))
+        done = subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="", timeout=30,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+        self.assert_refused(done, "not a regular file")
+
+    def test_a_record_that_is_a_pipe_is_refused_without_blocking(self):
+        (self.home / bridgerecord.RECORD_NAME).unlink(missing_ok=True)
+        os.mkfifo(self.home / bridgerecord.RECORD_NAME)
+        done = subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="", timeout=30,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+        self.assert_refused(done, "not a regular file")
+
+    def test_a_policy_changed_after_it_was_registered_is_refused(self):
+        """Another VALID policy, so this fails on the digest and not on a parse."""
+        self.record()
+        replaced = write_policy(self.policy, OTHER_POLICY)
+        self.assertNotEqual(replaced, self.digest)
+        self.assert_refused(self.start(), self.digest, replaced)
+
+    def test_an_inherited_variable_naming_another_file_is_refused(self):
+        other = self.home / "other-policy.json"
+        write_policy(other, OTHER_POLICY)
+        self.record()
+        self.assert_refused(self.start(**{execution.ENVIRONMENT_VARIABLE: str(other)}),
+                            str(other), "Unset the variable")
+
+    def test_an_inherited_digest_that_disagrees_is_refused(self):
+        self.record()
+        self.assert_refused(self.start(**{execution.DIGEST_VARIABLE: "0" * 64}), "0" * 64)
+
+    def test_an_inherited_variable_naming_the_same_file_is_not_a_conflict(self):
+        self.record()
+        spelled = str(self.home / "." / self.policy.name)
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: spelled,
+                             execution.DIGEST_VARIABLE: self.digest})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["variables"][execution.ENVIRONMENT_VARIABLE],
+                         str(self.policy))
+
+    def test_an_empty_inherited_variable_is_unset_as_the_bridge_reads_it(self):
+        self.record()
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: "  ",
+                             execution.DIGEST_VARIABLE: ""})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["summary"]["digest"], self.digest)
+
+    def test_a_user_owned_policy_record_still_stands_down(self):
+        self.record(owner="user")
+        self.assert_refused(self.start(), "second one")
 
 
 # ---------------------------------------------------------------- the package check
@@ -1115,6 +2238,50 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertEqual(emitted["serversNow"], ["my-bridge"])
 
+    # Swaps a pipe in for the first path it is asked about whose name ends with argv[2], right
+    # after reading.observe has looked at it and found a regular file there.
+    SWAPS_A_PIPE_IN_AFTER_OBSERVE = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import reading\n"
+        "suffix, swapped = sys.argv[2], []\n"
+        "real = reading.observe\n"
+        "def observed_then_swapped(path, what):\n"
+        "    found = real(path, what)\n"
+        "    if found is None and not swapped and str(path).endswith(suffix):\n"
+        "        os.unlink(str(path))\n"
+        "        os.mkfifo(str(path))\n"
+        "        swapped.append(str(path))\n"
+        "    return found\n"
+        "reading.observe = observed_then_swapped\n"
+    )
+
+    @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
+    def test_a_manifest_swapped_for_a_pipe_after_the_look_does_not_hold_the_lock(self):
+        """Devin, PR #137: observe, then read_text by path, blocked on a pipe put there between.
+
+        register-mcp reads the cached manifests under the ownership lock, so that read held the
+        lock for every later run. Bounded by a timeout, so a regression fails instead of hanging.
+        """
+        self.install_plugin()
+        program = self.SWAPS_A_PIPE_IN_AFTER_OBSERVE + (
+            "import runtime_install\n"
+            "raise SystemExit(runtime_install.main(sys.argv[3:]))\n")
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", program, str(ROOT / "scripts"),
+                 os.path.join(".codex-plugin", "plugin.json"), "register-mcp", "--owner",
+                 "user", "--codex-home", str(self.home.codex_home), "--bridge-command",
+                 str(self.home.destination / "current" / "bin" / "codex-thread-bridge"),
+                 "--apply"],
+                capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("register-mcp blocked on a manifest swapped for a pipe")
+        emitted = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("could not be read", emitted.get("detail") or "", done.stdout)
+        self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
+
     @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
     def test_a_cached_manifest_that_is_not_an_object_refuses_rather_than_crashing(self):
         """Devin finding: valid JSON is not a manifest, and .get on a list is not a refusal."""
@@ -1126,6 +2293,24 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         self.assertNotEqual(emitted.get("outcome"), "internal_error")
         self.assertIn("could not be read", emitted["detail"])
         self.assertEqual(self.config(), before)
+
+    def test_a_cache_or_manifest_this_run_may_not_look_at_is_not_read_as_declaring_nothing(self):
+        """The same partition as the policy guard: a failed look is not an empty cache."""
+        if os.geteuid() == 0:
+            self.skipTest("root searches a directory whatever its mode")
+        cache = self.install_plugin()
+        for closed in (self.home.codex_home / "plugins", cache / ".codex-plugin"):
+            with self.subTest(str(closed.relative_to(self.home.codex_home))):
+                before = self.config()
+                closed.chmod(0)
+                try:
+                    status, emitted, output = self.register("--apply")
+                finally:
+                    closed.chmod(0o755)
+                self.assertEqual(status, 1, output)
+                self.assertIn("could not be read", emitted.get("detail", ""), output)
+                self.assertEqual(self.config(), before)
+                self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
 
 
 # ------------------------------------------------- the declaration that outlives the cache
