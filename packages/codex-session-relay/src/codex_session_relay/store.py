@@ -1044,6 +1044,11 @@ CREATE TABLE IF NOT EXISTS supervisor_attempts (
     sent_at        TEXT NOT NULL,
     transport_started_at TEXT,
     observed_at    TEXT NOT NULL,
+    -- What a readback looks for in the recipient's transcript: the request id and a random part
+    -- drawn inside the claim, rendered into these bytes and nowhere else. The request id alone is
+    -- derived from the message and the attempt number, so a copy of it could be written into the
+    -- recipient's thread before the send and found there after a lost response.
+    delivery_token TEXT,
     UNIQUE (message_id, attempt_no)
 );
 

@@ -15,13 +15,13 @@ derived from the direction, the relation, the purpose and the subject, so one fa
 converges on one row rather than waking a supervisor twice.
 
 What a verified readback establishes, written here because the word "received" invites more
-than it holds: this attempt's request id is in the recipient's own transcript, the named turn is
-real on its thread, and that turn did not certainly begin before the send. It does not establish
-that the turn answered anything or who computed the proof. The proof is built from two
-identifiers this store holds, and the turn a send opens is one whose id the sender already
-knows - so for that turn, which is the ordinary case, a verified readback needs no act of the
-supervisor's at all and shows arrival rather than reading. Which turn was named is recorded
-rather than averaged into one word.
+than it holds: this attempt's delivery token is in the recipient's own transcript, the named
+turn is real on its thread, and that turn did not certainly begin before the send. It does
+not establish that the turn answered anything or who computed the proof. The proof is built
+from two identifiers this store holds, and the turn a send opens is one whose id the sender
+already knows - so for that turn, which is the ordinary case, a verified readback needs no act
+of the supervisor's at all and shows arrival rather than reading. Which turn was named is
+recorded rather than averaged into one word.
 
 Nothing here wakes anybody on a timer. There is no daemon pass behind these methods: a report
 goes out inside the parent's own turn, and what discharges the obligation is still the Linear
@@ -31,6 +31,7 @@ record the supervisor reads for itself, confirmed, exactly as supervision.discha
 import json
 import math
 import os
+import secrets
 import shlex
 from datetime import datetime
 
@@ -96,7 +97,7 @@ TRANSCRIPT_SCAN = 200
 NEWLINE = chr(10)
 # What any readback answer says it establishes, and what it does not.
 READBACK_LIMITS = (
-    "a verified readback says this attempt's request id is in a named turn of the recipient's"
+    "a verified readback says this attempt's delivery token is in a named turn of the recipient's"
     " thread - the turn it names, or one that turn follows - and that the named turn did not"
     " certainly begin before this attempt's transport started. It does not say that turn"
     " answered or who computed the proof: the proof is two identifiers this store holds, and"
@@ -119,10 +120,10 @@ PROOF_PLACEHOLDER = "YOUR_PROOF"
 # this channel reports, because the state's name is shorter than what it proves: a readback of
 # the turn the send opened needs nothing the recipient did.
 ESTABLISHES = {
-    RELAY_OPENED: "arrival only: the turn this send opened holds this attempt's request id,"
-                  " and no act of the recipient's was needed",
+    RELAY_OPENED: "arrival only: the turn this send opened holds this attempt's delivery"
+                  " token, and no act of the recipient's was needed",
     RECIPIENT_OPENED: "a turn the recipient's thread opened after the send, and this attempt's"
-                      " request id in its transcript - not who wrote the answer or that"
+                      " delivery token in its transcript - not who wrote the answer or that"
                       " anybody read or acted",
 }
 NOT_ESTABLISHED = "nothing: this readback did not verify"
@@ -363,8 +364,12 @@ class SupervisorChannel:
         if obligation["kind"] not in (supervision.BLOCKED, supervision.DECISION):
             return obligation
         for row in self.store.all(
+                # Newest by ARRIVAL: the order this store accepted the events in. Two
+                # statements accepted at one instant have the same first_seen_at, and breaking
+                # that tie on the event id - a hash - chose between them at random, so the
+                # corrected one could be the one left out.
                 "SELECT event_id FROM events WHERE relationship_id = ?"
-                " ORDER BY first_seen_at DESC, event_id DESC", (obligation["relationId"],)):
+                " ORDER BY rowid DESC", (obligation["relationId"],)):
             one = supervision.from_event(self.store, row["event_id"],
                                          read_work_report(self.store, row["event_id"]))
             if one is not None and one["obligationId"] == obligation["obligationId"]:
@@ -813,7 +818,8 @@ class SupervisorChannel:
                               + " (event " + repr(current["event_id"]) + ") is already being"
                               " or has been sent, so the newer one, " + repr(event_id)
                               + ", is the same fact said again and is not reported again;"
-                              " its own evidence is show --event " + str(event_id),
+                              " its own evidence is "
+                              + self._command_line("show", "--event", str(event_id)),
                     "message": dict(current),
                     "recipient": now_is["recipient"], "sender": now_is["sender"]}
         raise DeliveryRefused(
@@ -978,7 +984,7 @@ class SupervisorChannel:
         return ("generation " + str(obligation.get("executionGeneration")) + ", revision "
                 + str(revision)[:12])
 
-    def render(self, packet, request_id) -> str:
+    def render(self, packet, request_id, token=None) -> str:
         """The bytes one attempt freezes. A function of the packet and the request id alone.
 
         The recipient's own turn id is absent, and that absence is what makes the readback
@@ -987,6 +993,9 @@ class SupervisorChannel:
         """
         region = packet["envelope"]
         lines = ["[codex-session-relay] supervisor report", "requestId: " + request_id]
+        if token:
+            # What a readback of this attempt looks for. Only these bytes carry it.
+            lines.append("deliveryToken: " + token)
         lines += packets.packet_lines(packet)
         # What the recipient is asked for is what the readback can record: that this attempt
         # reached its thread, answered from a turn of its own. Asking it to "confirm you read
@@ -1015,7 +1024,7 @@ class SupervisorChannel:
             "The proof is sha256(messageId|<your own turn id>). This message cannot contain",
             "that turn id, so quoting it back does not produce the proof - and that is all the",
             "proof rules out. Anyone holding the relay's store can compute it as well. A",
-            "readback records that this attempt's request id is in your thread and that the",
+            "readback records that this attempt's deliveryToken is in your thread and that the",
             "turn you name is real there. Where that turn is the one this message opened, it",
             "records arrival and nothing you did. It never records that you read, agreed to",
             "or acted on anything.",
@@ -1447,7 +1456,14 @@ class SupervisorChannel:
                     + repr(clash["message_id"]) + "; two message ids share the prefix this"
                     " id keeps, so this attempt cannot be told apart from that one",
                 )
-            message = self.render(json.loads(row["packet"]), request_id)
+            # The token a readback looks for, drawn HERE so that nothing written before this
+            # claim can contain it. The request id alone is derived from the message and the
+            # attempt number, so a copy of it written into the recipient's thread ahead of the
+            # send was found after a lost response and verified a readback for bytes that never
+            # arrived. Whoever holds this store can still read the token once the claim commits;
+            # that is the readback's documented authority bound, not a gap in this binding.
+            token = request_id + "." + secrets.token_hex(8)
+            message = self.render(json.loads(row["packet"]), request_id, token)
             # Spent in the SAME transaction as the claim, against the recipient rather than
             # against this channel, and through the one predicate delivery's claim calls too.
             # The bound limits how often one task is woken, so two queues feeding one task
@@ -1474,13 +1490,13 @@ class SupervisorChannel:
             at = self.clock.iso()
             db.execute(
                 "INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message,"
-                " state, send_attempted, retry_safe, turn_id, record, sent_at, observed_at)"
-                " VALUES (?,?,?,?,?,?,0,NULL,?,?,?)",
+                " state, send_attempted, retry_safe, turn_id, record, sent_at, observed_at,"
+                " delivery_token) VALUES (?,?,?,?,?,?,0,NULL,?,?,?,?)",
                 (request_id, message_id, attempt_no, message, HELD_UNCERTAIN, "unknown",
                  json.dumps({"requestId": request_id, "messageId": message_id,
                              "attemptNo": attempt_no, "deliveryState": HELD_UNCERTAIN,
                              "reservation": reservation}, sort_keys=True),
-                 at, at),
+                 at, at, token),
             )
         return attempt_no, request_id, message
 
@@ -1741,12 +1757,12 @@ class SupervisorChannel:
             )
         uncertain = row["state"] == HELD_UNCERTAIN
         if uncertain:
-            # The attempt whose outcome nobody heard. Its own request id is the token, so what
-            # the scan finds is evidence about THAT send and no other. Found by its number and
-            # not by its state: a receipt arriving after the recovery is recorded on the
-            # attempt without moving the message, so the attempt can say dispatched, or that
-            # nothing was sent, while the message is still held - and the transcript is still
-            # the fact that settles it.
+            # The attempt whose outcome nobody heard. Its own delivery token is what the scan
+            # looks for, so what it finds is evidence about THAT send and no other. Found by
+            # its number and not by its state: a receipt arriving after the recovery is
+            # recorded on the attempt without moving the message, so the attempt can say
+            # dispatched, or that nothing was sent, while the message is still held - and the
+            # transcript is still the fact that settles it.
             attempt = self.store.one(
                 "SELECT * FROM supervisor_attempts WHERE message_id = ? AND attempt_no = ?",
                 (message_id, row["attempt_count"]))
@@ -1822,19 +1838,20 @@ class SupervisorChannel:
             # And the turn the token is IN has to follow this attempt's transport start, unless
             # it is the turn the transport itself reported delivering to - a steered turn is
             # older than the send and the receipt says the bytes went there. Anywhere else, a
-            # token older than the send is not this send's: the request id is derived from the
-            # message and the attempt number, so it can be written into the recipient's thread
-            # before the send, and a lost response then left only that token to find.
+            # token older than the send is not this send's. The delivery token is drawn inside
+            # the claim, so only somebody holding this store can know it before the transport
+            # starts; this keeps even that copy from verifying.
             landed = _began_before(self._turn_start(row, delivered["turnId"], adapter),
                                    _iso_time(attempt["transport_started_at"]))
             if landed is None:
                 verified = NO_HOST
-                detail = ("the turn this attempt's request id is in, " + str(delivered["turnId"])
+                detail = ("the turn this attempt's delivery token is in, "
+                          + str(delivered["turnId"])
                           + ", has no start time the host would give, so whether it came after"
                             " this send is not established")
             elif landed:
                 verified = TURN_PREDATES_SEND
-                detail = ("this attempt's request id is in " + str(delivered["turnId"])
+                detail = ("this attempt's delivery token is in " + str(delivered["turnId"])
                           + ", a turn that began before this attempt's transport started, so it"
                             " was there before the send and is not evidence the send arrived")
         reconciled = None
@@ -2006,8 +2023,11 @@ class SupervisorChannel:
 
         Independent of our own receipt on purpose. A receipt says the transport accepted the
         call; a token found in the recipient's items says the message is where the recipient
-        reads. The request id is the token because it is unique to one attempt and is inside
-        the bytes that attempt sent.
+        reads. The token is the attempt's delivery token - its request id and a random part
+        drawn inside the claim - because that is unique to one attempt, is inside the bytes that
+        attempt sent, and exists nowhere before the claim. The request id alone did not: it is
+        derived from the message and the attempt number, so a copy could be written into the
+        recipient's thread ahead of the send.
 
         A truncated scan is inconclusive and is reported as such, never as absence.
         """
@@ -2017,15 +2037,20 @@ class SupervisorChannel:
         if attempt is None:
             return {"scanned": False,
                     "reason": "no dispatched attempt, so there is no token to look for"}
+        token = attempt["delivery_token"]
+        if not token:
+            return {"scanned": False,
+                    "reason": "this attempt carries no delivery token, so nothing in the"
+                              " transcript could be tied to its bytes alone"}
         try:
             scan = adapter.find_token(
-                row["recipient_task_id"], attempt["request_id"], limit=TRANSCRIPT_SCAN)
+                row["recipient_task_id"], token, limit=TRANSCRIPT_SCAN)
         except Exception as error:  # noqa: BLE001
             return {"scanned": False,
                     "reason": "the transcript could not be read: " + str(error)}
         return {"scanned": True, "found": bool(scan.found), "turnId": scan.turn_id,
                 "exhausted": bool(scan.exhausted), "itemsRead": scan.scanned,
-                "token": attempt["request_id"]}
+                "token": token}
 
     # ------------------------------------------------------------------- how far it got
 

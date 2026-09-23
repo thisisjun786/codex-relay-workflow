@@ -256,8 +256,14 @@ not verify. `host_read` needs all of the following:
   transport instant at all, claimed and never sent, verifies nothing. This applies to every
   candidate, including the turn the attempt names, because a send can STEER an existing turn
   rather than open one.
-- a bounded scan of the recipient's items - at most 200 - found THIS attempt's request id, in a
-  turn the host names. The frozen message is never compared, and what the scan is good for is
+- a bounded scan of the recipient's items - at most 200 - found THIS attempt's delivery token,
+  in a turn the host names. The token is the request id and a random part drawn inside the
+  claim and rendered into that attempt's bytes alone. The request id by itself is derived from
+  the message and the attempt number, so a copy of it could be written into the recipient's
+  thread ahead of the send - half a second ahead passed even the chronology below - and after
+  a lost response that copy verified a readback for bytes that never arrived. Nothing written
+  before the claim can contain the token; whoever holds the store can read it once the claim
+  commits, which is the authority bound this readback already records. The frozen message is never compared, and what the scan is good for is
   that it does not come from our own send receipt. A token the host places in no turn is tied
   to nothing and answers `transcript_unconfirmed`.
 - the named turn is that turn, or does not certainly begin before it. The transport can hold a
@@ -270,10 +276,8 @@ not verify. `host_read` needs all of the following:
   the token, and is the stronger reading anyway, because the sender never knew its id.
 - the turn the token is in does not certainly begin before this attempt's transport started,
   unless it is the turn the transport itself reported - a steered turn is older than the send,
-  and the receipt says the bytes went there. The request id is derived from the message and
-  the attempt number, so a copy can be written into the thread ahead of the send; after a lost
-  response that copy was the only one to find, and it verified a readback. An older token
-  answers `turn_predates_send`, and an unknown start is not verified.
+  and the receipt says the bytes went there. An older token answers `turn_predates_send`, and
+  an unknown start is not verified.
 
 Every answer to one readback has one shape - the first, a later one answered from the settled
 row, and one that lost the race to settle it - built from the stored row, with `recorded` and
@@ -322,11 +326,11 @@ records nothing, and the answer is to ask again.
 
 A message held uncertain is read back as well. Its send's response was lost, or its sender died
 between the claim and the receipt, and nothing else reconciles this queue, so refusing it here
-made the one check that could prove this attempt's request id reached the recipient's thread
+made the one check that could prove this attempt's delivery token reached the recipient's thread
 unreachable. It is verified against THAT attempt, the one numbered by the message's attempt
 count, found by its number because a late receipt may have been recorded on it. Verified means a
 real turn on the recipient's thread that did not begin before the send, and that attempt's
-request id in the recipient's own transcript. Only then does the readback settle it
+delivery token in the recipient's own transcript. Only then does the readback settle it
 to `read`, with a `supervisor_message_reconciled` journal entry and a `reconciled` field on
 the readback saying so. The answer alone never settles it; an unverified readback is recorded
 and the message stays `held_uncertain`. With no receipt the attempt keeps `held_uncertain`,
@@ -423,7 +427,7 @@ recheck line in `supervisor-show` is rendered whole.
 It carries no supervisor authority, and the bound on that is worth stating exactly rather than
 in general. `host_read` takes four answers from the host about the RECIPIENT's thread and
 nothing else: the named turn is readable there, its start is not certainly before the send,
-this attempt's request id is in the thread's transcript, and - where the named turn is the one
+this attempt's delivery token is in the thread's transcript, and - where the named turn is the one
 the send opened - the token is in that turn. A caller with this store and no host gets
 `unverified_turn`, which is recorded and leaves the message where it was.
 
@@ -444,7 +448,7 @@ written down as one, and calling it anything stronger would be the kind of claim
 this document exists to avoid.
 
 Read `received` on the reach ladder as "a readback was recorded, the named turn is real on the
-recipient's thread, and its transcript holds this attempt's request id", with `turnOrigin`
+recipient's thread, and its transcript holds this attempt's delivery token", with `turnOrigin`
 read beside it. It is not "the supervisor read it" and not "the supervisor acted", and the
 obligation is not discharged by it.
 
@@ -480,7 +484,8 @@ report existed. Under the lock, an obligation already reported or discharged ref
 
 A block or a decision goes up as its newest statement. Both are keyed on their generation and
 their cause, so the child stating the same one again - with its evidence corrected, say - raises
-the same obligation from a newer event. Staging composes from the newest event that raises it,
+the same obligation from a newer event. Staging composes from the newest event that raises it -
+newest by the order this store accepted them, because two accepted at one instant tie on time -
 whichever statement the caller held, and a message staged from an earlier statement and never
 sent is restated in place, inside the same lock the staging checks ran in: same message, same journal entry, a `supervisor_message_restated`
 entry naming both events, and the recipient's own bounds kept. Once an attempt may have sent,

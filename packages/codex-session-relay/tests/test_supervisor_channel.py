@@ -433,7 +433,10 @@ class TheRoundtrip(ChannelTestCase):
         answer = self.read_back(message_id, record["turnId"])
         self.assertEqual(answer["verified"], channel_module.HOST_READ)
         self.assertTrue(answer["delivered"]["found"])
-        self.assertEqual(answer["delivered"]["token"], record["requestId"])
+        token = self.store.one("SELECT delivery_token FROM supervisor_attempts"
+                               " WHERE request_id = ?", (record["requestId"],))["delivery_token"]
+        self.assertEqual(answer["delivered"]["token"], token)
+        self.assertTrue(token.startswith(record["requestId"] + "."))
         self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
 
         ladder = self.channel.reach(message_id)
@@ -2585,7 +2588,8 @@ class WhatTheEighthIndependentReviewFound(ChannelTestCase):
 
     def test_a_request_id_written_before_the_send_does_not_verify_it(self):
         """RED: the id is derived from the message and the attempt number, so it can be written
-        into the recipient's thread first; a lost response then left only that copy to find."""
+        into the recipient's thread first; a lost response then left only that copy to find.
+        The transcript is now searched for the attempt's delivery token, drawn in the claim."""
         from codex_session_relay.identity import supervisor_request_id
 
         _one, message_id = self.staged()
@@ -2598,8 +2602,7 @@ class WhatTheEighthIndependentReviewFound(ChannelTestCase):
         self.clock.advance(5)
         later = self.adapter.start_turn(SUPERVISOR, status="completed")
         answer = self.read_back(message_id, later.turn_id)
-        self.assertEqual(answer["verified"], channel_module.TURN_PREDATES_SEND)
-        self.assertIn("before this attempt's transport started", answer["detail"])
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
         self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
 
     def test_the_transport_start_is_stamped_after_the_lock_and_the_hierarchy_check(self):
@@ -2619,3 +2622,62 @@ class WhatTheEighthIndependentReviewFound(ChannelTestCase):
             "SELECT transport_started_at FROM supervisor_attempts WHERE message_id = ?",
             (message_id,))["transport_started_at"]
         self.assertGreaterEqual(channel_module._iso_time(stamp), after[-1])
+
+
+
+class WhatTheNinthIndependentReviewFound(ChannelTestCase):
+    """What a readback looks for exists nowhere before the claim that renders it, and the newest
+    statement of a block is the newest one this store accepted."""
+
+    blocked = WhatTheSeventhIndependentReviewFound.blocked
+
+    def token_of(self, message_id, attempt_no=1):
+        return self.store.one(
+            "SELECT delivery_token FROM supervisor_attempts WHERE message_id = ?"
+            "   AND attempt_no = ?", (message_id, attempt_no))["delivery_token"]
+
+    def test_a_request_id_written_just_before_the_send_does_not_verify_it(self):
+        """RED: written half a second ahead, inside the chronology's precision allowance, the
+        request id verified a readback of a send whose response was lost."""
+        from codex_session_relay.identity import supervisor_request_id
+
+        _one, message_id = self.staged()
+        request_id = supervisor_request_id(message_id, 1)
+        self.adapter.start_turn(SUPERVISOR, status="completed", text="ahead: " + request_id)
+        self.clock.advance(0.5)
+        self.adapter.script("transport_unknown")
+        self.channel.attempt(message_id, self.adapter)
+        self.clock.advance(5)
+        # And after the send as well: without the token, a copy of the id proves nothing.
+        self.adapter.start_turn(SUPERVISOR, status="completed", text="after: " + request_id)
+        self.clock.advance(5)
+        later = self.adapter.start_turn(SUPERVISOR, status="completed")
+        answer = self.read_back(message_id, later.turn_id)
+        self.assertNotEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+
+    def test_the_token_is_drawn_per_attempt_and_carried_in_its_bytes(self):
+        """Positive control: each attempt draws its own token, and its bytes carry it."""
+        _one, message_id = self.staged()
+        self.adapter.script("read_fail")
+        self.channel.attempt(message_id, self.adapter)
+        self.clock.advance(86400)
+        self.channel.attempt(message_id, self.adapter, now=self.clock.now())
+        first, second = self.token_of(message_id, 1), self.token_of(message_id, 2)
+        self.assertNotEqual(first, second)
+        self.assertIn("deliveryToken: " + second, self.bytes_of(message_id))
+
+    def test_the_newest_statement_is_the_newest_one_accepted(self):
+        """RED: two statements accepted at one instant were ordered by their event ids."""
+        first = self.blocked("the log at /logs/wrong.txt", attempt=1)
+        message_id = self.channel.stage(self.obligation(first))["messageId"]
+        # Accepted at the same instant, and with an event id that sorts BELOW the first.
+        attempt = 2
+        while (self.execution_payload(self.relationship, "blocked_needs_input",
+                                      attempt=attempt)["eventId"] > first):
+            attempt += 1
+        second = self.blocked("the log at /logs/right.txt", attempt=attempt)
+        self.assertLess(second, first)
+        answer = self.channel.stage(self.obligation(first))
+        self.assertTrue(answer.get("restated"))
+        self.assertEqual(self.channel.get(message_id)["event_id"], second)
