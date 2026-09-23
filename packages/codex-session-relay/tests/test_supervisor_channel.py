@@ -790,15 +790,16 @@ class TheReadbackRaceIsClosedInTheWrite(ChannelTestCase):
 
 
 class WhichTurnAnsweredCanBeUnknown(ChannelTestCase):
-    def test_a_delivered_attempt_with_no_turn_id_leaves_the_origin_unknown(self):
-        """inbox_only is a delivered state and carries no turn id, so unknown is reachable."""
+    def test_a_settled_uncertain_attempt_with_no_turn_id_leaves_the_origin_unknown(self):
+        """A send nobody heard back from carries no turn id, so unknown is reachable when a
+        readback settles it; nothing names which turn the transport opened."""
         _one, message_id, record = self.delivered()
         self.store.db.execute(
             "UPDATE supervisor_attempts SET state = ?, turn_id = NULL WHERE message_id = ?",
-            (INBOX_ONLY, message_id))
+            (HELD_UNCERTAIN, message_id))
         self.store.db.execute(
             "UPDATE supervisor_messages SET state = ? WHERE message_id = ?",
-            (INBOX_ONLY, message_id))
+            (HELD_UNCERTAIN, message_id))
         self.store.db.commit()
         answer = self.read_back(message_id, record["turnId"])
         self.assertEqual(answer["turnOrigin"], channel_module.ORIGIN_UNKNOWN)
@@ -1917,20 +1918,48 @@ class WhatTheEighthReviewRoundFound(ChannelTestCase):
 
     # ------------------------------------------------------- a corrected work report
 
-    def test_a_report_staged_upward_can_no_longer_be_corrected(self):
-        """Staged naming #10; neither an in-place correction nor a new submission to #11 lands."""
+    def corrected_before_the_send(self, submission):
+        event_id = self.completion_naming(10)
+        message_id = self.channel.stage(self.obligation(event_id))["messageId"]
+        self.assertEqual(self.packet_pr(message_id), 10)
+        from codex_session_relay.errors import ReceiptRefused
+
+        try:
+            self.report_naming(event_id, 11, submission_no=submission)
+        except ReceiptRefused as refused:
+            self.fail("a correction was refused although nothing had been sent: "
+                      + refused.detail)
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.packet_pr(message_id), 11)
+        self.assertIn("codex-relay-workflow #11 at", self.bytes_of(message_id))
+        self.assertEqual(report_module.read(self.store, event_id)["prNumber"], 11)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_staged_report_corrected_in_place_before_the_send_goes_up_corrected(self):
+        """Review 14: the freeze refused a correction to a report nothing had sent yet, so the
+        packet went up naming #10. A staged row is a proposal (I-247): the correction lands, and
+        the send carries it - never bytes naming #10 whose evidence reads #11."""
+        self.corrected_before_the_send(1)
+
+    def test_a_staged_report_resubmitted_before_the_send_goes_up_resubmitted(self):
+        """The same, as a new submission rather than a correction in place."""
+        self.corrected_before_the_send(2)
+
+    def test_a_report_sent_upward_can_no_longer_be_corrected(self):
+        """Once the transport started for a packet naming #10, neither an in-place correction nor
+        a new submission to #11 lands."""
         from codex_session_relay.errors import ReceiptRefused
 
         event_id = self.completion_naming(10)
         message_id = self.channel.stage(self.obligation(event_id))["messageId"]
-        self.assertEqual(self.packet_pr(message_id), 10)
-        row = self.channel.get(message_id)
-        self.assertEqual((row["event_id"], row["submission_no"]), (event_id, 1))
+        self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
+                         DISPATCHED)
         for submission in (1, 2):
             with self.subTest(submission=submission):
                 with self.assertRaises(ReceiptRefused) as caught:
                     self.report_naming(event_id, 11, submission_no=submission)
-                self.assertIn("staged from submission 1", caught.exception.detail)
+                self.assertIn("was sent", caught.exception.detail)
         self.assertEqual(report_module.read(self.store, event_id)["prNumber"], 10)
         self.assertEqual(self.packet_pr(message_id), 10)
 
@@ -2380,13 +2409,15 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
     # ------------------------------------------------ corrections once a report is staged
 
     def test_a_correction_after_staging_goes_up_as_the_next_event(self):
-        """Once staged, the report no longer changes - in place or as a new submission. The
+        """Once sent, the report no longer changes - in place or as a new submission. The
         child's next final receipt is a new event, keyed as its own completion, and goes up as
-        its own message; the first stays about the report it froze."""
+        its own message; the first stays about the report it carried."""
         from codex_session_relay.errors import ReceiptRefused
 
         first = self.completion_naming(10)
         staged = self.channel.stage(self.obligation(first))["messageId"]
+        self.assertEqual(self.channel.attempt(staged, self.adapter)["deliveryState"],
+                         DISPATCHED)
         for submission in (1, 2):
             with self.subTest(submission=submission):
                 with self.assertRaises(ReceiptRefused):
@@ -3086,3 +3117,40 @@ class TheStagedRowIsAProposal(ChannelTestCase):
         self.assertEqual(self.channel.get(message_id)["hold_reason"],
                          channel_module.SUPERSEDED_HOLD)
         self.assertEqual(self.adapter.sends, [])
+
+
+class WhatTheFourteenthIndependentReviewFound(ChannelTestCase):
+    """A push the recipient's policy refuses is not a send, and does not strand the report."""
+
+    staged = WhatTheSecondReviewRoundFound.staged
+
+    class _Services:
+        def __init__(self, channel, adapter):
+            self.adapter_requested = True
+            self.supervisor_channel = channel
+            self.adapter = adapter
+
+    def test_a_push_the_recipients_policy_refuses_is_not_sent_and_goes_later(self):
+        """RED: the transport answered inbox_only with sendAttempted no and no turn; the command
+        said sent, the ladder said transport_accepted, and inbox_only was never claimable, so
+        restoring the policy could not send the report."""
+        from codex_session_relay import cli
+
+        _one, message_id = self.staged()
+        self.adapter.script("approval_policy")
+        answer = cli.cmd_supervisor_send(self._Services(self.channel, self.adapter),
+                                         type("Args", (), {"message": message_id})())
+        self.assertFalse(answer["sent"])
+        self.assertEqual((answer["deliveryState"], answer["sendAttempted"], answer["turnId"]),
+                         (WITHHELD_PRE_SEND, "no", None))
+        self.assertEqual(answer["transportDeliveryState"], INBOX_ONLY)
+        self.assertNotEqual(
+            self.channel.reach(message_id)[envelope.TRANSPORT_ACCEPTED]["state"], envelope.YES)
+        row = self.channel.get(message_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (WITHHELD_PRE_SEND, None))
+        self.assertGreater(row["next_eligible_at"], self.clock.now())
+
+        record = self.channel.attempt(message_id, self.adapter, now=row["next_eligible_at"])
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(
+            self.channel.reach(message_id)[envelope.TRANSPORT_ACCEPTED]["state"], envelope.YES)

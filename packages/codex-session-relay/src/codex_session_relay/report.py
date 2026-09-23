@@ -878,28 +878,36 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     Takes the transaction handle rather than the store, so this cannot be satisfied by a
     read that was already stale by the time the row was written.
 
-    And once a report has been staged UPWARD it does not change at all. The supervisor packet
-    froze this report's artifact and decision, and its evidence pointer reads this event's
-    report, so a correction - in place or as a new submission - would leave a packet naming
-    one pull request while its evidence reads another.
+    And once a supervisor message composed from this report may have put its bytes anywhere,
+    the report does not change at all. That packet named this report's artifact and decision,
+    and its evidence pointer reads this event's report, so a correction - in place or as a new
+    submission - would leave bytes that went upward naming one pull request while their
+    evidence reads another.
     """
-    # Only a message composed FROM a recorded report froze one. A message staged from the event
-    # before any report existed froze nothing, so the first report stays free: refusing it lost
-    # the report outright - a blocked turn staged before its report said it was a decision only
-    # the user can make could never say so. The channel refuses to send a packet whose report
-    # is no longer the one standing, and staging again carries the new one.
+    # Only a message composed FROM a recorded report, and only once one of its attempts reached
+    # the transport. Before that the staged row is a proposal (I-247): the claim and the write
+    # that stamps the transport start re-derive it from the report that stands, so a correction
+    # made before the send is the one the send carries. The stamp is the line: it is committed
+    # in the write that lets the transport start, so this write and that one serialize - a
+    # correction committing first is restated and sent, and one committing after is refused. An
+    # attempt the transport refused before sending, retry-safe, put nothing anywhere.
     frozen = db.execute(
-        "SELECT message_id, submission_no FROM supervisor_messages WHERE event_id = ?"
-        "   AND submission_no IS NOT NULL ORDER BY staged_at LIMIT 1",
+        "SELECT m.message_id, m.submission_no FROM supervisor_messages m"
+        " WHERE m.event_id = ? AND m.submission_no IS NOT NULL"
+        "   AND EXISTS (SELECT 1 FROM supervisor_attempts a"
+        "                WHERE a.message_id = m.message_id"
+        "                  AND a.transport_started_at IS NOT NULL"
+        "                  AND NOT (a.send_attempted = 'no' AND a.retry_safe = 1))"
+        " ORDER BY m.staged_at LIMIT 1",
         (event_id,),
     ).fetchone()
     if frozen is not None:
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            f"a supervisor report was staged from submission {frozen['submission_no']} of"
-            f" this report (message {frozen['message_id']}), and its evidence points at this"
-            " event; a changed report would leave that message saying one thing while its"
-            " evidence says another, so this report no longer changes. A correction the"
+            f"a supervisor report composed from submission {frozen['submission_no']} of this"
+            f" report was sent (message {frozen['message_id']}), and its evidence points at"
+            " this event; a changed report would leave those bytes saying one thing while"
+            " their evidence says another, so this report no longer changes. A correction the"
             " level above needs is a new fact, reported as one",
         )
     attempted = db.execute(

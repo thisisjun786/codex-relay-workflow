@@ -150,9 +150,13 @@ staging lock the report is read again and has to be the same report WHOLE, becau
 correction made in place keeps its submission number; the obligation is re-derived and compared
 field by field; and the packet is composed again from what the store now says and has to be
 the packet about to be frozen. Any difference refuses as `superseded_revision` with nothing
-written. Once a message composed from a report commits, `report.record` refuses to change that
-report at all, in place or as a new submission, because the packet would otherwise name one
-pull request while its evidence reads another.
+written. Once a message composed from a report has reached the transport - its attempt's
+transport start is stamped - `report.record` refuses to change that report at all, in place or
+as a new submission, because the bytes that went up would otherwise name one pull request while
+their evidence reads another. Before that, the staged row is a proposal: a correction lands, and
+the send carries it (see a staged row is a proposal). The stamp is written in the same write
+that lets the transport start, so a correction and that write serialize: one committing first
+is restated and sent, one committing after is refused.
 
 A message staged from its event before any report existed froze no report, so the first report
 on that event is recorded. Refusing it lost the report outright: a block staged from its outcome
@@ -365,8 +369,8 @@ because the message is what wakes the supervisor. So which turn was named is rec
 `relay_opened`, `recipient_opened` or `unknown` rather than averaged into one word, and a
 reader can see how much was established instead of being told a number: `relay_opened` shows
 arrival and nothing more, and not even `recipient_opened` shows who wrote the answer.
-`unknown` is reachable: the origin is named only when the delivered attempt carries a turn id,
-and `inbox_only` carries none.
+`unknown` is reachable: the origin is named only when the attempt carries a turn id, and a send
+nobody heard back from carries none, so a readback that settles one answers `unknown`.
 
 There are six verification answers: `host_read`, `transcript_unconfirmed` for a real turn whose
 transcript scan did not confirm the message, `transcript_turn_mismatch` where the readback
@@ -578,6 +582,14 @@ releases that edge, so staging and sending refuse as `unregistered_scope` from t
 obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
 goes out only if it is staged and sent before the assignment is archived. A superseded
 assignment is not affected, because its successor holds the edge.
+
+A push the recipient's policy refuses is not a send here. The transport answers `inbox_only`
+when the recipient's thread reports an approval policy it cannot serve, after the resume and
+before any turn, so nothing reached the supervisor's thread. For parent-child traffic that
+answer names the durable inbox item the child reads; this channel has no inbox anybody is told
+to read, so the attempt is recorded as a refusal before sending, retry-safe, with the
+transport's own answer beside it, `supervisor-send` says `sent: false`, and the message waits
+out its backoff so a policy restored on the recipient lets the next attempt send it.
 
 A report goes through the socket its caller names, whatever host the supervisor is registered
 on - the rule parent-child delivery follows too. The relay records each endpoint's `hostId` for

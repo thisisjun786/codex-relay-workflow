@@ -28,6 +28,7 @@ goes out inside the parent's own turn, and what discharges the obligation is sti
 record the supervisor reads for itself, confirmed, exactly as supervision.discharge_of decides.
 """
 
+import dataclasses
 import json
 import math
 import os
@@ -60,9 +61,11 @@ VERSION = "relay-supervisor-channel/1"
 # it: the recipient said it read this, and the host agreed the turn was real.
 READ = "read"
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
-# What the transport calls a message that reached somewhere. inbox_only is included for the
-# reason ack includes it: it is stored rather than woken, and a recipient can still read it.
-DELIVERED = (DISPATCHED, INBOX_ONLY)
+# What the transport calls a message that reached the recipient's thread. inbox_only is not one
+# here. For parent-child traffic it names a durable inbox item the child is told to read; this
+# channel has no inbox anybody is told to read, and the transport answers it before turn/start,
+# so nothing reached the supervisor at all. attempt() records it as a refusal before sending.
+DELIVERED = (DISPATCHED,)
 
 # What a readback established about the turn it names.
 HOST_READ = "host_read"
@@ -1324,6 +1327,17 @@ class SupervisorChannel:
             receipt = {"requestId": request_id, "status": "outcome_unknown",
                        "error": type(error).__name__ + ": " + str(error)}
         facts = classify_operation_receipt(receipt)
+        transport_state = facts.delivery_state
+        if facts.delivery_state == INBOX_ONLY:
+            # The recipient's thread reported an approval policy this transport cannot serve,
+            # and the push was refused after the resume and before any turn: nothing is in its
+            # thread and it was not woken. The classifier keeps inbox_only terminal and not
+            # retry-safe for the parent-child inbox, whose frozen bytes ARE the item the child
+            # reads. Here there is no such item, so reporting it as sent was false and holding
+            # it terminal stranded the report; it is a refusal before sending, retried with the
+            # same backoff, so a policy restored on the recipient lets the next attempt send.
+            facts = dataclasses.replace(facts, delivery_state=WITHHELD_PRE_SEND,
+                                        retry_safe=True)
         record = {
             "schema": VERSION,
             "requestId": request_id,
@@ -1338,6 +1352,11 @@ class SupervisorChannel:
             "turnId": facts.turn_id,
             "observedAt": self.clock.iso(),
         }
+        if transport_state != facts.delivery_state:
+            record["transportDeliveryState"] = transport_state
+            record["reason"] = ("the recipient's thread reported an approval policy this"
+                                " transport cannot serve; nothing was started or stored for it,"
+                                " and the message is attempted again after its backoff")
         self._settle(message_id, attempt_no, owner, request_id, facts, record, now)
         # Where the MESSAGE is, beside what the transport said about this attempt. They differ
         # when this send outlived its lease and was recovered as uncertain before its receipt
@@ -2024,8 +2043,8 @@ class SupervisorChannel:
                     " token to look for")
         else:
             attempt = self.store.one(
-                "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state IN (?,?)"
-                " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
+                "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state = ?"
+                " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED))
         verified, detail, origin, read_turn = self._verify_read_turn(
             row, attempt, read_turn_id, adapter)
         delivered = self._delivered_evidence(row, attempt, adapter)
