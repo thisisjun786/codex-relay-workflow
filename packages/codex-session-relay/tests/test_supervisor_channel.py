@@ -1758,3 +1758,101 @@ class WhatTheSeventhReviewRoundFound(ChannelTestCase):
         self.assertEqual(settled["reconciled"]["requestId"], _record["requestId"])
 
     lost_response = WhatTheSixthReviewRoundFound.lost_response
+
+
+class WhatTheThirdIndependentReviewFound(ChannelTestCase):
+    """A report goes to whoever supervises at its transport instant, and a time that is not a
+    time establishes nothing."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+
+    # ------------------------------------------------ the handover and the transport instant
+
+    def test_a_handover_after_the_claim_and_before_the_transport_sends_nothing(self):
+        """The transport-start write is the instant; the hierarchy is asked there again."""
+        one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claim_then_hand_over(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.hand_over()
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim", claim_then_hand_over):
+            refusal = self.assertRefused(
+                RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, message_id,
+                self.adapter)
+        self.assertIn("Nothing was sent", refusal.detail)
+        self.assertEqual(self.adapter.sends, [])
+        attempt = self.store.one(
+            "SELECT send_attempted, retry_safe, transport_started_at FROM supervisor_attempts"
+            " WHERE message_id = ?", (message_id,))
+        self.assertEqual(tuple(attempt), ("no", 1, None))
+
+        self.assertTrue(self.channel.stage(one)["readdressed"])
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["recipientTaskId"], SUCCESSOR)
+        self.assertEqual([thread for _r, thread, _m, _o in self.adapter.sends], [SUCCESSOR])
+
+    def test_a_handover_after_the_transport_started_leaves_the_report_where_it_went(self):
+        """Live at the transport instant is who it was for; the successor is told of the drift."""
+        one, message_id = self.staged()
+        deliver = self.adapter.send_message
+
+        def hand_over_mid_send(request_id, thread_id, message, settings=None):
+            self.hand_over()
+            return deliver(request_id, thread_id, message, settings)
+
+        with mock.patch.object(self.adapter, "send_message", hand_over_mid_send):
+            record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["recipientTaskId"], SUPERVISOR)
+        refusal = self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.stage, one)
+        self.assertIn("live when its transport started", refusal.detail)
+
+    def test_a_report_the_transport_refused_to_send_follows_a_handover(self):
+        """sendAttempted no and retry-safe put the bytes nowhere, so the report can move."""
+        one, message_id = self.staged()
+        self.adapter.script("read_fail")
+        self.assertEqual(self.channel.attempt(message_id, self.adapter)["sendAttempted"], "no")
+        self.hand_over()
+        self.assertTrue(self.channel.stage(one)["readdressed"])
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUCCESSOR)
+
+    # ----------------------------------------------------------- times that are not times
+
+    def test_a_turn_start_that_is_not_a_time_does_not_verify(self):
+        from codex_session_relay.hostadapter import TurnInfo
+
+        _one, message_id, record = self.delivered()
+        real = self.adapter.read_turn
+        for bad in ("not-a-timestamp", float("nan"), float("inf"), True, None):
+            with self.subTest(start=bad):
+                def named_turn(thread, turn, bad=bad):
+                    if turn == record["turnId"]:
+                        return TurnInfo(turn, "completed", bad)
+                    return real(thread, turn)
+
+                with mock.patch.object(self.adapter, "read_turn", named_turn):
+                    answer = self.read_back(message_id, record["turnId"])
+                self.assertEqual(answer["verified"], channel_module.NO_HOST)
+                self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+    def test_a_landing_turn_whose_start_is_not_a_time_does_not_verify(self):
+        """A turn the recipient opened is measured against where the token landed, too."""
+        from codex_session_relay.hostadapter import TurnInfo
+
+        _one, message_id, record = self.delivered()
+        self.clock.advance(30)
+        own = self.adapter.start_turn(SUPERVISOR, status="completed")
+        real = self.adapter.read_turn
+
+        def landing_turn(thread, turn):
+            if turn == record["turnId"]:
+                return TurnInfo(turn, "completed", float("nan"))
+            return real(thread, turn)
+
+        with mock.patch.object(self.adapter, "read_turn", landing_turn):
+            answer = self.read_back(message_id, own.turn_id)
+        self.assertEqual(answer["turnOrigin"], channel_module.RECIPIENT_OPENED)
+        self.assertEqual(answer["verified"], channel_module.NO_HOST)
+        self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)

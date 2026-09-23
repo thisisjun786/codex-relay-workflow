@@ -105,9 +105,11 @@ That a supervisor agreed to anything, acted on it, or confirmed it. No row in th
 so: `deliveries` holds one recipient per event and serves the registered parent-child pair, and
 `ack.acknowledge` records a parent acknowledging a child completion. What CAN now be said is
 narrower than it sounds - [the supervisor channel](supervisor-channel.md) stages a report, sends
-it and records a readback, which together say the bytes reached the recipient's transcript and a
-real turn on its thread answered. Convergence still means one fact yields one obligation, not
-that a second wake was prevented somewhere else.
+it and records a readback, which together say this attempt's bytes reached the recipient's
+thread and the turn the readback names is real there and did not begin before the send. That is
+arrival, not reading: for the turn the send opened it needs nothing from the supervisor at all.
+Convergence still means one fact yields one obligation, not that a second wake was prevented
+somewhere else.
 
 ### What discharges one
 

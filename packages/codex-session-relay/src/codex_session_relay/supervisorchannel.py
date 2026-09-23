@@ -29,10 +29,12 @@ record the supervisor reads for itself, confirmed, exactly as supervision.discha
 """
 
 import json
+import math
 import shlex
+from datetime import datetime
 
 from . import envelope, packets, supervision
-from .ack import TURN_START_PRECISION_SECONDS, certainly_before
+from .ack import TURN_START_PRECISION_SECONDS
 from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
 from .identity import supervisor_read_proof, supervisor_request_id
@@ -64,20 +66,20 @@ HOST_READ = "host_read"
 NO_HOST = "unverified_turn"
 TURN_NOT_FOUND = "turn_not_found"
 TURN_PREDATES_SEND = "turn_predates_send"
-# The turn is real and the bytes are not where the recipient reads. A separate word from the
-# three above, because those are answers about the TURN and this one is an answer about the
-# MESSAGE: somebody answered from a genuine turn on the right thread, and nothing independent
-# of our own receipt says the message they are answering about ever landed there.
+# The turn is real and the bytes are not established where the recipient reads. A separate
+# word from the three above, because those are answers about the TURN and this one is about
+# the MESSAGE: a genuine turn on the right thread was named, and nothing independent of our
+# own receipt places this attempt's bytes in a turn the host names.
 TRANSCRIPT_UNCONFIRMED = "transcript_unconfirmed"
 # The readback names the turn the send itself opened, and the delivered bytes are not in that
 # turn. Those two cannot both be true of one message: what the token is IN is where the
 # message landed, so a claim to have read it in the turn it landed in has to be the same turn.
 TRANSCRIPT_TURN_MISMATCH = "transcript_turn_mismatch"
 
-# And which turn answered, which is what says how much the readback is worth. The relay knows
+# And which turn the readback names, which is what says how much it is worth. The relay knows
 # the id of the turn its own send opened, so a readback from that turn rests on nothing the
 # sender could not have produced alone. It is still the ordinary case, because the message IS
-# what wakes the supervisor. Recording which one answered is the honest middle between refusing
+# what wakes the supervisor. Recording which one was named is the honest middle between refusing
 # the ordinary case and calling it more than it is.
 RELAY_OPENED = "relay_opened"
 RECIPIENT_OPENED = "recipient_opened"
@@ -128,16 +130,42 @@ def _addressed_as(row, resolution):
             and row["project_key"] == resolution["projectKey"])
 
 
-def _began_before(first, second):
-    """Whether one host start time is certainly earlier than another: True, False, or None.
+def _host_time(value):
+    """A host timestamp in seconds, or None when it is not a finite number.
 
-    None when either is not a time, so the caller can treat "not established" as not verified
-    rather than as "not earlier", which is the side an unknown must not fall on.
+    Every chronology this channel checks reads its times through here or _iso_time, because
+    the comparison that used to do it answered False for a value it could not read - so a
+    start of "not-a-timestamp" or NaN counted as "not earlier" and verified. An unreadable
+    time is not established, and the callers treat that as not verified.
     """
+    if value is None or isinstance(value, bool):
+        return None
     try:
-        return float(first) + TURN_START_PRECISION_SECONDS <= float(second)
+        seconds = float(value)
     except (TypeError, ValueError):
         return None
+    return seconds if math.isfinite(seconds) else None
+
+
+def _iso_time(value):
+    """One of this store's own ISO instants in seconds, or None when it cannot be read."""
+    try:
+        seconds = datetime.fromisoformat(value).timestamp()
+    except (TypeError, ValueError):
+        return None
+    return seconds if math.isfinite(seconds) else None
+
+
+def _began_before(first, second):
+    """Whether one host start is certainly earlier than another: True, False, or None.
+
+    None when either is not a time, so the caller treats "not established" as not verified
+    rather than as "not earlier", which is the side an unknown must not fall on.
+    """
+    first, second = _host_time(first), _host_time(second)
+    if first is None or second is None:
+        return None
+    return first + TURN_START_PRECISION_SECONDS <= second
 
 
 def _nothing_owed(obligation, decided):
@@ -167,6 +195,38 @@ def _hierarchy_moved(read, live):
         + repr(live["recipient"]) + ". Nothing was written; staging again addresses the report"
         " to the live supervisor",
     )
+
+
+# The hierarchy a staged message names is still the live one. Two halves: the owner of each
+# level is still the task on the row, and no OTHER live owner exists for that level - which
+# covers a handover committed since resolve() ran and a store holding two live owners at
+# once. The project key is compared too, so a relationship that moved projects cannot be
+# sent under the one it left. ONE predicate, asked inside the claim and again inside the
+# write that starts the transport. Parameters: the project key three times, then the
+# initiative key twice.
+_LIVE_HIERARCHY = (
+    "   AND supervisor_messages.project_key = ?"
+    "   AND EXISTS (SELECT 1 FROM scope_bindings b"
+    "                WHERE b.scope_kind = 'project' AND b.scope_key = ?"
+    "                  AND b.role = 'parent' AND b.superseded_by IS NULL"
+    "                  AND b.status IN ('active','paused')"
+    "                  AND b.task_id = supervisor_messages.sender_task_id)"
+    "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
+    "                    WHERE b.scope_kind = 'project' AND b.scope_key = ?"
+    "                      AND b.role = 'parent' AND b.superseded_by IS NULL"
+    "                      AND b.status IN ('active','paused')"
+    "                      AND b.task_id <> supervisor_messages.sender_task_id)"
+    "   AND EXISTS (SELECT 1 FROM scope_bindings b"
+    "                WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
+    "                  AND b.role = 'supervisor' AND b.superseded_by IS NULL"
+    "                  AND b.status IN ('active','paused')"
+    "                  AND b.task_id = supervisor_messages.recipient_task_id)"
+    "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
+    "                    WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
+    "                      AND b.role = 'supervisor' AND b.superseded_by IS NULL"
+    "                      AND b.status IN ('active','paused')"
+    "                      AND b.task_id <> supervisor_messages.recipient_task_id)"
+)
 
 
 class _NotClaimable(Exception):
@@ -390,21 +450,24 @@ class SupervisorChannel:
     def _readdress(self, row, packet, resolution) -> dict:
         """A staged message whose hierarchy moved before anything was sent.
 
-        Never attempted is the one state in which moving a message is safe, because nothing
+        Nothing sent is the one state in which moving a message is safe, because nothing
         outside this store has seen it: the bytes are rendered inside the claim, against the
-        endpoints on the row at that moment. So the row is re-addressed IN PLACE - same id,
-        same supervisor_report entry, one obligation still one message - and the condition is
-        a predicate inside the write rather than a check before it, so a claim that commits
-        first wins and this becomes a refusal instead of a second recipient.
+        endpoints on the row at that moment, and an attempt that recorded sendAttempted no
+        and retry-safe put them nowhere - a transport that refused before sending, or a
+        transport start that found the hierarchy moved. So the row is re-addressed IN PLACE -
+        same id, same supervisor_report entry, one obligation still one message - and the
+        condition is a predicate inside the write rather than a check before it, so a claim
+        that commits first wins and this becomes a refusal instead of a second recipient.
 
         What the former recipient's state decided goes with it. A backoff, a lifecycle recheck
         and a busy cap were all bounds about THAT task, and carrying them over would have the
         new supervisor inherit a wait it never caused; the deferral count restarts for the
         same reason, from this journal entry.
 
-        Anything with an attempt stays frozen. Those bytes went to somebody, possibly as a
-        wake, and moving the row would leave its attempts describing a recipient they were
-        never sent to. The drift is refused by name, which is how it gets reported.
+        Anything with an attempt that may have sent stays frozen. Those bytes may have reached
+        somebody, possibly as a wake, and moving the row would leave its attempts describing a
+        recipient they were never sent to. The drift is refused by name, which is how it gets
+        reported.
         """
         message_id = row["message_id"]
         was = {"sender": row["sender_task_id"], "recipient": row["recipient_task_id"],
@@ -424,9 +487,10 @@ class SupervisorChannel:
                 " project_key = ?, packet = ?, state = ?, next_eligible_at = NULL,"
                 " hold_reason = NULL, updated_at = ?"
                 " WHERE message_id = ? AND sender_task_id = ? AND recipient_task_id = ?"
-                "   AND project_key IS ? AND attempt_count = 0 AND state IN (?,?,?)"
+                "   AND project_key IS ? AND state IN (?,?,?)"
                 "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
-                "                    WHERE a.message_id = supervisor_messages.message_id)",
+                "                    WHERE a.message_id = supervisor_messages.message_id"
+                "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
                 (now_is["sender"], now_is["recipient"], now_is["projectKey"],
                  json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at,
                  message_id, was["sender"], was["recipient"], was["projectKey"],
@@ -460,9 +524,10 @@ class SupervisorChannel:
             + " to " + repr(current["recipient_task_id"]) + " and has "
             + str(current["attempt_count"]) + " attempt(s), state "
             + repr(current["state"]) + "; the linkage now says " + repr(now_is["sender"])
-            + " reports to " + repr(now_is["recipient"]) + ". A message that was attempted is"
-            " never re-addressed, because its attempts would then describe a recipient they"
-            " were never sent to - so " + repr(now_is["recipient"]) + " has not been told by"
+            + " reports to " + repr(now_is["recipient"]) + ". A message an attempt may have"
+            " sent is never re-addressed, because its attempts would then describe a recipient"
+            " they were never sent to - it went to the supervisor who was live when its"
+            " transport started - so " + repr(now_is["recipient"]) + " has not been told by"
             " this channel, and the obligation stands until the Linear record confirms it",
         )
 
@@ -678,9 +743,9 @@ class SupervisorChannel:
             # Sending never re-addresses: which task a report is FOR is decided where it is
             # staged, so this refuses and says how the report recovers.
             recovery = (" It was never attempted, so staging it again re-addresses it to the"
-                        " live supervisor" if row["attempt_count"] == 0 else
-                        " It has been attempted, so it stays addressed to the task it was"
-                        " sent to and is not re-addressed")
+                        " live supervisor" if self._nothing_sent(message_id) else
+                        " Its bytes may have reached that task, so it stays addressed to it and"
+                        " is not re-addressed")
             raise DeliveryRefused(
                 RefusalReason.RELATION_OWNER_DRIFT,
                 "this message was staged from " + repr(row["sender_task_id"]) + " to "
@@ -717,16 +782,12 @@ class SupervisorChannel:
             return None
         except _NotClaimable:
             return None
-        # The transport's start is stamped HERE, immediately before it is called, and committed
-        # first. sent_at holds the claim time, and settings, lock contention and scheduling can
-        # separate the two, so a turn the recipient opened in between passed the chronology
-        # check as if it followed the send. A stamp that cannot be written raises before
-        # anything is sent, which leaves the claim to lapse into held_uncertain with no
-        # transport instant at all - and a readback of an attempt with none does not verify.
-        with self.store.transaction() as db:
-            db.execute(
-                "UPDATE supervisor_attempts SET transport_started_at = ? WHERE request_id = ?",
-                (self.clock.iso(), request_id))
+        refused = self._start_transport(message_id, attempt_no, request_id, owner, resolution)
+        if refused is not None:
+            kind, detail = refused
+            if kind == "moved":
+                raise DeliveryRefused(RefusalReason.RELATION_OWNER_DRIFT, detail)
+            return None
         try:
             receipt = adapter.send_message(request_id, recipient, message, settings)
         except Exception as error:  # noqa: BLE001 - a transport fault is an unknown outcome
@@ -749,6 +810,73 @@ class SupervisorChannel:
         }
         self._settle(row, request_id, facts, record, now)
         return record
+
+    def _start_transport(self, message_id, attempt_no, request_id, owner, resolution):
+        """Stamp the instant the transport starts, under the lock that decides it may.
+
+        A report goes to whoever supervises at its transport instant, and this write IS that
+        instant. It stamps transport_started_at only while this caller's claim still holds the
+        row and the hierarchy the message names is still the live one, and it is committed
+        before the call - so a stamp that cannot be written raises before anything is sent.
+
+        A handover committing between the claim and this write used to be sent through to the
+        supervisor who had stepped down, and the report was then frozen with its attempt, so the
+        successor was never told. Now that attempt is recorded as one that sent nothing, which
+        is exactly true, and staging again re-addresses the message. A handover committing after
+        this write finds a report already on its way to the supervisor who was live when it
+        started, and that report stays with the task it went to.
+
+        Returns None when the transport may start, else ("lapsed" | "moved", detail).
+        """
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            ours = db.execute(
+                "SELECT 1 FROM supervisor_messages WHERE message_id = ? AND state = ?"
+                "   AND attempt_count = ? AND lease_owner IS ?",
+                (message_id, SENDING, attempt_no, owner)).fetchone()
+            if ours is None:
+                return ("lapsed", "this send's claim no longer holds the message, so its"
+                                  " transport was not started")
+            # The keys the claim itself was decided under, as _claim uses them: resolving again
+            # here could refuse on a store that is contested for a moment and strand a claim
+            # that never sent anything.
+            key, scope = resolution["projectKey"], resolution["initiativeKey"]
+            live = db.execute(
+                "SELECT 1 FROM supervisor_messages WHERE message_id = ?" + _LIVE_HIERARCHY,
+                (message_id, key, key, key, scope, scope)).fetchone()
+            if live is None:
+                record = {"requestId": request_id, "messageId": message_id,
+                          "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
+                          "sendAttempted": "no", "retrySafe": True,
+                          "reason": "the hierarchy moved between the claim and the transport"}
+                db.execute(
+                    "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
+                    " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
+                    (WITHHELD_PRE_SEND, json.dumps(record, sort_keys=True), at, request_id))
+                db.execute(
+                    "UPDATE supervisor_messages SET state = ?, next_eligible_at = NULL,"
+                    " lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                    " WHERE message_id = ? AND state = ? AND attempt_count = ?",
+                    (QUEUED, at, message_id, SENDING, attempt_no))
+                self.store.journal(
+                    "supervisor_message_withheld", message_id,
+                    {"requestId": request_id,
+                     "reason": "the hierarchy moved between the claim and the transport"},
+                    at=at)
+                return ("moved", "the hierarchy this message names moved after its send was"
+                                 " claimed and before its transport started. Nothing was sent;"
+                                 " staging it again re-addresses it to the live supervisor")
+            db.execute(
+                "UPDATE supervisor_attempts SET transport_started_at = ? WHERE request_id = ?",
+                (at, request_id))
+        return None
+
+    def _nothing_sent(self, message_id):
+        """Whether no attempt at this message can have put its bytes anywhere."""
+        return self.store.one(
+            "SELECT 1 FROM supervisor_attempts WHERE message_id = ?"
+            "   AND (send_attempted <> 'no' OR retry_safe = 0) LIMIT 1",
+            (message_id,)) is None
 
 
     def _recover_if_stranded(self, row, now):
@@ -871,33 +999,9 @@ class SupervisorChannel:
                 "                           OR (older.staged_at = supervisor_messages.staged_at"
                 "                               AND older.message_id <"
                 "                                   supervisor_messages.message_id)))"
-                # And the hierarchy this message was staged under is still the live one. Two
-                # halves: the owner of each level is still the task on the row, and no OTHER
-                # live owner exists for that level - which covers a handover that committed
-                # since resolve() ran and a store that holds two live owners at once. The
-                # project key is compared as well, so a relationship that moved projects
-                # cannot be sent under the hierarchy of the one it left.
-                "   AND supervisor_messages.project_key = ?"
-                "   AND EXISTS (SELECT 1 FROM scope_bindings b"
-                "                WHERE b.scope_kind = 'project' AND b.scope_key = ?"
-                "                  AND b.role = 'parent' AND b.superseded_by IS NULL"
-                "                  AND b.status IN ('active','paused')"
-                "                  AND b.task_id = supervisor_messages.sender_task_id)"
-                "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
-                "                    WHERE b.scope_kind = 'project' AND b.scope_key = ?"
-                "                      AND b.role = 'parent' AND b.superseded_by IS NULL"
-                "                      AND b.status IN ('active','paused')"
-                "                      AND b.task_id <> supervisor_messages.sender_task_id)"
-                "   AND EXISTS (SELECT 1 FROM scope_bindings b"
-                "                WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
-                "                  AND b.role = 'supervisor' AND b.superseded_by IS NULL"
-                "                  AND b.status IN ('active','paused')"
-                "                  AND b.task_id = supervisor_messages.recipient_task_id)"
-                "   AND NOT EXISTS (SELECT 1 FROM scope_bindings b"
-                "                    WHERE b.scope_kind = 'initiative' AND b.scope_key = ?"
-                "                      AND b.role = 'supervisor' AND b.superseded_by IS NULL"
-                "                      AND b.status IN ('active','paused')"
-                "                      AND b.task_id <> supervisor_messages.recipient_task_id)",
+                # And the hierarchy this message was staged under is still the live one,
+                # by the predicate the transport-start write asks again.
+                + _LIVE_HIERARCHY,
                 (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                  message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
                  QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now,
@@ -1333,9 +1437,10 @@ class SupervisorChannel:
         """A readback has to come from a real turn that did not start before the send.
 
         The turn the send itself opened is allowed, and is the ordinary case: the message is
-        what wakes the supervisor, so that turn IS where it gets read. Which turn answered is
+        what wakes the supervisor, so that turn is where it lands. Which turn was named is
         returned beside the verdict rather than folded into it, because the sender already
-        knows the id of the turn it opened and a reader deserves to know that.
+        knows the id of the turn it opened, so for that turn the verdict shows arrival and not
+        reading, and a reader deserves to know which it is.
         """
         recipient = row["recipient_task_id"]
         origin = ORIGIN_UNKNOWN
@@ -1356,23 +1461,24 @@ class SupervisorChannel:
             return NO_HOST, "the turn could not be read: " + str(error), origin, None
         if turn is None:
             return TURN_NOT_FOUND, "the host has no such turn on this thread", origin, None
-        if turn.started_at is None:
-            return NO_HOST, ("the host did not say when this turn began, and an unknown"
-                             " chronology is not a verification"), origin, turn
+        began = _host_time(turn.started_at)
+        if began is None:
+            return NO_HOST, ("the host gave no start time for this turn that is a time, and an"
+                             " unknown chronology is not a verification"), origin, turn
         # Applied to EVERY candidate, including the turn the send reports having opened. That
         # turn is not always a new one: the transport can steer an existing turn, and the
         # delivery path keeps a whole flag for that case, so exempting it let a turn that
-        # predates the message verify a readback for the message. The precision allowance in
-        # certainly_before already covers a turn genuinely started by this send.
+        # predates the message verify a readback for the message. The precision allowance
+        # covers a turn genuinely started by this send.
         # Measured from the instant the transport started and from nothing earlier: the claim
         # time let a turn opened between the claim and the call pass as if it followed the
         # send. An attempt with no transport instant has no send to measure against, and a
         # readback that cannot be tied to the send does not verify.
-        started = attempt["transport_started_at"] if attempt is not None else None
+        started = _iso_time(attempt["transport_started_at"]) if attempt is not None else None
         if started is None:
             return NO_HOST, ("this attempt has no recorded transport start, so there is no send"
                              " to measure the turn against"), origin, turn
-        if certainly_before(turn.started_at, started):
+        if began + TURN_START_PRECISION_SECONDS <= started:
             return TURN_PREDATES_SEND, ("this turn began before the send, so it cannot be the"
                                         " turn that read it"), origin, turn
         return HOST_READ, ("the host lists this turn on the recipient's thread and it did not"

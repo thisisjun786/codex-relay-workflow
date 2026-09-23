@@ -341,8 +341,9 @@ def discharge_of(store, obligation, *, target=sync.COORDINATION_DOCUMENT) -> dic
     """Whether the record the supervisor actually reads has this yet.
 
     There is no supervisor acknowledgement in this store and this does not pretend otherwise.
-    A readback on the supervisor channel says a message was read, which is a different fact and
-    discharges nothing. What discharges one is the Linear synchronisation row, which the
+    A readback on the supervisor channel says a message arrived where the recipient reads and
+    that the turn it names is real there - not that anybody read it - and it discharges
+    nothing. What discharges one is the Linear synchronisation row, which the
     supervisor reads for itself, and it counts only at confirmed - the state reached after a
     readback verified what was written.
 

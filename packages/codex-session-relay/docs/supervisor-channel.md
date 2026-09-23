@@ -117,21 +117,29 @@ second from under the first. Returning the frozen row as it stood left a report 
 supervisor who had stepped down: `attempt()` refused it as drift, and the `supervisor_report`
 entry kept a second report from being produced, so the successor was never told.
 
-Staging again recovers it, under one rule. A message that has never been attempted has not
-been seen by anybody, because its bytes are rendered inside the claim, so it is re-addressed
-in place: the same id and the same journal entry, with the live sender, recipient, project key
-and a recomposed packet, and a `supervisor_message_readdressed` entry naming both
-hierarchies. The no-attempt condition is a predicate inside the write, so a claim that commits
-first wins and the re-address becomes a refusal. What the former recipient's state decided goes
-with it: a lifecycle recheck, a backoff and a busy cap were bounds about that task, and the busy
-count restarts from the re-address.
+Staging again recovers it, under one rule. A message none of whose attempts can have sent
+anything has not been seen by anybody - its bytes are rendered inside the claim, and an attempt
+recorded as `sendAttempted: no` and retry-safe put them nowhere - so it is re-addressed in
+place: the same id and the same journal entry, with the live sender, recipient, project key and
+a recomposed packet, and a `supervisor_message_readdressed` entry naming both hierarchies. The
+condition is a predicate inside the write, and the hierarchy is resolved again under that same
+lock, so a claim that commits first wins and the re-address becomes a refusal. What the former
+recipient's state decided goes with it: a lifecycle recheck, a backoff and a busy cap were
+bounds about that task, and the busy count restarts from the re-address.
 
-A message with any attempt stays addressed to the task it was sent to. Its attempts describe
-bytes that went there, and moving the row would have them describe a recipient they were never
-sent to. Staging it again refuses as `relation_owner_drift` and names both hierarchies, which is
-how `supervisor-stage --project` reports it under `refused`: the successor has not been told
-through this channel, and the obligation stands until the Linear record confirms it. Sending
-never re-addresses anything; which task a report is for is decided where it is staged.
+A report goes to whoever supervises at its TRANSPORT INSTANT, and the write that stamps that
+instant is where the question is asked last. It checks, under the lock, that the send's claim
+still holds the row and that the hierarchy the message names is still the live one. A handover
+that committed after the claim and before that write finds nothing sent: the attempt is
+recorded as one that sent nothing, the send refuses as `relation_owner_drift`, and staging
+again re-addresses the report to the successor. A handover that commits after the stamp finds a
+report already on its way to the supervisor who was live when it started, and that report stays
+with the task it went to: its attempts describe bytes that went there, and moving the row would
+have them describe a recipient they were never sent to. Staging it again refuses as
+`relation_owner_drift` and names both hierarchies, which is how `supervisor-stage --project`
+reports it under `refused`; the successor has not been told through this channel, and the
+obligation stands until the Linear record confirms it. Sending never re-addresses anything;
+which task a report is for is decided where it is staged.
 
 ### The readback, and exactly what it establishes
 
@@ -179,11 +187,12 @@ row, and one that lost the race to settle it - built from the stored row, with `
 It does not say who wrote the answer, that the turn answered anything, or that the supervisor
 acted. The turn a send opens is one the sender already knows the id of, so a readback from that
 turn rests on nothing the sender could not have produced alone - and that is the ORDINARY case,
-because the message is what wakes the supervisor. So which turn answered is recorded as
-`relay_opened`, `recipient_opened` or `unknown` rather than averaged into one word, and a reader
-can see how much was established instead of being told a number. `unknown` is reachable: the
-origin is named only when the delivered attempt carries a turn id, and `inbox_only` carries
-none.
+because the message is what wakes the supervisor. So which turn was named is recorded as
+`relay_opened`, `recipient_opened` or `unknown` rather than averaged into one word, and a
+reader can see how much was established instead of being told a number: `relay_opened` shows
+arrival and nothing more, and not even `recipient_opened` shows who wrote the answer.
+`unknown` is reachable: the origin is named only when the delivered attempt carries a turn id,
+and `inbox_only` carries none.
 
 There are six verification answers: `host_read`, `transcript_unconfirmed` for a real turn whose
 transcript scan did not confirm the message, `transcript_turn_mismatch` where the readback
