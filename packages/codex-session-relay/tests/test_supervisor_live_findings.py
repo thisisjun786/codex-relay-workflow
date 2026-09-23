@@ -276,6 +276,9 @@ class F2EveryShapeTheComparisonReads(_Seam):
         "an environment without a cwd": {"environments": [{"environmentId": "local"}]},
         "environment roots as text": {"environments": [
             {"environmentId": "local", "cwd": seam.WORKTREE, "runtimeWorkspaceRoots": "/a/bc"}]},
+        # Null is not absent: an absent list defaults to the cwd, a null one says nothing.
+        "environment roots null": {"environments": [
+            {"environmentId": "local", "cwd": seam.WORKTREE, "runtimeWorkspaceRoots": None}]},
     }
 
     @staticmethod
@@ -295,6 +298,9 @@ class F2EveryShapeTheComparisonReads(_Seam):
                 thread={"environments": [{"cwd": seam.WORKTREE}]}),
             "environment roots as a number": self._answer(thread={"environments": [
                 {"environmentId": "local", "cwd": seam.WORKTREE, "runtimeWorkspaceRoots": 123}]}),
+            "environment roots null": self._answer(thread={"environments": [
+                {"environmentId": "local", "cwd": seam.WORKTREE,
+                 "runtimeWorkspaceRoots": None}]}),
             "a thread that is not an object": not_an_object,
         }
 
@@ -444,27 +450,66 @@ class F2EveryShapeTheComparisonReads(_Seam):
                         receipt, calls,
                         "settings_differ_after_load" if flagged else "settings_not_preserved")
 
-    def test_a_permission_profile_agrees_only_as_the_same_json_value(self):
-        """The one other field compared with equality whose value is not always text."""
-        with self.subTest("the recorder"):
-            view = TaskSettings(dict(seam.AUTHORIZED.data, expectedPermissionProfile=0))
-            try:
-                view.require_usable()
-            except DeliveryRefused as refused:
-                self.assertEqual(refused.reason, RefusalReason.SETTINGS_MISTYPED)
-                self.assertIn("expectedPermissionProfile", refused.detail)
-            else:
-                self.fail("an expectedPermissionProfile that is not text was accepted")
-        record = dict(seam.AUTHORIZED.data, expectedPermissionProfile=0)
+    def test_absent_environment_roots_still_mean_the_cwd(self):
+        """TurnEnvironmentParams: an omitted roots list defaults to the cwd. Only null is refused."""
+        record = dict(seam.AUTHORIZED.data,
+                      environments=[{"environmentId": "local", "cwd": seam.WORKTREE}])
+        answer = self._answer(thread={"environments": [
+            {"environmentId": "local", "cwd": seam.WORKTREE}]})
+        try:
+            TaskSettings(record).require_usable()
+        except DeliveryRefused as refused:
+            self.fail(f"an environment with no roots list was refused: {refused}")
         for number, flagged in enumerate((True, False), start=1):
-            with self.subTest("record 0, answer false", settings_free=flagged):
+            with self.subTest(settings_free=flagged):
                 settings = record_based(record) if flagged else TaskSettings(record)
-                adapter, calls = self._adapter(
-                    resume=self._answer(activePermissionProfile=False), status="notLoaded")
+                adapter, calls = self._adapter(resume=answer, status="notLoaded")
                 receipt = adapter.send_message(
-                    f"sup-80000000000{number}-a1", "thread-1", "hi", settings)
-                self.assert_withheld_before_any_turn(receipt, calls,
-                                                     "unverifiable_permission_profile")
+                    f"sup-90000000000{number}-a1", "thread-1", "hi", settings)
+                self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
+
+    PROFILE = {"id": "profile-1", "extends": None, "rules": []}
+
+    def test_a_permission_profile_is_the_hosts_whole_value_and_agrees_only_as_json(self):
+        """relay.md: carry activePermissionProfile WHOLE, an object, into the record.
+
+        Devin on 16ea6c8b: typing expectedPermissionProfile as text refused the object a
+        creation receipt reports, so such a task could not be registered or sent to. The record
+        holds the host's value as it is; agreement is JSON equality, where 0 and false differ,
+        key order does not matter, and an absent extends is not a null one.
+        """
+        with self.subTest("the recorder takes the object"):
+            try:
+                TaskSettings(dict(seam.AUTHORIZED.data,
+                                  expectedPermissionProfile=self.PROFILE)).require_usable()
+            except DeliveryRefused as refused:
+                self.fail(f"the profile a creation receipt reports was refused: {refused}")
+        reordered = {"rules": [], "extends": None, "id": "profile-1"}
+        agreeing = {
+            "the same object, keys in another order": (self.PROFILE, reordered),
+        }
+        refusing = {
+            "record 0, answer false": (0, False),
+            "extends null in the record, absent in the answer": (
+                self.PROFILE, {"id": "profile-1", "rules": []}),
+        }
+        number = 0
+        for label, (recorded, reported) in {**agreeing, **refusing}.items():
+            for flagged in (True, False):
+                number += 1
+                with self.subTest(label, settings_free=flagged):
+                    record = dict(seam.AUTHORIZED.data, expectedPermissionProfile=recorded)
+                    settings = record_based(record) if flagged else TaskSettings(record)
+                    adapter, calls = self._adapter(
+                        resume=self._answer(activePermissionProfile=reported),
+                        status="notLoaded")
+                    receipt = adapter.send_message(
+                        f"sup-8{number:011d}-a1", "thread-1", "hi", settings)
+                    if label in agreeing:
+                        self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
+                    else:
+                        self.assert_withheld_before_any_turn(
+                            receipt, calls, "unverifiable_permission_profile")
 
     def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
         host = FakeHostAdapter(clock=None)

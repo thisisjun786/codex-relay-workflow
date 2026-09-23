@@ -199,7 +199,8 @@ class TaskSettings:
         """Recorded fields whose shape this record does not hold.
 
         The three the resume contract types as strings, and the two lists every comparison
-        reads (runtimeWorkspaceRoots, environments: see environments_problem).
+        reads (runtimeWorkspaceRoots, environments: see environments_problem). The sandbox is
+        typed by normalise_policy, one gate later.
 
         Presence was never the whole question. resume_params copies each of these values
         straight into ThreadResumeParams, so a recorded `cwd: 7` used to be built and sent, and
@@ -232,11 +233,10 @@ class TaskSettings:
             wrong.append("runtimeWorkspaceRoots")
         if environments_problem(self.data["environments"]) is not None:
             wrong.append("environments")
-        # Optional, and text where given: the managed admission path types it so, and the
-        # comparison below reads it against the host's answer.
-        profile = self.data.get("expectedPermissionProfile")
-        if profile is not None and not isinstance(profile, str):
-            wrong.append("expectedPermissionProfile")
+        # expectedPermissionProfile is not typed: it is the host's own value, carried whole from
+        # the creation receipt (an object such as {"id", "extends", "rules"}), and nothing here
+        # can say which shapes a host may report. mismatches() compares it with the answer as a
+        # JSON value, where 0 and false differ and an absent key is not a null one.
         return wrong
 
     def _mistyped_detail(self, field) -> str:
@@ -547,7 +547,8 @@ def environments_problem(environments):
     """Why an environment selection cannot be read, as (where, what), or None when it can.
 
     Readable is a list of objects, each with an environmentId and a cwd that are text and, where
-    given, runtimeWorkspaceRoots that are a list of text (an omitted list defaults to the cwd).
+    the key is present, runtimeWorkspaceRoots that are a list of text (an omitted list defaults to
+    the cwd; a null one is present and is not a list).
     An empty list is readable: it is a selection of none. The caller decides what None means
     before asking; here it is simply not a list.
     """
@@ -559,9 +560,14 @@ def environments_problem(environments):
         for key in ("environmentId", "cwd"):
             if not isinstance(entry.get(key), str):
                 return (f"[{index}].{key}", f"is {_shape(entry.get(key))}, not str")
-        roots = entry.get("runtimeWorkspaceRoots")
-        if roots is not None and not _text_list(roots):
-            return (f"[{index}].runtimeWorkspaceRoots", f"is {_shape(roots)}, not a list of str")
+        # Absent is the documented default (TurnEnvironmentParams: the cwd). Null is not absent
+        # and not a list, so it says nothing about the roots and is refused like any other
+        # shape; reading it as the cwd agreed on a value neither side had reported.
+        if "runtimeWorkspaceRoots" in entry:
+            roots = entry["runtimeWorkspaceRoots"]
+            if not _text_list(roots):
+                return (f"[{index}].runtimeWorkspaceRoots",
+                        f"is {_shape(roots)}, not a list of str")
     return None
 
 

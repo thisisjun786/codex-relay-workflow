@@ -219,6 +219,19 @@ class _Reader:
         return _OTHER
 
 
+# Calls that cannot fail on any value a record can hold. Handing a field to one is not a
+# transformation, because a transformation is what can refuse a row by raising, and these never
+# raise: settings._canonical is the JSON value a record and an answer are compared as (CRW-215),
+# and it reads the host's permission profile, which is opaque and any value of which is a record
+# a send can carry. test_every_transformation_a_send_applies_to_the_record_is_covered proves each
+# name here total before it derives anything, so one that stops being total fails there.
+TOTAL_CALLS = ("_canonical",)
+
+
+def _total(call):
+    return isinstance(call.func, ast.Name) and call.func.id in TOTAL_CALLS
+
+
 def _handed_over(call):
     """(selector, expression) for everything a call hands over.
 
@@ -310,7 +323,7 @@ def _visit(defined, function, parameters, seen, collect):
     reader = _Reader(function, parameters)
     found = collect(function, reader)
     for node in _scoped(function):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or _total(node):
             continue
         target, method = _hop(node, defined, function)
         if target is None:
@@ -334,7 +347,7 @@ def transformed_fields(tree, entries, owner="TaskSettings"):
     def collect(function, reader):
         found = set()
         for node in _scoped(function):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or _total(node):
                 continue
             for _selector, expression in _handed_over(node):
                 carried = reader.type_of(expression)
@@ -2342,6 +2355,18 @@ class ParticipantAccessReceipts(CliBase):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                         and node.func.attr in api):
                     called.add(node.func.attr)
+
+        # What the derivation below is allowed to pass over, proved rather than trusted: each
+        # call it treats as total returns on every shape a record or an answer can hold.
+        for name in TOTAL_CALLS:
+            total = getattr(settings_module, name)
+            for value in (7, "7", None, True, 0.5, [], {}, [7, {"a": None}],
+                          {"b": [True, 0], "a": "x"}, object()):
+                with self.subTest(total=name, value=repr(value)):
+                    try:
+                        total(value)
+                    except Exception as error:  # noqa: BLE001 - raising is what is ruled out
+                        self.fail(f"{name} is listed as total and raised {error!r}")
 
         recorded = ast.parse(inspect.getsource(settings_module))
         fields = transformed_fields(recorded, called)
