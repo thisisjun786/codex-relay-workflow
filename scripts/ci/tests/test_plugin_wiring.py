@@ -1133,6 +1133,15 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertNotIn("repair", emitted, "precondition: this refusal carries no repair")
         self.assertNotIn("repair", emitted.get("note") or "", output)
 
+    def test_a_dry_run_makes_no_activation_claim(self):
+        """Review of be3ebe4c: a dry run counted as settled and claimed new threads would run under
+        a record that does not exist."""
+        status, emitted, output = self.register()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.WOULD_CREATE, output)
+        self.assertFalse(self.record.exists(), output)
+        self.assertNotIn("activation", emitted, output)
+
     def test_a_rerun_that_writes_nothing_does_not_say_it_wrote(self):
         """Review of f743d438: every outcome printed "The record was written"."""
         self.assertEqual(self.register("--apply")[0], 0)

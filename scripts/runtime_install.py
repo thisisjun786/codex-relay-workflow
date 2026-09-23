@@ -5297,8 +5297,7 @@ def _register_mcp_plugin_note(outcome, wrote, repair):
                 " written.") + unregistered
     if outcome == bridgerecord.APPLIED_UNVERIFIED:
         return ("The record was written and could not be read back as written, so whether a new"
-                " thread can start the bridge from it is not established; detail says what was"
-                " found.")
+                " thread can start the bridge from it is not established.")
     then = "; repair says what to do." if repair else "."
     if wrote:
         return ("Refused after the write, and this run removed nothing; detail says what was at"
@@ -5447,8 +5446,9 @@ def _register_mcp_owned(args, codex_home):
                   "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
                   "otherTablesPreserved": True})
             return EXIT_REFUSED
-        # What the output claims follows what happened. A refusal says nothing about new threads
-        # running the bridge, and only a record that is in place is described as written.
+        # What the output claims follows what happened. Only a record that is in place, written
+        # now or already there, carries the activation claim: a refusal, a dry run and a write
+        # that could not be read back say nothing about new threads running the bridge.
         answered = written["outcome"]
         emit({"command": "register-mcp", "owner": owner, "path": str(path),
               "record": str(record_path), "outcome": answered,
@@ -5465,7 +5465,7 @@ def _register_mcp_owned(args, codex_home):
                   " thread it loads (observed on Codex Desktop 0.154.0), so a thread started after"
                   " that runs the bridge under this record and a thread already running keeps"
                   " the bridge it spawned. Read get_capabilities in a new thread to observe it.")}
-                 if answered in bridgerecord.SETTLED else {}),
+                 if answered in (bridgerecord.CREATED, bridgerecord.UNCHANGED) else {}),
               "note": _register_mcp_plugin_note(answered, written["wrote"],
                                                 bool(written.get("repair")))})
         return EXIT_OK if answered in bridgerecord.SETTLED else EXIT_REFUSED
