@@ -122,7 +122,7 @@ never as a review that passed.
 ## Surface the disagreements, not the inventory
 
 A list of green rows is not a report. What makes a midpoint check worth asking for is the places
-where two levels disagree, and three of them recur:
+where two levels disagree, and four of them recur:
 
 - The parent is idle while its children's work is still outstanding AND nothing will bring it back.
   Idle alone is not the blocker: under event-driven handoff a parent answers, returns to idle, and
@@ -143,6 +143,12 @@ where two levels disagree, and three of them recur:
   by an unanswered question, and the question has an owner who has not seen it.
 - The newest report and the newest pull request describe different states. The report is stale, or
   the pull request moved after it, and the summary everybody is reading is no longer true.
+- A tracked item sits outside the project it belongs to: an issue read back with no project or the
+  wrong one, or an incident the relay's product routing held because no single product, owner or
+  project could be chosen. The record and the plan disagree about where the work lives. Where an
+  existing rule settles it, it is internal coordination; where it needs a choice between products
+  or projects, it is a decision for Jun. Routine accumulation under records that already exist is
+  summarized in one line rather than listed.
 
 Report those as the main blockers, before the per-project detail. Then split what is waiting into
 three: a normal dependency wait, which is nobody's failure and needs only its reason; the questions
