@@ -322,6 +322,19 @@ class ControlGroups(ProductRoutingCase):
         self.holder.run()
         self.assertNotIn("open", [i["state"] for i in self.linear.issues.values()])
 
+    def test_a_closure_records_its_own_fix_after_an_earlier_one(self):
+        first = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
+        (entry,) = first["recorded"]
+        self.router.port.record_fix(entry["faultId"], ref="PR#10", detail="an earlier attempt")
+        closed = self.router.check_completion(reading("ALN-9", observedAt="later", evidence={
+            "acceptance": {"fix": {"ref": "PR#11", "source": "github"},
+                           "verification": {"ref": "suite#12", "source": "ci"}}}))
+        self.assertIn("closed", [e["recorded"] for e in closed["recorded"]])
+        timeline = [(r["kind"], r["ref"]) for r in
+                    self.router.port.remediations(entry["faultId"], limit=20)]
+        self.assertEqual(["PR#10", "PR#11", "suite#12"], [ref for _kind, ref in timeline])
+        self.assertEqual("resolved", self.router.port.get(entry["faultId"])["state"])
+
     def test_a_withdrawn_claim_leaves_an_open_mismatch_standing_without_a_new_occurrence(self):
         first = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
         (entry,) = first["recorded"]
@@ -385,6 +398,27 @@ class Projects(ProductRoutingCase):
         self.assertEqual({created}, {r["project"] for r in gamma})
         self.holder.run()
         self.assertEqual({created}, {i["project"] for i in self.issues_of("GMK").values()})
+
+    def test_members_declaring_different_criteria_for_one_goal_make_no_project(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.route(product="gamma-kit", repository="example-org/gamma-kit", surface="real_use",
+                   phase="in_use", component="queue", symptom="lost", occurrenceKey="g2",
+                   goal={"key": "offline_sync", "criteria": "conflicts are surfaced"})
+        answer = self.router.evaluate_projects("gamma-kit")
+        self.assertEqual([], answer["queued"])
+        self.assertIn("different completion criteria", answer["skipped"][0]["reasons"][0])
+        self.holder.run()
+        self.assertEqual({}, self.linear.projects)
+
+    def test_settled_proposals_are_history_not_attention(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        self.holder.run()
+        self.router.digest()
+        self.assertEqual(1, len(self.router.show("gamma-kit")["projects"]))
+        self.assertEqual([], self.router.show("gamma-kit", attention=True)["projects"])
 
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
@@ -675,6 +709,17 @@ class UnclearOwnership(ProductRoutingCase):
 
 
 class Reporting(ProductRoutingCase):
+    def test_a_nonsense_page_bound_is_refused_before_anything_is_done(self):
+        self.route()
+        for call in (lambda: self.router.digest(limit=0), lambda: self.router.digest(limit=True),
+                     lambda: self.router.reconcile(limit=-1),
+                     lambda: self.router.show(limit=0), lambda: self.router.show(after=-1),
+                     lambda: self.router.reconcile(after="x")):
+            with self.subTest(call=call), self.assertRaises(products.RouteRefused) as caught:
+                call()
+            self.assertEqual("route_input_malformed", caught.exception.reason.value)
+        self.assertIsNone(routes.listing(self.store)["routes"][0]["reported"])
+
     def test_a_second_digest_with_nothing_changed_is_quiet(self):
         self.route()
         self.route(product="beta-meter", repository="example-org/beta-meter",

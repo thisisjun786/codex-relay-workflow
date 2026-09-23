@@ -80,10 +80,18 @@ def eligibility(db, payload) -> list:
             continue
         if route["goal"] != payload["goal"]:
             continue
+        # Sharing a goal means sharing its completion criteria too: a member whose incident
+        # declares other criteria is another contract that happens to use the same key.
+        latest = db.execute("SELECT record FROM route_incidents WHERE fault_id = ?"
+                            " ORDER BY recorded_seq DESC LIMIT 1", (fault_id,)).fetchone()
+        declared = ((json.loads(latest["record"]) if latest else {}).get("goal") or {})
+        if declared.get("criteria") != payload.get("criteria"):
+            continue
         members.append(fault_id)
     problems = []
     if len(members) < policy["minIndependentFixes"]:
-        problems.append(f"{len(members)} held defect(s) still share goal {payload['goal']};"
+        problems.append(f"{len(members)} held defect(s) still share goal {payload['goal']}"
+                        f" and its criteria;"
                         f" the policy needs {policy['minIndependentFixes']}")
     if not payload.get("criteria"):
         problems.append("the goal declares no completion criteria")
@@ -135,9 +143,10 @@ def _groups(router, product):
             goal = (stored[-1]["goal"] if stored else None) or {}
             if not goal.get("key") or not goal.get("criteria"):
                 continue
-            entry = groups.setdefault(goal["key"], {"criteria": goal["criteria"],
+            entry = groups.setdefault(goal["key"], {"criteria": set(),
                                                      "members": [], "components": set(),
                                                      "workspace": route["workspace"]})
+            entry["criteria"].add(goal["criteria"])
             entry["members"].append(route["fault_id"])
             entry["components"].add(stored[-1]["component"])
         after = page["next"]
@@ -155,9 +164,17 @@ def evaluate(router, product) -> dict:
     port = router.port
     queued, skipped = [], []
     for goal, group in sorted(_groups(router, product).items()):
+        if len(group["criteria"]) > 1:
+            # One project carries one completion contract; picking whichever criteria came
+            # first would drop the others without anybody deciding it.
+            skipped.append({"goal": goal, "reasons": [
+                f"the held defects under {goal} declare different completion criteria"
+                f" {sorted(group['criteria'])}; a project needs one"]})
+            continue
+        (criteria,) = group["criteria"]
         payload = {"product": product, "workspace": group["workspace"],
                    "team": registry["team"], "familyLabel": registry["familyLabel"],
-                   "goal": goal, "criteria": group["criteria"],
+                   "goal": goal, "criteria": criteria,
                    "name": f"{registry['familyLabel']} · {goal}",
                    "members": sorted(set(group["members"])),
                    "components": sorted(group["components"])}

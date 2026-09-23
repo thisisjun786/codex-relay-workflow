@@ -459,8 +459,9 @@ def _close(port, fault_id, row, closure, key):
         fix = closure["fix"]["ref"]
         verification = {"method": "observation", "ref": closure["verification"]["ref"],
                         "outcome": "passed"}
-    if row["state"] != ledger_port.FIX_PENDING:
-        port.record_fix(fault_id, ref=fix, detail="closure of a completion mismatch")
+    # Recorded even when an earlier fix left the record fix_pending: the reverification below
+    # must follow the fix this reading names. The same fix again is the ledger's no-op.
+    port.record_fix(fault_id, ref=fix, detail="closure of a completion mismatch")
     port.record_reverification(fault_id, detail="completion reading", **verification)
     port.resolve(fault_id)
 

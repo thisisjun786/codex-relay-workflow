@@ -952,6 +952,16 @@ class ProjectEligibility(RouteRows):
                         "members": ["c" * 32, "d" * 32], "components": ["cache", "queue"],
                         "team": ALPHA["team"], "familyLabel": ALPHA["familyLabel"]}
 
+    def upsert(self, fault_id, criteria="edits made offline survive reconnect", **fields):
+        """A member route with the incident behind it, which declares the goal's criteria."""
+        from codex_session_relay import routes
+
+        super().upsert(fault_id, **fields)
+        goal = fields.get("goal", "offline_sync")
+        with self.store.transaction() as db:
+            routes.store_incident(db, self.clock, fault_id, incident(
+                occurrenceKey=f"{fault_id[:4]}:{goal}", goal={"key": goal, "criteria": criteria}))
+
     def policy(self, enabled=True):
         self.router.set_policy({"schema": "routing-policy/1", "policy": "project_creation",
                                 "enabled": enabled, "minIndependentFixes": 2,
@@ -978,6 +988,12 @@ class ProjectEligibility(RouteRows):
         self.upsert("d" * 32)
         self.router.register_product(dict(ALPHA, team="ALX"))
         self.assertEqual(["alpha-notes's team is now 'ALX', not 'ALN'"], self.problems())
+
+    def test_members_that_declare_other_criteria_for_the_goal_do_not_count(self):
+        self.policy()
+        self.upsert("c" * 32)
+        self.upsert("d" * 32, criteria="conflicts are surfaced")
+        self.assertIn("1 held defect(s)", " ".join(self.problems()))
 
     def test_a_member_that_left_the_group_cancels_the_create(self):
         from codex_session_relay import routes

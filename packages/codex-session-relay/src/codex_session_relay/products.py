@@ -522,3 +522,15 @@ def canonical(value) -> str:
                           allow_nan=False)
     except ValueError as error:
         malformed(f"a value has no JSON text: {error}")
+
+
+def read_page(limit, after, *, ceiling) -> tuple:
+    """(limit, after) of a caller's page: a positive whole number, at most the ceiling, and no
+    cursor or one a listing returned. Refused rather than clamped, because a bound on what is
+    read is a bound on what is written too, and a nonsense one is no permission to do one."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        malformed(f"limit is a positive whole number, not {limit!r}")
+    if after is not None and (isinstance(after, bool) or not isinstance(after, int)
+                              or after < 0):
+        malformed(f"after is a cursor a listing returned, not {after!r}")
+    return min(limit, ceiling), after

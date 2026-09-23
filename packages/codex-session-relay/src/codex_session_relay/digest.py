@@ -60,9 +60,9 @@ def _severe(snapshot):
 
 def digest(router, *, limit=500, after=None) -> dict:
     """The changes since the last digest, over at most limit routes from after."""
+    limit, after = products.read_page(limit, after, ceiling=5000)
     port = router.port
     port.ready("route-digest")
-    limit = min(max(int(limit), 1), 5000)
     bound, unreached = _bind_created_projects(router, limit)
     linked = []
     severe, decisions, resolutions, routine = [], [], [], {}

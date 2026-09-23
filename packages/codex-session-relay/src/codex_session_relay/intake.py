@@ -521,7 +521,7 @@ def reconcile(router, *, product=None, limit=50, after=None) -> dict:
     """Discharge obligations whose ends now own issues, and bind projects that were created,
     over at most limit filed routes after the cursor; pass next back as after to continue."""
     queued, bound, seen = [], [], 0
-    limit = min(max(int(limit), 1), 5000)
+    limit, after = products.read_page(limit, after, ceiling=5000)
     while seen < limit:
         page = routes.listing(router.store, product=product, stages=(products.STAGE_FILED,),
                               limit=min(100, limit - seen), after=after)

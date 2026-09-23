@@ -232,7 +232,8 @@ class ProductRouter:
                                 "issue": now["externalRef"], "linkState": now["linkState"],
                                 "linkedProject": row.get("linkedProject")}}
             if route["disposition"] == products.PROJECT_PROPOSAL:
-                proposals.append(entry)
+                if not attention or waiting is not None:
+                    proposals.append(entry)
             elif not attention or waiting is not None:
                 shown.append(entry)
         return {"routes": shown, "projects": proposals, "attention": bool(attention),

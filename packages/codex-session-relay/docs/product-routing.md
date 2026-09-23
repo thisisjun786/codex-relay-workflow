@@ -95,7 +95,9 @@ A defect is filed under the product it belongs to, not the product that saw it. 
 a CRW-managed run of another repository goes to that repository's product and team. CRW is one
 registered product among others, and nothing defaults to it. A declared product whose repository
 is registered to another product is two readings naming two owners, so the incident waits for
-classification instead of being filed under either.
+classification instead of being filed under either. A repository several products register is
+settled by the declaration when it names one of them, since then the two readings agree; without
+a declaration such an incident waits.
 
 ### No issue without its project
 
@@ -174,8 +176,10 @@ is intended.
 A project is created only under an explicitly configured `project_creation` policy whose basis
 names this request. Creation needs no suitable project for the members' components, plus at least
 `minIndependentFixes` (two or more) distinct held defects sharing one declared user goal with
-completion criteria. Issue, file or error counts alone never create one, and a single defect goes
-into its product's existing suitable project.
+completion criteria. Sharing the goal means declaring the same criteria for it: defects that give
+one goal key different criteria are different contracts, so they make no project, and the pre-issue
+check counts only members declaring the criteria the create carries. Issue, file or error counts
+alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope
 `__projects__` (a target with the product's team and no project), so it can never file an issue
@@ -270,16 +274,16 @@ recorded for that comparison, one small row each, so how many readings came afte
 matter.
 
 A mismatch closes only on evidence. A later reading can carry a fix reference and a verification
-reference; then the fix is recorded, a reverification that passed is recorded, and the record is
-resolved. An approved exception closes it the same way, with the exception as the fix. A
-requirement quietly dropped after a mismatch keeps it open. So does a claim withdrawn while the
-mismatch is open, a subject taken back out of Done for instance: the check answers
-`claim_withdrawn_without_closure` and records no new occurrence, because a subject taken back is
-not a new failure; an exception nobody could verify changes neither. The claim made again with its
-evidence closes it. An unverified check is cleared by a later reading that establishes it either
-way. A reading where every check now agrees, but an open mismatch still lacks its fix and
-verification references, answers `closure_pending` rather than `consistent`: nothing is wrong any
-more, and nothing is closed. A legitimate Done produces no write at all.
+reference; then that fix is recorded, even after an earlier one, a reverification that passed is
+recorded after it, and the record is resolved. An approved exception closes it the same way, with
+the exception as the fix. A requirement quietly dropped after a mismatch keeps it open. So does a
+claim withdrawn while the mismatch is open, a subject taken back out of Done for instance: the
+check answers `claim_withdrawn_without_closure` and records no new occurrence, because a subject
+taken back is not a new failure; an exception nobody could verify changes neither. The claim made
+again with its evidence closes it. An unverified check is cleared by a later reading that
+establishes it either way. A reading where every check now agrees, but an open mismatch still lacks
+its fix and verification references, answers `closure_pending` rather than `consistent`: nothing is
+wrong any more, and nothing is closed. A legitimate Done produces no write at all.
 
 Recurrence is read from the ledger. A defect the subject owns is recurring when it is open again
 after a fix in its current cycle, or open in a cycle after a resolution. The ledger has already
@@ -288,7 +292,8 @@ most a thousand of the product's defect records; past that, recurrence is unveri
 
 ## Reporting
 
-`route-show --attention` lists what needs somebody. Each route waits on at most one decision,
+`route-show --attention` lists what needs somebody, project proposals included only while they
+wait on a decision. Each route waits on at most one decision,
 named the same way everywhere:
 
 | Decision | When |
@@ -361,6 +366,9 @@ completion-check  --reading <json|@path>
 fault owns no issue yet, from its latest stored incident. It does this in the same transaction as
 the binding, so a binding whose consequences were refused is not kept. Its answer lists what
 changed.
+
+`--limit` is a positive whole number and `--after` a cursor a listing returned. Anything else is
+refused before any work, because a bound on what a command reads is a bound on what it writes.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds

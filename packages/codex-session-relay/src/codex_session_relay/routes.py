@@ -168,7 +168,8 @@ def outstanding_proposals(store, limit):
     rows = store.all(
         "SELECT rowid AS seq, * FROM incident_routes WHERE stage = ? AND disposition = ?"
         " ORDER BY checked_seq, rowid LIMIT ?",
-        (products.STAGE_FILED, products.PROJECT_PROPOSAL, min(max(int(limit), 1), 5000)))
+        (products.STAGE_FILED, products.PROJECT_PROPOSAL,
+         products.read_page(limit, None, ceiling=5000)[0]))
     reached = [_decode(row) for row in rows]
     placeholders = ",".join("?" * len(reached)) or "''"
     waiting = store.all(
@@ -233,7 +234,7 @@ def incidents(store, fault_id) -> list:
 def listing(store, *, product=None, stages=None, dispositions=None, limit=20,
             after=None) -> dict:
     """One page of routes, oldest first, continued by rowid like the ledger's own listing."""
-    limit = min(max(int(limit), 1), 1000)
+    limit, after = products.read_page(limit, after, ceiling=1000)
     clauses, params = [], []
     if product is not None:
         clauses.append("product_key = ?")
@@ -246,7 +247,7 @@ def listing(store, *, product=None, stages=None, dispositions=None, limit=20,
         params.extend(dispositions)
     if after is not None:
         clauses.append("rowid > ?")
-        params.append(int(after))
+        params.append(after)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = store.all("SELECT rowid AS seq, * FROM incident_routes" + where
                      + " ORDER BY rowid LIMIT ?", (*params, limit + 1))
