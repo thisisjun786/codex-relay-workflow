@@ -139,6 +139,9 @@ class RelayDaemon:
         # The last project key the supervisor pass served, where its rotation resumes. In memory
         # on purpose: see _report_upward.
         self._supervisor_after = None
+        # The (staged_at, message_id) of the last supervisor queue head _send_upward considered,
+        # where its next page starts. In memory for the same reason.
+        self._supervisor_send_after = None
         self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
@@ -981,16 +984,35 @@ class RelayDaemon:
                     "  AND (%(m)s.next_eligible_at IS NULL OR %(m)s.next_eligible_at <= ?))"
                     " OR (%(m)s.state = ? AND %(m)s.lease_until IS NOT NULL"
                     "     AND %(m)s.lease_until <= ?))")
-        rows = self.store.all(
-            "SELECT m.message_id, m.recipient_task_id FROM supervisor_messages m"
-            " WHERE " + eligible % {"m": "m"}
-            + "   AND NOT EXISTS (SELECT 1 FROM supervisor_messages o"
-              "                    WHERE o.recipient_task_id = m.recipient_task_id"
-              "                      AND " + eligible % {"m": "o"}
-            + "                      AND (o.staged_at < m.staged_at OR (o.staged_at ="
-              "                           m.staged_at AND o.message_id < m.message_id)))"
-              " ORDER BY m.staged_at, m.message_id LIMIT ?",
-            (*CLAIMABLE, now, SENDING, now, *CLAIMABLE, now, SENDING, now, budget * 4))
+        heads = ("SELECT m.message_id, m.recipient_task_id, m.staged_at"
+                 " FROM supervisor_messages m WHERE " + eligible % {"m": "m"}
+                 + " AND NOT EXISTS (SELECT 1 FROM supervisor_messages o"
+                   "  WHERE o.recipient_task_id = m.recipient_task_id"
+                   "    AND " + eligible % {"m": "o"}
+                 + "    AND (o.staged_at < m.staged_at OR (o.staged_at = m.staged_at"
+                   "         AND o.message_id < m.message_id)))")
+        ordered = " ORDER BY m.staged_at, m.message_id LIMIT ?"
+        base = (*CLAIMABLE, now, SENDING, now, *CLAIMABLE, now, SENDING, now)
+        # A page of heads that starts after the last head the previous tick considered and wraps.
+        # Starting from the oldest every tick let a window's worth of heads that are never
+        # sendable - withheld, faulted - be the whole window on every tick, however the budget
+        # is counted, and the heads after them were never read. The page is bounded, so is the
+        # tick, and every eligible head is reached within a bounded number of ticks.
+        window = budget * 4
+        after = self._supervisor_send_after
+        if after is None:
+            rows = self.store.all(heads + ordered, (*base, window))
+        else:
+            staged, message = after
+            rows = self.store.all(
+                heads + " AND (m.staged_at > ? OR (m.staged_at = ? AND m.message_id > ?))"
+                + ordered, (*base, staged, staged, message, window))
+            if len(rows) < window:
+                seen = {row["message_id"] for row in rows}
+                rows += [row for row in self.store.all(
+                    heads + " AND (m.staged_at < ? OR (m.staged_at = ? AND m.message_id <= ?))"
+                    + ordered, (*base, staged, staged, message, window - len(rows)))
+                    if row["message_id"] not in seen]
         struggling = set()
         attempted = 0
         for row in rows:
@@ -1002,6 +1024,7 @@ class RelayDaemon:
             # is the page above: one head per recipient, at most budget * 4 of them.
             if attempted >= budget:
                 break
+            self._supervisor_send_after = (row["staged_at"], row["message_id"])
             recipient = row["recipient_task_id"]
             if recipient in struggling:
                 report.skipped += 1

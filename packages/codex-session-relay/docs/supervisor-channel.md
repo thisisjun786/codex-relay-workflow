@@ -715,8 +715,9 @@ child whose Stop hook never fired is derived where `reporting-show` answers `sto
 The relay daemon does, on every tick, with nobody asking. Its supervisor pass
 (`RelayDaemon._report_upward`) stages what each project owes - the same staging a parent runs
 by hand, restricted to obligations whose message is absent or still unsent - and attempts each
-recipient's oldest eligible message, oldest first, through `SupervisorChannel.attempt`, so one
-recipient's backlog cannot keep every other recipient's report unread; an attempt that raises
+recipient's oldest eligible message through `SupervisorChannel.attempt`, a page of them at a time
+starting after the last one the previous tick considered, so neither one recipient's backlog nor
+a page of recipients that are never sendable can keep a later recipient's report unread; an attempt that raises
 is deferred by the recheck interval, and only an attempt that reached the claim and the
 transport spends the send budget, so a recipient that is never sendable cannot take every tick's
 budget however far apart ticks are. So every rule above holds

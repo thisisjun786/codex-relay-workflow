@@ -479,3 +479,66 @@ class TheSupervisorPassReadsAndReportsWhatItDid(TwoSupervisors):
         held = self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
         self.assertGreaterEqual(held.deferred, 1,
                                 "the tick held a report nobody can be addressed with")
+
+class AWindowOfUnsendableHeadsDoesNotHideTheRest(DaemonChannelCase):
+    """Review 8 on 8014f425: the page of heads always started at the oldest.
+
+    With a window's worth of earlier supervisors that are never sendable, the page on every
+    tick was exactly those, and a later supervisor's report was never read. The page now
+    starts after the last head the previous tick considered, and wraps.
+    """
+
+    def add_project(self, index):
+        from codex_session_relay.models import Endpoint, TurnRef
+        from codex_session_relay.registry import record_settings
+
+        from .support import HOST, task_settings
+
+        supervisor, parent, child = ("01sup-%d" % index, "01par-%d" % index,
+                                     "01chi-%d" % index)
+        for task, cwd in ((supervisor, "/sup-%d" % index), (parent, "/par-%d" % index),
+                          (child, self.root)):
+            self.adapter.add_thread(task)
+            record_settings(self.store, self.clock, task, task_settings(cwd),
+                            source="creation_result")
+        self.linkage.register_supervision(
+            initiative_key="INI-%d" % (index + 10), project_key="PRJ-%d" % (index + 10),
+            supervisor=Endpoint(supervisor, HOST, cwd="/sup-%d" % index,
+                                cxc_session="cxc-sup-%d" % index),
+            parent=Endpoint(parent, HOST, cwd="/par-%d" % index,
+                            cxc_session="cxc-par-%d" % index))
+        relationship = self.registry.register(
+            parent=Endpoint(parent, HOST, cwd="/par-%d" % index,
+                            cxc_session="cxc-par-%d" % index),
+            child=Endpoint(child, HOST, cwd=self.root, cxc_session="cxc-chi-%d" % index),
+            issue_key="REL-%d" % (index + 10), artifact_roots=[self.root],
+            allowed_recipients=[parent], dispatch_request_id="dispatch-%d" % (index + 10),
+            dispatch_turn_id="turn-dispatch-%d" % index)
+        self.linkage.attach_issue(relationship["relationshipId"], "PRJ-%d" % (index + 10))
+        path = self.artifact("deliverable-%d.txt" % index, "deliverable %d" % index)
+        payload = self.ready_payload(relationship, [path],
+                                     turn=TurnRef(child, "turn-dispatch-%d" % index,
+                                                  "completed"))
+        self.accept(payload)
+        report_module.record(
+            self.store, self.clock, event_id=payload["eventId"],
+            repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.DONE,
+            cxc_reason="every recorded criterion was proved", summary="work %d is done" % index,
+            next_action="merge", evidence=["pytest passed"])
+        self.channel.stage(self.obligation(payload["eventId"]))
+        self.clock.advance(1)
+        return supervisor
+
+    def test_a_later_supervisor_is_reached_behind_a_window_of_unsendable_ones(self):
+        import dataclasses
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        window = self.daemon.policy.max_supervisor_sends_per_tick * 4
+        for index in range(window):
+            self.adapter.threads[self.add_project(index)].archived = True
+        healthy = self.add_project(window)
+        for _ in range(3):
+            self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
+        self.assertEqual(len([one for one in self.adapter.sends if one[1] == healthy]), 1,
+                         "the supervisor behind the unsendable ones was reached")
