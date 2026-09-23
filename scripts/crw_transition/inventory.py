@@ -405,21 +405,25 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
     if version is not None:
         answer["cacheVersion"] = str(version)
         manifest = version / ".codex-plugin" / "plugin.json"
-        answer["payload"]["manifest"] = manifest.is_file()
+        # Read through a descriptor opened without blocking. Asking is_file() and then opening
+        # the path let a FIFO put there in between hold this reader, and register-mcp asks it
+        # under the ownership lock.
+        found = bridgerecord.read_json_without_blocking(manifest, "the cached manifest")
+        answer["payload"]["manifest"] = found.state == reading.PRESENT
         declared = None
-        if manifest.is_file():
-            try:
-                document = json.loads(manifest.read_text(encoding="utf-8"))
-                if not isinstance(document, dict):
-                    # Valid JSON and not an object: a list or a string answers .get with an
-                    # AttributeError, and every command ended in an internal error over a cached
-                    # manifest this reader is supposed to report on.
-                    raise ValueError("the cached manifest is not an object, it is a "
-                                     + type(document).__name__)
-                declared = document.get("skills")
-            except (OSError, ValueError) as error:
+        if found.state == reading.PRESENT:
+            document = found.value
+            if not isinstance(document, dict):
+                # Valid JSON and not an object: a list or a string answers .get with an
+                # AttributeError, and every command ended in an internal error over a cached
+                # manifest this reader is supposed to report on.
                 answer["payload"]["manifest"] = False
-                answer["detail"] = "the cached manifest could not be read: " + str(error)
+                answer["detail"] = ("the cached manifest could not be read: the cached manifest"
+                                    " is not an object, it is a " + type(document).__name__)
+            else:
+                declared = document.get("skills")
+        elif found.state != reading.ABSENT:
+            answer["detail"] = "the cached manifest could not be read: " + str(found.detail)
         root = (version / str(declared)[2:].strip("/")) if isinstance(declared, str) \
             and declared.startswith("./") else None
         answer["payload"]["skills"] = bool(root and root.is_dir())

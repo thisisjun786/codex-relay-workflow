@@ -211,8 +211,8 @@ def read_json_without_blocking(path, what, *, follow=True):
     read_json looks at the path and then opens it, and a FIFO put there in between blocks that
     open until something writes to it -- inside a lock, for the writers of this record. Opened
     here first, with O_NONBLOCK, the descriptor is what read_json judges and reads, so there is
-    no interval left. An open that fails is handed back to read_json on the path, which
-    classifies absence, a dangling link and an access error without opening anything; follow
+    no interval left. An open that fails is classified by looking at the path, never by opening
+    it again: absence, a dangling link and an access error each keep their own answer. follow
     False refuses a symbolic link outright, for an archive that has to be the file itself.
     """
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
@@ -220,11 +220,20 @@ def read_json_without_blocking(path, what, *, follow=True):
         flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(str(path), flags)
-    except (OSError, ValueError):
-        found = reading.read_json(path, what) if follow or not os.path.islink(str(path)) \
-            else reading.Reading(state=reading.UNREADABLE, source=path,
-                                 detail="a symbolic link, where the file itself is required")
-        return found
+    except (OSError, ValueError) as error:
+        # Classified without opening anything again. Handing the path back to read_json would
+        # open it a second time, blocking, and a FIFO put there in between would hold the caller
+        # -- the interval this function exists to remove.
+        if not follow and os.path.islink(str(path)):
+            return reading.Reading(state=reading.UNREADABLE, source=path,
+                                   detail="a symbolic link, where the file itself is required")
+        settled = reading.observe(path, what)
+        if settled is not None:
+            return settled
+        # observe found a regular file where the open had just failed: the path changed between
+        # the two looks. Named rather than read, so a rerun decides against it as it then stands.
+        return reading.failure(error, source=path, what=what,
+                               detail="the file changed while it was being read")
     try:
         return reading.read_json(path, what, descriptor=descriptor)
     finally:

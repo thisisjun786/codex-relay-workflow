@@ -852,6 +852,56 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(emitted["outcome"], "launcher_not_established")
         self.assertFalse(self.record.exists())
 
+    GUARDED_OPEN = (
+        "import builtins, io, os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "path = sys.argv[2]\n"
+        "real = builtins.open\n"
+        "def watched(file, *args, **kwargs):\n"
+        "    if str(file) == path:\n"
+        "        raise AssertionError('a blocking open of ' + path)\n"
+        "    return real(file, *args, **kwargs)\n"
+        "builtins.open = watched\n"
+        "io.open = watched\n"
+    )
+
+    def test_a_failed_nonblocking_open_is_never_retried_as_a_blocking_one(self):
+        """A second, ordinary open is where a FIFO swapped in between would block the reader."""
+        path = self.home.destination.parent / "record.json"
+        path.write_text(json.dumps({"recordVersion": 1}), encoding="utf-8")
+        program = self.GUARDED_OPEN + (
+            "from crw_runtime import bridgerecord\n"
+            "real_open = os.open\n"
+            "def once(target, flags, *args, **kwargs):\n"
+            "    if str(target) == path:\n"
+            "        os.open = real_open\n"
+            "        raise FileNotFoundError(2, 'gone for a moment', target)\n"
+            "    return real_open(target, flags, *args, **kwargs)\n"
+            "os.open = once\n"
+            "found = bridgerecord.read_json_without_blocking(path, 'the record')\n"
+            "print(found.state)\n"
+            "print(found.detail)\n")
+        done = subprocess.run([sys.executable, "-c", program, str(ROOT / "scripts"), str(path)],
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        state, detail = done.stdout.splitlines()[:2]
+        self.assertNotEqual(state, "PRESENT", done.stdout)
+        self.assertIn("changed while it was being read", detail)
+
+    def test_the_cached_manifest_is_read_without_a_blocking_open(self):
+        """register-mcp asks read_plugin under the ownership lock."""
+        launcher = self.install_package()
+        manifest = launcher.parent.parent / ".codex-plugin" / "plugin.json"
+        program = self.GUARDED_OPEN + (
+            "from crw_transition import inventory\n"
+            "answer = inventory.read_plugin(sys.argv[3])\n"
+            "print(answer['payload']['manifest'])\n")
+        done = subprocess.run([sys.executable, "-c", program, str(ROOT / "scripts"),
+                               str(manifest), str(self.home.codex_home)],
+                              capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split()[-1:], ["True"], done.stdout + done.stderr)
+
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
                                       "--bridge-command", str(self.bridge),
