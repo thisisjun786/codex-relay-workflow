@@ -653,6 +653,8 @@ four consecutive creations produced four surviving checkouts, and
 landed under the Codex home root. Neither key was set in the host configuration either.
 So the limit was not merely unobserved, it was absent from the path under test, and the
 trigger cannot be exercised from here. Close this condition on the surface that owns
+those settings, and record the effective limit and any exemption state next to the
+result, as the table above requires.
 
 A second round on 2026-09-22 closed the remaining doubt about `archive` and tightened
 this wording, on the same isolated home. The first round's `archive` had not
@@ -693,8 +695,6 @@ and none should be run — on a shared repository it reaches every worktree, not
 One residue: the Codex-side container directory above the checkout stays behind, empty. A
 count of the worktrees root therefore keeps counting a checkout that no longer exists, which
 matters if anyone builds a retention check on that count.
-those settings, and record the effective limit and any exemption state next to the
-result, as the table above requires.
 
 On the paths exercised above, then, Codex 0.154.0 removed no checkout on its own, and
 the risk to plan for is an accumulating leftover rather than a checkout that
