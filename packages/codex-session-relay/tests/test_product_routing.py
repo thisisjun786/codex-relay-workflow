@@ -926,6 +926,49 @@ class RegistryChanges(ProductRoutingCase):
         self.holder.run()
         self.assertEqual(["GMX"], [p["team"] for p in self.linear.projects.values()])
 
+    def test_a_create_not_yet_issued_waits_while_its_route_has_no_project(self):
+        answer = self.route(product="beta-meter", repository="example-org/beta-meter",
+                            surface="real_use", phase="in_use", component="billing",
+                            symptom="charge_twice")
+        untriaged = {key: value for key, value in BETA.items() if key != "triageProject"}
+        self.router.register_product(untriaged)
+        self.assertEqual("no_project", routes.get(self.store, answer["faultId"])["target"]["hold"])
+        self.holder.run()
+        self.assertEqual({}, self.linear.issues)
+        self.router.register_product(BETA)
+        self.holder.run()
+        (ref, issue), = self.issues_of("BTM").items()
+        self.assertEqual("proj-btm-triage", issue["project"])
+
+    def test_a_project_made_in_a_team_the_product_left_is_never_bound_on_faith(self):
+        self.router.set_policy(POLICY)
+        members = [Projects.gamma(self, "cache", "stale", "g1"),
+                   Projects.gamma(self, "queue", "lost", "g2")]
+        (row,) = [r for r in self.holder.pending() if r.get("kind") == projects.KIND]
+        pid = row.get("publicationId") or row.get("publication_id")
+        token = self.ledger.claim(pid, owner="holder")["claimToken"]
+        operation = self.ledger.operation(pid, claim_token=token)  # issued in GMK
+        self.router.register_product(dict(GAMMA, team="GMX"))
+        team = operation["payload"]["team"]
+        ref = self.linear.create_project(team, operation["block"])
+        self.ledger.complete(pid, claim_token=token, readback=operation["block"],
+                             external_ref=ref, observed={"team": team})
+        answer = self.router.digest()
+        self.assertEqual(("GMK", []), (team, answer["projectsBound"]))
+        self.assertIn("held_project_team_changed", [d["decision"] for d in answer["decisions"]])
+        self.assertEqual([], [b for b in self.router.bindings("gamma-kit")
+                              if b["kind"] == "project"])
+        self.assertEqual({"held"}, {routes.get(self.store, m["faultId"])["stage"]
+                                    for m in members})
+        self.holder.run()
+        self.assertEqual({}, self.linear.issues)
+        # Bound by hand, the decision is made: the members move into it.
+        self.router.bind(binding("gamma-kit", "project", ref, components=["cache", "queue"],
+                                 goal="offline_sync"))
+        self.router.digest()
+        self.assertEqual({"filed"}, {routes.get(self.store, m["faultId"])["stage"]
+                                     for m in members})
+
     def test_a_product_using_its_test_target_keeps_it(self):
         self.route(origin="simulated", occurrenceKey="sim-1")
         for changed in (None, {"team": "TS2", "project": "proj-test-2"}):

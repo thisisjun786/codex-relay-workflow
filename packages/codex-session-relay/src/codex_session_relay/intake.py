@@ -407,6 +407,11 @@ def _again(router, route, registry, bindings):
             current["team"] if current["project"] else None):
         return None
     place = scope(route["workspace"], decision["project"])
+    # Held with no project, a fault that owns no issue leaves its old project's scope: the
+    # ledger offers a create only where its scope has a target and a project, so the unissued
+    # create waits instead of landing in a project that no longer suits it, and is re-pointed
+    # when a later decision places the route. An owned issue is never unlinked this way.
+    unplaced = not decision["project"] and not (port.get(fault_id) or {}).get("external_ref")
     try:
         with router.store.composing() as db:
             if decision["owner"]:
@@ -415,7 +420,7 @@ def _again(router, route, registry, bindings):
                 port.ensure_target(product=registry["product"], workspace=route["workspace"],
                                    project=decision["project"], team=target["team"],
                                    project_ref=decision["project"])
-            if decision["project"] and not decision["owner"]:
+            if not decision["owner"] and (decision["project"] or unplaced):
                 port.move(fault_id, scope=place)
             routes.upsert(db, router.clock, fault_id=fault_id, product=registry["product"],
                           workspace=route["workspace"], disposition=decision["disposition"],

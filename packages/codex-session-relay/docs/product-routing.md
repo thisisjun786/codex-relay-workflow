@@ -138,8 +138,10 @@ filed ones whose fault owns no issue yet, are decided again in the same transact
 team re-points the ledger's target for their project, so a create not yet written goes to the
 new team. A project create not yet issued that was queued for the old team or family label is
 cancelled and queued again under the new one. An issue or project already written stays where it
-is. A product with simulated routes or test bindings keeps its test target, because they live
-there.
+is. A route that a change leaves with no project at all is held, and if its fault owns no issue
+it leaves the old project's scope: the ledger offers a create only where its scope has a target
+and a project, so the unissued create waits there until a later decision places the route. A
+product with simulated routes or test bindings keeps its test target, because they live there.
 
 ## Shared causes
 
@@ -196,6 +198,11 @@ one transaction. The proposal records which project it became. Once no create of
 outstanding, because its project is bound or every create it queued was cancelled, the proposal
 is settled and leaves the filed stage. Nothing that looks for outstanding work reads it again,
 and a later evaluation that queues a new create files it again.
+
+A project confirmed in a team the product's registry no longer names, because the team changed
+after its create was issued, is never bound on faith: binding it would file the members' issues
+in a team the product left. The proposal waits as `held_project_team_changed` and its members
+stay held, until somebody binds the project by hand or the registry names that team again.
 
 ### Holder protocol
 

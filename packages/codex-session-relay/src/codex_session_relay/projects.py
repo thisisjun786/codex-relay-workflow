@@ -246,11 +246,19 @@ def bind_confirmed(router, route) -> list:
     """
     rows = router.port.publications(route["fault_id"], kind=KIND, limit=100)
     bound = {b["ref"] for b in router.bindings(route["product_key"]) if b["kind"] == "project"}
+    registry = router.registry(route["product_key"]) or {}
     made = []
+    stranded = []
     for row in rows:
         ref, payload = row.get("external_ref"), row.get("payload") or {}
         if row.get("state") != "confirmed" or not ref or (
                 ref in bound and route["target"]["project"] == ref):
+            continue
+        if ref not in bound and payload.get("team") != registry.get("team"):
+            # Made in a team the product has left since it was queued; an issued create cannot
+            # be taken back, and binding it would file the members' issues there. Somebody binds
+            # it by hand, or the product names that team again.
+            stranded.append(ref)
             continue
         with router.store.composing() as db:
             if ref not in bound:
@@ -263,7 +271,12 @@ def bind_confirmed(router, route) -> list:
                                        f" {row.get('publication_id') or row.get('id')})"})
                 made.append(ref)
             routes.set_target(db, router.clock, route["fault_id"],
-                              {**route["target"], "project": ref})
+                              {**route["target"], "project": ref, "hold": None})
+    if stranded:
+        with router.store.transaction() as db:
+            routes.set_target(db, router.clock, route["fault_id"],
+                              {**route["target"], "hold": products.PROJECT_TEAM_CHANGED})
+        return made
     if rows and all(row.get("state") in ("confirmed", "cancelled") for row in rows):
         created = sorted(row["external_ref"] for row in rows
                          if row.get("state") == "confirmed" and row.get("external_ref"))

@@ -123,8 +123,10 @@ AMBIGUOUS_PROJECT = "ambiguous_project"
 # defect itself is placed (routes.CAUSE_UNVERIFIED).
 CAUSE_UNVERIFIED = "cause_unverified"
 OWNER_FOUND_AFTER_CREATE = "owner_found_after_create"
+# A project a confirmed create made in a team the product's registry no longer names.
+PROJECT_TEAM_CHANGED = "project_team_changed"
 HOLDS = (NO_PROJECT, OWNER_PROJECT_MISSING, AMBIGUOUS_OWNER, AMBIGUOUS_PROJECT,
-         OWNER_FOUND_AFTER_CREATE)
+         OWNER_FOUND_AFTER_CREATE, PROJECT_TEAM_CHANGED)
 
 
 class RouteRefused(RelayError):

@@ -98,6 +98,10 @@ def attention(snapshot):
     if snapshot["stage"] == products.STAGE_HELD:
         return held_reason(snapshot["hold"])
     if snapshot["disposition"] == products.PROJECT_PROPOSAL:
+        if snapshot["hold"]:
+            # A created project nobody may bind on faith: a decision until it is bound by hand
+            # or the product's team names it again.
+            return held_reason(snapshot["hold"])
         # Waiting while its create is outstanding; once the project is bound, or every create
         # it queued was cancelled, the proposal is settled and history.
         if (snapshot["stage"] == products.STAGE_FILED and snapshot["project"] is None
