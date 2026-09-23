@@ -72,7 +72,10 @@ class Host:
         return receipt
 
 
-class ManagedEntry(RelayTestCase):
+class ManagedStartFixture(RelayTestCase):
+    """The managed entry over a boundary fake host, without any test of its own, so another
+    module can drive the same entry without re-running this module's tests."""
+
     def setUp(self):
         super().setUp()
         path = write_policy(Path(self.tmp))
@@ -99,6 +102,19 @@ class ManagedEntry(RelayTestCase):
                                   socket=os.path.join(self.tmp, "socket"),
                                   marker_root=os.path.join(self.tmp, "markers"))
 
+    def partial_creation(self, *, attempted_turn=False):
+        real_create = self.host.create_thread
+        def partial(request, **kwargs):
+            receipt = real_create(request, **kwargs)
+            receipt.update(status="failed", attemptedEffects=["thread/start", "thread/name/set"])
+            receipt.pop("turnId")
+            if attempted_turn:
+                receipt["attemptedEffects"].append("turn/start")
+            return receipt
+        self.host.create_thread = partial
+
+
+class ManagedEntry(ManagedStartFixture):
     def test_same_request_recovers_one_child_one_business_turn(self):
         first = self.start.run(self.request)
         self.assertEqual(first["state"], "admitted")
@@ -142,17 +158,6 @@ class ManagedEntry(RelayTestCase):
         recovered = self.start.run(self.request)
         self.assertEqual(recovered["state"], "admitted")
         self.assertEqual((self.host.created, self.host.sent), (1, 1))
-
-    def partial_creation(self, *, attempted_turn=False):
-        real_create = self.host.create_thread
-        def partial(request, **kwargs):
-            receipt = real_create(request, **kwargs)
-            receipt.update(status="failed", attemptedEffects=["thread/start", "thread/name/set"])
-            receipt.pop("turnId")
-            if attempted_turn:
-                receipt["attemptedEffects"].append("turn/start")
-            return receipt
-        self.host.create_thread = partial
 
     def test_failed_naming_recovers_standby_on_same_shell(self):
         self.partial_creation()

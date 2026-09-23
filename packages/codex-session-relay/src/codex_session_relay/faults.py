@@ -264,7 +264,8 @@ register_class(
 )
 register_class(
     "managed_start_failed", component="managed_start",
-    clears="a later receipt for the same request being accepted",
+    clears="the request recording an accepted receipt or attaching, or its newest"
+           " creation-stage answer saying something else",
 )
 
 
