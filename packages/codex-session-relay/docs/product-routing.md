@@ -339,8 +339,12 @@ last reported. It answers only what changed: new severe records, new decisions,
 resolutions of records that owned an issue, and routine accumulation summarized per product.
 Each new decision is also raised as a ledger notification under its
 decision name. The ledger keeps one notification per record and reason, so a decision is
-announced once however often digests run. A severe pending incident or a severe hold is raised
-at intake under the same name. Asked again with nothing changed, the digest answers quiet and
+raised once however often digests run. A severe pending incident or a severe hold is raised
+at intake under the same name. Raising is not delivery: the notification waits pending in the
+ledger, like every other, until somebody reserves it, and nothing reserves one on its own
+today (see [who tells the level above](faults.md#who-tells-the-level-above-criterion-7)). Until
+that wiring exists, what reaches a person is the digest's answer to whoever asks for it, a
+midpoint check included. Asked again with nothing changed, the digest answers quiet and
 reports nothing. The only thing it writes then is the rotation position of each outstanding
 project proposal it checked. It runs only when somebody asks, and it calls no model.
 
