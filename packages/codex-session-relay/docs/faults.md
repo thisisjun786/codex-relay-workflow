@@ -230,7 +230,17 @@ publication (`external_ref`) and never becomes the fault's issue:
   complete read it from text) or `"fields"` (confirmed from fields read back from the owned
   issue).
 - `confirm(expected, observed)` returns the problems with a readback; `validate(payload)`
-  those with a payload.
+  those with a payload. `expected` is the publication row exactly as `publication()` returns it
+  (id, fault id, kind, trigger, payload, target), so a create's confirmation can compare what was
+  read back with what was queued; `validate` receives that row's payload.
+- `pre_issue(context)` receives `context = {"publication": the row as publication() returns it
+  (id, fault_id, kind, trigger, payload, target), "fault": the fault as get() returns it, "db": the
+  connection of the transaction operation() is running in, "now": the ledger clock's time}`. A
+  kind's check may read any table of this store through `context["db"]` and must not write. That
+  is enforced, not a convention: the check runs inside a savepoint that is always rolled back, and
+  if the connection's change count moved during it the operation is refused, nothing is issued and
+  the row stays claimed. (An SQLite authorizer alone would not do: it is consulted only when a
+  statement is prepared, and a cached statement is not prepared again.)
 - `pre_issue(context)` is called by `operation()` immediately before the row is issued. It
   answers `None` to proceed, `{"hold": reason, "seconds": n}` to return the row to pending,
   not offered again until n seconds pass (default 30) and with the reason recorded, or
