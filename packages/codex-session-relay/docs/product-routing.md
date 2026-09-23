@@ -388,8 +388,8 @@ changed.
 rowid range, normally the `next` a listing returned. Anything else is refused before any work,
 because a bound on what a command reads is a bound on what it writes.
 
-`route-intake`, `route-classify` and `completion-check` each run in one transaction from their
-first read to their last write. The registry, bindings, run owner and ledger records a decision
+`route-intake`, `route-classify`, `completion-check` and `route-projects` each run in one
+transaction from their first read to their last write. The registry, bindings, run owner and ledger records a decision
 is made from are the ones it commits with; a binding another process commits meanwhile is either
 seen or waits, and then decides the route again itself. `product-bind` checks a binding against
 the registry read inside its own transaction. The redecision stores any change to the route's

@@ -245,7 +245,17 @@ def _groups(router, product):
 
 
 def evaluate(router, product) -> dict:
-    """Queue one project create per qualifying goal of this product, or say why none."""
+    """Queue one project create per qualifying goal of this product, or say why none.
+
+    One transaction from reading the goal's members and its creates to cancelling and queuing
+    them again, joining the caller's where there is one: a binding committed meanwhile is either
+    read here or waits, and a create another evaluation just re-cut is never overwritten from a
+    stale reading of its members."""
+    with router.store.composing():
+        return _evaluate(router, product)
+
+
+def _evaluate(router, product) -> dict:
     registry = router.registry(product)
     policy = router.policy()
     if registry is None or policy is None or not policy["enabled"]:
@@ -322,8 +332,13 @@ def revise(router, product) -> dict:
 
     The pre-issue check would refuse such a create anyway; this settles it when the registry
     changes rather than whenever a holder next reaches it. A create already issued is the
-    ledger's to reconcile and is left alone.
+    ledger's to reconcile and is left alone. One transaction, as for evaluate.
     """
+    with router.store.composing():
+        return _revise(router, product)
+
+
+def _revise(router, product) -> dict:
     port = router.port
     cancelled, after = [], None
     while True:

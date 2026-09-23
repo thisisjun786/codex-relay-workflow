@@ -1269,6 +1269,25 @@ class TransactionBoundaries(ProductRoutingCase):
         self.assertEqual({"decide", "evaluate"}, {name for name, _inside in seen})
         self.assertEqual([], [name for name, inside in seen if not inside])
 
+    def test_a_projects_evaluation_reads_its_goals_inside_its_transaction(self):
+        from unittest import mock
+
+        self.router.set_policy(POLICY)
+        Projects.gamma(self, "cache", "stale", "g1")
+        Projects.gamma(self, "queue", "lost", "g2")
+        seen = []
+        real = projects._groups
+
+        def groups(*args, **kwargs):
+            seen.append(self.store.in_transaction)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(projects, "_groups", groups):
+            self.router.evaluate_projects("gamma-kit")
+            self.router.register_product(dict(GAMMA, team="GMX"))
+        self.assertTrue(seen)
+        self.assertEqual([], [inside for inside in seen if not inside])
+
     def test_a_late_binding_that_makes_a_filed_route_a_follow_up_is_stored(self):
         answer = self.route(product="beta-meter", repository="example-org/beta-meter",
                             surface="real_use", phase="in_use", component="billing",
