@@ -1895,6 +1895,15 @@ class FaultLedger:
             " LIMIT 1",
             (identifier, UPDATE_RECORD, ISSUED, UNCERTAIN, project_ref)).fetchone() is not None
 
+    def _project_write_outstanding(self, db, identifier):
+        """Is any set_project of this fault issued or uncertain? Either may still land."""
+        return db.execute(
+            "SELECT 1 FROM fault_publications p"
+            "  LEFT JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"
+            " WHERE p.fault_id = ? AND p.kind = ? AND p.state IN (?,?)"
+            "   AND " + _SET_PROJECT.format(pp="pp") + " LIMIT 1",
+            (identifier, UPDATE_RECORD, ISSUED, UNCERTAIN)).fetchone() is not None
+
     def _cancel_stale_relinks(self, db, identifier, reason, now):
         """Cancel every unissued set_project of this fault; issued and uncertain ones stay."""
         self._cancel_where(
@@ -1945,12 +1954,14 @@ class FaultLedger:
             if live is not None:
                 return None
         self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
-        if self._moving_elsewhere(db, identifier, project_ref):
-            # A write to another project is issued or uncertain and may still land. Queuing this
-            # one beside it put two project writes on one issue at once. The issue waits,
-            # unlinked and aimed at the target: the outstanding write's readback re-evaluates it
-            # through _observe_link, and relink() takes it up again once nothing it waits on is
-            # outstanding - including when that write ends with no readback at all.
+        if self._project_write_outstanding(db, identifier):
+            # A set_project is issued or uncertain and may still land - to another project, or
+            # to this one after the target went away and came back. Queuing another beside it
+            # put two project writes on one issue at once. The issue waits, unlinked and aimed
+            # at the target: the outstanding write's readback re-evaluates it through
+            # _observe_link, and relink() takes it up again once nothing it waits on is
+            # outstanding - including when that write ends with no readback at all. One to this
+            # project that returns to pending is still live and is issued in its turn.
             db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
                        " WHERE fault_id = ?", (project_ref, UNLINKED, now, identifier))
             return None
@@ -3325,6 +3336,11 @@ def register_kind(name, *, creates, requires_issue, target, evidence, confirm, v
         raise ValueError("target is None, 'team' or 'team+project'")
     if evidence not in ("block", "fields"):
         raise ValueError("evidence is 'block' or 'fields'")
+    if creates and evidence != "block":
+        # A create is found by its block: the single-create rule searches for it before
+        # anything is made, and the object it made is what its publication records. A fields
+        # readback names the fault's issue, never a new object, so it can confirm neither.
+        raise ValueError("a kind that creates is confirmed by its block, never by fields")
     for label, value in (("confirm", confirm), ("validate", validate), ("pre_issue", pre_issue)):
         if value is not None and not callable(value):
             raise ValueError(f"{label} is callable")

@@ -955,6 +955,15 @@ class Kinds(ContractCase):
             self.ledger.claim(pub, owner="writer-A")
         self.assertEqual(refused.exception.reason, RefusalReason.FAULT_KIND_UNREGISTERED)
 
+    def test_a_create_confirmed_by_fields_is_refused(self):
+        """Final review round ten (criterion 6, G2): a create is found by its block."""
+        self.addCleanup(faults.KINDS.pop, "fields_create_test", None)
+        with self.assertRaises(ValueError):
+            capability(self, faults, "register_kind")(
+                "fields_create_test", creates=True, requires_issue=True, target=None,
+                evidence="fields", confirm=lambda expected, observed: [])
+        self.assertNotIn("fields_create_test", faults.KINDS)
+
 
 class Relinking(ContractCase):
     """Invariants 10 and 11: the issue ends on the current project."""
@@ -1902,6 +1911,17 @@ class NoProjectWriteBesideAnOutstandingOne(ContractCase):
                               reason="the connector refused the request with a 400")
         self.ledger.relink()
         self.assertEqual([("P3", faults.PENDING)], self.updates(identifier, faults.PENDING))
+
+    def test_a_target_that_returns_waits_for_its_own_outstanding_write(self):
+        """Final review round ten: P2 -> P3 -> P2 issued a second write to P2 beside the first."""
+        identifier, p2, claim = self.waiting()
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        self.assertEqual([], self.updates(identifier, faults.PENDING, faults.CLAIMED),
+                         "the write to P2 is already out")
+        self.ledger.complete(p2, claim_token=claim["claimToken"],
+                             observed={"issue": "REL-1", "projectId": "P2"})
+        self.assertEqual(faults.LINKED,
+                         capability(self, self.ledger, "get")(identifier)["linkState"])
 
 
 class ManagedStartAnswersAreTheirOwnFaults(RelayTestCase):

@@ -67,7 +67,8 @@ a path that reaches the outcome without passing through that function is a defec
     project its product owns, an owned issue is unlinked - awaiting a target - and never
     reported linked; nor is it reported linked while a `set_project` to another project is issued
     or uncertain, because that write may still land (`_moving_elsewhere()`, which reads at most
-    one row), and no second `set_project` is queued beside such a write, whatever project the
+    one row), and no second `set_project` is queued while any is issued or uncertain - to another
+    project or to the target itself - whatever project the
     issue reads back in: the issue waits unlinked, and the write's readback or, when it ends
     with none, `relink()` takes it up again. A `set_project` is recognised by its payload's `op`, never by its trigger, and
     `update_record` is queued only through `request_update()`. Link state is decided when read, against the product's current owned target
@@ -293,7 +294,9 @@ publication (`external_ref`) and never becomes the fault's issue:
 - `target`: `"team+project"`, `"team"` or `None` - what must be configured before it is
   offered.
 - `evidence`: `"block"` (the write carries this publication's marker block; reconcile and
-  complete read it from text) or `"fields"` (confirmed from fields read back from the owned
+  complete read it from text; a kind that creates must use it, since the single-create rule
+  finds a create by its block and its publication records the object it made - `register_kind()`
+  refuses `creates=True` with `"fields"`) or `"fields"` (confirmed from fields read back from the owned
   issue).
 - `confirm(expected, observed)` returns the problems with a readback; `validate(payload)`
   those with a payload. `expected` is the publication row exactly as `publication()` returns it
