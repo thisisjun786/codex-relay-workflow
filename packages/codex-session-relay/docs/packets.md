@@ -197,7 +197,10 @@ between the check judges by the declared policy and the daemon by its snapshot. 
 `--applied` read neither the store nor the policy, so neither is held to them.
 A policy file or a declaration that cannot be parsed, JSON nested deeper than the parser
 descends included, is unresolved or unreadable in those same terms and ends no command as a
-host failure.
+host failure. A declaration path that is there and cannot be read as a regular file of text -
+a link to nothing, a FIFO or another non-regular file, bytes that are not UTF-8 - is unreadable
+rather than absent, so the check never falls back to its shell's variable over it and never
+waits on it.
 
 The relationship is chosen among the receiver's own rows: its one live relationship where it
 has exactly one, otherwise the row the packet names if it is one of the receiver's. A first
