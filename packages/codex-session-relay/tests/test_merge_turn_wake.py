@@ -581,6 +581,22 @@ class AGrantThatNoLongerAppliesOwesNothing(MergeTurnWakeTestCase):
         expected = "superseded:" + MERGE_TURN_GRANT_UNREADABLE
         self.assertEqual(self.status(event), (expected, expected))
 
+    def test_a_notice_answered_before_it_was_sent_is_acknowledged(self):
+        # A promoted parent that comes back reads its own claims and can answer the grant
+        # before the daemon has sent anything. Nothing is owed after that, send included.
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.answer_grant(turn, PARENT)
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+
+    def test_an_unsettled_send_answered_meanwhile_is_acknowledged(self):
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.store.db.execute(
+            "UPDATE deliveries SET state = ? WHERE event_id = ?", (HELD_UNCERTAIN, event))
+        self.answer_grant(turn, PARENT)
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+
 
 class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
     """A parent that follows the notice to the letter cannot merge past a red gate (PR132-RB1).
@@ -635,7 +651,12 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         for placeholder, value in fills:
             self.assertIn(placeholder, line)
             line = line.replace(placeholder, shlex.quote(value), 1)
-        return cli.build_parser().parse_args(shlex.split(line))
+        try:
+            return cli.build_parser().parse_args(shlex.split(line))
+        except SystemExit as refused:
+            # argparse exits rather than raising. A command the notice hands over that the CLI
+            # will not even parse is the defect under test, so it is reported as one.
+            self.fail(f"the CLI refused the notice's command (exit {refused.code}): {line}")
 
     def invoke(self, args):
         return args.handler(types.SimpleNamespace(merge_turn=self.turns), args)
@@ -652,7 +673,7 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
     def assertNotRecorded(self, text, reason):
         self.assertIn("requiredDeclared: not recorded (", text)
         self.assertIn(reason, text)
-        self.assertIn(" --required <", self.line(text, "merge-turn-check"))
+        self.assertIn(" --required=<", self.line(text, "merge-turn-check"))
         self.assertIn("merge-evidence --repository " + REPO, text)
 
     # ------------------------------------------------------- a recorded reading
@@ -680,10 +701,11 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         self.candidate()
         self.promoted()
         preview = self.delivery.preview_message(self.wakes()[0]["event_id"])
-        self.assertTrue(self.line(preview, "merge-turn-check").endswith(" --required dev-gate"))
+        self.assertTrue(self.line(preview, "merge-turn-check").endswith(" --required=dev-gate"))
 
     def test_names_that_need_quoting_survive_the_round_trip(self):
-        names = ["build linux", "dev-gate", "lint'; echo x"]
+        # A space, a quote and a leading dash are all legal in a check name.
+        names = ["--check", "build linux", "dev-gate", "lint'; echo x"]
         self.candidate(required=names)
         _turn, _event, text = self.notice()
         self.assertEqual(self.check_command(text, "success").required, sorted(names))
@@ -727,6 +749,20 @@ class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
         self.candidate(base_ref="main")
         _turn, _event, text = self.notice()
         self.assertNotRecorded(text, "another base")
+
+    def test_a_reading_that_names_no_base_is_not_this_targets(self):
+        # Required checks belong to a branch. An empty set read against no named branch is not
+        # a statement that this target requires nothing.
+        self.candidate(base_ref=None, required=())
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "records no base")
+
+    def test_a_current_report_without_a_reading_beside_one_with_is_not_a_reading(self):
+        self.candidate(required=(), name="one")
+        self.candidate(required=None, pr_number=None, pr_url=None, pr_state=None, handoff=None,
+                       name="two")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "no merge-readiness handoff")
 
     def test_two_current_readings_that_disagree_propose_neither(self):
         self.candidate(required=("dev-gate",), name="one")

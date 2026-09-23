@@ -711,14 +711,20 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
     if any(row["repository"] != repository for row in rows):
         return absent("the current work report is about another repository than "
                       + str(repository))
-    # A report that records no base says nothing against this one; one that records a different
-    # base read another branch's rules.
-    if any(row["base_ref"] not in (None, base_ref) for row in rows):
+    # Required checks are a property of the base branch, so a reading counts only for the base
+    # it names. One that names none cannot be tied to this target: taken as agreeing, its empty
+    # set rendered a check with no --required at all.
+    if any(row["base_ref"] is None for row in rows):
+        return absent("the current work report records no base, so its reading cannot be tied"
+                      " to " + str(base_ref))
+    if any(row["base_ref"] != base_ref for row in rows):
         return absent("the current work report is about another base than " + str(base_ref))
+    # Every current report must carry a reading. Skipping one that has none and taking another's
+    # proposed that other reading for a candidate this store cannot tell apart from it.
+    if any(row["required_declared"] is None for row in rows):
+        return absent("a current work report records no merge-readiness handoff")
     readings = []
     for row in rows:
-        if row["required_declared"] is None:
-            continue
         try:
             names = json.loads(row["required_declared"])
         except ValueError:
@@ -727,8 +733,6 @@ def required_for_candidate(store, *, relationship_id, repository, base_ref, head
             return absent("the recorded required set of work report " + row["event_id"]
                           + " is unreadable")
         readings.append((row, sorted(set(names))))
-    if not readings:
-        return absent("the current work report records no merge-readiness handoff")
     if len({tuple(names) for _row, names in readings}) > 1:
         return absent("the current work reports' readings disagree about what is required")
     row, names = readings[0]

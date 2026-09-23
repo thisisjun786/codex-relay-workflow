@@ -1989,9 +1989,10 @@ def _message_status(row, record) -> str:
 def _required_for_notice(record, required):
     """The grant notice's requiredDeclared line, the --required flags, and what to do without them.
 
-    Each name is one shell word. A check name is free text - a space or a quote is a legal part
-    of one - and printed bare, "build linux" became two arguments and a quote ended the command
-    early, so the command a parent runs as written would declare something else.
+    Each name is one shell word, joined to its flag. A check name is free text - a space, a
+    quote or a leading dash is a legal part of one. Printed bare, "build linux" became two
+    arguments and a quote ended the command early; printed as a separate word, "--check" was
+    read by the parser as an option of its own and the command refused to run.
 
     Three answers, kept apart because they mean different things: a reading that named checks, a
     reading that found none required, and no reading at all. Only the last leaves the flag as a
@@ -2004,15 +2005,15 @@ def _required_for_notice(record, required):
     if names is None:
         return (
             f"requiredDeclared: not recorded ({reading.get('reason')})",
-            " --required <each check the branch requires>",
+            " --required=<each check the branch requires>",
             [
                 "No required-check reading is recorded for this candidate, so --required is",
                 "yours to fill. Read the branch's required checks first:",
                 f"  codex-session-relay merge-evidence --repository {shlex.quote(str(repository))}"
                 " --pull-request <its number>",
-                "and pass each name in its requiredDeclared as its own --required. Leaving",
-                "--required out declares that nothing is required, and a failing required check",
-                "would then not stop the merge.",
+                "and pass each name in its requiredDeclared as its own --required=<name>.",
+                "Leaving --required out declares that nothing is required, and a failing",
+                "required check would then not stop the merge.",
             ],
         )
     source = f"work report {reading.get('eventId')} submission {reading.get('submissionNo')}"
@@ -2028,7 +2029,7 @@ def _required_for_notice(record, required):
         )
     return (
         f"requiredDeclared: {json.dumps(names, ensure_ascii=False)} ({source})",
-        "".join(" --required " + shlex.quote(name) for name in names),
+        "".join(" --required=" + shlex.quote(name) for name in names),
         [
             "--required restates what the candidate's merge-evidence reading found the branch",
             "rules require. The names are yours to declare; read them again with merge-evidence",
@@ -2047,18 +2048,20 @@ def _reported_state(row, ack, grant=None) -> str:
     answer every delivered grant read dispatched_awaiting_ack for good - the acknowledged one,
     and one its turn had since replaced, returned or lost. That answer is passed in as grant and
     decides before the delivery state does, in every state but superseded: a suppressed grant
-    already reports held:<reason> with the same reason.
+    already reports held:<reason> with the same reason. A parent can answer before the notice
+    is sent, since it reads its own claims on entry, so acknowledged is not a dispatched-only
+    answer either.
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
     if row["kind"] == MERGE_TURN_GRANT and row["state"] != SUPERSEDED:
         from .mergeturn import MERGE_TURN_GRANT_ANSWERED
 
-        if grant is not None and grant != MERGE_TURN_GRANT_ANSWERED:
+        if grant == MERGE_TURN_GRANT_ANSWERED:
+            return "grant_acknowledged"
+        if grant is not None:
             return f"superseded:{grant}"
         if row["state"] == DISPATCHED:
-            if grant == MERGE_TURN_GRANT_ANSWERED:
-                return "grant_acknowledged"
             return "dispatched_awaiting_grant_acknowledgement"
     if row["state"] == INBOX_ONLY:
         return "stored_not_woken"
@@ -2157,13 +2160,16 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
     if row["kind"] == MERGE_TURN_GRANT and grant is not None:
         from .mergeturn import MERGE_TURN_GRANT_ANSWERED
 
-        if grant != MERGE_TURN_GRANT_ANSWERED:
-            # The grant's own turn says this notice no longer applies: regranted to another
-            # candidate, closed without being answered, gone, or unreadable. A delivered grant is
-            # never annotated above, because attempt() stops before the claim for a state that
-            # is not claimable, so its turn's answer is the only place that says so - and
-            # without it every one of them reported an acknowledgement nobody can now give.
-            return f"superseded:{grant}"
+        # The grant's own turn has settled what this notice was for, whatever the delivery
+        # state: answered - possibly before the notice was even sent, since a parent reads its
+        # own claims on entry - or no longer applicable: regranted to another candidate, closed
+        # without being answered, gone, or unreadable. A delivered grant is never annotated
+        # above, because attempt() stops before the claim for a state that is not claimable, so
+        # its turn's answer is the only place that says so - and without it every one of them
+        # reported an acknowledgement or a send that nothing is waiting for.
+        if grant == MERGE_TURN_GRANT_ANSWERED:
+            return "grant_acknowledged"
+        return f"superseded:{grant}"
     if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
         return "channel_closed"
     if row["state"] == DISPATCHED:
