@@ -33,6 +33,8 @@ for review both said completion; the message that STARTS the work had no name at
 | parent to supervisor | completion | notification | issue, generation, evidence |
 | parent to supervisor | blocked | notification | issue, evidence |
 | parent to supervisor | decision_request | decision | issue, decision, evidence |
+| parent to supervisor | fault_notice | notification | issue, evidence |
+| parent to supervisor | fault_decision | decision | issue, decision, evidence |
 
 The restraint is load-bearing in two rows. An **assignment** does not require a generation,
 because a newly created child's registration needs a task id creation has not returned yet
@@ -50,7 +52,7 @@ nothing about what it corrects is a correction the child answers from memory. Th
 against the correction form below rather than against DISPATCH-TASK-01, and the evidence is
 where the reproduction or the review finding it rests on can be read.
 
-The three upward rows are the ones [the supervisor channel](supervisor-channel.md) sends. A
+The upward rows are the ones [the supervisor channel](supervisor-channel.md) sends; the two fault rows carry the relay's own fault notifications (see [faults](faults.md)), naming the issue the fault sits under and where it is readable, never the fault's recorded detail. A
 completion upward is NOT required to carry an artifact, because a noop completion has none and
 a research assignment may have only a locator; it carries the pull request when the work report
 names one whole. `status_response` has no row at all, and the absence is deliberate: `body`

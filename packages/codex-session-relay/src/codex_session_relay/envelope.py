@@ -116,6 +116,12 @@ PURPOSES = {
         "blocked": NOTIFICATION,
         "decision_request": DECISION,
         "status_response": STATUS_RESPONSE,
+        # What the relay's fault ledger tells the level above (CRW-205 criterion 7): a broken
+        # fault opened or a fault resolved, which owes nothing back, and a decision somebody
+        # must make about one, which is the user's. Words of their own, because a fault notice
+        # sent as "blocked" is read as the issue being blocked (CRW-215 live finding F4).
+        "fault_notice": NOTIFICATION,
+        "fault_decision": DECISION,
     },
 }
 

@@ -118,6 +118,11 @@ REQUIRED_BY_PURPOSE = {
     # there is a problem and not where to look at it has been told half of it.
     (envelope.PARENT_TO_SUPERVISOR, "blocked"): (ISSUE, EVIDENCE),
     (envelope.PARENT_TO_SUPERVISOR, "decision_request"): (ISSUE, DECISION, EVIDENCE),
+    # A fault notice names the issue its fault sits under and where the fault is readable; a
+    # fault decision also says what is being decided. The fault's own recorded detail and
+    # evidence are not fields here: what travels upward is what the fault is, and the pointer.
+    (envelope.PARENT_TO_SUPERVISOR, "fault_notice"): (ISSUE, EVIDENCE),
+    (envelope.PARENT_TO_SUPERVISOR, "fault_decision"): (ISSUE, DECISION, EVIDENCE),
     # status_response is deliberately absent, and the absence is the honest answer rather
     # than an oversight. BODY here is a dispatch instruction, checked against DISPATCH-TASK-01
     # by cxc.dispatch_problems, so requiring it of an answer would refuse every real answer;

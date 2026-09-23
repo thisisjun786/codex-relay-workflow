@@ -37,6 +37,9 @@ block, a decision only the user can make, or a turn that settled without reporti
 the three things CRW-148 decided are news, plus the absence. Nothing else has an entry point,
 which is what makes a heartbeat unsendable rather than merely discouraged.
 
+Besides those, one other thing: a fault notification the relay's fault ledger has reserved
+(CRW-205 criterion 7), carried as a message of its own kind - see a fault notification, below.
+
 ### What it carries
 
 `relay-packet/1`, gaining three rows rather than a second vocabulary:
@@ -570,6 +573,29 @@ The three with nothing stay `not_applicable` whatever happens on this channel, a
 sourced from `acks`. What discharges a reporting obligation is unchanged: the Linear record the
 supervisor reads for itself, confirmed.
 
+### A fault notification
+
+`stage_notice` freezes a notification the fault ledger reserved as one message of kind
+`fault_notification`: its obligation id is the notification id and its subject the notification's
+`deliveryKey`, so a second staging - another process, a restart, another relationship addressing
+it - finds the same row, and the store refuses a second one by a unique index
+(`supervisor_messages_one_notice`). It is addressed by `resolve()` from the relationship the
+notification is about, like a report. A row none of whose attempts can have sent is restated,
+re-addressed or released from its park by the next staging; one that may have been sent is
+returned as it is.
+
+A notice is owed only while its notification is reserved under a live lease, because that
+reservation is where the ledger decided its eligibility and spent its budget. That is its I-247
+check (`_notice_now`, through `_proposal_now` at the claim and again where the transport starts):
+a notice whose notification is pending, uncertain, delivered or lapsed is held
+(`superseded_by_report`), never sent, and a reserved one is recomposed from what the ledger says
+now and restated if its fault moved. A notice whose attempt sent nothing is parked under the same
+hold (`park_notice`), so it is never the oldest message holding its recipient's later reports back,
+and the next reservation's staging releases it. Every other rule here holds unchanged: lifecycle
+withholding, the busy backoff and caps, the recipient's send budget, one head per recipient in
+staging order, uncertain sends held until a readback. The deliverer that reserves and settles it
+lives in `faultnotice` and is described in [faults](faults.md).
+
 ## The surface
 
 ```bash
@@ -827,6 +853,12 @@ still reads no marker file; what it reads is what the child's own relay wrote in
 beside the marker. A legacy admission - a child that claimed without that record - is never
 staged automatically, and stays owed and visible in `supervisor-standing` whenever a
 `reporting-show` reading of it is passed in, as before.
+
+The same pass then delivers fault notifications, when the daemon holds a fault ledger: after
+the reports, so a notice staged now is younger than every report already waiting for the same
+supervisor. `faultnotice.NoticeDeliverer` reserves what the ledger says may go, stages each as a
+notice and attempts it through the same `attempt`, and settles the notification from what the
+channel recorded (see [faults](faults.md), who tells the level above).
 
 ## Scope of these claims
 

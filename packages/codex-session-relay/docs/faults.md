@@ -95,8 +95,11 @@ a path that reaches the outcome without passing through that function is a defec
     reservation is uncertain, caller-raised decisions use the same path, and candidates are taken
     least recently examined first, by an examination sequence that never ties (a time would, for
     calls at one instant), so one withheld or held never hides the ones behind it, whatever the
-    caller's cadence.
-    Enforced by `reserve_notifications()`.
+    caller's cadence. A reservation that reaches nobody spends nothing: `fail_notification()` and
+    `reconcile_notification(delivered=False)` give back that reservation's own budget unit and
+    nothing earlier, and a deliverer's `deliverable` predicate is asked after eligibility and
+    before any budget is spent, so a notification its transport cannot carry now is never reserved.
+    Enforced by `reserve_notifications()` and `_settle_notification()`.
 16. **Waiting is never a fault, an overtaken obligation is not current, and no sweep contradicts
     itself.** Paused, archived, busy and waiting recipients are never collected - an attempt
     answered `deferred_busy` and a delivery held at `busy_cap` are a recipient mid-turn, and a
@@ -542,7 +545,20 @@ follow it too.
   the current token whatever has happened to eligibility since; `fail_notification(id, *, token,
   error)` returns it to pending with the error, when the deliverer knows nothing was sent. A lease
   that lapses makes the notification uncertain, never pending: `reconcile_notification(id, *,
-  delivered, ref)` settles it from what the deliverer can read back.
+  delivered, ref)` settles it from what the deliverer can read back. Settling one as not delivered -
+  `fail_notification`, or `reconcile_notification(delivered=False)` - gives back that reservation's
+  own budget unit: a notification whose level above is paused or unreachable would otherwise
+  spend its product's budget once per retry and starve every other notification.
+- `reserve_notifications(*, owner, limit, deliverable=None)`: `deliverable` is the deliverer's own
+  answer about its transport, called with each candidate (as `notifications()` lists it) after
+  eligibility and before any budget is consumed; it returns None when the deliverer can carry
+  it now, or the reason it cannot, which is kept on the notification (`lastError`) and counted
+  as `waiting`. It is not an eligibility rule, and it runs inside the reservation's write: it may
+  read the store, and must neither open a transaction nor call a host.
+  `notification_waiting(id, *, reason)` keeps such a reason on a pending notification, writing
+  only when it changes. Eligibility's answer names the relationship and parent it is about and
+  the parent's contact reading, so a deliverer that finds it unmeasured can measure it; the rule
+  is unchanged.
   `notifications(*, state=None, limit, after=None)` lists any state - pending with eligibility,
   reserved and uncertain with their id and `deliveryKey` - so a process that lost a reservation
   can find and settle it. Eligibility is decided at reservation; a withheld one cannot be
@@ -897,25 +913,55 @@ module says exactly that rather than implying an issue exists.
 
 ### Who tells the level above (criterion 7)
 
-Today, nobody delivers a fault notification. The ledger raises them - `blocking` when a broken
-fault opens, `decision` when a write becomes uncertain or fails for good, `resolved` - and keeps
-them `pending` with their eligibility, but the only caller of `reserve_notifications` on an
-installed system is the `fault-notification-reserve` command. The daemon tick sweeps and
-records; it never reserves or sends a notification, and nothing in the plugin wiring or the
-skills does either. A pending notification therefore waits until a person or a coordinating
-task runs `fault-notification-reserve` and acknowledges it. Nor is the unsent-write warning
-delivered upward: `attention()` is visible locally, on `status` under `faults` and as a note in
-the daemon's tick result when it appears or changes, and the level above learns of it only by
-reading those. The supervisor channel's tick stages a project's standing obligations and sends
-nothing about faults.
+The relay daemon does, on its tick, through the supervisor upward channel its reports already
+use (`faultnotice.NoticeDeliverer`, run by `RelayDaemon._report_upward` after the reports when the
+daemon has a fault ledger). The ledger raises the notifications - `blocking` when a broken fault
+opens, `decision` when a write becomes uncertain or fails for good or a caller raises one,
+`resolved` - and still decides whether each may go: its eligibility (the assignment's pause,
+cancellation or archive, and whether its parent can be contacted) and its product's budget, at
+reservation. The channel decides how it goes: who the level above is, whether that task may be
+woken, the re-check where the transport starts (I-247) and what a lost answer means. The
+deliverer is the seam between them and owns no rule. Each tick it:
 
-The smallest wiring that closes this, left as its own follow-up rather than built here: the
-daemon tick reserves eligible notifications (`reserve_notifications`) and stages each through
-the supervisor upward channel the relay already runs on its tick (CRW-215), passing the
-notification's `deliveryKey` as the idempotency key, then acknowledges it from that channel's
-own answer (`ack_notification`, or `reconcile_notification` after a lapsed lease). That keeps one
-notification path - eligibility, budget and pause/archive/no-contact are already decided at
-reservation - and one upward transport.
+- settles uncertain notifications from their one message: sent (dispatched, or read back) is
+  delivered; a message no attempt of which can have sent returns the notification to pending
+  (its budget unit given back); a send that may have landed stays uncertain and is never
+  repeated - only a verified `supervisor-read` settles it;
+- reads, without writing, a page of pending notifications (rotating across ticks) and asks
+  whether any can go now, measuring a parent whose contact eligibility could not read (the host
+  observation delivery itself records) and keeping on a notification why it waits, only when
+  that changes;
+- when something can go, reserves (`reserve_notifications` with its `deliverable` predicate),
+  stages each reserved notification as one supervisor message keyed by its `deliveryKey`,
+  attempts it and settles it: `ack_notification` on the channel's recorded dispatch,
+  `fail_notification` only when the channel proves nothing was sent (the message is then parked
+  until its next reservation), and nothing when a send may have landed - the lease lapses to
+  uncertain and the first step settles it.
+
+The level above is the one the live linkage names from the relationship the notification is
+about - the fault's own relationship, else its issue's current one (`anchor_relationship`, the
+anchor eligibility reads): the project's parent sends and the initiative's supervisor receives,
+exactly as a report does. A notice says what the fault is - purpose `fault_notice` (blocking,
+resolved) or `fault_decision`, class, severity, state, product, the notification's kind and
+reason, the issue once published, the fault id - and points at `fault-show` on this store; the
+fault's recorded detail and evidence never travel. It is recomposed where its transport starts,
+so it states the fault as it stands then.
+
+Limits, stated rather than papered over:
+
+- A fault no relationship places under a project - a managed start that failed before its
+  relationship existed, a relationship with no project scope - has no level above to tell. Its
+  notification waits pending with that reason until one exists; a project-keyed route is a
+  follow-up.
+- A notice the channel has capped (a busy or attempt cap) waits with the cap named, and needs
+  the same act that releases a capped report.
+- Notifications are keyed per fault, kind and cycle, and a withdrawal keeps the cycle. A notice
+  sent after its fault withdrew says so; one already delivered is not followed by a notice that
+  the fault withdrew, and a fault that flaps within one cycle is told once. Whether a withdrawal
+  after a delivered blocking notice should itself go up is a criterion 7 decision this does not
+  make.
+- The unsent-write warning (`attention()`) is still visible locally only, on `status` and as a
+  tick note; it is not a notification.
 
 ## What this does not claim
 
@@ -1017,10 +1063,14 @@ ledger.limits(product, *, limit=20, after=None)     -> limits, next
 ledger.attention()
 ledger.raise_notification(fault_id, *, reason, ref=None)
 ledger.notifications(*, state=None, limit=20, after=None)
-ledger.reserve_notifications(*, owner, limit=20)
+ledger.reserve_notifications(*, owner, limit=20, deliverable=None) -> reserved, withheld, held, waiting
+ledger.notification_waiting(notification_id, *, reason)
 ledger.ack_notification(notification_id, *, token, ref)
 ledger.fail_notification(notification_id, *, token, error)
 ledger.reconcile_notification(notification_id, *, delivered, ref)
+
+faultnotice.NoticeDeliverer(ledger, channel, *, owner).tick(adapter, *, now=None, limit)
+    -> delivered, returned, waiting
 
 faultsweep.sweep(store, *, product="crw", scope=None, readings=(), limit=32, policy=None,
                  readings_after=0, selection=None, now=None)

@@ -3056,28 +3056,23 @@ class FaultLedger:
 
         fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                            (identifier,)).fetchone()
-        relationship = _json(fault["signature"]).get("relationship")
-        row = None
-        if _named(relationship):
-            row = db.execute("SELECT status, parent_task_id FROM relationships"
-                             " WHERE relationship_id = ?", (relationship,)).fetchone()
-        issue = _json(fault["scope"]).get("issueKey")
-        if row is None and _named(issue):
-            row = db.execute(
-                "SELECT status, parent_task_id FROM relationships WHERE issue_key = ?"
-                " AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
-                (issue,)).fetchone()
+        row = anchor_relationship(db, fault)
         if row is None:
             return {"eligible": True, "reason": "no relationship whose wishes apply"}
+        # Which relationship and parent the answer is about, and the contact reading it rests
+        # on, beside the answer: a deliverer that finds the reading unmeasured or stale can
+        # measure the parent the way delivery does and ask again. The rule is unchanged.
+        about = {"relationshipId": row["relationship_id"], "parentTaskId": row["parent_task_id"]}
         if row["status"] in ("paused", "cancelled", "archived"):
-            return {"eligible": False, "reason": f"the relationship is {row['status']}"}
+            return {**about, "eligible": False, "reason": f"the relationship is {row['status']}"}
         contact = supervision.contactable(self.store, row["parent_task_id"], now=moment)
+        about["contact"] = contact
         if contact.get("contactable") is False:
-            return {"eligible": False, "reason": f"no contact: {contact.get('reason')}"}
+            return {**about, "eligible": False, "reason": f"no contact: {contact.get('reason')}"}
         if contact.get("contactable") is None and contact.get("asked", True):
-            return {"eligible": False,
+            return {**about, "eligible": False,
                     "reason": f"contact unmeasured: {contact.get('reason')}"}
-        return {"eligible": True, "reason": "reportable"}
+        return {**about, "eligible": True, "reason": "reportable"}
 
     def _lapse_notifications(self, db, moment, stamp):
         db.execute("UPDATE fault_notifications SET state = ?, token = NULL, updated_at = ?"
@@ -3102,18 +3097,30 @@ class FaultLedger:
         return {"notifications": listed,
                 "next": rows[limit - 1]["seq"] if len(rows) > limit else None}
 
-    def reserve_notifications(self, *, owner, limit=SHOWN_PER_PAGE) -> dict:
+    def reserve_notifications(self, *, owner, limit=SHOWN_PER_PAGE, deliverable=None) -> dict:
         """Take eligible notifications, consuming their product's budget, under a lease.
 
         Eligibility and budget are decided here, atomically, so two reservers cannot together
         exceed a budget and a withheld one is never taken.
+
+        deliverable, when given, is the deliverer's own answer about its transport: called
+        with the notification (as notifications() lists it) after eligibility and BEFORE any
+        budget is consumed, it returns None when the deliverer can carry it now, or the reason
+        it cannot. A notification it cannot carry is not reserved, spends nothing and keeps
+        that reason (notification_waiting); it is not an eligibility rule, and an eligible
+        notification is never withheld by anything but eligibility and budget - it waits for
+        its transport, counted as waiting.
+
+        It runs inside this call's write: it may read the store on its connection, and must
+        neither open a transaction (the store refuses a nested one, and the refusal would roll
+        back the whole batch) nor call a host (which would hold the write lock for as long).
         """
         if not _named(owner):
             raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED, "a reservation has an owner")
         limit = _bounded(limit, "limit")
         moment = self.clock.now()
         stamp = self.clock.iso()
-        reserved, withheld, held = [], 0, 0
+        reserved, withheld, held, waiting = [], 0, 0, 0
         with self.store.transaction() as db:
             self._lapse_notifications(db, moment, stamp)
             # Round-robin by product, a spent product excluded inside the query, and the least
@@ -3141,6 +3148,12 @@ class FaultLedger:
                 if not self._eligibility(db, row["fault_id"], moment)["eligible"]:
                     withheld += 1
                     continue
+                if deliverable is not None:
+                    reason = deliverable(_notification(row))
+                    if reason:
+                        self._wait(db, row["notification_id"], str(reason), stamp)
+                        waiting += 1
+                        continue
                 used = self._consume(db, row["product"], NOTIFICATION,
                                      f"{row['notification_id']}:{row['attempts'] + 1}",
                                      moment, stamp)
@@ -3159,7 +3172,27 @@ class FaultLedger:
                     (row["notification_id"],)).fetchone())
                 entry["token"] = token
                 reserved.append(entry)
-        return {"reserved": reserved, "withheld": withheld, "held": held}
+        return {"reserved": reserved, "withheld": withheld, "held": held, "waiting": waiting}
+
+    def notification_waiting(self, notification, *, reason) -> dict:
+        """Why a pending notification is not being delivered now, kept on it as lastError.
+
+        Written only when the reason changes, so a deliverer that asks every tick about a
+        notification that is still waiting for the same thing writes nothing.
+        """
+        if not _named(reason):
+            raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                               "a waiting notification names what it waits for")
+        with self.store.transaction() as db:
+            changed = self._wait(db, notification, reason, self.clock.iso())
+        return {"notificationId": notification, "changed": changed, "reason": reason}
+
+    @staticmethod
+    def _wait(db, notification, reason, stamp):
+        return db.execute(
+            "UPDATE fault_notifications SET last_error = ?, updated_at = ?"
+            " WHERE notification_id = ? AND state = ? AND last_error IS NOT ?",
+            (reason, stamp, notification, PENDING, reason)).rowcount == 1
 
     def ack_notification(self, notification, *, token, ref) -> dict:
         """Delivered. Accepted for the current token whatever happened to eligibility since."""
@@ -3195,6 +3228,13 @@ class FaultLedger:
                            " WHERE notification_id = ?",
                            (DELIVERED, stamp, ref, stamp, notification))
             else:
+                # Nothing reached anybody, so the reservation spent nothing: its own unit goes
+                # back, and nothing earlier (the notification analogue of invariant 4). Without
+                # it a notification whose level above is paused or unreachable spent the
+                # product's budget once per retry and starved every other notification.
+                db.execute("DELETE FROM fault_budget_uses WHERE product = ? AND kind = ?"
+                           " AND ref = ?", (row["product"], NOTIFICATION,
+                                           f"{notification}:{row['attempts']}"))
                 db.execute("UPDATE fault_notifications SET state = ?, token = NULL,"
                            " last_error = ?, updated_at = ? WHERE notification_id = ?",
                            (PENDING, ref, stamp, notification))
@@ -3213,6 +3253,67 @@ def _json(text):
 def _exists(db, identifier):
     return db.execute("SELECT 1 FROM fault_ledger WHERE fault_id = ?",
                       (identifier,)).fetchone() is not None
+
+
+def anchor_relationship(db, fault):
+    """The relationship a fault's notifications are about, or None.
+
+    The fault's own signature relationship when that relationship exists, else the issue's
+    current relationship. One definition, read by _eligibility for whose wishes apply and by
+    the deliverer for where the level above is, so the two can never be about different
+    assignments.
+    """
+    relationship = _json(fault["signature"]).get("relationship")
+    row = None
+    if _named(relationship):
+        row = db.execute("SELECT relationship_id, status, parent_task_id FROM relationships"
+                         " WHERE relationship_id = ?", (relationship,)).fetchone()
+    issue = _json(fault["scope"]).get("issueKey")
+    if row is None and _named(issue):
+        row = db.execute(
+            "SELECT relationship_id, status, parent_task_id FROM relationships"
+            " WHERE issue_key = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 1",
+            (issue,)).fetchone()
+    return row
+
+
+# The longest reason a notice carries upward. A raised reason is a caller's own words; the
+# notice says what it is about, and the rest is one fault-show away.
+NOTICE_REASON_CHARS = 200
+
+
+def notice_facts(db, notification):
+    """What a notification says about its fault, for the notice that carries it upward.
+
+    Only what identifies the fault and what it is: class, severity, state, product, the
+    issue it has once published, and the notification's own kind, reason and cycle. Never the
+    fault's recorded detail, evidence or occurrences - those are free text a collector wrote
+    from what it saw, and what goes up is a pointer to them (fault-show), not their bytes.
+    None when the notification or its fault is gone.
+    """
+    row = db.execute(
+        "SELECT n.notification_id, n.fault_id, n.kind, n.reason, n.cycle, n.state,"
+        "  n.lease_until, n.attempts, f.product, f.fault_class, f.severity,"
+        "  f.state AS fault_state, f.external_ref, f.signature, f.scope"
+        " FROM fault_notifications n JOIN fault_ledger f ON f.fault_id = n.fault_id"
+        " WHERE n.notification_id = ?", (notification,)).fetchone()
+    if row is None:
+        return None
+    anchor = anchor_relationship(db, row)
+    reason = " ".join((row["reason"] or "").removeprefix("raised:").split())
+    if len(reason) > NOTICE_REASON_CHARS:
+        reason = reason[:NOTICE_REASON_CHARS - 1] + "…"
+    return {
+        "notificationId": row["notification_id"],
+        "deliveryKey": f"relay-notification:{row['notification_id']}",
+        "faultId": row["fault_id"], "kind": row["kind"], "reason": reason or None,
+        "cycle": row["cycle"], "state": row["state"], "leaseUntil": row["lease_until"],
+        "attempts": row["attempts"], "product": row["product"],
+        "faultClass": row["fault_class"], "severity": row["severity"],
+        "faultState": row["fault_state"], "externalRef": row["external_ref"],
+        "relationshipId": anchor["relationship_id"] if anchor is not None else None,
+        "issueKey": _json(row["scope"]).get("issueKey"),
+    }
 
 
 # The current claim's attempt row, parameterised by the publication id. One claim is live at a

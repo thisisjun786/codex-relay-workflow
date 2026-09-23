@@ -130,6 +130,18 @@ UNADDRESSED_HOLD = "hierarchy_unresolved"
 # How many times one attempt() call restates a message at its transport start and tries again
 # before it answers, rather than looping on an obligation that keeps moving.
 RESTATE_RETRIES = 2
+# A fault notification from the relay's own fault ledger (CRW-205 criterion 7), carried as a
+# supervisor message of its own kind. Its obligation id is the notification id, so one
+# notification is one message (the store also refuses a second by a unique index), and it is
+# owed - may be sent - only while its notification is reserved under a live lease: that
+# reservation is where the ledger decided its eligibility and spent its budget.
+NOTICE = "fault_notification"
+NOTICE_PURPOSE = {"blocking": "fault_notice", "resolved": "fault_notice",
+                  "decision": "fault_decision"}
+# The hold a notice is parked under when an attempt sent nothing and its notification went
+# back to pending: not claimable, so it is never the oldest message holding its recipient's
+# later reports back, and released when a new reservation stages it again.
+PARKED_HOLD = SUPERSEDED_HOLD
 # What the reader of a message fills in. Each is one shell word, so the rendered line splits
 # into the argv it looks like, and none of them is a value this relay could know.
 SOCKET_PLACEHOLDER = "YOUR_RELAY_SOCKET"
@@ -589,6 +601,8 @@ class SupervisorChannel:
                     "detail": detail + ". Nothing is sent through this message; it is held as "
                     + repr(SUPERSEDED_HOLD) + ", and staging the project stages what is owed now"}
 
+        if row["obligation_kind"] == NOTICE:
+            return self._notice_now(db, row, live)
         staged = json.loads(row["packet"])
         reading = json.loads(row["reading"]) if row["reading"] else None
         event_id = row["event_id"]
@@ -771,9 +785,14 @@ class SupervisorChannel:
         row = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                          (message_id,)).fetchone()
         at = self.clock.iso()
-        packet = self.compose(current["obligation"], resolution=current["live"],
-                              reading=current["reading"], observed_at=at,
-                              report=current["report"])
+        if "notice" in current:
+            packet = self.compose_notice(current["notice"], resolution=current["live"],
+                                         observed_at=at,
+                                         relation_id=row["relationship_id"])
+        else:
+            packet = self.compose(current["obligation"], resolution=current["live"],
+                                  reading=current["reading"], observed_at=at,
+                                  report=current["report"])
         if claim is None:
             held, released = "state IN (?,?,?)", ""
             params = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
@@ -1325,6 +1344,237 @@ class SupervisorChannel:
                           " and a readback shows arrival rather than that a supervisor read it"}
 
     # ------------------------------------------------------------------ what it carries
+
+    # ------------------------------------------------------------ fault notifications
+
+    def notice_message(self, notification):
+        """The one message carrying this fault notification, or None when none is staged."""
+        return self.store.one(
+            "SELECT * FROM supervisor_messages WHERE obligation_kind = ? AND obligation_id = ?",
+            (NOTICE, notification))
+
+    def may_have_sent(self, message_id):
+        """The request id of an attempt at this message that may have put its bytes somewhere
+        (the newest), or None when no attempt can have: the proof that nothing was sent."""
+        row = self.store.one(
+            "SELECT request_id FROM supervisor_attempts WHERE message_id = ?"
+            "   AND (send_attempted <> 'no' OR retry_safe = 0)"
+            " ORDER BY attempt_no DESC LIMIT 1", (message_id,))
+        return row["request_id"] if row is not None else None
+
+    def queued_ahead(self, recipient, *, now, row=None):
+        """An earlier message to this recipient that could go now, or None: for a staged row,
+        one staged before it (the order the claim enforces); for a notice not staged yet, any,
+        since it would be the newest. A notice waiting behind one costs nothing to wait."""
+        if row is not None:
+            older = self._older_claimable(row, now)
+            return older["message_id"] if older is not None else None
+        older = self.store.one(
+            "SELECT message_id FROM supervisor_messages WHERE recipient_task_id = ?"
+            "   AND ((state IN (?,?,?) AND hold_reason IS NULL"
+            "         AND (next_eligible_at IS NULL OR next_eligible_at <= ?))"
+            "        OR (state = ? AND lease_until IS NOT NULL AND lease_until > ?))"
+            " ORDER BY staged_at, message_id LIMIT 1",
+            (recipient, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now))
+        return older["message_id"] if older is not None else None
+
+    def recover(self, message_id, *, now=None):
+        """Settle a send whose process died mid-claim, exactly as attempt() would first."""
+        row = self.get(message_id)
+        return self._recover_if_stranded(row, self.clock.now() if now is None else now)
+
+    def stage_notice(self, notice) -> dict:
+        """Freeze a fault notification as ONE supervisor message, before anything is sent.
+
+        notice is what faults.notice_facts reads for a notification its deliverer has reserved.
+        Addressed by resolve(), the one function that says who the level above is, from the
+        relationship the notification is about; a refusal there stages nothing and raises, and
+        the notification waits for it.
+
+        The notification's own message is found by its obligation id, whatever relationship
+        it was first addressed from, so a notification is never staged twice. That row is
+        rewritten - restated, re-addressed, released from its park - only while none of its
+        attempts can have put bytes anywhere, and the predicate is in the write. One that may
+        have been sent is returned as it is: its bytes may be in the recipient's thread, and a
+        second message for the same notification would be a second wake.
+        """
+        existing = self.notice_message(notice["notificationId"])
+        relation = existing["relationship_id"] if existing is not None else notice["relationshipId"]
+        if not relation:
+            raise DeliveryRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "fault " + repr(notice["faultId"]) + " is about no relationship this store"
+                " holds, so nothing places it under a project and there is no level above to"
+                " tell; the notification waits")
+        resolution = self.resolve(relation)
+        observed_at = self.clock.iso()
+        packet = self.compose_notice(notice, resolution=resolution, observed_at=observed_at,
+                                     relation_id=relation)
+        message_id = packet["envelope"]["messageId"]
+        at = self.clock.iso()
+        with self.store.composing() as db:
+            live = self.resolve(relation)
+            if not _same_hierarchy(live, resolution):
+                raise _hierarchy_moved(resolution, live)
+            row = db.execute(
+                "SELECT * FROM supervisor_messages WHERE obligation_kind = ?"
+                "   AND obligation_id = ?", (NOTICE, notice["notificationId"])).fetchone()
+            if row is None:
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO supervisor_messages (message_id, obligation_id,"
+                    " obligation_kind, relationship_id, project_key, purpose, kind,"
+                    " sender_task_id, recipient_task_id, subject, packet, state,"
+                    " attempt_count, next_eligible_at, staged_at, updated_at, event_id,"
+                    " submission_no, reading) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,"
+                    " NULL,NULL,NULL)",
+                    (message_id, notice["notificationId"], NOTICE, relation,
+                     resolution["projectKey"], packet["envelope"]["purpose"],
+                     packet["envelope"]["kind"], resolution["sender"], resolution["recipient"],
+                     notice["deliveryKey"],
+                     json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at))
+                if cursor.rowcount == 1:
+                    self.store.journal("supervisor_notice_staged", message_id,
+                                       {"notificationId": notice["notificationId"],
+                                        "faultId": notice["faultId"],
+                                        "recipient": resolution["recipient"]}, at=at)
+                return {"schema": VERSION, "staged": cursor.rowcount == 1,
+                        "messageId": message_id, "message": dict(self.get(message_id)),
+                        "recipient": resolution["recipient"], "sender": resolution["sender"]}
+            frozen = json.loads(row["packet"])
+            moved = not _addressed_as(row, live)
+            if (packet == frozen and not moved and row["hold_reason"] is None):
+                return {"schema": VERSION, "staged": False, "messageId": row["message_id"],
+                        "reason": "this notification is already staged; one notification is"
+                                  " one message", "message": dict(row),
+                        "recipient": row["recipient_task_id"], "sender": row["sender_task_id"]}
+            released = row["hold_reason"] in (PARKED_HOLD, UNADDRESSED_HOLD)
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET packet = ?, sender_task_id = ?,"
+                " recipient_task_id = ?, project_key = ?, hold_reason = CASE WHEN hold_reason"
+                " IN (?,?) THEN NULL ELSE hold_reason END, updated_at = ?"
+                " WHERE message_id = ? AND state IN (?,?,?) AND packet = ?"
+                "   AND sender_task_id = ? AND recipient_task_id = ?"
+                "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
+                "                    WHERE a.message_id = supervisor_messages.message_id"
+                "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
+                (json.dumps(packet, ensure_ascii=False, sort_keys=True), live["sender"],
+                 live["recipient"], live["projectKey"], PARKED_HOLD, UNADDRESSED_HOLD, at,
+                 row["message_id"], *CLAIMABLE, row["packet"], row["sender_task_id"],
+                 row["recipient_task_id"]))
+            if cursor.rowcount != 1:
+                return {"schema": VERSION, "staged": False, "messageId": row["message_id"],
+                        "reason": "this notification's message may already have gone, so it"
+                                  " is left exactly as it is", "message": dict(row),
+                        "recipient": row["recipient_task_id"], "sender": row["sender_task_id"]}
+            if moved:
+                self.store.journal(READDRESSED, row["message_id"],
+                                   {"from": row["recipient_task_id"], "to": live["recipient"],
+                                    "reason": "the notice was never sent and the level above"
+                                              " moved, so it goes to the one there now"}, at=at)
+            if packet != frozen:
+                self.store.journal(RESTATED, row["message_id"],
+                                   {"at": "staging", "reason": "what the notification says"
+                                    " about its fault moved and nothing had been sent"}, at=at)
+            if released:
+                self.store.journal("supervisor_notice_reopened", row["message_id"],
+                                   {"hold": row["hold_reason"],
+                                    "reason": "its notification is reserved again"}, at=at)
+        return {"schema": VERSION, "staged": False, "restated": True,
+                "messageId": row["message_id"], "message": dict(self.get(row["message_id"])),
+                "recipient": live["recipient"], "sender": live["sender"]}
+
+    def park_notice(self, message_id, reason) -> None:
+        """Hold a notice whose attempt sent nothing while its notification is pending again.
+
+        Not claimable while parked, so it never becomes the oldest message to its recipient
+        holding later reports back; and it would not be sent anyway, because a notice is owed
+        only while its notification is reserved (_notice_now). The channel's own recheck time
+        stays on the row. Only a notice none of whose attempts can have sent is parked.
+        """
+        at = self.clock.iso()
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE supervisor_messages SET hold_reason = ?, updated_at = ?"
+                " WHERE message_id = ? AND obligation_kind = ? AND state IN (?,?,?)"
+                "   AND hold_reason IS NULL"
+                "   AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a"
+                "                    WHERE a.message_id = supervisor_messages.message_id"
+                "                      AND (a.send_attempted <> 'no' OR a.retry_safe = 0))",
+                (PARKED_HOLD, at, message_id, NOTICE, *CLAIMABLE))
+            if cursor.rowcount == 1:
+                self.store.journal("supervisor_notice_parked", message_id,
+                                   {"reason": reason}, at=at)
+
+    def _notice_now(self, db, row, live) -> dict:
+        """I-247 for a fault notice: owed only while its notification is reserved and live.
+
+        The reservation is where the ledger decided the notification's eligibility and spent its
+        budget, so a notice sent without one would be a second notification path. A delivered,
+        pending or uncertain notification, or a lapsed reservation, makes the message obsolete
+        (held). A reserved one is recomposed from what the ledger says NOW and compared with
+        the staged packet, so a fault that changed severity or published its issue since
+        staging goes up as it stands.
+        """
+        from . import faults
+
+        notice = faults.notice_facts(db, row["obligation_id"])
+        if notice is None:
+            return {"kind": "obsolete", "live": live,
+                    "detail": "notification " + repr(row["obligation_id"]) + " no longer exists"}
+        lease = notice["leaseUntil"]
+        if notice["state"] != faults.RESERVED or lease is None or lease <= self.clock.now():
+            return {"kind": "obsolete", "live": live,
+                    "detail": "notification " + repr(row["obligation_id"]) + " is "
+                    + (notice["state"] if notice["state"] != faults.RESERVED
+                       else "reserved under a lapsed lease")
+                    + "; a notice goes out only while its notification is reserved, which is"
+                      " where its eligibility and budget are decided"}
+        staged = json.loads(row["packet"])
+        packet = self.compose_notice(notice, resolution=live,
+                                     observed_at=staged["envelope"].get("observedAt"),
+                                     relation_id=row["relationship_id"])
+        if packet == staged:
+            return {"kind": None, "live": live}
+        return {"kind": "restated", "live": live, "notice": notice, "obligation": None,
+                "reading": None, "report": None, "eventId": None, "submissionNo": None,
+                "detail": "what notification " + repr(row["obligation_id"]) + " says about"
+                          " its fault moved after it was staged"}
+
+    def compose_notice(self, notice, *, resolution, observed_at=None, relation_id=None) -> dict:
+        """The relay-packet/1 a fault notification travels as.
+
+        What the fault is - class, severity, state, product, the notification's kind and
+        reason, the issue once published - and where it is readable, on this store. Never the
+        fault's recorded detail or evidence.
+        """
+        purpose = NOTICE_PURPOSE.get(notice["kind"])
+        if purpose is None:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                repr(notice["kind"]) + " is not a notification kind a notice carries; it"
+                " carries " + ", ".join(sorted(NOTICE_PURPOSE)))
+        relation = relation_id or notice["relationshipId"]
+        issue = notice.get("issueKey") or self._issue_of(relation)
+        decision = None
+        if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
+            decision = ("fault " + str(notice["faultClass"]) + " (" + str(notice["product"])
+                        + ") needs a decision: " + (notice.get("reason")
+                                                    or "a write about it became uncertain or"
+                                                       " failed for good"))
+        return packets.compose(
+            direction=envelope.PARENT_TO_SUPERVISOR,
+            purpose=purpose,
+            relation_id=relation,
+            sender=resolution["sender"],
+            recipient=resolution["recipient"],
+            subject=notice["deliveryKey"],
+            issue=issue,
+            evidence=[self._command_line("fault-show", "--fault", notice["faultId"])],
+            decision=decision,
+            scope=self._scope(resolution, issue),
+            basis=_notice_basis(notice),
+            observed_at=observed_at,
+        )
 
     def compose(self, obligation, *, resolution, reading=None, observed_at=None,
                 report=_UNREAD) -> dict:
@@ -2781,6 +3031,22 @@ class SupervisorChannel:
         }
 
 
+
+
+def _notice_basis(notice):
+    """What a fault notice rests on, in one line the supervisor reads first."""
+    state = str(notice["faultState"])
+    if state == "withdrawn":
+        state += " (it cleared before anything about it was published)"
+    parts = ["fault " + str(notice["faultClass"]) + " (" + str(notice["product"]) + ") is "
+             + str(notice["severity"]) + ", " + state,
+             "notification " + str(notice["kind"])
+             + (": " + notice["reason"] if notice.get("reason") else "")
+             + ", cycle " + str(notice["cycle"]),
+             ("issue " + str(notice["externalRef"])) if notice.get("externalRef")
+             else "no issue published yet",
+             "fault " + str(notice["faultId"])]
+    return "; ".join(parts)
 
 
 def _selectors(reading):

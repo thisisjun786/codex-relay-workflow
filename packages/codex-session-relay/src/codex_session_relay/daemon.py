@@ -46,6 +46,7 @@ class TickReport:
     faultsRecorded: int = 0
     supervisorStaged: int = 0
     supervisorSent: int = 0
+    notificationsDelivered: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -59,6 +60,7 @@ class TickReport:
             "faultsRecorded": self.faultsRecorded,
             "supervisorStaged": self.supervisorStaged,
             "supervisorSent": self.supervisorSent,
+            "notificationsDelivered": self.notificationsDelivered,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -150,6 +152,9 @@ class RelayDaemon:
         # where its next page starts. In memory for the same reason.
         self._supervisor_send_after = None
         self._last_refusal = None
+        # The fault notification deliverer, built on first use from whatever ledger and channel
+        # the daemon holds then (both are also set by attribute), and rebuilt if either changes.
+        self._notices = None
 
     # ------------------------------------------------------------------ tick
 
@@ -175,7 +180,8 @@ class RelayDaemon:
         report.quiet = not (report.observed or report.reconciled or report.delivered
                             or report.deferred or report.acksVerified or report.anchorsBound
                             or report.requeued or report.faultsRecorded
-                            or report.supervisorStaged or report.supervisorSent)
+                            or report.supervisorStaged or report.supervisorSent
+                            or report.notificationsDelivered)
         return report
 
     def _sweep_faults(self, report) -> None:
@@ -983,6 +989,35 @@ class RelayDaemon:
                 if one.get("staged") or one.get("readdressed") or one.get("restated"):
                     report.supervisorStaged += 1
         self._send_upward(channel, report, now)
+        # After the reports: a notice staged now is younger than every report already waiting
+        # for the same supervisor, and the channel sends each recipient's oldest first.
+        self._deliver_notices(channel, report, now)
+
+    def _deliver_notices(self, channel, report, now) -> None:
+        """Fault notifications to the level above (CRW-205 criterion 7), with nobody asking.
+
+        Only with a fault ledger as well as the channel: the ledger decides what is owed and
+        whether it may go (reservation), the channel how it goes; faultnotice is the seam. A
+        notification that waits is carried as a note on the tick its reason appears or changes.
+        """
+        if self.faults is None:
+            return
+        deliverer = self._notices
+        if deliverer is None or deliverer.ledger is not self.faults or deliverer.channel is not channel:
+            from .faultnotice import NoticeDeliverer
+
+            deliverer = self._notices = NoticeDeliverer(self.faults, channel, owner=DAEMON_OWNER)
+        try:
+            answer = deliverer.tick(self.adapter, now=now,
+                                    limit=self.policy.max_supervisor_sends_per_tick)
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"fault notifications not delivered: {error}")
+            return
+        report.notificationsDelivered += answer["delivered"]
+        # Returned to pending with nothing sent: a deferral, as a supervisor report's is.
+        report.deferred += answer["returned"]
+        for notification, reason in answer["waiting"]:
+            report.notes.append(f"fault notification {notification} waits: {reason}")
 
     def _send_upward(self, channel, report, now) -> None:
         from .supervisorchannel import CLAIMABLE, SENDING
