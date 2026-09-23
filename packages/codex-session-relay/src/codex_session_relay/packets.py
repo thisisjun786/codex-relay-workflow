@@ -1202,7 +1202,14 @@ def check_progression(ladder) -> None:
                 RefusalReason.MALFORMED_RECEIPT,
                 "a handover ladder answers every state; " + name + " is missing. Start from"
                 " unobserved() rather than from a partial dictionary")
-        entry = ladder[name] or {}
+        entry = ladder[name]
+        if not isinstance(entry, dict):
+            # Shape before meaning, as everywhere else here: reading .get() off an int turned a
+            # producer's malformed ladder into a host failure instead of a refusal it can act on.
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "each handover state is an object with a state and the record that answered"
+                " it; " + name + " is a " + type(entry).__name__)
         state = entry.get("state")
         if state not in envelope.STATES:
             raise PacketRefused(
