@@ -1712,6 +1712,10 @@ class DescriptorIdentity(unittest.TestCase):
         closing one, a rename during the read still returns rows and an identity a caller reads
         as "the store at this path". Together the two say the file was the one at this pathname
         for the whole read, or there is no answer.
+
+        The seam renames right after the connect returns, so since every connection asks the
+        descriptor again before running anything, this move is refused by that ask rather than
+        by the closing one. The closing question itself is not isolated by any case here.
         """
         from codex_session_relay import store as store_module
 
