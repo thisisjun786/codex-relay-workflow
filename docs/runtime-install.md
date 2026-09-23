@@ -1853,8 +1853,11 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   `duplicate_invocation`, an unowned release only `arbitration_failed`), a guard outcome that does
   not follow from the process ending, exit code and stdout reading it records, a decision, state,
   hold or receipt on a record that got no answer, a hold without a block or a block without a
-  hold, an accepted row that did not ask the guard or names another record, or any record whose
-  own session, turn, `stop_hook_active` and answer item do not hash to its key;
+  hold, a fault that is not a prefix of `run()`'s order (asked, then the call, then an answer), a
+  version that is not the integer the adapter writes, a time not in its format, a field in another
+  type than the adapter writes it, an accepted row that did not ask the guard or names another
+  record, or any record whose own session, turn, `stop_hook_active` and answer item do not hash
+  to its key;
 - a row version it does not know, or an entry in a ledger that is not one of its records;
 - an outcome without its claim, naming another session or turn than its claim, or without the
   accepted row it names (or with none under `every_invocation`), and a claim without its outcome
@@ -1891,7 +1894,7 @@ The claim files are never removed, like the rows. The reading checks that record
 adapter writes and that the records of one event agree; it does not order their timestamps, and it
 cannot contradict the values the adapter observed once and recorded in one place (timings, the
 transcript path, the guard's stderr and detail, the configuration path, and the receipt values an
-answer carries). That the host
+answer carries). It checks their types and the time format, not the values. That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
 with every record in the live journal, but it is not a documented host contract; a host that ran a
 Stop before recording both that sampling's continuation and its answer would show the previous

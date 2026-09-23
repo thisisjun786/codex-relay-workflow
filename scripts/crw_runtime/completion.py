@@ -1745,13 +1745,21 @@ def _row_fields_written(row):
     """
     if any(field not in row for field in ROW_FIELDS) or row.get("event") != EVENT:
         return False
+    # The types the adapter writes these in; their values are observations nothing else records.
+    if (not isinstance(row.get("configuration"), str)
+            or not _is_count(row.get("elapsedMs"), zero=True)
+            or not (row.get("detail") is None or isinstance(row.get("detail"), str))):
+        return False
     outcome, acceptance = row.get("adapterOutcome"), row.get("acceptance")
     if outcome == ADAPTER_FAULTED:
         if not isinstance(row.get("fault"), str):
             return False
     elif "detail" not in row:
         return False
-    if outcome in FROM_THE_GUARD:
+    if outcome == ADAPTER_FAULTED:
+        if not _fault_prefix_written(row):
+            return False
+    elif outcome in FROM_THE_GUARD:
         if any(field not in row for field in GUARD_CALL_FIELDS) or not _outcome_follows(row):
             return False
     elif outcome != ADAPTER_FAULTED and any(field in row for field in GUARD_CALL_FIELDS):
@@ -1771,17 +1779,17 @@ def _row_fields_written(row):
                 or any(field not in identity for field in IDENTITY_FIELDS)
                 or not _is_count(row.get("identityScanMs"), zero=True)
                 or not _is_count(identity.get("scannedBytes"), zero=True)
-                or not _is_count(identity.get("scannedLines"), zero=True)):
+                or not _is_count(identity.get("scannedLines"), zero=True)
+                or not (identity.get("transcriptPath") is None
+                        or isinstance(identity.get("transcriptPath"), str))):
             return False
     return True
 
 
-def _outcome_follows(row):
-    """Whether a guard outcome is the one outcome_of() reaches from the call the row records.
-
-    The process ending, the exit code and what stdout said are recorded; the verdict itself is not,
-    so a verdict printed by a run that exited cleanly may have been answered or incomplete.
-    """
+def _call_recorded(row):
+    """Whether the guard call a row records is one invoke_guard() returns: a known ending and
+    stdout reading, an exit code only from a process that exited, a signal only from one that was
+    signalled, an errno only from one that never started."""
     said, how = row.get("stdoutReading"), row.get("processEnding")
     if said not in STDOUT_READINGS or how not in PROCESS_ENDINGS:
         return False
@@ -1799,10 +1807,52 @@ def _outcome_follows(row):
             return False
     elif code is not None or signal is not None or errno_name is not None:
         return False
-    ending = {"ending": how, "code": code}
-    if how == EXITED and said == SAID_A_VERDICT and row.get("exitCode") == GUARD_EXIT_OK:
+    return (_is_count(row.get("guardElapsedMs"), zero=True)
+            and isinstance(row.get("guardStderr"), str))
+
+
+def _could_answer(row):
+    """Whether the call a row records could have produced an answer: a verdict from a clean exit."""
+    return (row.get("processEnding") == EXITED and row.get("stdoutReading") == SAID_A_VERDICT
+            and _exact(row.get("exitCode"), GUARD_EXIT_OK))
+
+
+def _outcome_follows(row):
+    """Whether a guard outcome is the one outcome_of() reaches from the call the row records.
+
+    The process ending, the exit code and what stdout said are recorded; the verdict itself is not,
+    so a verdict printed by a run that exited cleanly may have been answered or incomplete.
+    """
+    if not _call_recorded(row):
+        return False
+    if _could_answer(row):
         return row.get("adapterOutcome") in (GUARD_VERDICT_INCOMPLETE, GUARD_ANSWERED)
-    return outcome_of(ending, said, None) == row.get("adapterOutcome")
+    return (outcome_of({"ending": row.get("processEnding"), "code": row.get("exitCode")},
+                       row.get("stdoutReading"), None) == row.get("adapterOutcome"))
+
+
+def _fault_prefix_written(row):
+    """Whether a faulted row holds a prefix of what run() records, in run()'s order.
+
+    run() marks the guard as asked, then records the call (its ending, exit code, signal, errno,
+    stdout reading, time and stderr together), then, from an answer only, the decision, state and
+    receipts. A fault keeps what came before it and nothing after it.
+    """
+    called = row.get("processEnding") is not None
+    answered = (row.get("guardDecision") is not None or row.get("guardState") is not None
+                or row.get("assignmentId") is not None or row.get("guardRecordedAs") is not None
+                or any(field in row for field in ANSWER_FIELDS))
+    if called:
+        if (row.get("guardInvoked") is not True
+                or any(field not in row for field in GUARD_CALL_FIELDS)
+                or not _call_recorded(row)):
+            return False
+    elif row.get("stdoutReading") is not None or any(field in row for field in GUARD_CALL_FIELDS):
+        return False
+    if answered:
+        return (called and all(field in row for field in ANSWER_FIELDS)
+                and row.get("guardDecision") in DECISIONS and _could_answer(row))
+    return True
 
 
 def _guard_result_written(record):
@@ -1835,7 +1885,7 @@ OUTCOME_FIELDS = ("ledgerVersion", "eventKey", "sessionId", "turnId", "journalPo
 def _ledger_shape(body, key, outcome):
     """Whether an accepted record carries every field its kind is written with, and names its key."""
     if (not isinstance(body, dict) or body.get("eventKey") != key
-            or body.get("ledgerVersion") != LEDGER_VERSION):
+            or not _exact(body.get("ledgerVersion"), LEDGER_VERSION)):
         return False
     for field in ("sessionId", "turnId"):
         if not isinstance(body.get(field), str) or not body.get(field):
@@ -1844,14 +1894,14 @@ def _ledger_shape(body, key, outcome):
         # The owner's outcome: it got past its claim, so it asked the guard or faulted, and its
         # guard result is one run() writes.
         return (all(field in body for field in OUTCOME_FIELDS)
-                and isinstance(body.get("at"), str)
+                and _stamp(body.get("at"))
                 and (body.get("adapterOutcome") in FROM_THE_GUARD
                      or body.get("adapterOutcome") == ADAPTER_FAULTED)
                 and body.get("journalPolicy") in JOURNAL_POLICIES
                 and _guard_result_written(body)
                 and (body.get("attemptRow") is None or isinstance(body.get("attemptRow"), str)))
     claimed_by = body.get("claimedBy")
-    return (isinstance(body.get("claimedAt"), str) and isinstance(body.get("stopHookActive"), bool)
+    return (_stamp(body.get("claimedAt")) and isinstance(body.get("stopHookActive"), bool)
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
             and isinstance(claimed_by, dict) and isinstance(claimed_by.get("attemptRow"), str)
             and _is_count(claimed_by.get("pid"))
@@ -1871,7 +1921,7 @@ def _row_shape(row):
     carries what its acceptance is written with: the outcomes that acceptance ends in, whether the
     guard was asked, and a guard result only where one was reached (_guard_result_written).
     """
-    if not isinstance(row.get("at"), str) or not row.get("at") or not _row_fields_written(row):
+    if not _stamp(row.get("at")) or not _row_fields_written(row):
         return False
     acceptance, key, identity = row.get("acceptance"), row.get("eventKey"), row.get("eventIdentity")
     outcome, asked = row.get("adapterOutcome"), row.get("guardInvoked")
@@ -1923,11 +1973,13 @@ def _row_shape(row):
 def _host_shape(body, key):
     """Whether a host file carries every field it is written with, and is filed under its own key."""
     if (not isinstance(body, dict) or body.get("eventKey") != key
-            or body.get("ledgerVersion") != LEDGER_VERSION):
+            or not _exact(body.get("ledgerVersion"), LEDGER_VERSION)):
         return False
-    for field in ("sessionId", "turnId", "answerItem", "claimedAt"):
+    for field in ("sessionId", "turnId", "answerItem"):
         if not isinstance(body.get(field), str) or not body.get(field):
             return False
+    if not _stamp(body.get("claimedAt")):
+        return False
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
             and isinstance(claimed_by.get("attemptRow"), str) and _is_count(claimed_by.get("pid"))
@@ -1936,6 +1988,19 @@ def _host_shape(body, key):
                  or isinstance(claimed_by.get("journalRoot"), str))
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
                                  body["answerItem"]))
+
+
+# How now() writes a time. A record carrying another shape of time was not written by the adapter.
+STAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+
+
+def _stamp(value):
+    return isinstance(value, str) and STAMP.match(value) is not None
+
+
+def _exact(value, number):
+    """An integer the adapter writes, not a value that merely compares equal to it (True, 1.0)."""
+    return type(value) is int and value == number
 
 
 def _is_count(value, zero=False):
@@ -2102,7 +2167,8 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 where = str(root / day / name)
                 row, readable = _read_json(root / day / name)
                 if (not readable or not isinstance(row, dict)
-                        or row.get("recordVersion") not in (1, RECORD_VERSION)
+                        or not (_exact(row.get("recordVersion"), 1)
+                                or _exact(row.get("recordVersion"), RECORD_VERSION))
                         or (row.get("recordVersion") == RECORD_VERSION
                             and not _row_shape(row))):
                     answer["rowsUnreadable"].append(where)
@@ -2280,7 +2346,7 @@ def _read_stop_events(answer, roots, since, until, session, turn, hosts):
                 if not kept or row != slot:
                     answer["recordsThatDisagree"].append(outcome_path)
                 named_row = _read_row(root, row)
-                if (named_row is None or named_row.get("recordVersion") != RECORD_VERSION
+                if (named_row is None or not _exact(named_row.get("recordVersion"), RECORD_VERSION)
                         or named_row.get("acceptance") != ACCEPTED
                         or named_row.get("eventKey") != key):
                     answer["acceptedRowsMissing"].append(key)

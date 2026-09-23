@@ -1087,3 +1087,59 @@ class ReviewRoundSixControls(OneEventRecords, unittest.TestCase):
                 host, records = self.one_event()
                 self.change(records["accepted"], lambda b: b.__setitem__(field, value))
                 self.assertEqual(verify(host.journal)[0], 3, field + " was vouched for")
+
+
+class ReviewRoundSevenControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the seventh review round (CRW-212, PR #144).
+
+    A fault keeps whatever run() had recorded before it, in run()'s order: the guard is marked as
+    asked, then the call's fields are recorded, then an answer's. A faulted record is one of those
+    prefixes and nothing else. And a version field is the integer the adapter writes, not a value
+    that merely compares equal to it.
+    """
+
+    def faulted(self, records, row_changes):
+        def fault(body, extra):
+            body["adapterOutcome"] = "adapter_faulted"
+            body["held"] = False
+            body.update(extra)
+        self.change(records["accepted"],
+                    lambda b: fault(b, dict({"fault": "OSError: injected"}, **row_changes)))
+        self.change(records["outcome"], lambda b: fault(b, {}))
+
+    def test_a_fault_after_the_answer_is_still_one_event_accepted_once(self):
+        host, records = self.one_event()
+        self.faulted(records, {})
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (0, "TRUE"),
+                         "a prefix run() writes was not vouched for")
+
+    def test_a_fault_that_is_not_a_prefix_of_runs_order_is_not_vouched_for(self):
+        cases = [
+            ("not asked, yet called and answered", {"guardInvoked": False}),
+            ("answered without a call", {"processEnding": None, "stdoutReading": None,
+                                         "exitCode": None}),
+            ("called without the call's fields", {"__drop__": "guardStderr"}),
+        ]
+        for label, changes in cases:
+            with self.subTest(case=label):
+                host, records = self.one_event()
+                drop = changes.pop("__drop__", None)
+                self.faulted(records, changes)
+                if drop:
+                    self.change(records["accepted"], lambda b: b.pop(drop))
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 label + " was vouched for")
+
+    def test_a_version_the_adapter_does_not_write_is_not_vouched_for(self):
+        cases = [("host", "ledgerVersion", True), ("claim", "ledgerVersion", 1.0),
+                 ("outcome", "ledgerVersion", True), ("accepted", "recordVersion", 2.0),
+                 ("duplicate", "recordVersion", 2.0)]
+        for which, field, value in cases:
+            with self.subTest(record=which, value=repr(value)):
+                host, records = self.one_event()
+                self.change(records[which], lambda b: b.__setitem__(field, value))
+                code, answer = verify(host.journal, **{"codex-home": str(host.codex_home)})
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 which + "." + field + "=" + repr(value) + " was vouched for")
