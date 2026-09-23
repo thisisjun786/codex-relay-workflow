@@ -2019,17 +2019,16 @@ def authorized_settings(store, task_id: str, runtime_status=None):
             + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
             + finding.get("recovery", rolepolicy.RECOVERY),
         )
-    # The bridge applies this rule on its own tool path, and a relay send does not take that
-    # path: it resumes through its own transport. Applied here too, or a send reaches a thread
-    # the tool surface would have refused.
-    unloaded = rolepolicy.check_unloaded_transmission(settings, role, policy, runtime_status)
-    if unloaded is not None:
-        raise unloaded
-    # The status above is the one observed before this send listed turns and claimed itself, so
-    # it can be stale by the time the transport resumes. The transport takes its own read
-    # immediately before that resume; this is what tells it to apply the same rule there, on
-    # the state that actually holds.
-    settings.refuse_when_unloaded = (
+    # A pair policy did not derive is never transmitted to this recipient, loaded or not: the
+    # bridge refuses to transmit one to a thread the host has to load, and the relay's own
+    # transport goes further and transmits nothing at all (settings.TaskSettings
+    # settings_free_resume). Refusing an unloaded supervisor here, as this gate used to, left it
+    # unreachable until something else loaded it, and the live host unloads an idle thread within
+    # about a minute (CRW-215 live finding F1). The transport now loads it with nothing requested
+    # and compares what the host reports with this record before any turn, so the decision is
+    # made on the state that actually holds rather than on a status this gate read earlier.
+    # runtime_status is kept for callers; the rule no longer depends on it.
+    settings.settings_free_resume = (
         rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded") is not None
     )
     return settings

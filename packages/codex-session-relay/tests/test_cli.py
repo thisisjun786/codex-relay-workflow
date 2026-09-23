@@ -219,6 +219,19 @@ class _Reader:
         return _OTHER
 
 
+# Calls that cannot fail on any value a record can hold. Handing a field to one is not a
+# transformation, because a transformation is what can refuse a row by raising, and these never
+# raise: settings._canonical is the JSON value a record and an answer are compared as (CRW-215),
+# and it reads the host's permission profile, which is opaque and any value of which is a record
+# a send can carry. test_every_transformation_a_send_applies_to_the_record_is_covered proves each
+# name here total before it derives anything, so one that stops being total fails there.
+TOTAL_CALLS = ("_canonical",)
+
+
+def _total(call):
+    return isinstance(call.func, ast.Name) and call.func.id in TOTAL_CALLS
+
+
 def _handed_over(call):
     """(selector, expression) for everything a call hands over.
 
@@ -310,7 +323,7 @@ def _visit(defined, function, parameters, seen, collect):
     reader = _Reader(function, parameters)
     found = collect(function, reader)
     for node in _scoped(function):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.Call) or _total(node):
             continue
         target, method = _hop(node, defined, function)
         if target is None:
@@ -334,7 +347,7 @@ def transformed_fields(tree, entries, owner="TaskSettings"):
     def collect(function, reader):
         found = set()
         for node in _scoped(function):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or _total(node):
                 continue
             for _selector, expression in _handed_over(node):
                 carried = reader.type_of(expression)
@@ -2179,11 +2192,12 @@ class ParticipantAccessReceipts(CliBase):
         problem in a SEPARATE field, which was true of a send whose outcome depended on what the
         host did with the value, and is no longer true of one that is never made.
 
-        The first four are written past the validating recorder deliberately: registration
-        refuses them, so the only way a store holds one is an older writer or a hand edit,
-        which is the case this helper says it supports. The fifth needs no hand edit at all -
-        `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
-        so this row can arrive through the ordinary recorder and still fail every send.
+        All five are written past the validating recorder deliberately: registration refuses
+        them, so the only way a store holds one is an older writer or a hand edit, which is the
+        case this helper says it supports. The fifth, roots recorded as a number, used to need
+        no hand edit at all - `require_usable()` did not type the list fields, so the ordinary
+        recorder took it and every send then failed on list(7). It now refuses it as mistyped,
+        and the doctor says so in delivery's own words rather than as an unexpected TypeError.
         """
         from pathlib import Path
 
@@ -2195,9 +2209,8 @@ class ParticipantAccessReceipts(CliBase):
         # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
         incomplete = dict(self.settings(self.root))
         del incomplete["cwd"]
-        # Complete, supported, and still not sendable: require_usable() types the three fields
-        # the resume contract declares as strings and says nothing about this one, while
-        # resume_params calls list() on it.
+        # Complete and supported, and not a list: require_usable() types the list fields as
+        # well as the three strings, so resume_params is never asked to call list() on it.
         unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
         # Complete and supported too, and refused one gate earlier than that: present is not
         # the same as usable, and no host answer could tell us what it did with cwd: 7.
@@ -2218,8 +2231,8 @@ class ParticipantAccessReceipts(CliBase):
             "an approval policy this transport cannot carry": (
                 interactive, "unsupported_approval_policy", "'on-request'",
             ),
-            "a field the params construction cannot use": (
-                unusable_roots, "unexpected", "TypeError",
+            "a list field recorded as something else": (
+                unusable_roots, "settings_mistyped", "runtimeWorkspaceRoots is int, not a list",
             ),
         }
         for label, (stale, expected_reason, detail_says) in cases.items():
@@ -2342,6 +2355,18 @@ class ParticipantAccessReceipts(CliBase):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                         and node.func.attr in api):
                     called.add(node.func.attr)
+
+        # What the derivation below is allowed to pass over, proved rather than trusted: each
+        # call it treats as total returns on every shape a record or an answer can hold.
+        for name in TOTAL_CALLS:
+            total = getattr(settings_module, name)
+            for value in (7, "7", None, True, 0.5, [], {}, [7, {"a": None}],
+                          {"b": [True, 0], "a": "x"}, object()):
+                with self.subTest(total=name, value=repr(value)):
+                    try:
+                        total(value)
+                    except Exception as error:  # noqa: BLE001 - raising is what is ruled out
+                        self.fail(f"{name} is listed as total and raised {error!r}")
 
         recorded = ast.parse(inspect.getsource(settings_module))
         fields = transformed_fields(recorded, called)

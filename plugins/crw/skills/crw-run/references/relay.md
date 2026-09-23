@@ -286,12 +286,17 @@ change what the task runs on.
 The recipient's runtime state decides the mechanism as well as the settings, and it does not
 decide it alone. An ACTIVE recipient is steered into the turn it is already running, and a steer
 carries no model or effort at all, so there is nothing to state and nothing that could be
-applied. An IDLE recipient is resumed and carries its settings. A recipient the host reports as
-`notLoaded` is resumed only when its pair derives from its role's declared pair: a resume can
-apply what it transmits while the host materializes the thread, so a record-based pair — a
-supervisor's — or an exception-authorized one is refused there rather than sent. For those, wait
-until the host has the task loaded and read its state again before choosing a route; the refusal
-is retry-safe and nothing is lost meanwhile.
+applied. An IDLE recipient whose pair derives from its role's declared pair is resumed and
+carries its settings, and so is one the host reports as `notLoaded`: a host that applies what it
+was sent while materializing the thread lands it where policy says it belongs. A record-based pair
+— a supervisor's — or an exception-authorized one is never transmitted, loaded or not, because a
+resume could restore a value the user has since changed. The relay's transport loads such a
+recipient with a resume that requests nothing, compares what the host reports with the record
+before any turn, and refuses a difference as `settings_differ_after_load`, retry-safe with
+nothing started; re-record from a reading the user stands behind rather than retrying. The
+workspace roots may come back narrower than recorded, because a load does not restore them, and
+never wider. The bridge's own tool path still refuses the unloaded case, so an operator message
+to an unloaded supervisor through the bridge waits until the host has it loaded.
 
 Reading the state before choosing is what keeps those apart, and it is also what a report must
 not skip: a send accepted on a resumed recipient, a steer accepted into a live turn, and a

@@ -493,6 +493,13 @@ def check_unloaded_transmission(settings, role, policy, runtime_status):
     Returns None or the refusal, like every other check here, so a caller raises what it is
     given rather than reconstructing it from a yes or no.
 
+    The relay's delivery gate asks it with "notLoaded" as a PREDICATE - is this a pair policy did
+    not derive? - and no longer raises what it returns. Its own transport transmits such a pair to
+    nobody, loaded or not: it resumes the recipient with nothing requested and compares what the
+    host reports with the record before any turn (settings.TaskSettings.settings_free_resume).
+    The bridge's tool path still refuses with this reason, because it cannot read a binding and
+    does not load a thread without transmitting.
+
     The bridge applies this rule on its own tool path and a relay delivery never takes that
     path: it resumes through its own transport. So the rule is applied here too, with the same
     predicate and the same reason. Where the role's pair comes from policy the record has

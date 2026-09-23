@@ -140,6 +140,10 @@ What each one waits on:
 - `test_stop_adapter.py` runs the Stop adapter's console entry point as a real process, because
   exit 2 is the host's blocking code and only a real exit status can show that it never returns one.
 - `test_daemon_cadence.py` measures a real run spending its deadline polling.
+- `test_supervisor_live_findings.py` runs one line a supervisor report renders as a real
+  process with PATH pointing nowhere, because whether a line runs as rendered is a property of
+  a process that starts, not of the string: the live host's PATH named a relay without the
+  command the line asked for (CRW-215 live finding F3).
 - `test_failure_recovery.py` waits a real SQLite busy timeout, because a timeout is
   the one thing an injected clock cannot produce. It is why criteria 2 and 3 are both
   mixed: they share that module, and one of its cases waits.
@@ -248,7 +252,7 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
 weigh them, and the ones that reach their value down a single path. Every place the suite
 measures something with either folded kind is listed, keyed by the assertion's own text, with
-a verdict written beside it. Today that reads 64 booleans as 15 / 38 / 11, and 84 measured
+a verdict written beside it. Today that reads 67 booleans as 16 / 39 / 12, and 85 measured
 places. Those counts, and the per-module case counts in the landed table above, are read back
 out of this file and compared against the suite, so a number here that went stale fails there.
 

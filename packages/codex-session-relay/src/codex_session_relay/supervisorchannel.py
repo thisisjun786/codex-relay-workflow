@@ -37,6 +37,7 @@ import math
 import os
 import secrets
 import shlex
+import sys
 from datetime import datetime
 
 from . import envelope, omitted, packets, supervision
@@ -162,6 +163,34 @@ def _command(*argv) -> str:
     these arguments, which is the property a reader relies on.
     """
     return " ".join(shlex.quote(str(one)) for one in argv)
+
+
+# The console script this package installs. Never rendered on its own: see relay_program().
+PROGRAM_NAME = "codex-session-relay"
+
+
+def relay_program() -> tuple:
+    """The absolute command that runs THIS relay, for every line written for a later reader.
+
+    A line rendered into a report is run later, by somebody else, in a shell whose PATH this
+    process never saw. The bare program name let that shell choose, and on the live host it chose
+    a pre-channel relay with no supervisor-read at all, so the rendered readback failed as
+    rendered (CRW-215 live finding F3). The relay that staged a report is the one that can read
+    it back, so the line names that relay's own executable: the console script installed beside
+    this interpreter, found through the real path of its environment so that every process of
+    one installation - the service's worker, a parent's CLI started through a 'current' link -
+    renders the same bytes, since a staged packet is compared byte for byte where its transport
+    starts. Where no console script is installed, the interpreter itself runs the module.
+
+    An installation that is later replaced and removed takes that path with it: a line
+    already delivered then names an executable that no longer exists and fails as rendered.
+    Its arguments still apply, but whoever runs them has to name the relay that reads that
+    store now; nothing re-points a delivered line.
+    """
+    script = os.path.join(os.path.realpath(sys.prefix), "bin", PROGRAM_NAME)
+    if os.path.isfile(script) and os.access(script, os.X_OK):
+        return (script,)
+    return (os.path.abspath(sys.executable), "-m", "codex_session_relay.cli")
 
 
 def _addressed_as(row, resolution):
@@ -297,10 +326,10 @@ def _recheck_line(reading):
         return None
     if reading.get("source") == omitted.STORE_SOURCE:
         # Derived from the store, so rechecked from the store: the command that derived it.
-        return _command("codex-session-relay", "--state", selectors["state"],
+        return _command(*relay_program(), "--state", selectors["state"],
                         "reporting-derive", "--relationship", reading.get("relationshipId"),
                         "--turn", selectors["turn"])
-    return _command("codex-session-relay", "--state", selectors["state"],
+    return _command(*relay_program(), "--state", selectors["state"],
                     "reporting-show", "--marker-root", selectors["markerRoot"],
                     "--workspace", selectors["workspace"],
                     "--assignment", selectors["assignment"],
@@ -336,7 +365,7 @@ def _settings_key(settings):
     """What a send carries as its authorized settings, as one comparable value."""
     data = getattr(settings, "data", settings)
     return (json.dumps(data, sort_keys=True, default=repr),
-            bool(getattr(settings, "refuse_when_unloaded", False)))
+            bool(getattr(settings, "settings_free_resume", False)))
 
 
 class _Stale(_NotClaimable):
@@ -439,8 +468,8 @@ class SupervisorChannel:
         return None
 
     def _command_line(self, *argv, socket=False) -> str:
-        """A codex-session-relay line that selects THIS store, and this host when asked to."""
-        head = ["codex-session-relay", "--state", self.state_directory]
+        """A line that runs THIS relay (relay_program) on THIS store, and this host when asked."""
+        head = [*relay_program(), "--state", self.state_directory]
         if socket:
             head += ["--socket", self.socket_path or SOCKET_PLACEHOLDER]
         return _command(*head, *argv)
@@ -1387,11 +1416,30 @@ class SupervisorChannel:
 
     @staticmethod
     def _basis(obligation):
+        """What the report rests on, in the bytes the supervisor actually reads.
+
+        An event rests on its generation and revision. An omission has no revision, and
+        leaving its basis unknown delivered it as a bare parent_to_supervisor/blocked: the
+        envelope has no purpose of its own for a turn that ended without reporting, so the real
+        supervisor read the only word it was given and took the issue for blocked (CRW-215 live
+        finding F4). So an omission's basis says what it is - unreported - which turn, the
+        reason the reading gave and the generation; supervisor-show still carries the whole
+        frozen reading.
+        """
         revision = obligation.get("revisionHash")
-        if not revision:
+        if revision:
+            return ("generation " + str(obligation.get("executionGeneration")) + ", revision "
+                    + str(revision)[:12])
+        if obligation.get("kind") != supervision.UNREPORTED:
             return None
-        return ("generation " + str(obligation.get("executionGeneration")) + ", revision "
-                + str(revision)[:12])
+        basis = obligation.get("basis") or {}
+        turn = basis.get("turn") or obligation.get("subject")
+        parts = [supervision.UNREPORTED + ": turn " + str(turn) + " ended without a report"]
+        if basis.get("reason"):
+            parts.append("reading " + str(basis["reason"]))
+        if obligation.get("executionGeneration") is not None:
+            parts.append("generation " + str(obligation["executionGeneration"]))
+        return ", ".join(parts)
 
     def render(self, packet, request_id, token=None) -> str:
         """The bytes one attempt freezes. A function of the packet and the request id alone.

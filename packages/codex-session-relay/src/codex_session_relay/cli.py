@@ -2484,20 +2484,20 @@ def _sandbox_summary(row) -> dict:
     refused = None
     try:
         view.require_usable()
-        # Not an inspection of the params: the construction a send performs, run for real. A
-        # record the validator accepts can still fail in it - runtimeWorkspaceRoots: 7 is
-        # present, so require_usable() passes, and then list(7) raises. The thread id is the
-        # one input that cannot change the answer: resume_params assigns it to
+        # Not an inspection of the params: the construction a send performs, run for real, so
+        # a record the validator accepts and the construction cannot use is still caught here.
+        # runtimeWorkspaceRoots: 7 was one until require_usable() typed the list fields
+        # (settings.environments_problem); it is now refused one gate earlier, as mistyped. The
+        # thread id is the one input that cannot change the answer: resume_params assigns it to
         # params["threadId"] and reads nothing from it, so a placeholder can neither hide a
         # failure nor invent one.
         view.resume_params("doctor-probe-thread")
         # The recorded half of what runs AFTER the response. `mismatches` needs a resume
         # response and cannot be run here, but the transformations it applies to the recorded
         # row can be, and this is the one the two calls above do not reach: environments is
-        # read only by the verification, so a value the completeness gate admits and the
-        # params never touch gets that far. Measured both ways - a response that reports its
-        # environment selection raises here, one that reports null withholds the send as
-        # environments_unknown - so no send completes for such a row either way.
+        # read only by the verification. require_usable() now types it
+        # (settings.environments_problem), so this no longer finds anything that gate admits;
+        # it stays as the construction itself, run for real, like resume_params above.
         normalise_environments(settings.get("environments"))
     except DeliveryRefused as refusal:
         refused = refusal
