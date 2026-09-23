@@ -866,6 +866,9 @@ class RouteRows(RelayTestCase):
             disposition=products.PROJECT_PROPOSAL, project=None, state="observed")))
         self.assertIsNone(routes.attention(snap(disposition=products.PROJECT_PROPOSAL,
                                                 project="proj-new", state="observed")))
+        self.assertIsNone(routes.attention(snap(disposition=products.PROJECT_PROPOSAL,
+                                                project=None, state="observed",
+                                                stage=products.STAGE_OBSERVED)))
         self.assertIsNone(routes.attention(snap()))
 
 

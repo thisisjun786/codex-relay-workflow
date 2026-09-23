@@ -241,7 +241,8 @@ def _signature(reading, check, round_=1):
 
 def _mismatch_round(port, product, workspace, reading, check):
     """(fault id, row, signature, closed) of the mismatch record this reading belongs to, with
-    the ids of the rounds already closed.
+    the ids of the rounds already closed. After MAX_ROUNDS closed rounds the id is None: the
+    reading may still be a replay of one of them, which check() recognises before it refuses.
 
     The newest round, unless that one was resolved: a mismatch found again after its closure
     starts the next round. Were it the same record coming back, the ledger's rule for a resolved
@@ -256,9 +257,7 @@ def _mismatch_round(port, product, workspace, reading, check):
         if row is None or row.get("state") != ledger_port.RESOLVED:
             return fault_id, row, signature, closed
         closed.append(fault_id)
-    products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
-                    f"{check} of {reading['subject']} was closed {MAX_ROUNDS} times and found"
-                    f" wrong again; that is a decision for somebody, not another round")
+    return None, None, None, closed
 
 
 def reading_key(reading) -> str:
@@ -384,6 +383,11 @@ def check(router, record) -> dict:
                 # closed. Old evidence is not a new failure, so it opens nothing.
                 written.append({"check": name, "faultId": replayed, "recorded": "replayed"})
             elif verdict in OPEN_VERDICTS:
+                if ids["mismatch"] is None:
+                    products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                                    f"{name} of {reading['subject']} was closed {MAX_ROUNDS}"
+                                    f" times and found wrong again; that is a decision for"
+                                    f" somebody, not another round")
                 adopt = None
                 if ids["mismatchRow"] is None:
                     adopt = {"externalRef": reading["subject"], "scope": scope}

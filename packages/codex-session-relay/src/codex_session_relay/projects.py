@@ -190,13 +190,19 @@ def bind_confirmed(router, route) -> list:
     again, and a failure half way would leave a bound project with members still held for want
     of one. Idempotent: a project already bound, by this or by an operator's read-back, is not
     bound again, and the proposal still records which project it became.
+
+    A proposal with no create outstanding any more - its project bound, or every create it
+    queued cancelled - is settled: it leaves the filed stage, so the digest and route-reconcile,
+    which look only for outstanding proposals, stop reading it. A later evaluation that queues
+    a new create files it again.
     """
-    rows = router.port.publications(route["fault_id"], kind=KIND, state="confirmed", limit=10)
+    rows = router.port.publications(route["fault_id"], kind=KIND, limit=100)
     bound = {b["ref"] for b in router.bindings(route["product_key"]) if b["kind"] == "project"}
     made = []
     for row in rows:
         ref, payload = row.get("external_ref"), row.get("payload") or {}
-        if not ref or (ref in bound and route["target"]["project"] == ref):
+        if row.get("state") != "confirmed" or not ref or (
+                ref in bound and route["target"]["project"] == ref):
             continue
         with router.store.composing() as db:
             if ref not in bound:
@@ -210,4 +216,11 @@ def bind_confirmed(router, route) -> list:
                 made.append(ref)
             routes.set_target(db, router.clock, route["fault_id"],
                               {**route["target"], "project": ref})
+    if rows and all(row.get("state") in ("confirmed", "cancelled") for row in rows):
+        created = sorted(row["external_ref"] for row in rows
+                         if row.get("state") == "confirmed" and row.get("external_ref"))
+        with router.store.transaction() as db:
+            routes.settle(db, router.clock, route["fault_id"],
+                          f"project {', '.join(created)} created and bound" if created else
+                          "every create it queued was cancelled before issue")
     return made

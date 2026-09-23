@@ -146,9 +146,12 @@ from this store inside the ledger's own transaction: the policy still enabled, e
 still held for want of a project under that goal, and no active project bound meanwhile that
 covers a member's component. Any failure cancels the unissued write and nothing is created.
 
-When the create confirms, `route-reconcile` (which every digest runs first) binds the created
-project, and binding decides the held members again, so they move into it, all in one
-transaction. The proposal records which project it became and stops asking for attention.
+When the create confirms, `route-reconcile` binds the created project, and so does every digest
+before it reports anything. Binding decides the held members again, so they move into it, all in
+one transaction. The proposal records which project it became. Once no create of it is
+outstanding, because its project is bound or every create it queued was cancelled, the proposal
+is settled and leaves the filed stage. Nothing that looks for outstanding work reads it again,
+and a later evaluation that queues a new create files it again.
 
 ### Holder protocol
 
@@ -202,7 +205,8 @@ resolved starts a new round, a new record for the same subject and check adopted
 Were it the old record coming back, the ledger's rule for a resolved fault that recurs would
 queue a reopen of the subject. A completion check never changes the subject's state, so the new
 round's first write is again a comment. After twenty closed rounds the check refuses, and the
-decision goes to a person.
+decision goes to a person. A replay of a reading one of those rounds recorded is still recognised
+first.
 
 A reading that already failed on a closed round is recognised when it is handed in again. A retry
 of an old reading is old evidence, so it opens no round. Each round keeps every failing reading it
@@ -237,10 +241,12 @@ named the same way everywhere:
 | `project_proposed` | a project proposal whose project is not bound yet |
 
 `route-digest` answers a midpoint check. It first binds the projects that confirmed creates
-made. Binding one moves its member defects wherever they sit in the listing, and reporting a
-member as held in the same answer would announce a decision already made. Then, for each route it
-reads, it discharges what that route owes, reads the route again, and compares it with the
-snapshot it last reported. It answers only what changed: new severe records, new decisions,
+made, reading at most `--limit` outstanding proposals. Binding one moves its member defects
+wherever they sit in the listing, and reporting a member as held in the same answer would announce
+a decision already made. When more proposals are outstanding than the limit, that digest holds
+back routes held for want of a project and answers `proposalsSettled: false`. Then, for each
+route it reads, it discharges what that route owes, reads the route again, and compares it with
+the snapshot it last reported. It answers only what changed: new severe records, new decisions,
 resolutions of records that owned an issue, and routine accumulation summarized per product.
 Each new decision is also raised as a ledger notification under its
 decision name. The ledger keeps one notification per record and reason, so a decision is

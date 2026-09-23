@@ -91,8 +91,10 @@ def attention(snapshot):
     if snapshot["stage"] == products.STAGE_HELD:
         return held_reason(snapshot["hold"])
     if snapshot["disposition"] == products.PROJECT_PROPOSAL:
-        # Waiting until the project it proposed is created and bound; then it is history.
-        if snapshot["project"] is None and snapshot["state"] in ledger_port.ACTIVE:
+        # Waiting while its create is outstanding; once the project is bound, or every create
+        # it queued was cancelled, the proposal is settled and history.
+        if (snapshot["stage"] == products.STAGE_FILED and snapshot["project"] is None
+                and snapshot["state"] in ledger_port.ACTIVE):
             return PROJECT_PROPOSED
         return None
     if snapshot["linkState"] == "unlinked":
@@ -128,6 +130,13 @@ def upsert(db, clock, *, fault_id, product, workspace, disposition, stage, targe
 def set_target(db, clock, fault_id, target):
     db.execute("UPDATE incident_routes SET target = ?, updated_at = ? WHERE fault_id = ?",
                (products.canonical(target), clock.iso(), fault_id))
+
+
+def settle(db, clock, fault_id, detail):
+    """A route with nothing left to wait for leaves the filed stage, so the paths that look
+    for outstanding work stop reading it."""
+    db.execute("UPDATE incident_routes SET stage = ?, detail = ?, updated_at = ?"
+               " WHERE fault_id = ?", (products.STAGE_OBSERVED, detail, clock.iso(), fault_id))
 
 
 def set_reported(db, clock, fault_id, snapshot):

@@ -24,18 +24,23 @@ from . import intake, ledger_port, products, routes
 PAGE = 100
 
 
-def _bind_created_projects(router):
-    """Every project proposal whose create confirmed, bound before anything is reported."""
-    bound, after = [], None
-    while True:
+def _bind_created_projects(router, limit):
+    """(bound, settled): outstanding project proposals whose create confirmed, bound before
+    anything is reported. At most limit are read; settled says every outstanding one was.
+    A bound or wholly cancelled proposal leaves the filed stage, so this reads only the ones
+    still waiting, not every proposal ever made."""
+    bound, after, read = [], None, 0
+    while read < limit:
         page = routes.listing(router.store, stages=(products.STAGE_FILED,),
-                              dispositions=(products.PROJECT_PROPOSAL,), limit=PAGE,
-                              after=after)
+                              dispositions=(products.PROJECT_PROPOSAL,),
+                              limit=min(PAGE, limit - read), after=after)
         for route in page["routes"]:
+            read += 1
             bound.extend(intake.reconcile_route(router, route)["bound"])
         after = page["next"]
         if after is None:
-            return bound
+            return bound, True
+    return bound, False
 
 
 def _entry(route, now):
@@ -57,7 +62,8 @@ def digest(router, *, limit=500, after=None) -> dict:
     port = router.port
     port.ready("route-digest")
     limit = min(max(int(limit), 1), 5000)
-    linked, bound = [], _bind_created_projects(router)
+    bound, settled = _bind_created_projects(router, limit)
+    linked = []
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
     while read < limit:
@@ -74,6 +80,11 @@ def digest(router, *, limit=500, after=None) -> dict:
                 if route["disposition"] != products.PROJECT_PROPOSAL:
                     linked.extend(intake.reconcile_route(router, route)["queued"])
                 route = routes.get(router.store, route["fault_id"])
+                if (not settled and route["stage"] == products.STAGE_HELD
+                        and route["target"]["hold"] == products.NO_PROJECT):
+                    # A proposal this digest did not reach may be about to move it; its hold
+                    # is reported once the proposals are settled, not announced stale now.
+                    continue
                 now = routes.snapshot(route, port.get(route["fault_id"]))
                 before = route["reported"]
                 if now == before:
@@ -108,6 +119,7 @@ def digest(router, *, limit=500, after=None) -> dict:
     return {"quiet": not changed, "severe": severe, "decisions": decisions,
             "resolutions": resolutions, "routine": routine,
             "linked": linked, "projectsBound": bound,
+            "proposalsSettled": settled,
             "read": read, "next": cursor,
             "limits": "routing's rows and the ledger's state in this store only. A queued write"
                       " is not an issue anybody has written; pass next as after to continue."}
