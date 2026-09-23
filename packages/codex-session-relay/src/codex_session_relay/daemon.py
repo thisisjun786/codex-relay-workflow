@@ -994,13 +994,18 @@ class RelayDaemon:
         struggling = set()
         attempted = 0
         for row in rows:
+            # The budget counts attempts that produced an attempt record - that reached the
+            # claim and the transport - and nothing else. A head that was withheld, deferred,
+            # held or faulted sent nothing, and counting it let one recipient that is never
+            # sendable take every tick's budget whenever ticks are further apart than its
+            # recheck, so a healthy recipient behind it was never tried. What bounds the work
+            # is the page above: one head per recipient, at most budget * 4 of them.
             if attempted >= budget:
                 break
             recipient = row["recipient_task_id"]
             if recipient in struggling:
                 report.skipped += 1
                 continue
-            attempted += 1
             try:
                 record = channel.attempt(row["message_id"], self.adapter, now=now,
                                          owner=DAEMON_OWNER)
@@ -1025,6 +1030,7 @@ class RelayDaemon:
                 struggling.add(recipient)
                 report.deferred += 1
                 continue
+            attempted += 1
             if record["deliveryState"] == DISPATCHED:
                 report.supervisorSent += 1
             else:

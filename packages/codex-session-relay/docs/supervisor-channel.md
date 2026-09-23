@@ -219,7 +219,8 @@ reader classifies anything itself, and neither classifies a turn the other would
 fact set through both and compares the facts and the answer. The diagnosis is CRW-180's,
 unchanged. Beside it the predicate answers whether a report is still OWED: not when the turn's
 own final receipt exists (it goes upward as its own fact), not when a later turn was admitted
-(the work went on; admissions are ordered by when the bound admission was made), and not inside `omission_grace_seconds` after the settlement (300 by
+(the work went on; admissions are ordered by when the bound admission was made, to the
+microsecond), and not inside `omission_grace_seconds` after the settlement (300 by
 default), which gives the parent, or the child it steers, the chance to answer first. A
 reading that owes nothing raises no obligation and is not a gap.
 
@@ -716,8 +717,9 @@ The relay daemon does, on every tick, with nobody asking. Its supervisor pass
 by hand, restricted to obligations whose message is absent or still unsent - and attempts each
 recipient's oldest eligible message, oldest first, through `SupervisorChannel.attempt`, so one
 recipient's backlog cannot keep every other recipient's report unread; an attempt that raises
-is deferred by the recheck interval, so a message that faults every time cannot take every
-tick's budget either. So every rule above holds
+is deferred by the recheck interval, and only an attempt that reached the claim and the
+transport spends the send budget, so a recipient that is never sendable cannot take every tick's
+budget however far apart ticks are. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
 the transport starts (I-247), the recipient's budget is shared with parent-child traffic and
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld

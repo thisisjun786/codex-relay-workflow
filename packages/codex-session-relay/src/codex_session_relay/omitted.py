@@ -71,18 +71,15 @@ SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_
                  'workspace',m.workspace,'markerRoot',m.marker_root,'issue',m.issue_key))
         FROM managed_start_requests m WHERE m.dispatch_request_id=g.dispatch_request_id)
         AS managed,
-       (SELECT COUNT(*) FROM generation_turns t
+       (SELECT json_group_array(json_object('turn',t.turn_id,'at',t.admitted_at,'row',t.rowid))
+        FROM generation_turns t
         WHERE t.relationship_id=r.relationship_id
           AND t.execution_generation=g.execution_generation
-          AND """ + BOUND_ADMISSION_SQL + """
-          AND t.turn_id<>?
-          AND NOT EXISTS (SELECT 1 FROM generation_turns a
-                          WHERE a.relationship_id=r.relationship_id
-                            AND a.execution_generation=g.execution_generation
-                            AND a.turn_id=?
-                            AND (julianday(a.admitted_at)>julianday(t.admitted_at)
-                                 OR (julianday(a.admitted_at)=julianday(t.admitted_at)
-                                     AND a.rowid>=t.rowid)))) AS later_admitted
+          AND """ + BOUND_ADMISSION_SQL + """) AS bound_admissions,
+       (SELECT json_object('at',a.admitted_at,'row',a.rowid) FROM generation_turns a
+        WHERE a.relationship_id=r.relationship_id
+          AND a.execution_generation=g.execution_generation
+          AND a.turn_id=?) AS own_admission
 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.relationship_id=? AND g.dispatch_request_id=?
 """
@@ -194,7 +191,7 @@ def _context(selection, relationship, dispatch, session, turn):
 
 def _context_params(relationship, dispatch, session, turn):
     """CONTEXT's parameters, in the order its placeholders appear."""
-    return (session, turn, session, turn, turn, turn, relationship, dispatch)
+    return (session, turn, session, turn, turn, relationship, dispatch)
 
 
 class _AdmissionReader:
@@ -301,7 +298,32 @@ def _execution_reports(row, terminal):
             and event["outcome"] == terminal and event["status"] == terminal]
 
 
-def facts_of(row, *, witness, admission, label, now, grace):
+def admission_order(entry):
+    """Where one bound admission sits in admission order: its time to the microsecond, then row.
+
+    Admission order is WHEN the bound admission was made. The rowid alone is insertion order,
+    and a legacy row repaired by a fresh admission keeps the rowid it was first inserted with
+    (admission._record_bound upserts). Compared here rather than in SQL because SQLite's date
+    functions resolve milliseconds and the clock writes microseconds: two admissions inside one
+    millisecond fell back to the rowid, which put the repaired turn behind the earlier one
+    again. A time that does not parse sorts last, so it is never taken for an older admission.
+    """
+    moment = intent.moment(entry.get("at")) if isinstance(entry, dict) else None
+    row = entry.get("row") if isinstance(entry, dict) else None
+    return (0, moment, row or 0) if moment is not None else (1, 0, row or 0)
+
+
+def _admitted_after(row, turn):
+    """Whether a turn other than this one was admitted to the generation after it."""
+    bound = json.loads(row["bound_admissions"] or "[]")
+    own = json.loads(row["own_admission"]) if row["own_admission"] else None
+    # A turn with no admission row of its own is the anchor, which every bound admission
+    # continues, so each of them is later.
+    floor = admission_order(own) if own else (-1, 0, 0)
+    return any(entry.get("turn") != turn and admission_order(entry) > floor for entry in bound)
+
+
+def facts_of(row, *, turn, witness, admission, label, now, grace):
     """The facts classify() decides from, gathered off one CONTEXT row.
 
     Everything that is not specific to where the declaration was read comes from this row, so
@@ -321,7 +343,7 @@ def facts_of(row, *, witness, admission, label, now, grace):
         # always treated one as answering an omission; the predicate now says so for everyone.
         "receipted": any(event["producer"] == CHILD_PRODUCER and event["stage"] == "final"
                          for event in events),
-        "laterAdmitted": bool(row["later_admitted"]),
+        "laterAdmitted": _admitted_after(row, turn),
         "now": now,
         "grace": float(grace or 0),
     }
@@ -473,7 +495,7 @@ def observe(selection, root, workspace, assignment, session, turn, now, grace=0)
             facts, disposition, selection, assignment, session, turn, now)
         result.update(currentObservation={"label": label, "detail": detail},
                       declaration=disposition, receipt=receipt)
-        verdict = classify(facts_of(row, witness=_stop_witness(stops), admission=admission,
+        verdict = classify(facts_of(row, turn=turn, witness=_stop_witness(stops), admission=admission,
                                     label=label, now=now, grace=grace))
         _record_terminal(result, row, verdict)
         if _context(selection, relationship, claim["dispatchRequestId"], session, turn) != snapshot:
@@ -496,20 +518,15 @@ FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.relationship_id=?
 """
 
-# The newest turn admitted to a generation by an explicit bound record, in admission order.
-# Every other admitted turn of the generation has a later one, so it is the only turn whose
-# omission can still be owed; the anchor is that turn when nothing was admitted after it.
-#
-# Admission order is the bound admission's time, rowid breaking ties. The rowid alone is
-# insertion order, and a legacy row repaired by a fresh admission keeps the rowid it was first
-# inserted with (admission._record_bound upserts), so ordering by it put a turn admitted last
-# behind one admitted before it and reported the earlier turn's omission after work went on.
-# later_admitted in CONTEXT asks the same order.
-LATEST_ADMITTED = """
-SELECT t.turn_id FROM generation_turns t JOIN generations g
+# The turns admitted to a generation by an explicit bound record. The newest of them, in
+# admission_order, is the only turn whose omission can still be owed - every other has a later
+# one - and the anchor is that turn when nothing was admitted after it. Ordered in Python, the
+# same way _admitted_after orders CONTEXT's bound_admissions, for the reason admission_order
+# gives.
+BOUND_ADMISSIONS = """
+SELECT t.turn_id AS turn, t.admitted_at AS at, t.rowid AS row FROM generation_turns t JOIN generations g
   ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation
 WHERE t.relationship_id=? AND t.execution_generation=? AND """ + BOUND_ADMISSION_SQL + """
-ORDER BY julianday(t.admitted_at) DESC, t.rowid DESC LIMIT 1
 """
 
 
@@ -556,9 +573,10 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
                 or claimed["capability"] != CAPABILITY):
             raise Unmeasured(DECLARATIONS_NOT_RECORDED)
         if turn is None:
-            latest = store.one(LATEST_ADMITTED, (relationship_id,
-                                                 current["execution_generation"]))
-            turn = latest["turn_id"] if latest is not None else current["dispatch_turn_id"]
+            admissions = [dict(one) for one in store.all(
+                BOUND_ADMISSIONS, (relationship_id, current["execution_generation"]))]
+            turn = (max(admissions, key=admission_order)["turn"] if admissions
+                    else current["dispatch_turn_id"])
         if not marker.valid_segment(turn or ""):
             raise Unmeasured("admission_unrecorded")
         result["selectors"] = {"state": str(state_directory),
@@ -598,7 +616,7 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
             "marker": {"relationship": {"relationshipId": relationship_id}}})
         result.update(currentObservation={"label": label}, declaration=disposition,
                       receipt=receipt)
-        verdict = classify(facts_of(row, witness=label in guard.OMISSIONS,
+        verdict = classify(facts_of(row, turn=turn, witness=label in guard.OMISSIONS,
                                     admission=admission, label=label, now=now, grace=grace))
         _record_terminal(result, row, verdict)
         result.update(verdict)

@@ -588,6 +588,7 @@ class AMarkerTheMarkerReaderCannotReadRecordsNoCapability(StoreOmissionCase):
         self.assertEqual(self.omissions(), [])
         self.assertEqual(self.upward(), [])
 
+
 class ADeclarationRacingTheDaemon(StoreOmissionCase):
     """Review 4 on ebae6a3b: a tick between the marker publication and the store record.
 
@@ -693,3 +694,24 @@ class ARepairedAdmissionIsOrderedByWhenItWasAdmitted(StoreOmissionCase):
                                  now=self.clock.iso(), grace=0, turn="turn-omitted")
         self.assertEqual((derived["owed"], derived["owedReason"]),
                          (False, omitted.LATER_TURN_ADMITTED))
+
+    def test_a_repair_inside_the_same_millisecond_is_still_the_later_admission(self):
+        """Review 7 on 38f81dfb: SQLite's date functions resolve milliseconds, the clock writes
+        microseconds, and a tie fell back to the rowid - the repaired row's old one."""
+        self.claim_through_cli()
+        self.store.db.execute(
+            "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id,"
+            " evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)",
+            (self.rid, 1, "turn-legacy", "explicit_admission", "a legacy writer", "",
+             self.clock.iso()))
+        self.clock.advance(0.0001)
+        admit_explicitly(self.store, self.clock, self.rid, 1, "turn-omitted",
+                         actor="the child")
+        self.clock.advance(0.0001)
+        admit_explicitly(self.store, self.clock, self.rid, 1, "turn-legacy",
+                         actor="the parent steered the child")
+        self.the_turn_ends("turn-omitted")
+        self.tick(advance=self.grace + 1)
+        self.tick(advance=3600)
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])

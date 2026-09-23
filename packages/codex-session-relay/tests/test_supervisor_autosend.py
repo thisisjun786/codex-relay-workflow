@@ -381,6 +381,51 @@ class TwoSupervisorsOneStuck(TwoSupervisors):
         self.assertEqual(len(to_second), 1, "the healthy supervisor's report went up")
         self.assertEqual(self.upward(), [])
 
+    def far_apart(self, ticks=3):
+        """Ticks further apart than the recheck interval, so a withheld or faulted head is
+        eligible again on every one of them."""
+        for _ in range(ticks):
+            self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
+
+    def test_a_faulting_head_does_not_starve_another_when_ticks_are_far_apart(self):
+        """Review 7 on 38f81dfb: the deferral alone left fairness to the tick cadence."""
+        import dataclasses
+        from unittest import mock
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        settings = self.channel._settings_for
+
+        def faulting(task, runtime=None):
+            if task == SUPERVISOR:
+                raise TypeError("unhashable type: 'dict'")
+            return settings(task, runtime)
+
+        self.channel.stage(self.obligation(self.completed()))
+        self.clock.advance(1)
+        self.complete_other()
+        with mock.patch.object(self.channel, "_settings_for", faulting):
+            self.far_apart()
+        to_second = [one for one in self.adapter.sends if one[1] == self.SECOND]
+        self.assertEqual(len(to_second), 1, "the healthy supervisor's report went up")
+
+    def test_a_head_that_is_never_sendable_does_not_starve_another(self):
+        """The same class through a returned outcome: an archived supervisor is withheld, and a
+        withheld head spent the budget whenever its recheck had passed."""
+        import dataclasses
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        self.adapter.threads[SUPERVISOR].archived = True
+        self.channel.stage(self.obligation(self.completed()))
+        self.clock.advance(1)
+        self.complete_other()
+        self.far_apart()
+        to_second = [one for one in self.adapter.sends if one[1] == self.SECOND]
+        self.assertEqual(len(to_second), 1, "the live supervisor's report went up")
+        self.assertEqual(self.upward(), [], "the archived supervisor was not woken")
+
+
 class TheSupervisorPassReadsAndReportsWhatItDid(TwoSupervisors):
     """Devin PRRT_kwDOUcYZMM6lKWYC, PRRT_kwDOUcYZMM6lKLHF, PRRT_kwDOUcYZMM6lKWaj."""
 
