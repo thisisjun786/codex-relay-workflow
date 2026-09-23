@@ -160,8 +160,13 @@ class StoreReception(DeliveryTestCase):
         return path
 
     def packet_check(self, packet, *, receiver_id=None, observation=None, ledger=None,
-                     record=None, state=None):
-        """The command a receiver runs, in process, and what it printed."""
+                     record=None, state=None, applied=False):
+        """The command a receiver runs, in process, and what it printed.
+
+        An exit the argument parser raises comes back as its code, and a run that printed
+        nothing as an empty answer, so a control whose flag or path does not exist fails as
+        an assertion about the code rather than escaping as an exception.
+        """
         argv = ["--state", state or self.state, "packet-check",
                 "--packet", self._write("packet", packet)]
         if record is not None:
@@ -172,10 +177,16 @@ class StoreReception(DeliveryTestCase):
             argv += ["--observation", self._write("observation", observation)]
         if ledger is not None:
             argv += ["--ledger", ledger]
+        if applied:
+            argv.append("--applied")
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
-            code = cli.main(argv)
-        return code, json.loads(printed.getvalue())
+            try:
+                code = cli.main(argv)
+            except SystemExit as stopped:
+                code = stopped.code
+        output = printed.getvalue()
+        return code, json.loads(output) if output.strip() else {}
 
     def kinds(self, answer):
         return sorted({m["kind"] for m in answer["mismatches"]})
@@ -286,10 +297,14 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         _code, first = self.packet_check(one, receiver_id=CHILD,
                                          observation=self.observed(), ledger=ledger)
         self.assertTrue(first["act"], first)
+        code, recorded = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, recorded)
+        self.assertTrue(recorded["applied"], recorded)
         _code, again = self.packet_check(one, receiver_id=CHILD,
                                          observation=self.observed(), ledger=ledger)
         self.assertEqual(again["disposition"], packets.ACCEPTED)
         self.assertEqual(again["repeat"]["state"], packets.REPLAY)
+        self.assertTrue(again["repeat"]["applied"], again)
         self.assertFalse(again["act"])
         changed = self.correction(relationship, generation=1,
                                   body=CORRECTION.replace("receiver.py", "packets.py"))
@@ -298,6 +313,58 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         self.assertEqual(collided["disposition"], packets.REFUSAL)
         self.assertIn(packets.COLLISION_MISMATCH, self.kinds(collided))
         self.assertFalse(collided["act"])
+
+    def test_an_accepted_instruction_is_acted_on_until_it_is_recorded_applied(self):
+        # The receiver checks, then crashes before it acts. The ledger holds the answer it was
+        # given, and the second check is the only way the instruction reaches it again, so a
+        # replay that is accepted and not yet applied still has to be acted on.
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        one = self.correction(relationship, generation=1)
+        _code, first = self.packet_check(one, receiver_id=CHILD,
+                                         observation=self.observed(), ledger=ledger)
+        self.assertTrue(first["act"], first)
+        _code, again = self.packet_check(one, receiver_id=CHILD,
+                                         observation=self.observed(), ledger=ledger)
+        self.assertEqual(again["repeat"]["state"], packets.REPLAY)
+        self.assertEqual(again["repeat"]["previousDisposition"], packets.ACCEPTED)
+        self.assertTrue(again["act"], again)
+        self.assertFalse(again["repeat"]["applied"], again)
+        code, recorded = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, recorded)
+        self.assertTrue(recorded["applied"], recorded)
+        _code, after = self.packet_check(one, receiver_id=CHILD,
+                                         observation=self.observed(), ledger=ledger)
+        self.assertFalse(after["act"], after)
+        # Recording it again changes nothing and says so.
+        code, twice = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, twice)
+        self.assertTrue(twice["alreadyApplied"], twice)
+
+    def test_only_an_accepted_answer_can_be_recorded_applied(self):
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        one = self.correction(relationship, generation=1)
+        code, unseen = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, cli.EXIT_USAGE, unseen)
+        self.assertIn("never checked", unseen.get("detail", ""))
+        stale = self.correction(relationship, generation=1, subject="evt-other",
+                                callback=self.a_callback(pair=SUPERSEDED_PARENT))
+        _code, refused = self.packet_check(stale, receiver_id=CHILD,
+                                           observation=self.observed(), ledger=ledger)
+        self.assertEqual(refused["disposition"], packets.REFUSAL)
+        code, denied = self.packet_check(stale, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, cli.EXIT_USAGE, denied)
+        self.assertIn(packets.REFUSAL, denied.get("detail", ""))
+        self.packet_check(one, receiver_id=CHILD, observation=self.observed(), ledger=ledger)
+        changed = self.correction(relationship, generation=1,
+                                  body=CORRECTION.replace("receiver.py", "packets.py"))
+        code, collided = self.packet_check(changed, receiver_id=CHILD, ledger=ledger,
+                                           applied=True)
+        self.assertEqual(code, cli.EXIT_USAGE, collided)
+        self.assertIn("asks for something else", collided.get("detail", ""))
+        code, bare = self.packet_check(one, receiver_id=CHILD, applied=True)
+        self.assertEqual(code, cli.EXIT_USAGE, bare)
 
     def test_the_callback_pair_the_parent_left_is_refused(self):
         relationship = self.registered()
@@ -421,6 +488,50 @@ class WhatTheStoreCannotAnswer(StoreReception):
         _code, answer = self.packet_check(one, receiver_id=PARENT, observation=self.observed())
         self.assertIsNone(answer["record"]["relationRevision"])
         self.assertNotIn("relationRevision", self.gap_fields(answer))
+
+    def test_a_link_that_is_not_this_relationships_live_link_leaves_the_revision_unread(self):
+        # The revision is the link's, and it answers for this relationship only while the link
+        # is live, not superseded, and still joins this relationship's two tasks.
+        changes = (("lower_task_id", "01other-child"), ("upper_task_id", "01other-parent"),
+                   ("status", "archived"), ("status", "cancelled"),
+                   ("superseded_by", "link-successor"))
+        for number, (column, value) in enumerate(changes, 1):
+            with self.subTest(column=column, value=value):
+                child, issue = CHILD + "-link%d" % number, "REL-LINK-%d" % number
+                relationship = self.registered(child=child, issue=issue,
+                                               dispatch="dispatch-link-%d" % number)
+                link = self.linkage.attachment(relationship["relationshipId"])["link"]
+                one = self.correction(relationship, generation=1, recipient=child, issue=issue)
+                self.store.db.execute(
+                    "UPDATE scope_links SET " + column + " = ? WHERE link_id = ?",
+                    (value, link["linkId"]))
+                _code, answer = self.packet_check(one, receiver_id=child,
+                                                  observation=self.observed())
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                self.assertIn("relationRevision", self.gap_fields(answer))
+                self.assertNotIn("relationRevision", answer["record"])
+
+    def test_a_store_missing_a_column_answers_nothing_rather_than_failing(self):
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        self.store.db.execute("ALTER TABLE scope_links RENAME COLUMN revision TO revision_was")
+        code, answer = self.packet_check(one, receiver_id=CHILD, observation=self.observed())
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer.get("disposition"), packets.UNAVAILABLE, answer)
+        self.assertTrue(any("could not be read" in note for note in answer["notes"]), answer)
+        self.assertEqual(sorted(answer["record"]), sorted(
+            [packets.RECORD_TASK_KEY["child"]]
+            + [name for name in receiver.OBSERVATION_FIELDS if name in self.observed()]))
+
+    def test_a_ledger_in_a_directory_not_made_yet_is_created_with_it(self):
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "not-made-yet", "child-ledger.json")
+        code, answer = self.packet_check(self.correction(relationship, generation=1),
+                                         receiver_id=CHILD, observation=self.observed(),
+                                         ledger=ledger)
+        self.assertEqual(code, 0, answer)
+        self.assertTrue(answer["act"], answer)
+        self.assertTrue(os.path.exists(ledger))
 
     def test_a_ledger_belonging_to_another_receiver_is_refused(self):
         relationship = self.registered()
