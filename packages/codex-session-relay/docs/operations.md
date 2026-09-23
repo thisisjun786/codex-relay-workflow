@@ -242,6 +242,11 @@ the connection is also asked which file it opened, through `PRAGMA database_list
 descriptor is checked again after the read. A store moved before, during or after the read is
 refused rather than answered, and `doctor` withdraws what a moved read had already published.
 
+That question is the first statement on every connection, including `doctor`'s write probe,
+which asks it before beginning its transaction. The first statement that touches the file creates
+the log beside whichever name SQLite opened, so a query or transaction on a moved name would leave
+a stray `-wal` behind even when the answer is refused. The question itself creates no file.
+
 One limit remains, and no check on this side can observe it: a different file swapped ONTO the
 expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
 locks. What they remove is every move of this store, which is the reachable case.
