@@ -206,13 +206,24 @@ def _newest_retired_refusal(host):
     rebuild that would take its policy from the archives asks this first and refuses instead.
     """
     home = Path(host["codexHome"])
-    found = inventory.archives(home, bridgerecord.RECORD_NAME + ".superseded-")
+    stem = bridgerecord.RECORD_NAME + ".superseded-"
+    # Every entry under the stem, whatever it is. inventory.archives lists regular files only, so a
+    # newest archive that became a pipe, a directory or a dangling link would not be the newest in
+    # that listing, and the older record behind it would be read as though it were.
+    with os.scandir(str(home)) as scanning:
+        found = [Path(item.path) for item in scanning if item.name.startswith(stem)]
     if not found:
         return None
-    document, outcome, detail = bridgerecord.read(found[-1])
+    newest = max(found, key=lambda path: inventory.archive_order(path, stem))
+    if newest.is_symlink() or not newest.is_file():
+        return ("the newest retired bridge record, " + str(newest) + ", is not a regular file, so"
+                " whether it named an execution policy was not established. An older archive may"
+                " predate the policy, and a record rebuilt from it would start a bridge that"
+                " checks no role. Repair or remove that entry and rerun")
+    document, outcome, detail = bridgerecord.read(newest)
     if document is not None:
         return None
-    return ("the newest retired bridge record, " + str(found[-1]) + ", could not be read ("
+    return ("the newest retired bridge record, " + str(newest) + ", could not be read ("
             + str(outcome) + (": " + str(detail) if detail else "") + "), so whether it named an"
             " execution policy was not established. An older archive may predate the policy, and"
             " a record rebuilt from it would start a bridge that checks no role. Repair or remove"

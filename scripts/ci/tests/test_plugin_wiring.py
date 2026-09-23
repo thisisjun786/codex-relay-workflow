@@ -653,14 +653,28 @@ class BridgeRecordPolicyTest(unittest.TestCase):
             arguments += ["--execution-policy", str(policy or self.policy)]
         return run(*arguments, *extra)
 
-    def install_package(self, launcher_text=None):
-        """An installed crw package in the cache; the shipped one unless a launcher is given."""
-        version = self.home.codex_home / "plugins" / "cache" / "crw" / "crw" / "0.4.0"
-        shutil.copytree(ROOT / "plugins" / "crw", version)
+    def install_package(self, launcher_text=None, *, marketplace="crw", plugin="crw",
+                        version="0.4.0"):
+        """A cached package; the shipped crw one unless a launcher is given."""
+        root = self.home.codex_home / "plugins" / "cache" / marketplace / plugin / version
+        shutil.copytree(ROOT / "plugins" / "crw", root)
         if launcher_text is not None:
-            (version / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text,
-                                                                  encoding="utf-8")
-        return version / "wiring" / "crw_bridge_mcp.py"
+            (root / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text, encoding="utf-8")
+        return root / "wiring" / "crw_bridge_mcp.py"
+
+    def enable(self, *keys, enabled=True):
+        """Register plugins in the Codex configuration the way an installation does."""
+        text = "".join('[plugins."' + key + '"]\nenabled = ' + ("true" if enabled else "false")
+                       + "\n" for key in keys)
+        (self.home.codex_home / "config.toml").write_text(text, encoding="utf-8")
+
+    @staticmethod
+    def older_launcher():
+        """The shipped launcher less the one declaration a launcher from before version 2 lacks."""
+        shipped = BRIDGE_LAUNCHER.read_text(encoding="utf-8")
+        declaration = "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) + "\n"
+        assert declaration in shipped
+        return shipped.replace(declaration, "")
 
     def test_the_record_names_the_file_and_its_digest_and_nothing_it_says(self):
         status, emitted, output = self.register("--apply")
@@ -807,14 +821,11 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(json.loads(self.record.read_text())["executionPolicy"]["path"],
                          str(self.policy))
 
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
     def test_an_installed_launcher_that_predates_the_record_refuses_the_write(self):
         """Written first, the record would stop every new thread's bridge until the update."""
-        # The shipped launcher less the one declaration an older one lacks, which is what an
-        # installed 0.4.0 package from before this record version looks like to this check.
-        shipped = BRIDGE_LAUNCHER.read_text(encoding="utf-8")
-        declaration = "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) + "\n"
-        self.assertIn(declaration, shipped)
-        old = self.install_package(launcher_text=shipped.replace(declaration, ""))
+        old = self.install_package(launcher_text=self.older_launcher())
+        self.enable("crw@crw")
         for extra in ((), ("--apply",)):
             with self.subTest(extra or "plan"):
                 status, emitted, output = self.register(*extra)
@@ -825,11 +836,71 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         # A record without a policy is what that launcher reads, and it is not held up.
         self.assertEqual(self.register("--apply", policy=False)[0], 0)
 
-    def test_the_launcher_this_package_ships_accepts_the_write(self):
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_enabled_crw_launcher_decides_and_unrelated_packages_do_not(self):
+        """Another plugin may declare a server with the same name through an older launcher."""
         self.install_package()
+        self.install_package(launcher_text=self.older_launcher(), marketplace="tools",
+                             plugin="other")
+        self.enable("crw@crw", "other@tools")
         status, emitted, output = self.register("--apply")
         self.assertEqual(status, 0, output)
         self.assertEqual(emitted["outcome"], bridgerecord.CREATED, output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_disabled_or_unregistered_crw_package_starts_nothing_and_holds_nothing_up(self):
+        self.install_package(launcher_text=self.older_launcher())
+        for label, keys, enabled in (("disabled", ("crw@crw",), False), ("unregistered", (), True)):
+            with self.subTest(label):
+                self.enable(*keys, enabled=enabled)
+                status, emitted, output = self.register()
+                self.assertEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], bridgerecord.WOULD_CREATE, output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_crw_selection_that_is_ambiguous_or_unreadable_is_refused_by_name(self):
+        cases = {
+            "two cached versions": (lambda: (self.install_package(),
+                                             self.install_package(version="0.5.0"),
+                                             self.enable("crw@crw")), "more than one cached"),
+            "two marketplaces": (lambda: (self.install_package(),
+                                          self.enable("crw@crw", "crw@elsewhere")),
+                                 "more than one marketplace"),
+            "an unreadable configuration": (lambda: (self.install_package(),
+                                                     (self.home.codex_home / "config.toml")
+                                                     .write_text("[plugins\n", encoding="utf-8")),
+                                            "could not be read"),
+        }
+        for label, (prepare, reason) in cases.items():
+            with self.subTest(label):
+                shutil.rmtree(self.home.codex_home / "plugins", ignore_errors=True)
+                prepare()
+                status, emitted, output = self.register("--apply")
+                self.assertNotEqual(status, 0, output)
+                self.assertFalse(self.record.exists(), output)
+                if label == "an unreadable configuration":
+                    # The ownership check reads the same file first and refuses on it too; either
+                    # refusal names the reason, and neither writes.
+                    self.assertIn("read", emitted["detail"], output)
+                    continue
+                self.assertEqual(emitted["outcome"], "launcher_not_established", output)
+                self.assertIn(reason, emitted["detail"], output)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_the_launcher_this_package_ships_accepts_the_write(self):
+        self.install_package()
+        self.enable("crw@crw")
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.CREATED, output)
+
+    @unittest.skipIf(TOML_READER, "the floor this repository supports has no configuration reader")
+    def test_on_the_floor_an_installed_package_is_refused_rather_than_guessed_at(self):
+        self.install_package()
+        self.enable("crw@crw")
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), output)
 
     def test_the_policy_is_part_of_what_the_record_starts(self):
         base = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",

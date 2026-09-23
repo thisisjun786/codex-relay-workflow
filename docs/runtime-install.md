@@ -1223,12 +1223,16 @@ changed file fail visibly instead of being enforced unregistered.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
-record. A version-2 record is also refused while an installed crw package in the plugin cache
-ships a launcher that reads version 1 only (`launcher_predates_policy`): that launcher would refuse
-the record, and every thread started afterwards would have no bridge. The check reads the cache,
-which is not proof of what a running App Server loaded, so the order on a host is: install the
-runtime, update the plugin package, restart Codex so it loads the package, register, then start a
-new thread and read `get_capabilities`. An installed runtime older than the digest variable still
+record. A version-2 record is also refused while the crw package this host loads ships a launcher
+that reads version 1 only (`launcher_predates_policy`): that launcher would refuse the record, and
+every thread started afterwards would have no bridge. The package is the one the Codex
+configuration enables as `crw@<marketplace>`, read from its single cached version; other plugins
+that happen to declare a server with the same name are not asked. When that selection cannot be
+made, because the configuration cannot be read, crw is registered from two marketplaces or more
+than one version is cached, the write is refused as `launcher_not_established`. The check reads
+the cache, which is not proof of what a running App Server loaded, so the order on a host is:
+install the runtime, update the plugin package, restart Codex so it loads the package, register,
+then start a new thread and read `get_capabilities`. An installed runtime older than the digest variable still
 reads the policy file, and the launcher's own digest check is then the only digest check.
 
 Codex starts the server once for each thread it loads. That was observed on Codex Desktop

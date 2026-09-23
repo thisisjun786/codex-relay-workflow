@@ -678,6 +678,32 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertIsNone(host.record())
         self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
 
+    def _refuses_with_newest_archive_replaced(self, replace):
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        archives = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        self.assertGreater(len(archives), 1, "an older readable archive has to be there to fall to")
+        newest = max(archives, key=lambda path: path.stat().st_mtime_ns)
+        self.assertEqual(json.loads(newest.read_text(encoding="utf-8"))["executionPolicy"],
+                         reference)
+        newest.unlink()
+        replace(newest)
+        code, answer = host.transition("--apply")
+        self.assertNotEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertIsNone(host.record())
+        self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
+
+    def test_a_newest_archive_that_became_a_pipe_refuses(self):
+        self._refuses_with_newest_archive_replaced(os.mkfifo)
+
+    def test_a_newest_archive_that_became_a_directory_refuses(self):
+        self._refuses_with_newest_archive_replaced(lambda path: path.mkdir())
+
+    def test_a_newest_archive_that_became_a_dangling_link_refuses(self):
+        self._refuses_with_newest_archive_replaced(
+            lambda path: path.symlink_to(path.with_name("nothing-here")))
+
 
 class SwapStateReportsWhatItRead(TransitionCase):
     def test_the_pointer_and_the_record_are_reported_apart(self):

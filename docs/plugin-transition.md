@@ -264,6 +264,10 @@ on such a host is therefore `already_done`, and a transition after `disable` reb
 naming the same file and digest instead of one that starts a bridge checking no role. A user-owned
 record never names a policy, so nothing is invented for a manual install.
 
+The newest archive has to read as a record for that carry-forward. When it cannot be read, or is
+not a regular file at all, the rebuild is refused rather than taken from an older archive, because
+an older one can predate the policy.
+
 ## Update
 
 Nothing here migrates a session. The settings record the adapter, the interpreter and the relay
