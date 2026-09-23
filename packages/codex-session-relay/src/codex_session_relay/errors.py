@@ -169,6 +169,28 @@ class RefusalReason(str, Enum):
     AGREEMENT_REVISION_STALE = "agreement_revision_stale"
     FOLLOWUP_UNASSIGNED = "followup_unassigned"
 
+    # Operational faults. Appended as one block at the END for the reason the block above
+    # states: a sibling lane inserting members mid-enum and this work never produce an
+    # overlapping hunk.
+    #
+    # Each names a different next action, which is why none folds into another. A malformed
+    # observation is repaired by its author; an unregistered class is a class nobody declared
+    # a clear source for; an uncertain write needs somebody to go and LOOK rather than retry;
+    # and the three verification refusals ask for three different things - a reverification
+    # at all, one recorded after the fix it verifies, and an explanation of the recurrence
+    # that followed it.
+    FAULT_OBSERVATION_MALFORMED = "fault_observation_malformed"
+    FAULT_CLASS_UNREGISTERED = "fault_class_unregistered"
+    FAULT_UNKNOWN = "fault_unknown"
+    FAULT_STATE_CONFLICT = "fault_state_conflict"
+    FAULT_NOT_CLAIMABLE = "fault_not_claimable"
+    FAULT_CLAIM_STALE = "fault_claim_stale"
+    FAULT_WRITE_UNCERTAIN = "fault_write_uncertain"
+    FAULT_READBACK_MISMATCH = "fault_readback_mismatch"
+    FAULT_UNVERIFIED = "fault_unverified"
+    FAULT_VERIFICATION_STALE = "fault_verification_stale"
+    FAULT_RECURRED_AFTER_VERIFICATION = "fault_recurred_after_verification"
+
 
 
 class RelayError(Exception):

@@ -69,6 +69,12 @@ OFFLINE_COMMANDS = (
     "linkage-completion", "linkage-down", "linkage-handover", "linkage-outstanding",
     "linkage-peer",
     "linkage-settle", "linkage-supervise", "linkage-up",
+    # The fault ledger reads and writes this store and never calls the host. The Linear write
+    # it queues is performed elsewhere by a credential holder, which is a different question
+    # from whether these commands need an App Server: they do not.
+    "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
+    "fault-reverify", "fault-resolve", "fault-next", "fault-claim", "fault-operation",
+    "fault-reconcile", "fault-complete", "fault-fail", "fault-retry", "fault-prune",
     "service status", "service enable", "service disable", "service stop",
     # Records which execution policy file this service's daemon is launched with. It writes
     # one small file next to the intent and reaches no host, so an operator can configure a
@@ -133,6 +139,7 @@ class Services:
         self._ack = None
         self._reconciler = None
         self._sync = None
+        self._faults = None
         self._assignments = None
         self._linkage = None
         self._merge_turn = None
@@ -246,6 +253,14 @@ class Services:
         if self._sync is None:
             self._sync = SyncOutbox(self.store, self.clock)
         return self._sync
+
+    @property
+    def faults(self):
+        if self._faults is None:
+            from .faults import FaultLedger
+
+            self._faults = FaultLedger(self.store, self.clock)
+        return self._faults
 
     @property
     def assignments(self):
@@ -1472,6 +1487,133 @@ def cmd_sync_progress(services, args) -> dict:
     return {"syncId": identifier, "state": assignment["state"]}
 
 
+
+
+# Spelled at the CLI so --help lists them, and imported rather than restated so the surface
+# cannot drift from what record_reverification actually accepts.
+from . import faults as faults_module  # noqa: E402
+from .faults import METHODS as FAULT_METHODS, OUTCOMES as FAULT_OUTCOMES  # noqa: E402
+
+
+def cmd_fault_target(services, args) -> dict:
+    return services.faults.set_target(args.scope, args.tracker_ref)
+
+
+def cmd_fault_observe(services, args) -> dict:
+    return services.faults.record(_fault_json(args.observation, "observation"))
+
+
+def cmd_fault_sweep(services, args) -> dict:
+    """Derive what the store currently shows is broken, and record it."""
+    from . import faultsweep
+
+    readings = _fault_json(args.readings, "readings") if args.readings else []
+    batch = faultsweep.sweep(
+        services.store, product=args.product,
+        scope={"projectKey": args.project} if args.project else {}, readings=readings,
+    )
+    recorded = faultsweep.record_all(services.faults, batch, store=services.store)
+    return {"read": recorded["read"], "recorded": recorded["recorded"],
+            "queued": recorded["queued"], "gaps": recorded["gaps"],
+            "limits": batch["limits"]}
+
+
+def _positive(value, name):
+    """A bound has to bound something. argparse accepts -1 happily and SQLite reads LIMIT -1
+    as no limit, so the flag asking for a page would have materialised the whole queue."""
+    from .errors import RefusalReason
+    from .faults import FaultRefused
+
+    if not isinstance(value, int) or value < 1:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"{name} is a positive integer, not {value!r}")
+    return value
+
+
+def _fault_json(value, what):
+    """Parse caller-supplied JSON into a refusal rather than a traceback.
+
+    An unhandled decode error left the command reporting an outage for what is simply a
+    malformed argument, which is the wrong diagnosis to hand somebody at 3am.
+    """
+    from .errors import RefusalReason
+    from .faults import FaultRefused
+
+    try:
+        return json.loads(_read_text(value))
+    except ValueError as error:
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"the {what} is not readable JSON: {error}") from error
+
+
+def cmd_fault_show(services, args) -> dict:
+    # One validated bound, applied on both branches. The listing branch used to take no bound
+    # at all, so the flag an operator passed to keep the answer small reached nothing.
+    limit = _positive(args.limit, "--limit")
+    if args.fault:
+        record = services.faults.get(args.fault)
+        if record is None:
+            raise PayloadExit({"faultId": args.fault, "found": False}, EXIT_REFUSED)
+        record["occurrences"] = services.faults.occurrences(args.fault, limit=limit)
+        record["remediations"] = services.faults.remediations(args.fault, limit=limit)
+        return record
+    return services.faults.snapshot(scope_key=args.scope, state=args.fault_state,
+                                    limit=limit, after=args.after)
+
+
+def cmd_fault_fix(services, args) -> dict:
+    return services.faults.record_fix(args.fault, ref=args.ref, detail=args.detail or "")
+
+
+def cmd_fault_reverify(services, args) -> dict:
+    return services.faults.record_reverification(
+        args.fault, method=args.method, ref=args.ref, outcome=args.outcome,
+        detail=args.detail or "",
+    )
+
+
+def cmd_fault_resolve(services, args) -> dict:
+    return services.faults.resolve(args.fault)
+
+
+def cmd_fault_next(services, args) -> dict:
+    services.faults.expire_leases()
+    return {"publications": services.faults.next(limit=_positive(args.limit, "--limit"))}
+
+
+def cmd_fault_claim(services, args) -> dict:
+    return services.faults.claim(args.publication, owner=args.owner)
+
+
+def cmd_fault_operation(services, args) -> dict:
+    return services.faults.operation(args.publication, claim_token=args.claim_token)
+
+
+def cmd_fault_reconcile(services, args) -> dict:
+    return services.faults.reconcile(args.publication, _read_text(args.observed),
+                                     searched=args.searched)
+
+
+def cmd_fault_complete(services, args) -> dict:
+    return services.faults.complete(
+        args.publication, claim_token=args.claim_token, readback=_read_text(args.readback),
+        external_ref=args.external_ref,
+    )
+
+
+def cmd_fault_fail(services, args) -> dict:
+    return services.faults.fail(args.publication, claim_token=args.claim_token,
+                                error=args.error)
+
+
+def cmd_fault_retry(services, args) -> dict:
+    return services.faults.retry(args.publication)
+
+
+def cmd_fault_prune(services, args) -> dict:
+    return services.faults.prune(args.fault, keep=args.keep)
+
+
 def _read_text(value: str) -> str:
     """Inline text, or @path to a file holding it."""
     if value and value.startswith("@"):
@@ -2415,6 +2557,10 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
             daemon = RelayDaemon(
                 services.store, services.registry, services.intake, services.delivery,
                 services.ack, services.reconciler, services.adapter, clock=services.clock,
+                # So a breakage is recorded without anybody having to notice it first. The
+                # pass records and queues; the Linear write itself needs a credential this
+                # process does not hold.
+                faults=services.faults,
             )
             try:
                 service.publish_worker_policy(rolepolicy.snapshot_record())
@@ -3543,6 +3689,99 @@ def build_parser() -> argparse.ArgumentParser:
     sync_progress = subparsers.add_parser("sync-progress")
     sync_progress.add_argument("--relationship", required=True)
     sync_progress.set_defaults(handler=cmd_sync_progress)
+
+    fault_target = subparsers.add_parser("fault-target")
+    fault_target.add_argument("--scope", required=True, help="product:projectKey")
+    fault_target.add_argument("--tracker-ref", required=True)
+    fault_target.set_defaults(handler=cmd_fault_target)
+
+    fault_observe = subparsers.add_parser("fault-observe")
+    fault_observe.add_argument("--observation", required=True, help="JSON, or @path")
+    fault_observe.set_defaults(handler=cmd_fault_observe)
+
+    fault_sweep = subparsers.add_parser("fault-sweep")
+    fault_sweep.add_argument("--product", default="crw")
+    fault_sweep.add_argument("--project")
+    fault_sweep.add_argument("--readings", help="reporting-observation/1 JSON list, or @path")
+    fault_sweep.set_defaults(handler=cmd_fault_sweep)
+
+    fault_show = subparsers.add_parser("fault-show")
+    fault_show.add_argument("--fault")
+    fault_show.add_argument("--scope")
+    # NOT --state. That is the global option naming the store directory, and a subcommand
+    # option of the same name overwrites it in the namespace, so every fault-show read an
+    # unconfigured default store and answered that the fault did not exist.
+    fault_show.add_argument("--fault-state", choices=list(faults_module.STATES))
+    fault_show.add_argument("--limit", type=int, default=20,
+                            help="faults per page, or occurrences and remediations with --fault")
+    fault_show.add_argument("--after", type=int,
+                            help="continue a listing from the next value the last page returned")
+    fault_show.set_defaults(handler=cmd_fault_show)
+
+    fault_fix = subparsers.add_parser("fault-fix")
+    fault_fix.add_argument("--fault", required=True)
+    fault_fix.add_argument("--ref", required=True, help="the pull request or commit")
+    fault_fix.add_argument("--detail")
+    fault_fix.set_defaults(handler=cmd_fault_fix)
+
+    fault_reverify = subparsers.add_parser("fault-reverify")
+    fault_reverify.add_argument("--fault", required=True)
+    fault_reverify.add_argument("--method", required=True, choices=list(FAULT_METHODS))
+    fault_reverify.add_argument("--ref", required=True, help="the command or reading")
+    fault_reverify.add_argument("--outcome", required=True, choices=list(FAULT_OUTCOMES))
+    fault_reverify.add_argument("--detail")
+    fault_reverify.set_defaults(handler=cmd_fault_reverify)
+
+    fault_resolve = subparsers.add_parser("fault-resolve")
+    fault_resolve.add_argument("--fault", required=True)
+    fault_resolve.set_defaults(handler=cmd_fault_resolve)
+
+    fault_next = subparsers.add_parser("fault-next")
+    fault_next.add_argument("--limit", type=int, default=4)
+    fault_next.set_defaults(handler=cmd_fault_next)
+
+    fault_claim = subparsers.add_parser("fault-claim")
+    fault_claim.add_argument("--publication", required=True)
+    fault_claim.add_argument("--owner", required=True)
+    fault_claim.set_defaults(handler=cmd_fault_claim)
+
+    fault_operation = subparsers.add_parser("fault-operation")
+    fault_operation.add_argument("--publication", required=True)
+    fault_operation.add_argument("--claim-token", required=True)
+    fault_operation.set_defaults(handler=cmd_fault_operation)
+
+    fault_reconcile = subparsers.add_parser("fault-reconcile")
+    fault_reconcile.add_argument("--publication", required=True)
+    fault_reconcile.add_argument("--observed", required=True, help="observed text, or @path")
+    fault_reconcile.add_argument(
+        "--searched", action="store_true",
+        help="attest that the search covered where the block would be. Without it a negative"
+             " read is not read as absence",
+    )
+    fault_reconcile.set_defaults(handler=cmd_fault_reconcile)
+
+    fault_complete = subparsers.add_parser("fault-complete")
+    fault_complete.add_argument("--publication", required=True)
+    fault_complete.add_argument("--claim-token")
+    fault_complete.add_argument("--readback", required=True, help="the text, or @path")
+    fault_complete.add_argument("--external-ref")
+    fault_complete.set_defaults(handler=cmd_fault_complete)
+
+    fault_fail = subparsers.add_parser("fault-fail")
+    fault_fail.add_argument("--publication", required=True)
+    fault_fail.add_argument("--claim-token", required=True)
+    fault_fail.add_argument("--error", required=True)
+    fault_fail.set_defaults(handler=cmd_fault_fail)
+
+    fault_retry = subparsers.add_parser("fault-retry")
+    fault_retry.add_argument("--publication", required=True)
+    fault_retry.set_defaults(handler=cmd_fault_retry)
+
+    fault_prune = subparsers.add_parser("fault-prune")
+    fault_prune.add_argument("--fault", required=True)
+    fault_prune.add_argument("--keep", type=int, default=20)
+    fault_prune.set_defaults(handler=cmd_fault_prune)
+
 
     show = subparsers.add_parser("show")
     show.add_argument("--event", required=True)
