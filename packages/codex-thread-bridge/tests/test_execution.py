@@ -594,6 +594,18 @@ def test_without_a_digest_the_environment_reads_exactly_as_before(tmp_path):
     assert unpinned.summary() == ExecutionPolicy.from_file(path).summary()
 
 
+def test_bytes_a_caller_already_read_parse_exactly_as_the_file_does(tmp_path):
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(policy_for(tmp_path)))
+    raw = path.read_bytes()
+    assert (ExecutionPolicy.from_bytes(raw, path).summary()
+            == ExecutionPolicy.from_file(path).summary())
+    with pytest.raises(ExecutionPolicyError, match="duplicate key 'allowed'"):
+        ExecutionPolicy.from_bytes(b'{"allowed": [], "allowed": []}', "somewhere")
+    with pytest.raises(ExecutionPolicyError, match="somewhere is not valid JSON"):
+        ExecutionPolicy.from_bytes(b"{ not json", "somewhere")
+
+
 def test_efforts_are_scoped_to_their_model(tmp_path):
     """Two independent lists would approve every crossing of them, which nobody wrote down."""
     policy = ExecutionPolicy.from_mapping(policy_for(tmp_path))

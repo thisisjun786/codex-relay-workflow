@@ -376,12 +376,22 @@ class ExecutionPolicy:
             raw = path.read_bytes()
         except OSError as error:
             raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
+        return cls.from_bytes(raw, path)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes, source) -> "ExecutionPolicy":
+        """Parse bytes a caller already read from `source`, exactly as from_file parses a file.
+
+        For a caller that has to control how the file is opened -- the installer refuses a FIFO
+        rather than blocking on it -- and still wants this parser, its duplicate-key rule and its
+        digest rather than a second reading of the same document.
+        """
         try:
             data = json.loads(raw, object_pairs_hook=_no_duplicates)
         except ExecutionPolicyError:
             raise
         except ValueError as error:
-            raise ExecutionPolicyError(f"{path} is not valid JSON: {error}") from error
+            raise ExecutionPolicyError(f"{source} is not valid JSON: {error}") from error
         return cls.from_mapping(data, digest=hashlib.sha256(raw).hexdigest())
 
     @classmethod
