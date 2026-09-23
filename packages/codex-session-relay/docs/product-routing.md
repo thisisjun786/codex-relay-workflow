@@ -255,7 +255,8 @@ Each new decision is also raised as a ledger notification under its
 decision name. The ledger keeps one notification per record and reason, so a decision is
 announced once however often digests run. A severe pending incident or a severe hold is raised
 at intake under the same name. Asked again with nothing changed, the digest answers quiet and
-writes nothing. It runs only when somebody asks, and it calls no model.
+reports nothing. The only thing it writes then is the rotation position of each outstanding
+project proposal it checked. It runs only when somebody asks, and it calls no model.
 
 ## What this does not claim
 

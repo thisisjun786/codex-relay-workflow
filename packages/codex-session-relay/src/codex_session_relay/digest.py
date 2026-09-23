@@ -15,8 +15,9 @@ compares it with the snapshot it last reported, answering only the difference:
 - a resolution of a record that owned an issue;
 - everything else summarized per product as routine accumulation.
 
-Asked again with nothing changed, it answers quiet and writes nothing. Budgets, eligibility and
-delivery of the notices belong to the ledger's one notification path.
+Asked again with nothing changed, it answers quiet and reports nothing; the only thing it writes
+then is the rotation position of each outstanding project proposal it checked. Budgets,
+eligibility and delivery of the notices belong to the ledger's one notification path.
 """
 
 from . import intake, ledger_port, products, routes
