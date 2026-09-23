@@ -954,6 +954,15 @@ class BridgeRecordPolicyTest(unittest.TestCase):
             "ignores the digest": (
                 "    if actual != digest:\n", "    if False:\n",
                 "digest no longer matches"),
+            "starts the bridge without the policy when it cannot read it": (
+                "    except OSError as error:\n"
+                "        fail(\"the execution policy the record at \" + str(record) + \" names could"
+                " not be read (\"\n",
+                "    except OSError as error:\n"
+                "        return dict(os.environ)\n"
+                "        fail(\"the execution policy the record at \" + str(record) + \" names could"
+                " not be read (\"\n",
+                "when the policy the record names was missing"),
             "starts the bridge and then fails": (
                 "            os.execve(executable, [executable, *arguments], environment)\n",
                 "            __import__('subprocess').run([executable, *arguments], env=environment)\n"

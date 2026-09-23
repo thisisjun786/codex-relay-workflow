@@ -4901,6 +4901,19 @@ def _launcher_honours_policy_records(argv, *, cwd=None):
             if seen is not None:
                 return ("it started the bridge under a policy whose digest no longer matches the"
                         " record")
+            # And a record naming a policy it cannot read at all -- gone, or not a file -- has to
+            # be refused too. A launcher that fell back to starting the bridge without the
+            # variables would pass both checks above and still start a bridge checking no role.
+            directory = root / "policy-directory"
+            directory.mkdir()
+            for label, unreadable, proof in (
+                    ("missing", root / "absent-policy.json", root / "missing.json"),
+                    ("a directory", directory, root / "directory.json")):
+                done, seen = _probe_launcher_once(argv, root, unreadable, probe, digest, proof,
+                                                  cwd)
+                if seen is not None:
+                    return ("it started the bridge when the policy the record names was " + label
+                            + " (the bridge saw " + json.dumps(seen) + ")")
         except subprocess.TimeoutExpired:
             return "it did not answer within " + str(LAUNCHER_PROBE_SECONDS) + " seconds"
         except (OSError, ValueError) as error:
