@@ -154,11 +154,16 @@ it from a file. It opens the store read-only and never creates or migrates one; 
 cannot open or read - including one missing a table or column the reading names, or holding a
 value of the wrong shape where the reading computes with it - gives a
 record holding only the receiver's own id, so every other field is a gap. Each field in the
-answer's `provenance` names what answered it. Recorded settings that cannot be parsed, or that
-nest deeper than any record the relay writes (32 levels, checked without recursion, so the
-answer does not depend on the interpreter's recursion limit), are unread: the policy or the
-callback they answer is a gap and the rest of the reading stands. A reopening row in the
-registration journal that cannot be parsed leaves the tenure unread.
+answer's `provenance` names what answered it. Recorded settings that cannot be parsed,
+including JSON nested deeper than the decoder descends on this interpreter, are unread: the
+policy or the callback they answer is a gap and the rest of the reading stands. From settings
+it can parse, the reading takes only what it answers with, in the shapes the writer records:
+the model, effort and approval as text (another shape is unread) and the sandbox as a policy
+object no deeper than 32 levels. A sandbox policy is a flat object, and the reading copies it
+whole into the answer, so a deeper one is unread: a gap wherever a packet states a sandbox. It
+bounds nothing it does not copy, so a deep value under a key the reading never uses is left as
+recorded. A reopening row in the registration journal that cannot be parsed leaves the tenure
+unread.
 
 | Record key | Answered by |
 |---|---|

@@ -290,9 +290,6 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("manifest.py", None, "_is_access_failure", "function"),
     ("marker.py", None, "valid_assignment", "function"),
     ("marker.py", None, "valid_segment", "function"),
-    # Whether recorded settings nest within the bound, folded over every value they hold;
-    # false the moment one sits too deep, so a reading never holds what it cannot print.
-    ("receiver.py", None, "_nested_within", "function"),
     # Whether the reception ledger changed: a first answer, an upgrade of a non-accepted one,
     # or an accepted assignment's mode written once, folded through the answer's state.
     ("receiver.py", None, "record_answer", "function"),

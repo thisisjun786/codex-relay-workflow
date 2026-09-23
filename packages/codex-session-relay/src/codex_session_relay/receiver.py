@@ -70,11 +70,12 @@ REOPENED = "relationship_tenure_reopened"
 STORE_FAULTS = (sqlite3.Error, IndexError, KeyError, TypeError, ValueError, AttributeError,
                 RecursionError)
 
-# How deeply a recorded settings object may nest and still be read. The relay writes them at
-# most four levels deep. Deeper is not a record any writer made, and without a bound whether it
-# could be read at all would depend on the interpreter's recursion limit (about a thousand
-# levels on 3.10, several thousand on 3.13), so one store would answer differently by host.
-RECORD_DEPTH = 32
+# How deeply a recorded sandbox policy may nest and still be read. A sandbox policy is a flat
+# object (its type, its writable roots, a few flags), and the reading copies it whole into the
+# record, where it is compared and printed. Unbounded, a sandbox the decoder could just parse
+# was printed a few levels deeper still and ended the answer as a host failure on 3.13. Only
+# this value is bounded, because only it is copied; the rest of the settings row is not.
+SANDBOX_DEPTH = 32
 
 # What an observation may carry: the facts a forge or a filesystem answers and the store does
 # not. Anything else in one is refused, so an observation cannot smuggle a relationship field.
@@ -395,34 +396,61 @@ def _read_criteria(rows, connection, rid, answer, notes):
     answer(packets.CRITERIA_DIGEST, held["setDigest"], "canonical_criteria (managed set)")
 
 
-def _settings(rows, task_id, notes):
+def _settings(rows, task_id, notes, about=""):
+    """The task's recorded settings, or None where none are recorded or they cannot be parsed.
+
+    Parsed as the writer wrote them and bounded nowhere else. The writer bounds only what a
+    reading answers with (see _recorded_text), so a bound here of its own turned records the
+    writer accepts - a deep value under a key the reading never uses - into unread ones.
+    """
     try:
         held = load_settings(rows, task_id)
     except (ValueError, TypeError, RecursionError) as fault:
+        # RecursionError: nested deeper than the decoder descends on this interpreter.
         notes.append("the recorded settings of " + task_id + " are unreadable: "
                      + type(fault).__name__ + ": " + str(fault))
         return None
-    if held is not None and not _nested_within(held.data, RECORD_DEPTH):
-        # Parsed, and still not a reading: a value this deep would be copied into the record,
-        # and compared and printed from there, by whatever recursion the host allows.
-        notes.append("the recorded settings of " + task_id + " nest deeper than %d levels,"
-                     " which no writer records, so they are unread" % RECORD_DEPTH)
-        return None
+    if held is None:
+        notes.append("no settings are recorded for " + task_id + about)
     return held
 
 
-def _nested_within(value, limit) -> bool:
-    """Whether a parsed JSON value nests no deeper than limit. Iterative, so it cannot recurse."""
-    pending = [(value, 1)]
+def _recorded_text(settings, name, task_id, notes):
+    """One recorded value the reading answers with, where it is the text every writer records.
+
+    The model, the effort and the approval are text in any row the writer accepts
+    (TaskSettings.require_usable). Another shape is not a reading of them - and a structure
+    copied from one would be compared and printed from the record - so it is unread, a gap.
+    """
+    value = settings.data.get(name)
+    if value is None or isinstance(value, str):
+        return value
+    notes.append("the recorded " + name + " of " + task_id + " is a " + type(value).__name__
+                 + ", not the text a writer records, so it is unread")
+    return None
+
+
+def _nesting(value) -> int:
+    """How many objects and lists deep a parsed JSON value goes. Iterative, so it cannot recurse."""
+    deepest, pending = 0, [(value, 1)]
     while pending:
         one, depth = pending.pop()
-        if depth > limit:
-            return False
         if isinstance(one, dict):
-            pending.extend((inner, depth + 1) for inner in one.values())
-        elif isinstance(one, list):
+            one = list(one.values())
+        if isinstance(one, list):
+            deepest = max(deepest, depth)
             pending.extend((inner, depth + 1) for inner in one)
-    return True
+    return deepest
+
+
+def _recorded_sandbox(settings, task_id, notes):
+    """The recorded sandbox policy as the reading compares it, where it is one."""
+    sandbox = normalise_policy(settings.data.get("sandbox"))
+    if sandbox is not None and _nesting(sandbox) > SANDBOX_DEPTH:
+        notes.append("the recorded sandbox of " + task_id + " nests deeper than %d levels, which"
+                     " no sandbox policy does, so it is unread" % SANDBOX_DEPTH)
+        return None
+    return sandbox
 
 
 def _read_settings(rows, row, answer, notes):
@@ -431,21 +459,19 @@ def _read_settings(rows, row, answer, notes):
     if child_settings is not None:
         # The permissions travel with the pair: a packet stating another sandbox or approval
         # is compared with these, and a sandbox this record cannot read stays None, a gap.
-        answer(packets.POLICY, {"model": child_settings.data.get("model"),
-                                "effort": child_settings.data.get("reasoningEffort"),
-                                "sandbox": normalise_policy(child_settings.data.get("sandbox")),
-                                "approval": child_settings.data.get("approvalPolicy")},
+        answer(packets.POLICY, {
+            "model": _recorded_text(child_settings, "model", child, notes),
+            "effort": _recorded_text(child_settings, "reasoningEffort", child, notes),
+            "sandbox": _recorded_sandbox(child_settings, child, notes),
+            "approval": _recorded_text(child_settings, "approvalPolicy", child, notes)},
                "authorized_settings[" + child + "]")
-    else:
-        notes.append("no settings are recorded for " + child)
-    parent_settings = _settings(rows, parent, notes)
+    parent_settings = _settings(rows, parent, notes, ", the task a callback answers")
     if parent_settings is not None:
-        answer(packets.CALLBACK, {"taskId": parent,
-                                  "model": parent_settings.data.get("model"),
-                                  "effort": parent_settings.data.get("reasoningEffort")},
+        answer(packets.CALLBACK, {
+            "taskId": parent,
+            "model": _recorded_text(parent_settings, "model", parent, notes),
+            "effort": _recorded_text(parent_settings, "reasoningEffort", parent, notes)},
                "relationships.parent_task_id + authorized_settings[" + parent + "]")
-    else:
-        notes.append("no settings are recorded for " + parent + ", the task a callback answers")
     bound = rolepolicy.bound_role(rows, child)
     if bound is None:
         answer("refusedPolicies", [], "rolepolicy: " + child + " holds no bound role, so no"
@@ -461,8 +487,14 @@ def _read_settings(rows, row, answer, notes):
         notes.append("no role policy resolved in this process, so whether the recorded pair is"
                      " authorised for " + bound + " is unchecked")
         return
-    finding = rolepolicy.check_record(child_settings, bound, policy)
     model, effort = rolepolicy.recorded_pair(child_settings)
+    if any(value is not None and not isinstance(value, str) for value in (model, effort)):
+        # Not a pair any writer records, so not one the role policy can judge: unread, and
+        # never folded into the refusal list the answer prints.
+        notes.append("the recorded pair of " + child + " is not text, so whether it is"
+                     " authorised for " + bound + " is unchecked")
+        return
+    finding = rolepolicy.check_record(child_settings, bound, policy)
     refused = [] if finding is None else [{
         "model": model, "effort": effort, "code": finding.get("code"),
         "reason": rolepolicy.describe(finding)}]
