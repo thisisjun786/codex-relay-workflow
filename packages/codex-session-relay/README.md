@@ -234,7 +234,7 @@ To make readiness a gate, name the pair each role must run on. The value is a JS
 are supported:
 
     codex-session-relay doctor \
-      --require-worker-policy '[{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]'
+      --require-worker-policy '[{"role": "parent", "model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}]'
     codex-session-relay doctor --require-worker-policy @/path/to/requirements.json
 
 doctor then exits 2, carrying the whole diagnosis plus `workerReadiness`, whenever the live
@@ -281,7 +281,7 @@ The role pairs below are examples; read your host's declared
   "parent": {
     "taskId": "observed-parent-task", "hostId": "observed-local-host",
     "settings": {
-      "model": "devin/swe-2", "reasoningEffort": "max",
+      "model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh",
       "approvalPolicy": "never",
       "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
       "cwd": "/workspace/project", "runtimeWorkspaceRoots": ["/workspace/project"],

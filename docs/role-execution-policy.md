@@ -1,11 +1,12 @@
 # Role execution policy
 
-CRW runs at three levels and each level is meant to run on a different model and reasoning
-effort. Until now nothing in the code knew that. The bridge asked whether a pair was stated and
-whether this host approved it, and neither question is whether the pair belongs to the ROLE the
-task is being created for. So a project parent created on the wrong model passed every check that
-existed, and a child verifying a send against a pair frozen at its parent's creation withheld a
-correct message once the user changed that parent.
+CRW runs at three levels and each level runs on the model and reasoning effort decided for its
+role. Two roles may be decided onto the same pair, as the parent and the child were on 2026-09-23,
+and the check is per role either way. Until now nothing in the code knew any of that. The bridge
+asked whether a pair was stated and whether this host approved it, and neither question is whether
+the pair belongs to the ROLE the task is being created for. So a project parent created on the
+wrong model passed every check that existed, and a child verifying a send against a pair frozen at
+its parent's creation withheld a correct message once the user changed that parent.
 
 This document is where the policy lives for a reader. The enforced values live in one place only:
 the `roles` section of the operator-owned execution policy file the bridge server reads from its
@@ -23,17 +24,18 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | Role | Model | Reasoning effort | Who decides |
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
-| `parent` | `devin/swe-2` | `max` | this policy |
+| `parent` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
 | `child` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
-itself is Linear CRW-127, and the child row's move to Opus 5.5 is CRW-217; the values that are
-actually enforced are the ones in the host's policy file. If the two disagree, the file is what
-runs and the disagreement is the bug.
+itself is Linear CRW-127, the child row's move to Opus 5.5 is CRW-217, and the parent row's move
+to the same pair is CRW-219; the values that are actually enforced are the ones in the host's
+policy file. If the two disagree, the file is what runs and the disagreement is the bug.
 
-That separation is what a change of pair costs, and the parent row has now paid it twice in a
-day. It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, and was
-restored to `devin/swe-2` at `max` later that same day. The child row has paid it once: it ran on
+That separation is what a change of pair costs, and the parent row has now paid it three times.
+It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, was restored
+to `devin/swe-2` at `max` later that same day, and moved to `anthropic/claude-opus-5-5` at `xhigh`
+on 2026-09-23, the pair the child already ran. The child row has paid it once: it ran on
 `anthropic/claude-opus-5` at `xhigh` until 2026-09-23, when it moved to
 `anthropic/claude-opus-5-5` and kept `xhigh`. Each move was an edit to the policy file and a
 restart, with no line of code changed, because no pair is written in code to go stale. A
@@ -53,14 +55,20 @@ Reasoning-effort names are catalog values, and two models that both offer a name
 offer the same thing. Nothing maps one onto another: there is no alias table, no normalisation
 step, and every comparison in both packages is exact string equality.
 
-The clearest case is the parent row itself. The host's catalog reports SWE-2 at medium, high, max
-and ultra, and the parent's requested value under that model is exactly `max`, while Opus 5.5 runs
-the child at `xhigh`. A request stating `xhigh` for that parent is refused, and so is one stating
-`max` for a child. The interim grok pair made the two names coincide at `xhigh` under different
-models, which changed nothing about the rule; the restored pair makes them differ again, which is
-why a pair whose two effort names differ is the case the regression fixture is built on.
+The clearest case is the pair the parent row just left. The host's catalog reports SWE-2 at
+medium, high, max and ultra, and the parent ran on it at exactly `max` until 2026-09-23; Opus 5.5,
+which the parent and the child now share, runs at `xhigh`. A parent request stating `max` under
+Opus 5.5 has the right model and is refused on its effort. One stating `xhigh` under SWE-2 has
+the right effort name and is refused on its model, which is compared first. So is the old pair
+whole: this host still lists `devin/swe-2` at `max` under `allowed`, and a request naming
+`parent` on it is refused by the role question, which is asked before the allowlist, even though
+the allowlist would approve it. The allowlist says what the host may run; the role row says what
+that role runs. The interim grok pair shared `xhigh` with the child under a different model, and
+the current parent pair shares the child's whole pair; neither changed the rule. The pair the
+parent left differs from the current one in model and in effort, which is why the single-axis
+regression cases take one half of it at a time.
 
-The child's move is the opposite case. It kept `xhigh`, so the pair it left differs from the
+The child's move is the other case. It kept `xhigh`, so the pair it left differs from the
 current one by model alone, and that superseded pair is the fixture proving a check cannot pass a
 record by comparing efforts only.
 
@@ -81,7 +89,7 @@ show the shape. Do not copy it as a default.
     {
       "roles": {
         "supervisor": {"expectation": "record"},
-        "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+        "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"},
         "child":  {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
       }
     }
@@ -145,8 +153,8 @@ task works in, and treat "one task" as a property of how you scoped it rather th
 the checks enforce.
 
 The `roles` section is untouched either way. A reader asking what a project parent runs on still
-gets `devin/swe-2` at `max`, because an exception is an exemption from the answer and never a
-replacement for it.
+gets `anthropic/claude-opus-5-5` at `xhigh`, because an exception is an exemption from the answer
+and never a replacement for it.
 
 The receipt says so too. A creation or send citing this id records `exception` and, under
 `roleExpectation`, the pair the role WOULD have required together with `overriddenBy`. A reader of
