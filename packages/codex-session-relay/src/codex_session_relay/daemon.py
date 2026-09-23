@@ -988,17 +988,22 @@ class RelayDaemon:
             for one in answer["staged"]:
                 if one.get("staged") or one.get("readdressed") or one.get("restated"):
                     report.supervisorStaged += 1
-        self._send_upward(channel, report, now)
+        sent = self._send_upward(channel, report, now)
         # After the reports: a notice staged now is younger than every report already waiting
         # for the same supervisor, and the channel sends each recipient's oldest first.
-        self._deliver_notices(channel, report, now)
+        # And within the same per-tick send cap: the notices get what the reports left of it.
+        self._deliver_notices(channel, report, now,
+                              max(0, self.policy.max_supervisor_sends_per_tick - sent))
 
-    def _deliver_notices(self, channel, report, now) -> None:
+    def _deliver_notices(self, channel, report, now, limit) -> None:
         """Fault notifications to the level above (CRW-205 criterion 7), with nobody asking.
 
         Only with a fault ledger as well as the channel: the ledger decides what is owed and
         whether it may go (reservation), the channel how it goes; faultnotice is the seam. A
         notification that waits is carried as a note on the tick its reason appears or changes.
+
+        limit is what the reports left of max_supervisor_sends_per_tick: a notice is one attempt
+        at one supervisor message, so the pass's one cap bounds both (I-250).
         """
         if self.faults is None:
             return
@@ -1009,7 +1014,7 @@ class RelayDaemon:
             deliverer = self._notices = NoticeDeliverer(self.faults, channel, owner=DAEMON_OWNER)
         try:
             answer = deliverer.tick(self.adapter, now=now,
-                                    limit=self.policy.max_supervisor_sends_per_tick)
+                                    limit=limit)
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"fault notifications not delivered: {error}")
             return
@@ -1022,12 +1027,14 @@ class RelayDaemon:
         for notification, reason in answer["waiting"]:
             report.notes.append(f"fault notification {notification} waits: {reason}")
 
-    def _send_upward(self, channel, report, now) -> None:
+    def _send_upward(self, channel, report, now) -> int:
+        """Attempt each recipient's oldest eligible message; returns how many attempts reached
+        the claim and the transport - what max_supervisor_sends_per_tick bounds."""
         from .supervisorchannel import CLAIMABLE, SENDING
 
         budget = self.policy.max_supervisor_sends_per_tick
         if budget <= 0:
-            return
+            return 0
         # Each recipient's OLDEST eligible message, oldest first. The claim lets only that one go
         # anyway, and reading every eligible row let one recipient's backlog - withheld again on
         # every recheck - fill the whole window each tick, so a report to anybody else was never
@@ -1113,6 +1120,7 @@ class RelayDaemon:
             else:
                 struggling.add(recipient)
                 report.deferred += 1
+        return attempted
 
     # ----------------------------------------------------------------- state
 

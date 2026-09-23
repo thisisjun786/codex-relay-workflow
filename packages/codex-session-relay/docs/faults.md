@@ -939,7 +939,8 @@ deliverer is the seam between them and owns no rule. Each tick it:
   whether any can go now, measuring a parent whose contact eligibility could not read (the host
   observation delivery itself records) and keeping on a notification why it waits, only when
   that changes;
-- when something can go, reserves (`reserve_notifications` with its `deliverable` predicate),
+- when something can go, reserves - at most what the reports left of the pass's per-tick send
+  cap, `max_supervisor_sends_per_tick` - (`reserve_notifications` with its `deliverable` predicate),
   stages each reserved notification as one supervisor message keyed by its `deliveryKey`,
   attempts it and settles it: `ack_notification` on the channel's recorded dispatch,
   `fail_notification` only when the channel proves nothing was sent (the message is then parked

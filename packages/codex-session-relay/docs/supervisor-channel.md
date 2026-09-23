@@ -859,8 +859,9 @@ staged automatically, and stays owed and visible in `supervisor-standing` whenev
 
 The same pass then delivers fault notifications, when the daemon holds a fault ledger: after
 the reports, so a notice staged now is younger than every report already waiting for the same
-supervisor. `faultnotice.NoticeDeliverer` reserves what the ledger says may go, stages each as a
-notice and attempts it through the same `attempt`, and settles the notification from what the
+supervisor, and within the same per-tick send cap: the notices get what the reports left of
+`max_supervisor_sends_per_tick`. `faultnotice.NoticeDeliverer` reserves what the ledger says may
+go, stages each as a notice and attempts it through the same `attempt`, and settles the notification from what the
 channel recorded (see [faults](faults.md), who tells the level above).
 
 ## Scope of these claims

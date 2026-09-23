@@ -549,3 +549,24 @@ class NoHierarchyValueTravelsAsFreeText(NoticeCase):
                 self.assertIn(field, str(refused.exception))
                 self.assertNotIn(SECRET, str(refused.exception))
         self.assertEqual(self.notification(fault)["state"], faults.RESERVED)
+
+
+class WhatTheFourthAuditFound(NoticeCase):
+    """Plan audit, round four: reports and notices share one per-tick send cap (I-250)."""
+
+    def test_a_notice_takes_only_what_the_reports_left_of_the_tick_cap(self):
+        import dataclasses
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        self.channel.policy = dataclasses.replace(self.channel.policy,
+                                                  min_send_interval_seconds=0.0)
+        self.completed()
+        fault = self.broken()
+        self.tick()
+        self.assertEqual(len(self.upward()), 1, "one send in a tick whose cap is one")
+        self.assertEqual([one["obligation_kind"] for one in self.messages()
+                          if one["state"] == DISPATCHED], ["completion"], "the older report first")
+        self.tick(advance=1)
+        self.assertEqual(len(self.upward()), 2)
+        self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
