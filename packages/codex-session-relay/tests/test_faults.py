@@ -1021,6 +1021,8 @@ class DaemonPass(DeliveryTestCase):
 
         ledger = faults.FaultLedger(self.store, self.clock)
         ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
+        self.assertTrue(callable(getattr(ledger, "attention", None)),
+                        "the ledger offers no attention()")
         daemon = self.daemon(ledger)
         ledger.record(omission("a"))
         first = TickReport()
@@ -1090,6 +1092,20 @@ class CommandLine(RelayTestCase):
         "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile",
     )
 
+    def offers(self, command, flag):
+        """The command line takes this flag, or a failure saying it does not."""
+        import argparse
+
+        from codex_session_relay import cli
+
+        parser = cli.build_parser()
+        if command is not None:
+            action = next(a for a in parser._actions
+                          if isinstance(a, argparse._SubParsersAction))
+            parser = action.choices[command]
+        flags = {option for action in parser._actions for option in action.option_strings}
+        self.assertIn(flag, flags, f"{command or 'the relay'} takes no {flag}")
+
     def test_every_new_fault_command_has_a_handler_and_runs_offline(self):
         from codex_session_relay import cli
 
@@ -1101,8 +1117,9 @@ class CommandLine(RelayTestCase):
 
     def test_status_shows_the_unsent_fault_writes(self):
         """B11: a write waiting for a target is visible where status is read."""
-        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER)
-        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
+        ledger = faults.FaultLedger(self.store, self.clock)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER)
+        ledger.record(omission("cli-1"))
         code, status = self.invoke("status")
         self.assertEqual(0, code)
         self.assertIn("faults", status)
@@ -1110,27 +1127,30 @@ class CommandLine(RelayTestCase):
         self.assertIn("awaitingTarget", status["faults"]["warning"])
 
     def test_fault_next_says_why_each_write_waits(self):
-        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER)
-        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
+        ledger = faults.FaultLedger(self.store, self.clock)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER)
+        ledger.record(omission("cli-1"))
         code, queue = self.invoke("fault-next")
         self.assertEqual(0, code)
-        self.assertEqual([], queue["publications"])
         self.assertIn("held", queue, "the queue does not say why a write waits")
+        self.assertEqual([], queue["publications"])
         self.assertEqual(["awaiting_target"], [entry["reason"] for entry in queue["held"]])
 
     def test_one_publication_is_shown_with_its_attempts(self):
-        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER,
-                    "--project-ref", "proj-CRW")
-        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
-        _code, queue = self.invoke("fault-next")
-        publication = queue["publications"][0]["publication_id"]
-        self.invoke("fault-claim", "--publication", publication, "--owner", "operator")
+        self.offers("fault-show", "--publication")
+        ledger = faults.FaultLedger(self.store, self.clock)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
+        ledger.record(omission("cli-1"))
+        publication = ledger.next()[0]["publication_id"]
+        ledger.claim(publication, owner="operator")
         code, shown = self.invoke("fault-show", "--publication", publication)
         self.assertEqual(0, code)
         self.assertEqual(publication, shown["publication_id"])
         self.assertEqual(["operator"], [attempt["owner"] for attempt in shown["attempts"]])
 
     def test_the_sweep_command_continues_a_readings_batch(self):
+        self.offers("fault-sweep", "--readings-after")
+        self.offers("fault-show", "--fault-class")
         readings = [{"schema": faultsweep.OBSERVATION_SCHEMA, "relationshipId": f"rel-{n}",
                      "selectors": {"turn": "turn-1"}, "reportingState": "unreported"}
                     for n in range(3)]
@@ -1149,6 +1169,7 @@ class CommandLine(RelayTestCase):
 
         from codex_session_relay import cli
 
+        self.offers(None, "--kind-module")
         name = "crw205_cli_probe_kind"
         module = f"crw205_cli_probe_module_{id(self)}"
         directory = pathlib.Path(self.artifact(module + ".py", (
