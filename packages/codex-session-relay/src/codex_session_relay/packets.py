@@ -1002,6 +1002,15 @@ def _reception(one, region, record, problems, gaps) -> dict:
                  one.get(CRITERIA_DIGEST), record.get(CRITERIA_DIGEST),
                  "criteria judged against a digest nobody registered are judged against"
                  " somebody's memory of them")
+    elif _present(one.get(CRITERIA_DIGEST)) is not None:
+        # Not required here, but stated, and held to it as a stated generation is. A block or
+        # a note naming the digest its sender judged against was accepted after the criteria
+        # were registered again, and accepted when the store could read no digest at all:
+        # the purpose table says what an occasion cannot omit, not what it may say unread.
+        _compare(problems, gaps, STALE_CRITERIA, CRITERIA_DIGEST,
+                 one.get(CRITERIA_DIGEST), record.get(CRITERIA_DIGEST),
+                 "this packet was written against criteria that are no longer the"
+                 " registered ones")
     _artifact_agreement(one, record, problems, gaps)
     _callback_agreement(one, record, problems, gaps)
     _policy_agreement(one, record, problems, gaps)

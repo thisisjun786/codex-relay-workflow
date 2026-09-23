@@ -125,7 +125,10 @@ registration, so a packet from an earlier tenure is refused as `superseded_relat
 unscoped one has no such mark: once it has returned to its child, a packet that states
 neither a revision nor a generation cannot be told from one sent in an earlier tenure and is
 a gap. A generation is compared whenever a packet states one, required or not, so a sender
-binds any packet to its generation by stating it. The relation revision is always compared except on a first assignment,
+binds any packet to its generation by stating it. The same holds for every compared field a
+packet states where its purpose does not require it - a criteria digest, an artifact, a
+callback, a policy: a stale one is refused as that, and one the record cannot answer is a gap,
+so a block naming the digest it was judged against is held to the registered one. The relation revision is always compared except on a first assignment,
 and the relationship must be live: `relationStatus` other than `active` or `paused` is refused as
 `superseded_relation`. A packet on a paused relationship can be accepted, since it is current;
 acting on it still waits for `relationship-resume`.
