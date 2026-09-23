@@ -77,8 +77,31 @@ def a_reading(mode, **facts):
     return reading
 
 
-# How each required field is supplied to compose, so the sweep derives from the table rather
-# than from a list someone has to remember to extend.
+# What every occasion must carry, written out from the packet contract (docs/packets.md,
+# "Fourteen occasions, not two") as literals. The sweep runs over THIS table, and a test pins
+# packets.REQUIRED_BY_PURPOSE to it, so dropping a field from the validator's table fails here
+# rather than silently shrinking the sweep that was supposed to catch it.
+CANONICAL_REQUIRED = {
+    ("parent_to_child", "assignment"): ("issue", "criteriaDigest", "policy", "callback", "body"),
+    ("parent_to_child", "revision_request"): (
+        "issue", "generation", "criteriaDigest", "callback", "artifact", "body", "evidence"),
+    ("parent_to_child", "resume"): ("issue", "policy", "callback", "artifact"),
+    ("parent_to_child", "receipt_confirmation"): ("issue", "correlationId"),
+    ("parent_to_child", "acceptance"): ("issue", "criteriaDigest", "artifact"),
+    ("parent_to_child", "integration_result"): ("issue", "artifact"),
+    ("child_to_parent", "completion"): (
+        "issue", "generation", "criteriaDigest", "artifact", "evidence"),
+    ("child_to_parent", "review_ready"): (
+        "issue", "generation", "criteriaDigest", "artifact", "evidence"),
+    ("child_to_parent", "blocked"): ("issue", "evidence"),
+    ("child_to_parent", "decision_request"): ("issue", "decision", "evidence"),
+    ("child_to_parent", "progress"): ("issue",),
+    ("parent_to_supervisor", "completion"): ("issue", "generation", "evidence"),
+    ("parent_to_supervisor", "blocked"): ("issue", "evidence"),
+    ("parent_to_supervisor", "decision_request"): ("issue", "decision", "evidence"),
+}
+
+# How each required field is supplied to compose.
 VALUES = {
     packets.ISSUE: ("issue", ISSUE),
     packets.GENERATION: ("generation", GENERATION),
@@ -97,7 +120,7 @@ def packet_kwargs(direction, purpose, *, without=None, **overrides):
     sender, recipient = ENDPOINTS[direction]
     kwargs = dict(direction=direction, purpose=purpose, relation_id=RELATION, sender=sender,
                   recipient=recipient, subject="evt-1", relation_revision=REVISION)
-    for name in packets.required_for(direction, purpose):
+    for name in CANONICAL_REQUIRED[(direction, purpose)]:
         if name == without:
             continue
         keyword, value = VALUES[name]
@@ -362,7 +385,7 @@ class RB6ReviewReadyInTheDeliveredEnvelope(unittest.TestCase):
 
 # Which record key answers which compared field, per the direction's roles.
 def _read_keys(direction, purpose):
-    required = packets.required_for(direction, purpose)
+    required = CANONICAL_REQUIRED[(direction, purpose)]
     sender_role, recipient_role = envelope.ENDPOINT_ROLES[direction]
     keys = {"relationId", packets.RECORD_TASK_KEY[sender_role],
             packets.RECORD_TASK_KEY[recipient_role], "issue", "relationRevision",
@@ -384,13 +407,19 @@ def _read_keys(direction, purpose):
 
 def sweep_rows():
     """(direction, purpose, required fields, record keys read) for every declared occasion."""
-    return [(direction, purpose, list(packets.required_for(direction, purpose)),
+    return [(direction, purpose, list(CANONICAL_REQUIRED[(direction, purpose)]),
              _read_keys(direction, purpose))
-            for direction, purpose in sorted(packets.REQUIRED_BY_PURPOSE)]
+            for direction, purpose in sorted(CANONICAL_REQUIRED)]
 
 
 class RequiredFieldSweep(_Reading):
     """Every required field of every purpose, missing and unreadable, one subtest each."""
+
+    def test_the_validators_table_is_the_contracts_table(self):
+        self.assertEqual(sorted(packets.REQUIRED_BY_PURPOSE), sorted(CANONICAL_REQUIRED))
+        for occasion, fields in CANONICAL_REQUIRED.items():
+            with self.subTest(occasion=occasion):
+                self.assertEqual(sorted(packets.required_for(*occasion)), sorted(fields))
 
     def test_the_full_packet_of_every_purpose_is_accepted(self):
         for direction, purpose, _required, _keys in sweep_rows():
