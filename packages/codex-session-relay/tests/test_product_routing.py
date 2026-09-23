@@ -1287,6 +1287,51 @@ class RegistryChanges(ProductRoutingCase):
                                                                     "project": "proj-test"}))
         self.assertEqual("TST", moved["testTarget"]["team"])
 
+    def test_a_test_target_never_shares_a_project_with_real_work(self):
+        # The ledger keeps one owned target per product, workspace and project, so a simulated
+        # record on a project real work uses would repoint that work's writes to the test team.
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.register_product(dict(ALPHA, testTarget={"team": "TST",
+                                                                 "project": "proj-aln-editor"}))
+        self.assertEqual("route_state_conflict", caught.exception.reason.value)
+        self.assertEqual("proj-test", self.router.registry("alpha-notes")["testTarget"]["project"])
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.register_product(dict(BETA, testTarget={"team": "TST",
+                                                                "project": "proj-btm-triage"}))
+        self.assertEqual("route_input_malformed", caught.exception.reason.value)
+        for record in (binding("alpha-notes", "issue", "ALN-40", project="proj-test",
+                               components=["editor"]),
+                       binding("alpha-notes", "project", "proj-test", components=["editor"])):
+            with self.subTest(kind=record["kind"]), \
+                    self.assertRaises(products.RouteRefused) as caught:
+                self.router.bind(record)
+            self.assertEqual("route_input_malformed", caught.exception.reason.value)
+        # A real route in a project keeps a test target out of it as much as a binding does.
+        self.route(product="beta-meter", repository="example-org/beta-meter", surface="real_use",
+                   phase="in_use", component="billing", symptom="charge_twice")
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.register_product(dict(BETA, triageProject="proj-btm-other",
+                                              testTarget={"team": "TST",
+                                                          "project": "proj-btm-triage"}))
+        self.assertEqual("route_state_conflict", caught.exception.reason.value)
+
+    def test_a_simulated_completion_check_leaves_real_work_on_its_own_team(self):
+        real = self.route(component="sync", symptom="merge_drop")
+        self.assertEqual(("new_issue", "proj-aln-editor"), (real["disposition"], real["project"]))
+        self.router.bind(binding("alpha-notes", "issue", "TST-5", state="done",
+                                 components=["editor"], project="proj-test", test=True))
+        answer = self.router.check_completion(reading("TST-5", origin="simulated",
+                                                      observed={"acceptance": "absent"}))
+        self.assertEqual("mismatch", answer["verdict"])
+        self.holder.run()
+        (ref, issue), = self.issues_of("ALN").items()
+        self.assertEqual("proj-aln-editor", issue["project"])
+        self.assertEqual("linked", self.router.port.get(real["faultId"])["linkState"])
+        self.assertEqual({}, self.issues_of("TST"))
+        self.assertEqual(["TST-5"], [c["issue"] for c in self.linear.comments])
+        self.assertEqual(("done", "proj-test"), (self.linear.issues["TST-5"]["state"],
+                                                 self.linear.issues["TST-5"]["project"]))
+
 
 class TransactionBoundaries(ProductRoutingCase):
     """What a decision is made from is read inside the transaction that records it."""

@@ -147,6 +147,13 @@ it leaves the old project's scope: the ledger offers a create only where its sco
 and a project, so the unissued create waits there until a later decision places the route. A
 product with simulated routes or test bindings keeps its test target, because they live there.
 
+The test target's project is never one real work uses. The ledger keeps one owned target per
+product, workspace and project, and a simulated record sets that target's team to the test team,
+so sharing a project would repoint real writes there. A registry whose triage project is its test
+target project is refused. So is a registry naming a test target on a project the product binds,
+or files observed routes in, for real work. A real binding on the test target project is refused
+too, the converse of a test binding having to sit on it.
+
 ## Shared causes
 
 When an incident names a cause in another product, typically a CRW fault that broke a product's

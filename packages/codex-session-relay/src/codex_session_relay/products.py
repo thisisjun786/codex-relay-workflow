@@ -255,7 +255,7 @@ def read_registry(record) -> dict:
         _closed(spec, ("method", "active"), f"surfaces.{surface}")
         watched[surface] = {"method": _text(spec.get("method"), f"surfaces.{surface}.method"),
                             "active": _flag(spec.get("active"), f"surfaces.{surface}.active")}
-    return {
+    answer = {
         "schema": REGISTRY_SCHEMA, "product": product,
         "workspace": _key(record.get("workspace"), "workspace"),
         "team": _text(record.get("team"), "team"),
@@ -265,6 +265,14 @@ def read_registry(record) -> dict:
         "triageProject": _text(record.get("triageProject"), "triageProject", optional=True),
         "testTarget": _target(record.get("testTarget"), "testTarget"),
     }
+    target = answer["testTarget"]
+    if target is not None and answer["triageProject"] == target["project"]:
+        # The ledger keeps one owned target per product, workspace and project. A test target
+        # sharing a real project would let a simulated record repoint that project's real
+        # writes to the test team, so the two stay apart.
+        malformed(f"the test target project {target['project']!r} is also the triage project;"
+                  f" a simulated record and a real one would share one project's target")
+    return answer
 
 
 def coverage(registry) -> dict:
@@ -338,6 +346,14 @@ def read_binding(record, registry=None) -> dict:
                           f" {target['project']!r}, not {where!r}")
             if kind == "issue" and answer["ref"].split("-")[0] != target["team"]:
                 malformed(f"a test issue belongs to the test target team {target['team']!r}")
+        elif registry["testTarget"] is not None:
+            # The converse: a real project or issue on the test target project would share its
+            # owned target with simulated records, which set that target's team to the test one.
+            where = answer["ref"] if kind == "project" else answer.get("project")
+            if where == registry["testTarget"]["project"]:
+                malformed(f"{where!r} is the test target project; only a test binding sits"
+                          f" there, or a simulated record and a real one would share one"
+                          f" project's target")
     return answer
 
 

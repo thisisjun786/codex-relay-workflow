@@ -33,6 +33,23 @@ def _simulated_use(db, product) -> list:
     return used
 
 
+def _real_on(db, product, project) -> list:
+    """What of this product does real work in a project: bindings not marked test that name it,
+    and routes of observed incidents that target it."""
+    used = []
+    for row in db.execute("SELECT kind, ref, record FROM product_bindings WHERE product_key = ?",
+                          (product,)).fetchall():
+        record = json.loads(row["record"])
+        where = row["ref"] if row["kind"] == "project" else record.get("project")
+        if not record.get("test") and where == project:
+            used.append(row["ref"])
+    used += [row["fault_id"] for row in db.execute(
+        "SELECT fault_id FROM incident_routes WHERE product_key = ? AND origin != ?"
+        " AND json_extract(target, '$.project') = ? LIMIT 5",
+        (product, products.SIMULATED, project)).fetchall()]
+    return used
+
+
 class ProductRouter:
     def __init__(self, store, clock, port=None):
         self.store = store
@@ -71,6 +88,16 @@ class ProductRouter:
                                 f"{registry['product']} has simulated routes or test bindings"
                                 f" on its test target {before['testTarget']}; they would be"
                                 f" left on a target the product no longer names")
+            target = registry["testTarget"]
+            real = _real_on(db, registry["product"], target["project"]) if target else []
+            if real:
+                # One owned target per product, workspace and project: a test target on a
+                # project real work uses would let a simulated record repoint that work's
+                # writes to the test team.
+                products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
+                                f"{registry['product']} does real work in {target['project']}"
+                                f" ({', '.join(real)}); a test target there would share that"
+                                f" project's target with it")
             db.execute(
                 "INSERT INTO product_registry (product_key, record, recorded_at) VALUES (?,?,?)"
                 " ON CONFLICT(product_key) DO UPDATE SET record = excluded.record,"
