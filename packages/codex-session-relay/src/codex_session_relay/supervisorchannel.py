@@ -482,8 +482,14 @@ class SupervisorChannel:
 
         None when it does. Else ("obsolete", detail) when the event now raises another
         obligation, or ("restage", detail) when it raises the same one from a report other than
-        the one the packet was composed from. An omission has no event and is never stale here:
-        its evidence is the reading frozen on its own row.
+        the one the packet was composed from, or when a NEWER event raises the same block or
+        decision - the child said it again, and I-246 sends the newest statement while nothing
+        has been sent. An omission has no event and is never stale here: its evidence is the
+        reading frozen on its own row.
+
+        Asked by the claim and asked again by the transport-start write, because a report or a
+        restatement committing between those two writes left the claim's answer stale at the one
+        instant that decides what goes out.
         """
         from .report import read as read_work_report
 
@@ -507,6 +513,13 @@ class SupervisorChannel:
                     + repr(_submission_of(report)) + " and this message was composed from "
                     + repr(row["submission_no"]) + ". Nothing was sent; staging it again"
                       " carries the report that stands")
+        newest = (self._latest_statement(raised).get("basis") or {}).get("eventId")
+        if newest and newest != row["event_id"]:
+            return ("restage",
+                    "event " + repr(newest) + " states this " + str(raised["kind"])
+                    + " again after event " + repr(row["event_id"]) + ", which this message"
+                      " was composed from. Nothing was sent; staging it again carries the"
+                      " newest statement")
         return None
 
     def _hierarchy_in(self, db, message_id):
@@ -1291,6 +1304,40 @@ class SupervisorChannel:
                     " before its transport started: " + str(moved.detail) + ". Nothing was"
                     " sent, and the attempt is recorded as sending nothing, so staging it"
                     " again re-addresses it to whoever the linkage names then"))
+            # And the fact is still the one the packet was composed from, asked again here for
+            # the reason the hierarchy is: the claim's answer is stale by the time this write is
+            # granted. A first report, or a restatement, committing in between otherwise went
+            # out as the packet composed without it, and a block the report turned into a
+            # decision woke the supervisor twice - once for the stale block, once for the
+            # decision staged after it.
+            stale = self._stale_in(db, message_id)
+            if stale is not None:
+                kind, detail = stale
+                record = {"requestId": request_id, "messageId": message_id,
+                          "attemptNo": attempt_no, "deliveryState": WITHHELD_PRE_SEND,
+                          "sendAttempted": "no", "retrySafe": True,
+                          "reason": "the fact moved between the claim and the transport",
+                          "refusal": RefusalReason.SUPERSEDED_REVISION.value,
+                          "stale": kind, "detail": detail}
+                db.execute(
+                    "UPDATE supervisor_attempts SET state = ?, send_attempted = 'no',"
+                    " retry_safe = 1, record = ?, observed_at = ? WHERE request_id = ?",
+                    (WITHHELD_PRE_SEND, json.dumps(record, sort_keys=True), at, request_id))
+                # Queued again under this claim's own state, attempt and lease owner; an event
+                # that raises another obligation now holds the message, as the claim would have.
+                db.execute(
+                    "UPDATE supervisor_messages SET state = ?, next_eligible_at = NULL,"
+                    " hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
+                    " WHERE message_id = ? AND state = ? AND attempt_count = ?"
+                    "   AND lease_owner IS ?",
+                    (QUEUED, SUPERSEDED_HOLD if kind == "obsolete" else None, at, message_id,
+                     SENDING, attempt_no, owner))
+                self.store.journal(
+                    "supervisor_message_superseded" if kind == "obsolete"
+                    else "supervisor_message_withheld", message_id,
+                    {"requestId": request_id, "stale": kind, "detail": detail,
+                     "reason": "the fact moved between the claim and the transport"}, at=at)
+                return ("moved", DeliveryRefused(RefusalReason.SUPERSEDED_REVISION, detail))
             # The instant, and the send it spends, are taken AFTER the lock was granted and the
             # hierarchy asked, not before: waiting for the lock and resolving can take seconds,
             # and a stamp read before them dated the transport start earlier than it was - so a

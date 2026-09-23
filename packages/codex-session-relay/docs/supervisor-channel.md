@@ -158,8 +158,11 @@ A message staged from its event before any report existed froze no report, so th
 on that event is recorded. Refusing it lost the report outright: a block staged from its outcome
 could never be told it was a decision only the user can make. The claim asks, inside its own
 write, whether the event still raises what the message is for from the report the packet was
-composed from. A packet composed without the report that now stands is refused as
-`superseded_revision` with nothing sent, and staging again restates it in place with that
+composed from, and the write that stamps the transport start asks again, because a report
+committing between those two writes is otherwise sent as the packet composed without it. A
+packet composed without the report that now stands is refused as `superseded_revision` with
+nothing sent - at the transport start the attempt is recorded as sending nothing - and staging
+again restates it in place with that
 report, journalled as `supervisor_message_restated` with both submissions. An event that now
 raises a different obligation - the block that turned out to be a decision - holds its old
 message as `superseded_by_report`, and the new obligation is staged as its own message. That
@@ -220,7 +223,8 @@ which task a report is for is decided where it is staged.
 A message leaves `sending` only through the claim that holds it: this message, this attempt
 number and this lease owner, all three in the predicate of the write that moves it. `_settle`
 records the transport's answer that way, and the transport-start write that finds the hierarchy
-moved, or the send budget spent, releases the message the same way. The one other way out is
+moved, the fact the packet was composed from moved, or the send budget spent, releases the
+message the same way. The one other way out is
 recovery, which takes the
 row from a claim whose lease expired with no receipt, and what it does depends on a durable
 fact. `transport_started_at` is stamped only by the claim holding the row, inside the write
@@ -524,6 +528,13 @@ entry naming both events, and the recipient's own bounds kept. Once an attempt m
 the newer statement is the same fact said again and is not reported again; staging answers
 that, naming the newer event's own evidence. A completion is keyed on its event, so a corrected
 completion is always its own message.
+
+A send never goes out as an older statement either. The claim asks for the newest event that
+raises the message's block or decision, and the transport-start write asks again; a message
+staged from an earlier statement is refused there as `superseded_revision`, with nothing sent
+and the attempt recorded as sending nothing, and staging again restates it. Without that, a
+restatement accepted after staging and before the send went nowhere: the older statement was
+sent, and the newer one was then answered as a fact already reported.
 
 A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
 project by walking up the edge the assignment holds on its issue, and archiving the assignment
