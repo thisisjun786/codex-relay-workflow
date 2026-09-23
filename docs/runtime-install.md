@@ -1221,8 +1221,8 @@ moved aside and registered again, and a thread started in between has no bridge 
 differs from the relay's launch declaration, which names only the file. The digest is what lets a
 changed file fail visibly instead of being enforced unregistered.
 
-A success is reported only after the policy file has been hashed again, following the write, and
-still matched. The digest is taken before the write, and nothing locks the policy file, so the
+A created record is reported only after the policy file has been hashed again, following the write,
+and still matched. The digest is taken before the write, and nothing locks the policy file, so the
 file is hashed twice more under the record's lock. Immediately before the write, a mismatch writes
 nothing: the run answers `record_policy_changed` with exit 1, and the host keeps no record, as
 before the run. After the write, with the record read back, a mismatch in that short interval gets

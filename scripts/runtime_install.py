@@ -5267,6 +5267,30 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=N
     return None
 
 
+def _register_mcp_plugin_note(outcome):
+    """What the plugin-owned register-mcp run did, in the words its outcome supports.
+
+    Each outcome gets its own sentence, so a rerun that wrote nothing never reads as a write and a
+    write that could not be confirmed never reads as nothing installed.
+    """
+    unregistered = (" No MCP server was registered: the plugin package declares the server, so"
+                    " installing that package registers it. Recorded, registered and a tool"
+                    " actually called stay three claims.")
+    if outcome == bridgerecord.CREATED:
+        return "The record was written." + unregistered
+    if outcome == bridgerecord.UNCHANGED:
+        return "This record was already installed, and this run wrote nothing." + unregistered
+    if outcome == bridgerecord.WOULD_CREATE:
+        return ("Nothing was written: this was a dry run. With --apply the record would be"
+                " written.") + unregistered
+    if outcome == bridgerecord.APPLIED_UNVERIFIED:
+        return ("The record was written and could not be read back as written, so whether a new"
+                " thread can start the bridge from it is not established; detail says what was"
+                " found.")
+    return ("Refused. This run installed no record a new thread can start the bridge from;"
+            " detail says what is at the record path now and repair says what to do.")
+
+
 def cmd_register_mcp(args):
     """Decide the owner and register, with both halves under one lock.
 
@@ -5400,16 +5424,7 @@ def _register_mcp_owned(args, codex_home):
                   " under it and a thread already running keeps the bridge it spawned. Read"
                   " get_capabilities in a new thread to observe it.")}
                  if answered in bridgerecord.SETTLED else {}),
-              "note": (
-                  "The record was written and no MCP server was registered. The plugin package"
-                  " declares the server, so install that package to register it. Written,"
-                  " registered and a tool actually called stay three claims."
-                  if answered in (bridgerecord.CREATED, bridgerecord.UNCHANGED) else
-                  "Nothing was written: this was a dry run. With --apply the record would be"
-                  " written and no MCP server registered."
-                  if answered == bridgerecord.WOULD_CREATE else
-                  "Refused. This run installed no record a new thread can start the bridge from;"
-                  " detail says what is at the record path now and repair says what to do.")})
+              "note": _register_mcp_plugin_note(answered)})
         return EXIT_OK if answered in bridgerecord.SETTLED else EXIT_REFUSED
     try:
         with reading.region(path, "the Codex configuration"):

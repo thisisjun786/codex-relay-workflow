@@ -1058,6 +1058,52 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
                          [], "nothing is moved aside")
 
+    def test_a_rerun_that_writes_nothing_does_not_say_it_wrote(self):
+        """Review of f743d438: every outcome printed "The record was written"."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.UNCHANGED, output)
+        self.assertIs(emitted.get("wrote"), False, output)
+        note = emitted.get("note") or ""
+        self.assertNotIn("was written", note, output)
+        self.assertIn("already installed", note, output)
+        self.assertIn("activation", emitted, output)
+
+    # register-mcp in a process whose record write lands truncated, so it cannot be read back.
+    TRUNCATES_THE_RECORD = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "real_write = hostrecord.atomic_write\n"
+        "def truncated(path, text):\n"
+        "    if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
+        "        text = text[:len(text) // 2]\n"
+        "    return real_write(path, text)\n"
+        "hostrecord.atomic_write = truncated\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[2:]))\n"
+    )
+
+    def test_a_write_that_cannot_be_read_back_is_reported_as_written_and_unverified(self):
+        """Review of f743d438: the refusal note said no record was installed over one that was."""
+        done = subprocess.run(
+            [sys.executable, "-c", self.TRUNCATES_THE_RECORD, str(ROOT / "scripts"),
+             "register-mcp", "--codex-home", str(self.home.codex_home), "--bridge-command",
+             str(self.bridge), "--owner", "plugin", "--execution-policy", str(self.policy),
+             "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        emitted = json.loads(done.stdout)
+        self.assertNotEqual(done.returncode, 0, output)
+        self.assertEqual(emitted.get("outcome"), bridgerecord.APPLIED_UNVERIFIED, output)
+        self.assertIs(emitted.get("wrote"), True, output)
+        note = emitted.get("note") or ""
+        self.assertIn("was written", note, output)
+        self.assertIn("could not be read back", note, output)
+        self.assertNotIn("activation", emitted, output)
+        self.assertTrue(self.record.exists(), output)
+
     def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
         """The path that writes nothing is settled against the file as it stands too."""
         status, emitted, output = self.register("--apply")
