@@ -327,71 +327,6 @@ def _policy_now(wanted):
     return [] if reference is None else policy_file_complaints(reference)
 
 
-def _file_identity(path):
-    """(identity, bytes) of the regular file at path, from one descriptor, or None.
-
-    Opened without blocking or following a link, and judged on that descriptor, so the inode and
-    the bytes are one file's even if the path moves while this reads it.
-    """
-    try:
-        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
-                             | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        return None
-    try:
-        found = os.fstat(descriptor)
-        if not stat_module.S_ISREG(found.st_mode):
-            return None
-        chunks = []
-        while True:
-            chunk = os.read(descriptor, 1 << 16)
-            if not chunk:
-                return (found.st_dev, found.st_ino), b"".join(chunks)
-            chunks.append(chunk)
-    except OSError:
-        return None
-    finally:
-        os.close(descriptor)
-
-
-def _remove_if_written_here(path, written):
-    """Remove the record at path only while it is the file this run wrote: (removed, why).
-
-    Compare-and-remove, because the lock around the write does not exclude a writer that ignores
-    it or one that reclaimed it as stale, and removing whatever is at the path by then deletes
-    that writer's record. The file is renamed aside, which is atomic, and judged there: the same
-    inode holding the same bytes is this run's and is deleted. Anything else is linked back,
-    which fails rather than replace a record that arrived since; it then stays aside under the
-    name the answer gives. Either way nothing another writer put there is deleted.
-    """
-    aside = path.with_name(path.name + ".policy-changed-" + str(os.getpid()) + "-"
-                           + os.urandom(4).hex())
-    try:
-        os.rename(str(path), str(aside))
-    except OSError as error:
-        return False, ("it could not be moved aside to be judged (" + type(error).__name__ + ": "
-                       + str(error) + ")")
-    if written is not None and _file_identity(aside) == written:
-        try:
-            os.unlink(str(aside))
-        except OSError as error:
-            return False, ("it was moved aside to " + str(aside) + " and could not be deleted ("
-                           + type(error).__name__ + ": " + str(error) + ")")
-        return True, None
-    try:
-        os.link(str(aside), str(path))
-    except OSError as error:
-        return False, ("the file there was no longer the one this run wrote; it was moved aside to "
-                       + str(aside) + " and could not be put back (" + type(error).__name__ + ": "
-                       + str(error) + "), so it is kept there and nothing was deleted")
-    try:
-        os.unlink(str(aside))
-    except OSError:
-        return False, ("the file there was no longer the one this run wrote, so it was left in"
-                       " place; a second name for it remains at " + str(aside))
-    return False, "the file there was no longer the one this run wrote, so it was left in place"
-
-
 def outcome_for(wanted, found):
     if not found.usable:
         return found.state
@@ -419,12 +354,15 @@ def write(path, wanted, *, apply=False):
     A record that names a policy is settled only against the policy as it stands when the
     answer is given. The digest was taken before this was called, and the policy file is not
     under this lock, so an edit in between would leave a record every new thread's launcher
-    refuses. The file is asked again after the write, with the written record read back under
-    the lock: a mismatch removes the record this run wrote, which leaves the path as it was
-    found (absent, the only state a write starts from), and answers POLICY_CHANGED. An
-    already-installed record whose policy no longer matches is not this run's, so it is left as
-    it is and answered the same way. The removal is compare-and-remove (_remove_if_written_here):
-    a record another writer put there after the write is never the one deleted.
+    refuses. So the file is asked twice more under the lock. Immediately before the write: a
+    mismatch writes nothing, which keeps the path as it was found (absent, the only state a
+    write starts from), and answers POLICY_CHANGED. After the write, with the written record read
+    back: a mismatch in that last interval answers POLICY_CHANGED too, and the record stays
+    where it is with the repair named. It is not removed. The lock does not exclude a writer
+    that ignores it, and no removal by path can prove the file it deletes is still the one this
+    run wrote, so this follows the rule a record that cannot be read back already follows:
+    reported, never deleted. An already-installed record whose policy no longer matches is
+    answered the same way and left as it is.
     """
     path = Path(path)
     unusable = complaints(wanted)
@@ -471,29 +409,27 @@ def write(path, wanted, *, apply=False):
             answer["detail"] = ("the record changed after it was read, so nothing was written;"
                                 " rerun to decide against the file as it now stands")
             return answer
-        text = json.dumps(wanted, indent=2, sort_keys=True) + "\n"
-        hostrecord.atomic_write(path, text)
-        # The inode and bytes this run put there, taken before anything is judged, so a removal
-        # can later tell this run's file from one that replaced it.
-        written = _file_identity(path)
-        if written is not None and written[1] != text.encode("utf-8"):
-            written = None
+        stale = _policy_now(wanted)
+        if stale:
+            answer["outcome"] = POLICY_CHANGED
+            answer["detail"] = ("the execution policy changed after it was read: "
+                                + "; ".join(stale) + ". A record naming it would start no bridge,"
+                                " so nothing was written")
+            answer["repair"] = "run register-mcp again against the file as it now stands"
+            return answer
+        hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
         back = read_json_without_blocking(path, "the bridge MCP record")
         stale = _policy_now(wanted) if back.usable and back.value == wanted else []
-        if stale:
-            removed, why = _remove_if_written_here(path, written)
     if stale:
         answer["outcome"] = POLICY_CHANGED
+        answer["applied"] = True
         answer["wrote"] = True
-        answer["rolledBack"] = removed
         answer["detail"] = ("the execution policy changed while this record was being written: "
-                            + "; ".join(stale) + ". The launcher would refuse to start the bridge"
-                            " from it, so "
-                            + ("the record this run wrote was removed and nothing is installed"
-                               if removed else
-                               "this run tried to remove the record it wrote and did not: " + why))
-        answer["repair"] = ("run register-mcp again against the file as it now stands"
-                            if removed else _POLICY_REPAIR.format(path=path))
+                            + "; ".join(stale) + ". The record is in place and the launcher will"
+                            " refuse to start the bridge from it. It was not removed, because"
+                            " this command never deletes a record it cannot prove is still the"
+                            " one it wrote")
+        answer["repair"] = _POLICY_REPAIR.format(path=path)
         return answer
     answer["outcome"] = CREATED
     answer["applied"] = True

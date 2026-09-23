@@ -1223,14 +1223,17 @@ changed file fail visibly instead of being enforced unregistered.
 
 A success is reported only after the policy file has been hashed again, following the write, and
 still matched. The digest is taken before the write, and nothing locks the policy file, so the
-record is read back under its own lock after the write and the file is hashed again. If the file
-changed in between, the run answers `record_policy_changed` with exit 1 and removes the record it
-wrote, leaving no record as before the run. The removal is compare-and-remove: the record is moved
-aside and deleted only if it is still the file this run wrote, and a record another writer put
-there is put back and left alone. A rerun over an installed record whose file has changed since
-gets the same answer and leaves that record where it is. The transition's record step writes
-through the same function and refuses the same way. An edit made after that last check is caught
-where every other one is: the launcher hashes the file at every start and refuses the record.
+file is hashed twice more under the record's lock. Immediately before the write, a mismatch writes
+nothing: the run answers `record_policy_changed` with exit 1, and the host keeps no record, as
+before the run. After the write, with the record read back, a mismatch in that short interval gets
+the same answer, and the record stays where it is with the repair named: move it aside and register
+again. It is not removed, because the record's lock does not exclude a writer that ignores it, and
+no removal by path can prove the file it deletes is still the one this run wrote. That is the rule
+a record that cannot be read back already follows. A rerun over an installed record whose file has
+changed since gets the same answer and leaves that record where it is. The transition's record
+step writes through the same function and refuses the same way. An edit made after the last check
+is caught where every other one is: the launcher hashes the file at every start and refuses the
+record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the

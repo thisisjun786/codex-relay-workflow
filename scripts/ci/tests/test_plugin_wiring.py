@@ -902,46 +902,75 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.split()[-1:], ["True"], done.stdout + done.stderr)
 
-    # register-mcp in a process whose record write first rewrites the policy file: the edit
-    # lands after the policy was read and hashed, and before the record naming that hash exists.
-    EDITS_THE_POLICY_AT_THE_WRITE = (
+    # register-mcp in a process that rewrites the policy file at one of two points: on entering
+    # the record's lock ("lock"), after the policy was read and hashed and before anything is
+    # written, or inside the record write itself ("write"), after the last look before it.
+    EDITS_THE_POLICY = (
         "import os, sys\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "from crw_runtime import hostrecord\n"
-        "policy = sys.argv[2]\n"
-        "real = hostrecord.atomic_write\n"
-        "def edited_first(path, text):\n"
-        "    if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
-        "        with open(policy, 'w', encoding='utf-8') as handle:\n"
-        "            handle.write('{\"roles\": {\"child\": {\"model\": \"a/b\",'\n"
-        "                         ' \"reasoningEffort\": \"low\"}}}\\n')\n"
-        "    return real(path, text)\n"
-        "hostrecord.atomic_write = edited_first\n"
+        "policy, where = sys.argv[2], sys.argv[3]\n"
+        "def edit():\n"
+        "    with open(policy, 'w', encoding='utf-8') as handle:\n"
+        "        handle.write('{\"roles\": {\"child\": {\"model\": \"a/b\",'\n"
+        "                     ' \"reasoningEffort\": \"low\"}}}\\n')\n"
+        "if where == 'lock':\n"
+        "    real_enter = hostrecord.Locked.__enter__\n"
+        "    def entered_then_edited(self):\n"
+        "        held = real_enter(self)\n"
+        "        if self.path.name.startswith('crw-bridge-mcp.json'):\n"
+        "            edit()\n"
+        "        return held\n"
+        "    hostrecord.Locked.__enter__ = entered_then_edited\n"
+        "else:\n"
+        "    real_write = hostrecord.atomic_write\n"
+        "    def edited_then_written(path, text):\n"
+        "        if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
+        "            edit()\n"
+        "        return real_write(path, text)\n"
+        "    hostrecord.atomic_write = edited_then_written\n"
         "import runtime_install\n"
-        "raise SystemExit(runtime_install.main(sys.argv[3:]))\n"
+        "raise SystemExit(runtime_install.main(sys.argv[4:]))\n"
     )
 
-    def test_a_policy_edited_while_the_record_is_written_is_not_reported_installed(self):
+    def register_while_the_policy_is_edited(self, where):
+        done = subprocess.run(
+            [sys.executable, "-c", self.EDITS_THE_POLICY, str(ROOT / "scripts"),
+             str(self.policy), where, "register-mcp", "--codex-home", str(self.home.codex_home),
+             "--bridge-command", str(self.bridge), "--owner", "plugin", "--execution-policy",
+             str(self.policy), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        self.assertNotEqual(hashlib.sha256(self.policy.read_bytes()).hexdigest(), self.digest,
+                            "the hook has to have changed the policy for this to prove anything")
+        return done.returncode, json.loads(done.stdout), output
+
+    def test_a_policy_edited_after_it_was_read_writes_nothing(self):
         """Devin, PR #137: the digest was taken before the write and never asked again.
 
         The launcher hashes the file at every start, so a record naming the old digest starts no
         bridge on any new thread, and register-mcp answered created and exit 0 over it.
         """
-        done = subprocess.run(
-            [sys.executable, "-c", self.EDITS_THE_POLICY_AT_THE_WRITE, str(ROOT / "scripts"),
-             str(self.policy), "register-mcp", "--codex-home", str(self.home.codex_home),
-             "--bridge-command", str(self.bridge), "--owner", "plugin", "--execution-policy",
-             str(self.policy), "--apply"],
-            capture_output=True, text=True, timeout=60)
-        output = done.stdout + done.stderr
-        emitted = json.loads(done.stdout)
-        self.assertNotEqual(hashlib.sha256(self.policy.read_bytes()).hexdigest(), self.digest,
-                            "the hook has to have changed the policy for this to prove anything")
-        self.assertNotEqual(done.returncode, 0, output)
+        status, emitted, output = self.register_while_the_policy_is_edited("lock")
+        self.assertNotEqual(status, 0, output)
         self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
         self.assertIn("now hashes to", emitted.get("detail") or "", output)
-        self.assertFalse(self.record.exists(), "the record this run wrote goes with the run: "
+        self.assertFalse(self.record.exists(), "nothing is written over a changed policy: "
                          + output)
+
+    def test_a_policy_edited_while_the_record_is_written_is_not_reported_installed(self):
+        """The edit that lands after the last look before the write is caught by the read-back.
+
+        The record is then in place and is reported with its repair rather than removed: no
+        removal by path can prove the file it deletes is still the one this run wrote.
+        """
+        status, emitted, output = self.register_while_the_policy_is_edited("write")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
+        self.assertIn("now hashes to", emitted.get("detail") or "", output)
+        self.assertTrue(emitted.get("wrote"), output)
+        self.assertIn("aside", emitted.get("repair") or "", output)
+        self.assertTrue(self.record.exists(), output)
 
     def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
         """The path that writes nothing is settled against the file as it stands too."""
@@ -958,11 +987,11 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
 
     def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
-        """Review of 28f11c04: the removal took whatever was at the path by then.
+        """Review of 28f11c04 and 8f019c24: a removal by path took whatever was there by then.
 
         The lock around the write does not exclude a writer that ignores it, or one that
         reclaimed it as stale. Here that writer replaces the record after the write and before
-        the removal; its record has to survive, and the answer must not claim a rollback.
+        the last look at the policy; its record has to survive, and the answer must say so.
         """
         wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
                                        owner=bridgerecord.OWNER_PLUGIN,
@@ -973,8 +1002,12 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                                                   owner=bridgerecord.OWNER_PLUGIN),
                             indent=2) + "\n"
         real = bridgerecord.policy_file_complaints
+        asked = []
 
         def replaced_then_stale(reference):
+            asked.append(reference)
+            if len(asked) == 1:
+                return real(reference)  # the look before the write
             staged = self.record.with_name("theirs.tmp")
             staged.write_text(theirs, encoding="utf-8")
             os.replace(staged, self.record)
@@ -986,12 +1019,12 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         finally:
             bridgerecord.policy_file_complaints = real
         self.assertEqual(answer["outcome"], "record_policy_changed", answer)
-        self.assertIs(answer.get("rolledBack"), False, answer)
+        self.assertIn("not removed", answer["detail"], answer)
         self.assertTrue(self.record.exists(), "another writer's record was deleted: "
                         + json.dumps(answer))
         self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
         self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
-                         [], "nothing is left aside when the record could be put back")
+                         [], "nothing is moved aside")
 
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),

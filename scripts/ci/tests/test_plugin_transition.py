@@ -780,7 +780,7 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
                          json.dumps(answer, indent=2)[:2000])
 
     def test_a_policy_edited_while_the_rebuilt_record_is_written_is_refused(self):
-        """The transition's answer comes from the same post-write check as register-mcp's."""
+        """The transition writes through the same checks as register-mcp: nothing is written."""
         import importlib
         sys.path.insert(0, str(ROOT / "scripts"))
         steps = importlib.import_module("crw_transition.steps")
@@ -801,18 +801,19 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         host = {"codexHome": str(home), "destination": str(self.host.destination),
                 "mcp": {"record": None, "registration": None, "recordOwner": None,
                         "recordPath": str(home / bridgerecord.RECORD_NAME)}}
-        real = hostrecord.atomic_write
+        real = hostrecord.Locked.__enter__
 
-        def edited_first(path, text):
-            if Path(path).name == bridgerecord.RECORD_NAME:
+        def entered_then_edited(lock):
+            held = real(lock)
+            if lock.path.name.startswith(bridgerecord.RECORD_NAME):
                 policy.write_text("{}", encoding="utf-8")
-            return real(path, text)
+            return held
 
-        hostrecord.atomic_write = edited_first
+        hostrecord.Locked.__enter__ = entered_then_edited
         try:
             answer = steps.mcp_record_install(host, {}, apply=True)
         finally:
-            hostrecord.atomic_write = real
+            hostrecord.Locked.__enter__ = real
         self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
         self.assertIn("now hashes to", json.dumps(answer))
         self.assertFalse((home / bridgerecord.RECORD_NAME).exists())
