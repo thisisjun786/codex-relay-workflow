@@ -585,6 +585,18 @@ def check(one, *, required=None) -> None:
                 "the policy states " + ", ".join(missing) + " as nothing; the workflow in"
                 " particular has no transport field, so an unstated one is dropped rather"
                 " than defaulted")
+        # A packet read back from disk never went through policy(), which writes text. A
+        # number would compare equal to its own spelling in a record, and an accepted one
+        # would be written into the receiver's ledger as an assignment no later reading can
+        # use, so it is refused here, before anything is compared or recorded.
+        mistyped = [name for name in ("model", "effort", "workflow")
+                    if not isinstance(one[POLICY][name], str)]
+        if mistyped:
+            raise PacketRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the policy states " + ", ".join(mistyped) + " as something other than"
+                " text; a setting is a name, and another shape would agree with its own"
+                " spelling in the record")
         if one[POLICY][MODE] not in MODES:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,

@@ -182,8 +182,11 @@ digest and disposition it got, whether the receiver has recorded acting on it, a
 assignment is accepted, the mode and workflow that assignment gave. Writes happen under a lock
 on a sidecar file, in a directory created if it is missing, and replace the ledger atomically,
 with the directory synced after the rename. A ledger with an entry that is not one - an
-answer without its digest, disposition or applied flag, or an assignment whose fields are not
-text - is refused as damaged rather than read through.
+answer without its digest, disposition or applied flag, or an assignment that cannot name the
+accepted assignment its mode came from (an execution mode, the workflow and the message id) -
+is refused as damaged rather than read through. What reaches the ledger cannot be damaged in
+that way: a policy whose model, effort or workflow is not text is refused before anything is
+compared, so no packet can write an entry the next check would refuse.
 
 Being told and acting are two records. A check records the answer; only the receiver says it
 acted, afterwards, with `packet-check --packet <file> --receiver <id> --ledger <file> --applied`,

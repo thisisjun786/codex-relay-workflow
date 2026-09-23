@@ -536,11 +536,16 @@ def _entry_problem(ledger):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
                     " disposition and whether it was applied")
     for relationship, entry in ledger["assignments"].items():
-        if not isinstance(entry, dict) or any(
-                entry.get(name) is not None and not isinstance(entry[name], str)
-                for name in ("mode", "workflow", "messageId", "dispatchRequestId")):
-            return ("assignment entry " + repr(relationship) + " is not a mode, a workflow, a"
-                    " message id and a dispatch id")
+        # The mode it holds is read as the mode of an accepted assignment, so the entry has to
+        # be able to name that assignment: an execution mode, a workflow and a message id,
+        # and the dispatch as text or null (a later assignment may have read none).
+        if not isinstance(entry, dict) or entry.get("mode") not in packets.MODES or any(
+                not isinstance(entry.get(name), str) or not entry[name].strip()
+                for name in ("workflow", "messageId")) or (
+                entry.get("dispatchRequestId") is not None
+                and not isinstance(entry["dispatchRequestId"], str)):
+            return ("assignment entry " + repr(relationship) + " is not an execution mode, a"
+                    " workflow, the message id of the assignment and a dispatch id")
     return None
 
 
