@@ -118,7 +118,7 @@ class SingleInstance:
 class RelayDaemon:
     def __init__(self, store, registry, intake, delivery, ack, reconciler, adapter, *,
                  policy=None, clock=None, log=None, faults=None, fault_scope=None,
-                 supervisor_channel=None):
+                 fault_selection=None, supervisor_channel=None):
         self.store = store
         self.registry = registry
         self.intake = intake
@@ -133,6 +133,13 @@ class RelayDaemon:
         # a ledger still ticks exactly as it did.
         self.faults = faults
         self.fault_scope = fault_scope or {}
+        # The store selection omitted.observe reads CRW-180 readings through. With it, the
+        # sweep reads this relay's own managed turns a few per tick; without it, only what the
+        # store derives by itself is collected.
+        self.fault_selection = fault_selection
+        # The unsent-writes warning last carried as a note, so it is carried when it appears or
+        # changes rather than on every tick of a run that collects every tick's report.
+        self._last_attention = None
         # Optional too, and absent means the supervisor pass does not run. Given one, a parent
         # that never stages or sends still has its reports go up (CRW-215).
         self.supervisor_channel = supervisor_channel
@@ -181,6 +188,10 @@ class RelayDaemon:
 
         This pass never writes to Linear and never can: it queues what a credential holder
         will write, and the relay holds no credential.
+
+        Unsent writes are carried as a note on the tick where the warning appears or changes,
+        so an operator reading the ticks sees them without having to ask. A note does not make
+        a tick busy.
         """
         if self.faults is None:
             return
@@ -188,11 +199,16 @@ class RelayDaemon:
             from . import faultsweep
 
             batch = faultsweep.sweep(self.store, scope=self.fault_scope,
-                                     policy=self.policy)
+                                     policy=self.policy, selection=self.fault_selection,
+                                     now=self.clock.iso())
             answer = faultsweep.record_all(self.faults, batch, store=self.store)
             report.faultsRecorded += answer["recorded"]
             for gap in answer["gaps"]:
-                report.notes.append(f"fault reading unusable: {gap['reason']}")
+                report.notes.append(f"fault {gap['gap']}: {gap['reason']}")
+            warning = self.faults.attention().get("warning")
+            if warning and warning != self._last_attention:
+                report.notes.append(warning)
+            self._last_attention = warning
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"fault sweep failed: {error}")
 

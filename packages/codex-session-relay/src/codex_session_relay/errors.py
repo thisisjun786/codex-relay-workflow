@@ -190,6 +190,16 @@ class RefusalReason(str, Enum):
     FAULT_UNVERIFIED = "fault_unverified"
     FAULT_VERIFICATION_STALE = "fault_verification_stale"
     FAULT_RECURRED_AFTER_VERIFICATION = "fault_recurred_after_verification"
+    # The corrected contract's refusals, appended for the same reason as the block above. Each
+    # names a different next action: reconcile a write before adopting over it, keep one
+    # product per scope key, take a write over explicitly, wait for the budget window, leave a
+    # fixed policy alone, and load the module that registers a kind before acting on it.
+    FAULT_ADOPT_CONFLICT = "fault_adopt_conflict"
+    FAULT_SCOPE_CONFLICT = "fault_scope_conflict"
+    FAULT_WRITER_CONFLICT = "fault_writer_conflict"
+    FAULT_BUDGET_SPENT = "fault_budget_spent"
+    FAULT_POLICY_FIXED = "fault_policy_fixed"
+    FAULT_KIND_UNREGISTERED = "fault_kind_unregistered"
 
 
 
