@@ -258,9 +258,13 @@ def evaluate(router, product) -> dict:
 def _evaluate(router, product) -> dict:
     registry = router.registry(product)
     policy = router.policy()
+    # First what is already queued: a create the pre-issue check would refuse now, because the
+    # policy is off or its goal no longer qualifies, is withdrawn here rather than whenever a
+    # holder reaches it, and a proposal left with nothing outstanding is settled.
+    cancelled = _withdraw(router, product)
     if registry is None or policy is None or not policy["enabled"]:
-        return {"queued": [], "skipped": [], "reason": "no explicit project creation policy is"
-                                                         " enabled"}
+        return {"queued": [], "skipped": [], "cancelled": cancelled,
+                "reason": "no explicit project creation policy is enabled"}
     port = router.port
     queued, skipped = [], []
     for goal, group in sorted(_groups(router, product).items()):
@@ -320,7 +324,7 @@ def _evaluate(router, product) -> dict:
                           detail=f"project for {goal} queued under the explicit policy")
         queued.append({"goal": goal, "faultId": fault_id, "trigger": trigger,
                        "members": payload["members"]})
-    return {"queued": queued, "skipped": skipped}
+    return {"queued": queued, "skipped": skipped, "cancelled": cancelled}
 
 
 REVISABLE = ("pending", "failed", "claimed")
@@ -335,10 +339,19 @@ def revise(router, product) -> dict:
     ledger's to reconcile and is left alone. One transaction, as for evaluate.
     """
     with router.store.composing():
-        return _revise(router, product)
+        evaluated = _evaluate(router, product)
+    return {"cancelled": evaluated["cancelled"], "queued": evaluated["queued"]}
 
 
-def _revise(router, product) -> dict:
+def withdraw(router, product) -> list:
+    """Withdraw the product's unissued creates that no longer qualify, in one transaction."""
+    with router.store.composing():
+        return _withdraw(router, product)
+
+
+def _withdraw(router, product) -> list:
+    """Cancel every unissued create of the product's outstanding proposals that the pre-issue
+    checks would refuse now, and settle each proposal left with nothing outstanding."""
     port = router.port
     cancelled, after = [], None
     while True:
@@ -346,7 +359,8 @@ def _revise(router, product) -> dict:
                               dispositions=(products.PROJECT_PROPOSAL,), limit=100, after=after)
         for route in page["routes"]:
             fault = port.get(route["fault_id"])
-            for row in port.publications(route["fault_id"], kind=KIND, limit=100):
+            rows = port.publications(route["fault_id"], kind=KIND, limit=100)
+            for row in rows:
                 if row.get("state") not in REVISABLE:
                     continue
                 problems = _issuable(router.store.db, fault, row.get("payload"))
@@ -355,13 +369,16 @@ def _revise(router, product) -> dict:
                     cancelled.append({"faultId": route["fault_id"],
                                       "publicationId": row["publication_id"],
                                       "reasons": problems})
+            states = {row.get("state") for row in
+                      port.publications(route["fault_id"], kind=KIND, limit=100)}
+            if rows and states == {"cancelled"}:
+                with router.store.transaction() as db:
+                    routes.settle(db, router.clock, route["fault_id"],
+                                  "every create it queued was cancelled before issue")
         after = page["next"]
         if after is None:
             break
-    # Evaluated whether or not anything was cancelled: a registry change can also decide held
-    # routes again, which changes who shares a goal.
-    evaluated = evaluate(router, product)
-    return {"cancelled": cancelled, "queued": evaluated["queued"]}
+    return cancelled
 
 
 def bind_confirmed(router, route) -> list:

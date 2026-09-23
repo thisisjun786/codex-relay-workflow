@@ -194,7 +194,11 @@ member that left the goal takes its component with it. A create not yet issued w
 members, components or criteria have changed is cancelled and queued again with them, under the
 same id and in one transaction, whenever the goal is evaluated. That happens wherever membership
 can change: a defect held for want of a project, one that stops being held that way, a binding,
-and a change of registry, which also runs the same checks on the creates it revises. Issue, file or error counts
+and a change of registry, which also runs the same checks on the creates it revises. Every
+evaluation first withdraws the unissued creates the pre-issue check would refuse now, and settles
+a proposal left with nothing outstanding, so a goal that stopped qualifying leaves no
+`project_proposed` waiting on a create that will never be issued. `route-policy` does the same
+for every product in the transaction that switches the policy. Issue, file or error counts
 alone never create one, and a single defect goes into its product's existing suitable project.
 
 The proposal is a `project_needed` record of the product, recorded at notice under the scope

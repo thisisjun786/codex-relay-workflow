@@ -139,17 +139,23 @@ class ProductRouter:
         return [json.loads(row["record"]) for row in rows]
 
     def set_policy(self, record) -> dict:
-        """The explicit project creation policy. Without one routing never creates a project."""
+        """The explicit project creation policy. Without one routing never creates a project.
+
+        In the same transaction every product's unissued creates that the new policy no longer
+        allows are withdrawn, and their proposals settled, so a policy switched off leaves no
+        proposal waiting on a create that will never be issued."""
         policy = products.read_policy(record)
         now = self.clock.iso()
-        with self.store.transaction() as db:
+        with self.store.composing() as db:
             db.execute(
                 "INSERT INTO routing_policy (policy_key, record, basis, recorded_at)"
                 " VALUES (?,?,?,?) ON CONFLICT(policy_key) DO UPDATE SET"
                 "   record = excluded.record, basis = excluded.basis,"
                 "   recorded_at = excluded.recorded_at",
                 (policy["policy"], products.canonical(policy), policy["basis"], now))
-        return policy
+            withdrawn = {product: projects.withdraw(self, product)
+                         for product in self.registries()}
+        return {**policy, "withdrawn": {p: c for p, c in withdrawn.items() if c}}
 
     def policy(self, key=products.PROJECT_CREATION):
         row = self.store.one("SELECT record FROM routing_policy WHERE policy_key = ?", (key,))

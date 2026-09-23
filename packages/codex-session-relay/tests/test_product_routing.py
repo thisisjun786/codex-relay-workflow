@@ -436,15 +436,32 @@ class Projects(ProductRoutingCase):
         self.route(product="gamma-kit", repository="example-org/gamma-kit", surface="real_use",
                    phase="in_use", component="sync", symptom="dropped", occurrenceKey="g3",
                    goal={"key": "offline_sync", "criteria": "conflicts are surfaced"})
-        (row,) = [r for r in self.holder.pending() if r.get("kind") == projects.KIND]
-        pid = row.get("publicationId") or row.get("publication_id")
-        token = self.ledger.claim(pid, owner="holder")["claimToken"]
-        with self.assertRaises(faults.FaultRefused) as caught:
-            self.ledger.operation(pid, claim_token=token)
-        self.assertIn("a project needs one completion contract", str(caught.exception))
-        self.assertEqual("cancelled", self.ledger.publication(pid)["state"])
+        # Withdrawn when the conflicting defect arrived, not when a holder reaches it: the
+        # proposal is settled and waits on nothing.
+        self.assertEqual([], [r for r in self.holder.pending() if r.get("kind") == projects.KIND])
+        (proposal,) = self.router.show("gamma-kit")["projects"]
+        self.assertEqual(["cancelled"], [r["state"] for r in self.router.port.publications(
+            proposal["faultId"], kind=projects.KIND)])
+        self.assertEqual([], self.router.show("gamma-kit", attention=True)["projects"])
         self.holder.run()
         self.assertEqual({}, self.linear.projects)
+
+    def test_a_proposal_whose_goal_stops_qualifying_is_withdrawn_at_once(self):
+        self.router.set_policy(POLICY)
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        (proposal,) = self.router.show("gamma-kit")["projects"]
+        self.assertEqual(1, len(self.router.show("gamma-kit", attention=True)["projects"]))
+        answer = self.router.set_policy(dict(POLICY, enabled=False))
+        self.assertEqual([proposal["faultId"]],
+                         [c["faultId"] for c in answer["withdrawn"]["gamma-kit"]])
+        self.assertEqual(["cancelled"], [r["state"] for r in self.router.port.publications(
+            proposal["faultId"], kind=projects.KIND)])
+        self.assertEqual([], self.router.show("gamma-kit", attention=True)["projects"])
+        # Switched on again, the next change to the goal queues it again, the same create.
+        self.router.set_policy(POLICY)
+        self.gamma("sync", "dropped", "g3")
+        self.assertEqual(1, len(self.router.show("gamma-kit", attention=True)["projects"]))
 
     def test_settled_proposals_are_history_not_attention(self):
         self.router.set_policy(POLICY)
@@ -631,9 +648,11 @@ class Projects(ProductRoutingCase):
         claim = self.ledger.claim(pid, owner="holder")
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",
                                  components=["cache"]))
+        # The binding withdraws the claimed, unissued create at once; the holder's operation is
+        # refused and nothing is created.
         with self.assertRaises(faults.FaultRefused) as caught:
             self.ledger.operation(pid, claim_token=claim["claimToken"])
-        self.assertIn("cancelled before issue", str(caught.exception))
+        self.assertIn("cancelled", str(caught.exception))
         self.assertEqual("cancelled", self.router.port.publication(pid)["state"])
         self.assertEqual({}, self.linear.projects)
 
