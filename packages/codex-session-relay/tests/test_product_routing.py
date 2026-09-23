@@ -364,6 +364,26 @@ class ControlGroups(ProductRoutingCase):
         self.assertEqual("consistent", self.router.check_completion(
             reading("GMK-1", product="gamma-kit"))["verdict"])
 
+    def test_an_open_mismatch_whose_subject_leaves_every_project_is_refused_not_moved(self):
+        first = self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
+        (entry,) = first["recorded"]
+        self.holder.run()
+        port = self.router.port
+        before = port.get(entry["faultId"])
+        self.assertEqual("linked", before["linkState"])
+        # alpha-notes has no triage project, and the subject is rebound in none.
+        self.router.bind(binding("alpha-notes", "issue", "ALN-9", state="done",
+                                 components=["editor"], symptoms=["save_mismatch"],
+                                 fixRef="PR#12"))
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.check_completion(reading("ALN-9", observedAt="later",
+                                                 observed={"acceptance": "failed"}))
+        self.assertEqual("route_state_conflict", caught.exception.reason.value)
+        after = port.get(entry["faultId"])
+        self.assertEqual(
+            (before["occurrence_count"], before["scope_key"], "linked"),
+            (after["occurrence_count"], after["scope_key"], after["linkState"]))
+
     def test_a_recurrence_is_found_behind_a_long_remediation_history(self):
         self.router.bind(binding("alpha-notes", "issue", "ALN-12", components=["editor"],
                                  symptoms=["cursor_jump"], project="proj-aln-editor"))

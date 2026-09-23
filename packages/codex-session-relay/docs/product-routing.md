@@ -284,9 +284,11 @@ its reference. Anything else is **exception_unverified**.
 The subject must be an issue bound to the product as read back, because a mismatch is filed as a
 re-verification demand on the subject issue itself. The ledger adopts an issue only into a
 project's scope, so a mismatch on a subject bound in no project, for a product with no triage
-project, is refused before anything is written. It could be linked nowhere, and it is never filed
-as a new issue instead. Binding the subject with the project it is in, or registering a triage
-project, lets the reading be handed in again. It is a `completion_mismatch` record,
+project, is refused before anything is written. That holds whether the reading would open the
+mismatch or add to one already open, whose record would otherwise leave its project's scope and
+its subject's link. It could be linked nowhere, and it is never filed as a new issue instead.
+Binding the subject with the project it is in, or registering a triage project, lets the reading
+be handed in again. It is a `completion_mismatch` record,
 one per subject and check, adopted by the subject issue and recorded at degraded. The class
 declares a threshold of one, since a reading that looked for the evidence and did not find it is
 the whole proof. Under that default the first reading files, and its first write is a comment on

@@ -428,17 +428,19 @@ def _record_reading(router, reading) -> dict:
                                     f"{name} of {reading['subject']} was closed {MAX_ROUNDS}"
                                     f" times and found wrong again; that is a decision for"
                                     f" somebody, not another round")
+                if not project:
+                    # The ledger keeps the subject only in a project's scope, and a
+                    # re-verification demand is never filed as a new issue: refused before
+                    # anything is written, with what would let it be recorded. A mismatch
+                    # already open is refused too, or its record would leave its project's
+                    # scope and the subject its link.
+                    products.refuse(
+                        RefusalReason.ROUTE_STATE_CONFLICT,
+                        f"{reading['subject']} is bound with no project and {product} has"
+                        f" no triage project; bind the subject with the project it is in,"
+                        f" or register a triage project, and hand the reading in again")
                 adopt = None
                 if ids["mismatchRow"] is None:
-                    if not project:
-                        # The ledger adopts an issue only into a project's scope, and a
-                        # re-verification demand is never filed as a new issue: refused before
-                        # anything is written, with what would let it be recorded.
-                        products.refuse(
-                            RefusalReason.ROUTE_STATE_CONFLICT,
-                            f"{reading['subject']} is bound with no project and {product} has"
-                            f" no triage project; bind the subject with the project it is in,"
-                            f" or register a triage project, and hand the reading in again")
                     adopt = {"externalRef": reading["subject"], "scope": scope}
                 if project:
                     # The scope's owned target, as intake sets it before any record: the

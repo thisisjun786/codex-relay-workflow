@@ -64,6 +64,9 @@ def digest(router, *, limit=500, after=None) -> dict:
     port = router.port
     port.ready("route-digest")
     bound, reached = _bind_created_projects(router, limit)
+    # One answer per product goal for the whole digest, as the reached set is fixed for it:
+    # held defects that share a goal ask once.
+    unreached = {}
     linked = []
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
@@ -81,10 +84,12 @@ def digest(router, *, limit=500, after=None) -> dict:
                 if route["disposition"] != products.PROJECT_PROPOSAL:
                     linked.extend(intake.reconcile_route(router, route)["queued"])
                 route = routes.get(router.store, route["fault_id"])
-                if (route["stage"] == products.STAGE_HELD
-                        and route["target"]["hold"] == products.NO_PROJECT
-                        and routes.unreached_proposal(router.store, route["product_key"],
-                                                      route["goal"], reached) is not None):
+                held = (route["stage"] == products.STAGE_HELD
+                        and route["target"]["hold"] == products.NO_PROJECT)
+                key = (route["product_key"], route["goal"])
+                if held and key not in unreached:
+                    unreached[key] = routes.unreached_proposal(router.store, *key, reached)
+                if held and unreached[key] is not None:
                     # A proposal for this defect's own goal that this digest did not reach may
                     # be about to move it; its hold is reported by the digest that reaches that
                     # proposal, not announced stale now. Every other hold is reported.
