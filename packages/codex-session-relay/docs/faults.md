@@ -12,6 +12,392 @@ and WHICH fact it belongs to, and the process holding the credential does the wr
 reports back. That separation is what lets a Linear failure be retried on its own without
 re-deriving the diagnosis it describes.
 
+## Corrected contract (CRW-205 follow-up)
+
+Published ahead of its implementation on codex/crw-205-review-fixes so a consumer can bind to it
+early. It corrects the merged contract where the post-merge independent review found it wrong or
+short, and adds what CRW-206 needs from the ledger. Everything here is normative; where it
+disagrees with an earlier section of this document, this section wins.
+
+### Invariants
+
+Every rule below is an instance of one of these. Each names the one function that enforces it;
+a path that reaches the outcome without passing through that function is a defect.
+
+1. **One issue per fault.** Only `open_record` creates a fault's issue; the slot is taken by an
+   owned issue or a non-cancelled `open_record`, and there is one `open_record` row per fault,
+   ever. Enforced by `_issue_slot()`, called from `next()`, `claim()`, `operation()`, `retry()`,
+   `queue()`, `adopt()` and revival.
+2. **An issued create is never repeated on a guess.** Handing out an operation marks it issued; a
+   lapse or failure after that makes it uncertain; only `reconcile()` with an attested end of the
+   request frees it. Enforced by `operation()` and `reconcile()`.
+3. **Transitions belong to the claim.** Operation, completion and failure need the current claim
+   token; the first claimant is the writer and another needs a recorded takeover. Enforced by
+   `_claimed()`.
+4. **Only unissued writes are cancelled, and cancelling spends nothing earlier.** Pending, failed
+   and claimed-not-issued rows only; a claimed one refunds its own attempt and budget. Enforced by
+   `cancel()`, the only path that cancels (adoption, withdrawal, pre-issue cancel and
+   `set_project` supersession all call it).
+5. **A clear withdraws what nothing landed for.** Owning an issue is not a write having landed.
+   Enforced by `_landed()` inside `_transition()`.
+6. **A cause that comes back is a new occurrence.** The first active observation after a clear
+   opens an episode. Enforced by `record()`.
+7. **One product per scope key.** Every assignment of a scope key refuses a key another product's
+   fault carries. Enforced by `_assign_scope_key()` for `record()`, `move()`, `adopt()` and
+   `set_target()`.
+8. **A write goes only to its product's current target.** Targets are owned by the product that
+   set them; a legacy row with no owner never issues; `operation()` re-checks the current owned
+   target before any kind's own check. Enforced by `_owned_target()`.
+9. **One record per failure per workspace.** Every fault id a caller hands in, and every alias
+   registration, resolves through `canonical_id()` (aliases and the legacy workspace lookup).
+   Enforced by `_canonical()`.
+10. **One rescope step.** Every scope change re-points unsent writes, keeps uncertain ones, and
+    relinks an owned issue. Enforced by `_rescope()` for `record()`, `move()` and `adopt()`.
+11. **The issue ends on the current project.** Each relink increments the link revision, a stale
+    `set_project` is cancelled before issue, and every confirmation re-checks the target.
+    Enforced by `_relink()` and the built-in `set_project` pre-issue check.
+12. **Budgets hold, never drop, and never starve another product.** Enforced by `consume()` and
+    `next()`.
+13. **No process skips a kind's checks.** An unregistered kind is never offered, claimed or
+    issued. Enforced by `_kind()`.
+14. **Every read is bounded and every rotation reaches the end.** Enforced by `bounded()` and
+    `faultsweep._rotation()`.
+15. **One notification path.** Eligibility and budget are decided at reservation, a lapsed
+    reservation is uncertain, and caller-raised decisions use the same path. Enforced by
+    `reserve_notifications()`.
+16. **Waiting is never a fault, and no sweep contradicts itself.** Paused, archived, busy and
+    waiting recipients are never collected; no source emits an active and a clear for one fault in
+    one sweep. Enforced by `faultsweep.sweep()`.
+17. **Nothing malformed reaches the store.** Enforced by `read_observation()`.
+
+### Identity
+
+- `faults.fault_id(product, fault_class, signature, *, workspace=None)` returns the 32-hex fault
+  id without a store, so a caller can decide an owner or a target before the first record.
+  `FaultLedger.canonical_id(product, fault_class, signature, *, workspace=None)` returns the id
+  the store actually keeps it under, which differs only through an alias (below).
+- Compatibility with stores written before workspace joined identity: when an observation with
+  workspace W finds no fault under its id but a fault exists under the workspace-less id whose
+  stored `scope.workspace` is W, that fault is the one - the W id is registered as its alias and
+  the observation converges on it. `record()` and `canonical_id()` both apply this.
+- The workspace is the observation's `scope.workspace`: a non-blank string naming the tenant the
+  fault belongs to (for Linear, the workspace), never a checkout path. It is not checked against
+  any registry. `faults.UNASSIGNED` (`"unassigned"`) is the sentinel for an incident whose
+  product workspace is not known yet. Without a workspace the id is exactly the merged one.
+- Two real workspaces never share a fault. A `scope.projectKey` change inside one workspace is
+  the same fault, moved. A fault recorded under `unassigned` moves to a real workspace through
+  `move()` and keeps its id; the id that workspace would have produced becomes an alias of it, so
+  later observations from that workspace converge on the same record. Every public call that takes
+  a fault id resolves aliases first.
+- Every alias registration - by `move()` or by the legacy lookup in `record()` - first resolves
+  the new id through `canonical_id()` (aliases AND the legacy workspace lookup), in the same
+  transaction, and refuses with `fault_scope_conflict` when that resolves to another recorded
+  fault. Two records never come to stand for one failure in one workspace.
+- Every path that changes a fault's scope - `record()`, `move()`, `adopt()` - does the same three
+  things in one transaction: re-points unsent writes to the new target, leaves uncertain ones
+  where they may have landed, and queues `set_project` when the fault owns an issue whose linked
+  project differs from the new target.
+- An observation moves its fault's scope only inside the fault's current workspace. An observation
+  still carrying `unassigned` for a fault that has moved to a real workspace is recorded and
+  leaves the scope where it is.
+- Validated before anything is written, else `FaultRefused(fault_observation_malformed)`:
+  product a plain identifier (letters, digits, `.`, `_`, `-`; no `:`, `@` or `|`, so the
+  product always ends where a target key's first separator begins); faultClass a non-blank string
+  without `|`; signature a non-empty object;
+  occurrenceKey a non-blank string; detail a string or null; observedAt a string or null; scope
+  an object whose values are JSON scalars, where `scope.workspace` and `scope.projectKey`, when
+  present, are non-blank strings (a number or an empty string is refused, so no two inputs name
+  one target); cleared a boolean.
+- `faults.target_key(product, *, workspace=None, project=None)`: without a workspace it is the
+  merged key, `product` or `product:project`. With one it is
+  `ws|<product>|<workspace>|<project>`, each part percent-encoded, which no merged key can
+  equal and no two inputs share. A store written before products were restricted may hold a
+  fault whose product contains `:` and whose key therefore reads like a newer product and
+  project. EVERY path that assigns a scope key - `record()` for a first record and for a scope
+  move, `move()`, `adopt()` and `set_target()` - goes through one check that refuses, in the same
+  transaction, a key already carried by a recorded fault of another product
+  (`fault_scope_conflict`; for `record()` the observation is refused and nothing is written). Such
+  a legacy fault stays readable but takes no new observation. A collision that already exists in
+  an older store is caught where it could do harm: a write that needs a target is never offered,
+  claimed or issued while its fault's scope key is also carried by a recorded fault of another
+  product. It waits as `scope_key_contested`, shown by `queue_state()` and `attention()`, until
+  `move()` separates the two. An observation files under
+  `target_key(product, workspace=scope.workspace, project=scope.projectKey)`.
+
+### Occurrences and episodes
+
+- The same occurrence key inside one episode converges: a repeated sweep records nothing.
+- The first ACTIVE observation after a recorded clear opens a new episode, whatever its key, and
+  is a new occurrence. A cause that comes back is seen before or after resolve, and resolve
+  refuses when it has come back after the reverification.
+- `observation_unmeasured` is per turn (`{relationship, turn}`) and clears when that turn is
+  later measured, so one relationship's turns cannot alternate one record open and closed.
+- `occurrence_count` counts active occurrences only; clears are reported separately.
+
+### Targets and project linkage
+
+- A target belongs to the product that set it: the target record names its product, and a
+  write is issued only against a target owned by its fault's product. A target row written
+  before this contract names no product and is never used to issue anything; calling
+  `set_target()` for it records the owner (so that call is not a no-op even when team and
+  project are unchanged).
+- `set_target(*, product, workspace=None, project=None, team, project_ref)` returns
+  `{scopeKey, team, projectRef, changed, backfilled, relinked, relinkPending}`. Values unchanged
+  on a target this product already owns write nothing. A change re-points only pending and failed writes whose target differs (an
+  uncertain write stays where it may have landed) and queues `set_project` for issues this
+  scope's faults own whose linked project differs, at most 100 per call; `relink(*, limit)`
+  continues the rest.
+- `targets(product=None, *, limit, after=None)` lists them.
+- An issue create is neither offered nor claimable while its scope's target has no
+  `project_ref`: no issue is created without a project, and the fault waits as awaiting target.
+- Relinking supersedes: queuing `set_project` cancels any earlier `set_project` of the same
+  fault that has not been issued, and each relink increments the link's stored revision, which
+  is part of the `set_project` write's identity (`update:set_project:<project>:r<revision>`),
+  so a later target always gets its own write, even one returning to an earlier project.
+  `set_project` carries a built-in pre-issue check: `operation()` cancels a `set_project` whose
+  project is no longer the fault's current target, so a stale write that an attested absence
+  returned to pending is never issued. When any `set_project` confirms, the link is compared with the
+  target as it is NOW, and a fresh `set_project` is queued if they differ: the issue ends on the
+  current target whatever order the writes completed in.
+- A create is confirmed against the project it was ISSUED with, and linked against the project
+  its scope targets NOW. The readback must name a project. When that project differs from the
+  current target, the create is still confirmed (the issue exists and the fault owns it), the
+  link is recorded unlinked, and `set_project` for the current target is queued on the same
+  issue.
+
+### Owning an issue is not the same as a write having landed
+
+- A fault OWNS an issue when a create for it confirmed or an adoption materialized
+  (`external_ref`).
+- A write has LANDED, or may have, when one of the fault's publications is issued, uncertain or
+  confirmed.
+- A clearing observation withdraws a fault when nothing has landed, even if it owns an issue, and
+  cancels its pending, failed and claimed-not-issued publications. A later open revives the
+  cancelled write under the same publication id; there is never a second row.
+- ONE ISSUE SLOT per fault. Only the built-in `open_record` creates the fault's own issue; no
+  registered kind can. The slot is taken when the fault owns an issue (a confirmed create or a
+  materialized adoption) or has a non-cancelled `open_record`. There is at most one
+  `open_record` row per fault, ever. A cancelled one is revived under its id only while the
+  fault owns no issue; once it owns one, the open trigger queues the opening comment on that
+  issue instead. Every path that could issue an `open_record` - `next()`, `claim()`,
+  `operation()`, `retry()` and revival - checks the slot: `open_record` carries a built-in
+  pre-issue check that cancels it when the fault already owns an issue, and `retry()` refuses one
+  for such a fault. A fault that owns an issue never has a create claimed or issued. Any other
+  create kind has at most one non-cancelled row per fault and kind.
+
+### Adoption
+
+Two entry points, and neither ever stores anything for a fault that has not been recorded:
+
+- ~record(observation, *, adopt=None)~ with ~adopt={"externalRef": ..., "scope": {...}}~ adopts
+  the existing issue in the SAME transaction as the fault's first record, before suppression can
+  open it. A caller that decides the owner before recording uses this.
+- ~adopt(fault_id, *, external_ref, scope)~ adopts for a fault already recorded (aliases
+  resolved); an unknown id is refused with ~fault_unknown~. It returns ~{faultId, externalRef,
+  state, cancelled, publication}~.
+
+Either way:
+
+- Not open yet: the adoption is stored against that fault and materializes when suppression opens
+  the record - the first publication is a comment on ~externalRef~ instead of a create.
+- Already open: it materializes at once; a pending, failed or claimed-not-issued create is
+  cancelled, the fault owns ~externalRef~, and the opening comment is queued.
+- ~scope~ carries the owner's ~projectKey~ and the identity's workspace; the fault moves to it.
+- Refused with ~fault_adopt_conflict~ when the fault owns a different issue, holds a stored
+  adoption naming a different issue, or has an issued or uncertain create (reconcile it first).
+  Refused with ~fault_scope_conflict~ for another real workspace. Adopting the same issue again
+  changes nothing.
+- An alias only ever points at a recorded fault, and an adoption only ever belongs to one, so no
+  alias registration - by ~move()~ or by the legacy lookup in ~record()~ - has an adoption to carry.
+
+### Move
+
+`move(fault_id, *, scope)` returns `{faultId, scopeKey, moved, repointed, alias}`. The same
+workspace, or out of `unassigned` into a real one (refused with `fault_scope_conflict` when a
+fault already exists under the id that workspace produces). Pending and failed writes follow the
+new target; uncertain ones stay; an owned issue whose linked project differs from the new target
+gets `set_project`; an unchanged scope writes nothing.
+
+### Publication kinds
+
+`register_kind(name, *, creates, requires_issue, target, evidence, confirm, validate=None,
+pre_issue=None)` declares a kind. What a registered create makes is recorded on its own
+publication (`external_ref`) and never becomes the fault's issue:
+
+- `target`: `"team+project"`, `"team"` or `None` - what must be configured before it is
+  offered.
+- `evidence`: `"block"` (the write carries this publication's marker block; reconcile and
+  complete read it from text) or `"fields"` (confirmed from fields read back from the owned
+  issue).
+- `confirm(expected, observed)` returns the problems with a readback; `validate(payload)`
+  those with a payload.
+- `pre_issue(context)` is called by `operation()` immediately before the row is issued. It
+  answers `None` to proceed, `{"hold": reason, "seconds": n}` to return the row to pending,
+  not offered again until n seconds pass (default 30) and with the reason recorded, or
+  `{"cancel": reason}`. Either refunds only the current claimed-not-issued attempt. No path
+  issues a write without it.
+- Before any kind's own check, `operation()` compares the target a write that needs one was
+  queued with (team, and project where required) against its fault's CURRENT target owned by its
+  product. If they differ, the write is re-pointed to the current target and returned to pending,
+  refunding only the current claimed-not-issued attempt; it is never issued against a target the
+  scope has left. This is built in for every kind and is not a kind's optional check.
+- Registration lives in the process: a kind is registered by importing the module that declares
+  it, and the command line takes `--kind-module <module>` (repeatable) to do so. A publication
+  whose kind is not registered in the acting process is never offered, claimed or issued; it is
+  refused with `fault_kind_unregistered`, so no process can skip a kind's own checks.
+- `creates=True` inherits the single-create rule: an issued write whose lease lapses or that
+  fails becomes uncertain, and only a reconciliation reporting what was observed moves it.
+- `queue(fault_id, *, kind, trigger, payload=None)` queues any registered kind on any recorded
+  fault, including one suppression never opened: it is an explicit caller act, and the rule that
+  a fix or resolve on a never-opened fault queues nothing governs only the ledger's own
+  remediation writes. The one exception is the issue create, which only suppression opens
+  (`queue(kind="open_record")` is refused with `fault_state_conflict`). A class whose only
+  writes are another kind is recorded at a severity that never files and queued explicitly. CRW-206's
+  project create is `creates=True, target="team", evidence="block"`; the
+  issue-create project rule applies to issue creates only.
+
+Built-in kinds:
+
+- `open_record` (creates the fault's issue, team+project, block). The operation carries
+  `trackerRef`, `projectRef` and the block. `complete(..., readback, external_ref,
+  project_ref)` needs the project the saved issue reads back as.
+- `append_comment` (requires the owned issue, block); confirmed only against that issue.
+- `update_record` (requires the owned issue, fields). `request_update(fault_id, *, op,
+  value)` queues one idempotent update per operation, value and cycle (`set_project` per link
+  revision instead, above): `set_project` (project id), `reopen` (null), `add_relation` (`{type, issue}`), `add_label` (label name). A cause
+  that comes back after resolution queues `reopen` beside its comment.
+- Comments and updates need only the owned issue; targets decide creates.
+
+Reads: `publication(publication_id)` returns one write with its kind, state, trigger, target,
+payload, `external_ref` and newest attempts; `publications(fault_id, *, kind=None, state=None,
+limit, after=None)` lists a fault's writes. A registered create leaves what it created in its
+publication's `external_ref` and nowhere else.
+
+Confirmation and reconciliation, for every kind:
+
+- `complete(publication, *, claim_token=None, readback=None, external_ref=None,
+  project_ref=None, observed=None)`: a block kind confirms from `readback`; a fields kind from
+  `observed`, whose `issue` must be the owned issue.
+- `reconcile(publication, *, observed_text=None, searched=False, observed=None)`: `present`
+  when the block, or the fields, are found; `absent` only when the search is attested
+  (`searched=True` for text; an `observed` naming the owned issue for fields). Under a live
+  issued lease an absence answers `absent_in_flight` and changes nothing. From uncertain (or a
+  lapsed lease) an attested absence returns the row to pending at the current target only when
+  somebody ATTESTS that the issuing request has ended: `fail(..., ended=True)` by the claim
+  holder when the connector answered with a definitive refusal, or `reconcile(...,
+  prior_ended=True, reason=...)`. Both are recorded with who said so. The ledger never infers
+  an end: a timeout, a lost response or a plain `fail()` after issue proves nothing, because the
+  connector's create takes no idempotency key and a request still travelling can land after the
+  search. Without the attestation the answer is `absent_unproven` and the row stays uncertain.
+- `cancel(publication, *, reason)` cancels a pending, failed or claimed-not-issued write. For a
+  claimed one it refunds that claim's attempt and budget; the budget and attempts of earlier,
+  issued attempts are never refunded. An issued or uncertain write is refused with
+  `fault_not_claimable`.
+
+### Writers and attempts
+
+`claim(publication, *, owner, takeover=False)`: the first claimant is the publication's writer.
+Another owner needs `takeover=True`, which is recorded, or is refused with
+`fault_writer_conflict`. Every claim appends an attempt carrying owner, takeover, claim and issue
+times, outcome and error; `attempts(publication, *, limit)` returns them.
+
+### Budgets
+
+- One sliding window per product and kind. Defaults per hour: `open_record` 5,
+  `append_comment` 20, `update_record` 20, `notification` 10, any other kind 20.
+  `set_limit(product, kind, *, max_count, window)` and `limits(product)`.
+- `budget(product, kind)` returns `{limit, window, used, remaining, source}`.
+  `consume(product, kind, *, ref)` returns `{consumed, remaining, reason}`; one ref is consumed
+  once; a spent budget answers `consumed: false, reason: budget_spent`. Any caller may use it.
+- `claim()` consumes one unit; a spent budget refuses with `fault_budget_spent` and the write
+  stays pending. Nothing a budget holds is dropped.
+- `next(limit)` is fair across products: spent product and kind pairs are excluded inside the
+  query and the rest are taken round-robin by product, so a capped product never hides another's
+  work. `queue_state(limit)` returns `ready`, `held` with reasons, and `budgets`.
+
+### Collection
+
+- `delivery_refused`: each settings or permission refusal before sending, read from its
+  append-only `delivery_withheld` journal record. Only reasons in `faultsweep.SETTINGS_REFUSALS`
+  count - the settings, sandbox, approval and role-binding refusals the settings check raises -
+  so a recipient withheld as paused, archived or unloaded never counts. Only the delivery's
+  CURRENT streak counts. A streak ENDS, and the fault (degraded) clears, on exactly the same
+  events: the delivery is sent (a settled attempt after the refusal) or settles, or its newest
+  withholding carries another reason. A busy deferral in between ends neither, because it says
+  nothing about the settings that were refused; three refusals for one reason are repetition
+  whatever waited between them. A streak that ended is never counted again. `managed_start_failed`: the host
+  answered a managed start without publishing a child (broken; clears when a later receipt for
+  that request is accepted - the registry replaces a non-publishing receipt - which is the only
+  transition the registry offers an armed request).
+- No source emits an active and a clearing observation for one fault in one sweep: a reading
+  batch is reduced to the last reading per relationship and turn BEFORE it is paged. A paused, archived,
+  busy or waiting recipient is never a fault.
+- Constructed with `fault_selection`, the daemon reads CRW-180 readings for attached managed
+  turns through `omitted.observe`, a bounded number per tick; an observer error is a gap.
+- Every source is read in rotations bounded by its upper key at rotation start, and every
+  rotation reaches the end.
+- `reading_faults(..., limit, after)` and `sweep(..., readings_after)` return
+  `readingsNext`; more than 1000 readings are refused. `record_all` turns a refused
+  observation into a gap and records the rest.
+
+### Lifecycle stages
+
+`record_stage(fault_id, *, stage, ref, detail="")` with stage `accepted`, `assigned`,
+`merged` or `installed`. Accepted and assigned need an owned issue; merged and installed need a
+fix in the cycle. Recording one runs, merges and installs nothing. `progress(fault_id)` returns
+the newest of each. When `installed` follows the newest fix, the resolving reverification must
+follow it too.
+
+### Attention and notifications
+
+- `attention()` counts unsent writes - ready, awaiting target, held, claimed (live or lapsed
+  lease), failed, uncertain, awaiting record - and returns a warning; `status` shows it and a
+  daemon tick carries it as a note.
+- Notifications are `blocking` (a broken fault opened), `decision` (a write became uncertain
+  or failed for good) and `resolved`. `notifications(*, limit)` lists pending ones with their
+  eligibility: a paused, cancelled or archived relationship withholds one; a parent recipient
+  that is uncontactable or unmeasured withholds one; a spent `notification` budget holds one.
+- `raise_notification(fault_id, *, reason, ref)` lets a caller raise its own decision (for
+  example an incident awaiting classification, or an owner or project hold). It is idempotent per
+  fault and reason and enters the same eligibility, budget and reservation path as the ledger's
+  own; there is one notification path.
+- `reserve_notifications(*, owner, limit)` atomically takes eligible ones, consumes their budget
+  and leases them, each with a stable `deliveryKey` the deliverer must pass to its transport as
+  the idempotency key. `ack_notification(id, *, token, ref)` records delivery and is accepted for
+  the current token whatever has happened to eligibility since; `fail_notification(id, *, token,
+  error)` returns it to pending with the error, when the deliverer knows nothing was sent. A lease
+  that lapses makes the notification uncertain, never pending: `reconcile_notification(id, *,
+  delivered, ref)` settles it from what the deliverer can read back.
+  `notifications(*, state=None, limit, after=None)` lists any state - pending with eligibility,
+  reserved and uncertain with their id and `deliveryKey` - so a process that lost a reservation
+  can find and settle it. Eligibility is decided at reservation; a withheld one cannot be
+  reserved, and nothing is dropped.
+
+### Policy
+
+`policies(product)` and `set_policy(product, fault_class, severity, *, threshold=None,
+window=None, reason)`. A degraded threshold and window can be adjusted; a broken fault files at
+once and a notice never files, and changing either is refused with `fault_policy_fixed`. A change
+is prospective: it decides the next occurrence recorded, and it is journaled with the value it
+replaced. A suppression reason names the policy that decided it.
+
+### Listing
+
+`snapshot(*, product=None, fault_class=None, scope_key=None, state=None, limit, after=None)`.
+`get()` and every snapshot row carry `linkState` (`linked`, `unlinked` or `none` when no
+issue is owned) and `linkedProject`, and `attention()` counts unlinked issues, so an issue
+without its project is visible wherever status is read.
+
+### New refusal reasons and tables
+
+Refusals: `fault_adopt_conflict`, `fault_scope_conflict`, `fault_writer_conflict`,
+`fault_budget_spent`, `fault_policy_fixed`, `fault_kind_unregistered`.
+
+Tables, all new because this store has no migration path: `fault_target_projects`,
+`fault_publication_payloads`, `fault_links`, `fault_adoptions`, `fault_aliases`,
+`fault_publication_attempts`, `fault_budget_uses`, `fault_limits`, `fault_notifications`,
+`fault_policies`.
+
 ## What a fault is
 
 A fault is the machinery failing to do its job. It is not a child failing at its task: a child
