@@ -9,6 +9,9 @@ about an installed bridge or a live App Server.
 """
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -618,6 +621,27 @@ def test_bytes_a_caller_already_read_parse_exactly_as_the_file_does(tmp_path):
         ExecutionPolicy.from_bytes(b'{"allowed": [], "allowed": []}', "somewhere")
     with pytest.raises(ExecutionPolicyError, match="somewhere is not valid JSON"):
         ExecutionPolicy.from_bytes(b"{ not json", "somewhere")
+
+
+def test_a_policy_path_that_is_not_a_regular_file_is_refused_without_blocking(tmp_path):
+    """Opening a FIFO for reading blocks until a writer arrives; loading must not wait for one."""
+    pipe = tmp_path / "policy.fifo"
+    os.mkfifo(pipe)
+    directory = tmp_path / "a-directory"
+    directory.mkdir()
+    for path in (pipe, directory):
+        done = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\n"
+             "from codex_thread_bridge.execution import ExecutionPolicy, ExecutionPolicyError\n"
+             "try:\n"
+             "    ExecutionPolicy.from_file(sys.argv[1])\n"
+             "except ExecutionPolicyError as error:\n"
+             "    print(error)\n", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert done.returncode == 0, done.stderr
+        assert "not a regular file" in done.stdout, done.stdout
 
 
 def test_efforts_are_scoped_to_their_model(tmp_path):

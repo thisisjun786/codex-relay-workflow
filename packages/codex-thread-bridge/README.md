@@ -236,6 +236,10 @@ parses hash to anything else, or if no file is named at all. The crw plugin's la
 variables from the record it reads, so a policy file edited after it was registered stops the
 server instead of being enforced unregistered. Left unset, nothing changes.
 
+The file has to be a regular file. It is opened without blocking and anything else -- a pipe,
+a device, a directory -- is refused at startup, because a pipe would hang the server before it
+could say why and would be read differently by every process that opens it.
+
 A declared role pair is still asked the allowlist question — only an exception skips that — so
 where both sections are present, `allowed` has to approve every pair `roles` declares. A file
 that declares `parent` on a model its own allowlist omits describes a role nobody could create,

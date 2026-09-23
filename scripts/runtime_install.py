@@ -17,7 +17,6 @@ import json
 import os
 import shutil
 import socket
-import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -212,6 +211,7 @@ REGISTER_REFUSALS = tuple(dict.fromkeys(
 # launcher would refuse the record this run would write.
 POLICY_UNREADABLE = "execution_policy_unreadable"
 LAUNCHER_PREDATES_POLICY = "launcher_predates_policy"
+LAUNCHER_NOT_ESTABLISHED = "launcher_not_established"
 # Where this checkout keeps the bridge, so a policy is judged by the parser the bridge runs rather
 # than by a second reading of the same document written here.
 BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
@@ -4805,30 +4805,10 @@ def _execution_policy_reading(value):
         return None, ("the bridge's policy parser was imported from " + str(loaded) + ", not from"
                       " this checkout's " + str(BRIDGE_SOURCE) + ", so this run cannot say the"
                       " policy was judged by the parser it ships")
-    # Read here, once, rather than by the parser's own from_file. This command holds the ownership
-    # lock while it decides, and opening a FIFO for reading blocks until something writes to it,
-    # so a path that is -- or is swapped to -- a pipe would hold every other registration until
-    # the run was killed. Opened without blocking and required to be a regular file on the
-    # descriptor that is then read, so there is no interval between the check and the read.
+    # from_file opens without blocking and refuses anything but a regular file, so a path that is
+    # -- or is swapped to -- a pipe cannot hold the ownership lock this command decides under.
     try:
-        descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-    except (OSError, ValueError) as error:
-        return None, ("cannot read " + repr(candidate) + ": " + type(error).__name__ + ": "
-                      + str(error))
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return None, (repr(candidate) + " is not a regular file, so it is not read: a pipe"
-                          " or a device would be read differently by every process that opens it")
-        with os.fdopen(descriptor, "rb") as handle:
-            descriptor = None
-            raw = handle.read()
-    except OSError as error:
-        return None, "cannot read " + repr(candidate) + ": " + str(error)
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-    try:
-        policy = execution.ExecutionPolicy.from_bytes(raw, candidate)
+        policy = execution.ExecutionPolicy.from_file(candidate)
     except execution.ExecutionPolicyError as error:
         return None, str(error)
     summary = policy.summary()
@@ -4858,62 +4838,89 @@ def _implements_policy_records(launcher):
     return False
 
 
-def _launchers_without_policy(codex_home):
-    """Installed launchers of this server that would refuse a record naming a policy, or None.
+def _policy_launcher_refusal(codex_home):
+    """(outcome, why) when the crw package Codex would load cannot start a policy record, or None.
 
     A launcher older than the version-2 record refuses it on its version, which is the right
     answer and still an outage: every thread started afterwards has no bridge. So a record that
-    names a policy is not written while an installed package would start it through one of those.
-    An absent cache, or none declaring this server, is a real answer and allows the write: the
-    record is inert until a package is installed, and installing one brings its own launcher.
+    names a policy is not written while the package that would start it ships such a launcher.
 
-    None means the cache could not be read, which refuses rather than guesses. What the cache
-    holds is not proof of what a running App Server loaded; see plugin-packaging.md.
+    Only that package is asked. The server name is shared, so another plugin can declare a server
+    called codex-thread-bridge with a launcher of its own, and what it would do with this record
+    says nothing about crw. The package is selected the way the transition selects it: the crw
+    entry in the Codex configuration names its marketplace, and the cache holds its versions
+    under <marketplace>/crw/<version>. No registered crw, a disabled one, or none cached means no
+    crw launcher starts, so the record is inert and allowed. A configuration that cannot be read,
+    crw registered from more than one marketplace, more than one cached version, or a package
+    that cannot be read refuses rather than guesses. What the cache holds is not proof of what a
+    running App Server loaded; see plugin-packaging.md.
     """
     cache = Path(codex_home) / "plugins" / "cache"
     if not cache.is_dir():
-        return []
-
-    def _children(directory):
-        # os.scandir for the reason _plugin_declared_servers gives: it raises on a directory it
-        # cannot read instead of leaving it out.
-        with os.scandir(directory) as entries:
-            return [Path(entry.path) for entry in entries if entry.is_dir()]
-
-    try:
-        versions = sorted(version
-                          for marketplace in _children(cache)
-                          for package in _children(marketplace)
-                          for version in _children(package))
-    except OSError:
         return None
-    stale = []
-    for version in versions:
-        manifest_path = version / ".codex-plugin" / "plugin.json"
-        if not manifest_path.is_file():
-            continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            named = manifest.get("mcpServers") if isinstance(manifest, dict) else None
-            if not (isinstance(named, str) and named.strip()):
-                continue
-            relative = named[2:] if text_prefix(named, "./", at="start") else named
-            document = json.loads((version / relative).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+    from crw_transition import inventory
+    plugin = inventory.read_plugin(codex_home)
+    if plugin["configEntry"] == reading.ABSENT:
+        return None
+    if plugin["configEntry"] != reading.PRESENT:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the Codex configuration could not be read (" + str(plugin.get("detail"))
+            + "), so which crw package this host loads was not established")
+    if len(plugin["entryKeys"]) > 1:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the Codex configuration registers crw from more than one marketplace ("
+            + ", ".join(plugin["entryKeys"]) + "), so which package would start this record is"
+            " ambiguous")
+    if plugin["enabled"] is False:
+        return None
+    package = cache / str(plugin["marketplace"]) / inventory.PLUGIN_NAME
+    try:
+        with os.scandir(str(package)) as entries:
+            versions = sorted(Path(entry.path) for entry in entries if entry.is_dir())
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the cached crw package under " + str(package) + " could not be listed ("
+            + type(error).__name__ + ": " + str(error) + ")")
+    if not versions:
+        return None
+    if len(versions) > 1:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "more than one cached crw version is present ("
+            + ", ".join(version.name for version in versions)
+            + "), and which one a session loads is not readable from here")
+    version = versions[0]
+    try:
+        manifest = json.loads((version / ".codex-plugin" / "plugin.json").read_text(
+            encoding="utf-8"))
+        named = manifest.get("mcpServers") if isinstance(manifest, dict) else None
+        if not (isinstance(named, str) and named.strip()):
             return None
-        servers = document.get("mcpServers") if isinstance(document, dict) else None
-        if not isinstance(servers, dict):
-            return None
-        entry = servers.get(MCP_NAME)
-        if entry is None:
-            continue
-        arguments = entry.get("args") if isinstance(entry, dict) else None
-        script = next((word for word in (arguments if isinstance(arguments, list) else [])
-                       if isinstance(word, str) and text_prefix(word, "./", at="start")), None)
-        launcher = version / script[2:] if script else None
-        if launcher is None or not _implements_policy_records(launcher):
-            stale.append(str(launcher or version))
-    return stale
+        relative = named[2:] if text_prefix(named, "./", at="start") else named
+        document = json.loads((version / relative).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the cached crw package at " + str(version) + " could not be read ("
+            + type(error).__name__ + ": " + str(error) + ")")
+    servers = document.get("mcpServers") if isinstance(document, dict) else None
+    if not isinstance(servers, dict):
+        return LAUNCHER_NOT_ESTABLISHED, (
+            "the cached crw package at " + str(version) + " declares no readable MCP servers")
+    entry = servers.get(MCP_NAME)
+    if entry is None:
+        return None
+    arguments = entry.get("args") if isinstance(entry, dict) else None
+    script = next((word for word in (arguments if isinstance(arguments, list) else [])
+                   if isinstance(word, str) and text_prefix(word, "./", at="start")), None)
+    launcher = version / script[2:] if script else version
+    if script and _implements_policy_records(launcher):
+        return None
+    return LAUNCHER_PREDATES_POLICY, (
+        "the installed crw launcher " + str(launcher) + " reads record version "
+        + str(bridgerecord.RECORD_VERSION) + " only and would refuse this record, leaving every"
+        " thread started afterwards without a bridge. Update the plugin package first, restart"
+        " Codex so it loads it, then run this again")
 
 
 def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=None):
@@ -5134,22 +5141,13 @@ def _register_mcp_owned(args, codex_home):
         return EXIT_REFUSED
     if owner == bridgerecord.OWNER_PLUGIN:
         if policy is not None:
-            stale = _launchers_without_policy(codex_home)
-            if stale is None or stale:
+            refusal = _policy_launcher_refusal(codex_home)
+            if refusal is not None:
                 emit({"command": "register-mcp", "owner": owner, "path": str(path),
-                      "record": str(record_path), "outcome": LAUNCHER_PREDATES_POLICY,
-                      "detail": (
-                          "the installed plugin cache under " + str(Path(codex_home) / "plugins"
-                                                                    / "cache")
-                          + " could not be read, so whether its launcher reads a record naming"
-                            " an execution policy was not established" if stale is None else
-                          "the installed launcher " + ", ".join(stale) + " reads record version "
-                          + str(bridgerecord.RECORD_VERSION) + " only and would refuse this"
-                          " record, leaving every thread started afterwards without a bridge."
-                          " Update the plugin package first, restart Codex so it loads it, then"
-                          " run this again"),
-                      "executionPolicy": policy, "applied": False, "wrote": False,
-                      "otherTablesPreserved": True, "note": "nothing was written"})
+                      "record": str(record_path), "outcome": refusal[0],
+                      "detail": refusal[1], "executionPolicy": policy, "applied": False,
+                      "wrote": False, "otherTablesPreserved": True,
+                      "note": "nothing was written"})
                 return EXIT_REFUSED
         # The declaration is the package's, so this command writes the one fact the package
         # cannot carry and leaves the configuration alone. Reported as that: a record written

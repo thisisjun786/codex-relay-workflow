@@ -47,6 +47,8 @@ not covered at all.
 
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 from typing import NamedTuple
 
@@ -372,11 +374,29 @@ class ExecutionPolicy:
 
     @classmethod
     def from_file(cls, path) -> "ExecutionPolicy":
+        """Read and parse the policy file, refusing anything that is not a regular file.
+
+        Opened without blocking and judged on the descriptor that is then read. Opening a FIFO for
+        reading blocks until something writes to it, so a path that is -- or is swapped to -- a
+        pipe would otherwise hang the server before it ever reported why, and a pipe is read
+        differently by every process that opens it in any case.
+        """
         path = Path(path)
         try:
-            raw = path.read_bytes()
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        except (OSError, ValueError) as error:
+            raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ExecutionPolicyError(f"cannot read {path}: it is not a regular file")
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None
+                raw = handle.read()
         except OSError as error:
             raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
         return cls.from_bytes(raw, path)
 
     @classmethod
