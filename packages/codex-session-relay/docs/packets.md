@@ -169,6 +169,13 @@ receiver act under settings its record never authorised. A sandbox stated as a m
 with omitted defaults filled on both sides. A record holding no readable sandbox or approval
 leaves a stated one a gap.
 
+Values are compared as what they are, never as their spellings. A record value of another
+type than the packet's (a recorded model of `123` against a packet's `"123"`, a generation
+recorded as `"2"`) is not a reading of that field, so it is a gap and the answer is
+unavailable. The packet's own side is shape-checked first: a packet that is not the shape
+relay-packet/1 declares, in any part it carries, is refused as a packet, and `packet-check`
+does not end in a host error over what it was sent.
+
 The artifact head is a forge reading the store does not hold. It comes only from
 `--observation <file>`, a JSON object with its own `source` (and `observedAt` where known) and
 any of `repository`, `prNumber`, `headSha`, `artifactPath`, `artifactDigest`. Without one, a

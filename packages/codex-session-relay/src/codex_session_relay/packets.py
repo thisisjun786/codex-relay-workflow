@@ -486,6 +486,26 @@ def compose(*, direction, purpose, relation_id, sender, recipient, subject, issu
 
 
 def check(one, *, required=None) -> None:
+    """Refuse a packet that omits what its own purpose cannot do without (see _check).
+
+    Total over whatever JSON can hold. _check validates shape before it reads meaning, and
+    every shape found so far has its own refusal there; this is the guarantee for the rest.
+    A part of the packet this validator cannot read ends as a refusal naming what failed,
+    never as an exception out of packet-check, because a host failure tells the producer
+    nothing about what it sent and a receiver nothing about what to do with it.
+    """
+    try:
+        _check(one, required=required)
+    except RelayError:
+        raise
+    except (AttributeError, TypeError, KeyError, IndexError) as fault:
+        raise PacketRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "a part of this packet is not the shape relay-packet/1 declares, so it could not"
+            " be read: " + type(fault).__name__ + ": " + str(fault)) from fault
+
+
+def _check(one, *, required=None) -> None:
     """Refuse a packet that omits what its own purpose cannot do without.
 
     A COMPLETE validator, not a finishing touch on something compose already made safe. The
@@ -591,12 +611,18 @@ def check(one, *, required=None) -> None:
         # use, so it is refused here, before anything is compared or recorded.
         mistyped = [name for name in ("model", "effort", "workflow")
                     if not isinstance(one[POLICY][name], str)]
+        if one[POLICY].get("approval") is not None \
+                and not isinstance(one[POLICY]["approval"], str):
+            mistyped.append("approval")
+        if one[POLICY].get("sandbox") is not None \
+                and not isinstance(one[POLICY]["sandbox"], (str, dict)):
+            mistyped.append("sandbox")
         if mistyped:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 "the policy states " + ", ".join(mistyped) + " as something other than"
-                " text; a setting is a name, and another shape would agree with its own"
-                " spelling in the record")
+                " text (a sandbox may also be a policy object); a setting is a name, and"
+                " another shape would agree with its own spelling in the record")
         if one[POLICY][MODE] not in MODES:
             raise PacketRefused(
                 RefusalReason.MALFORMED_RECEIPT,
@@ -1052,7 +1078,14 @@ def _mode_agreement(one, record, problems, gaps) -> list:
 
 
 def _compare(problems, gaps, kind, field, found, expected, reason) -> None:
-    """One field against the record, with a record that cannot answer kept separate."""
+    """One field against the record, with a record that cannot answer kept separate.
+
+    Values of different types are not compared. Both sides were once turned into strings, so
+    a recorded model of 123 agreed with a packet naming "123", and a generation recorded as
+    "2" with a packet's 2: a value of another shape was taken as a reading of the field. The
+    packet's side is shape-checked before this runs, so a type disagreement means the record
+    holds something that is not a reading of this field, and that is a gap, not agreement.
+    """
     if _present(expected) is None:
         gaps.append(mismatch(UNREADABLE, field, expected=None, found=found,
                              reason="the record the receiver read says nothing about "
@@ -1062,7 +1095,14 @@ def _compare(problems, gaps, kind, field, found, expected, reason) -> None:
         problems.append(mismatch(kind, field, expected=expected, found=None,
                                  reason="the packet states no " + field + ", and " + reason))
         return
-    if str(found) != str(expected):
+    if type(found) is not type(expected):
+        gaps.append(mismatch(UNREADABLE, field, expected=expected, found=found,
+                             reason="the record holds a " + type(expected).__name__ + " for "
+                                    + field + " and the packet a " + type(found).__name__
+                                    + "; values of different shapes are not a reading of"
+                                      " each other, so this could not be checked"))
+        return
+    if found != expected:
         problems.append(mismatch(kind, field, expected=expected, found=found, reason=reason))
 
 
