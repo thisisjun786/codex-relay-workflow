@@ -198,20 +198,24 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
     if theirs != incident["origin"]:
         return file(router, incident, registry, workspace, unverified_cause=_claim(
             cause, f"a {incident['origin']} incident never counts against a {theirs} fault"))
-    placed = _stored(row.get("scope"))
-    # One transaction: the cause's occurrence says a product was affected, and it stands only
-    # together with that product's own filing. A filing that fails takes the occurrence back
-    # with it, so no cause ever counts an effect that routing never recorded.
-    with router.store.composing():
-        port.record(port.observation(
-            product=row["product"], workspace=placed.get("workspace"),
-            fault_class=row["fault_class"], severity=row["severity"],
-            signature=_stored(row["signature"]),
-            occurrence_key=f"affected:{registry['product']}:{incident['occurrenceKey']}",
-            project=placed.get("projectKey"), observed_at=incident["observedAt"],
-            detail=f"{registry['product']} was affected by this fault",
-            evidence=incident["evidence"]))
-        return file(router, incident, registry, workspace, cause_fault=cause["faultId"])
+    return file(router, incident, registry, workspace, cause_fault=cause["faultId"],
+                cause_row=row)
+
+
+def _affected(port, cause_row, product, fault_id, incident):
+    """The cause's occurrence saying this product was affected, recorded inside the product
+    occurrence's own attempt and only once the ledger has recorded that occurrence as new: a
+    replay of it counts nothing on the cause, a failed filing takes this back with it, and the
+    key carries the product fault's episode, so the same key after a clear counts again."""
+    placed = _stored(cause_row.get("scope"))
+    episode = (port.get(fault_id) or {}).get("episode") or 1
+    port.record(port.observation(
+        product=cause_row["product"], workspace=placed.get("workspace"),
+        fault_class=cause_row["fault_class"], severity=cause_row["severity"],
+        signature=_stored(cause_row["signature"]),
+        occurrence_key=f"affected:{product}:{episode}:{incident['occurrenceKey']}",
+        project=placed.get("projectKey"), observed_at=incident["observedAt"],
+        detail=f"{product} was affected by this fault", evidence=incident["evidence"]))
 
 
 def _claim(cause, why):
@@ -226,12 +230,13 @@ def _origin(row):
 
 
 def file(router, incident, registry, workspace, *, cause_fault=None,
-         unverified_cause=None) -> dict:
+         unverified_cause=None, cause_row=None) -> dict:
     """Decide, then record: the one place a product incident becomes a ledger observation.
 
     cause_fault is a verified cause this incident links the defect to. unverified_cause is a
     cause it named that could not be verified: the defect is placed exactly as if it named none,
     and the claim stands on the route until an incident for this defect names a verified cause.
+    cause_row is the verified cause's ledger row, which gains an occurrence when this one is new.
     """
     port = router.port
     product = registry["product"]
@@ -286,6 +291,8 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
                 observed_at=incident["observedAt"], detail=placement.detail_text(incident),
                 evidence=incident["evidence"]), adopt=adopt)
             _replayed(result, existing)
+            if cause_row is not None and result.get("recorded") is True:
+                _affected(port, cause_row, product, fault_id, incident)
             _save(db, router, fault_id, product, workspace, decision, target, incident)
     except _Replayed:
         return _unchanged(existing, unchanged)
@@ -311,6 +318,8 @@ def file(router, incident, registry, workspace, *, cause_fault=None,
                     observed_at=incident["observedAt"], detail=placement.detail_text(incident),
                     evidence=incident["evidence"]))
                 _replayed(result, existing)
+                if cause_row is not None and result.get("recorded") is True:
+                    _affected(port, cause_row, product, fault_id, incident)
                 _save(db, router, fault_id, product, workspace, decision, target, incident)
         except _Replayed:
             return _unchanged(existing, unchanged)

@@ -710,6 +710,28 @@ class SharedCause(ProductRoutingCase):
         self.assertEqual([], self.linear.issues[theirs]["labels"])
 
 
+    def test_a_cause_counts_an_effect_once_per_episode_of_the_affected_defect(self):
+        cause, signature = self.crw_fault()
+        named = {"product": "crw", "faultId": cause, "signature": signature}
+        first = self.route(cause=named)
+        count = self.router.port.get(cause)["occurrence_count"]
+        # The same occurrence handed in again, even now naming the cause: nothing is counted.
+        self.route()
+        again = self.route(cause=named)
+        self.assertIs(False, again["recorded"])
+        self.assertEqual(count, self.router.port.get(cause)["occurrence_count"])
+        # After a clear the same key is a new occurrence of the defect, and a new effect.
+        port = self.router.port
+        port.record(port.observation(product="alpha-notes", workspace=WORKSPACE,
+                                     fault_class=products.DEFECT, severity="notice",
+                                     signature={"component": "editor", "symptom": "cursor_jump"},
+                                     occurrence_key="clear-1", cleared=True))
+        renewed = self.route(cause=named)
+        self.assertIs(True, renewed["recorded"])
+        self.assertEqual(first["faultId"], renewed["faultId"])
+        self.assertEqual(count + 1, self.router.port.get(cause)["occurrence_count"])
+
+
 class UnclearOwnership(ProductRoutingCase):
     def unknown(self, **fields):
         return self.route(product=None, repository="example-org/unknown", **fields)
@@ -1203,7 +1225,8 @@ class FinalReviewScenarios(ProductRoutingCase):
 
         cause, signature = SharedCause.crw_fault(self)
         before = self.router.port.get(cause)["occurrence_count"]
-        with mock.patch.object(intake, "file", side_effect=RuntimeError("filing failed")):
+        # The filing fails after the cause's occurrence was written in the same attempt.
+        with mock.patch.object(intake, "_save", side_effect=RuntimeError("filing failed")):
             with self.assertRaises(RuntimeError):
                 self.route(cause={"product": "crw", "faultId": cause, "signature": signature})
         self.assertEqual(before, self.router.port.get(cause)["occurrence_count"])

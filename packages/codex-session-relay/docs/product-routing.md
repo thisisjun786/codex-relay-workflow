@@ -167,7 +167,9 @@ already linked to all leave it standing: only the cause an incident verifies ans
 
 A verified cause produces two records in one transaction, linked once both own issues. The cause
 fault gains an occurrence at its own current severity, with evidence naming the affected product;
-a filing that fails takes that occurrence back with it. The affected
+a filing that fails takes that occurrence back with it. The cause counts an effect only when the
+ledger records the affected product's occurrence as new, once per episode of that defect: a replay
+counts nothing, and the same key after the defect was cleared counts again. The affected
 product's own defect is routed as above at its own severity. A severe impact in one product
 therefore reaches that product's team, and does not escalate a CRW record that its own observers
 judged minor. A cause that was resolved and comes back is reopened by its new occurrence, which
