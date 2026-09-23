@@ -126,18 +126,24 @@ def delivery_faults(store, *, product, scope, limit=SWEEP_LIMIT, policy=None,
     a settings rejection and a transport error - would otherwise merge into one record that
     named neither.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     policy = policy or RetryPolicy()
     rows = store.all(
         "SELECT d.event_id, d.relationship_id, d.recipient_task_id, d.state, d.hold_reason,"
         "       d.attempt_count,"
+        # The latest SETTLED attempt. An attempt row is written in_flight, carrying a
+        # provisional held_uncertain state, before the transport call is made; reading it
+        # then named a send still in progress as the cause of the hold.
         "       (SELECT a.request_id FROM attempts a WHERE a.event_id = d.event_id"
+        "          AND a.internal_state = 'settled'"
         "         ORDER BY a.attempt_no DESC LIMIT 1) AS last_request,"
         "       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
+        "          AND a.internal_state = 'settled'"
         "         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state"
         "  FROM deliveries d"
-        # A hold reason OR repeated attempts. Before a delivery is capped its hold reason is
-        # cleared between retries, so requiring one made the degraded tier unreachable: only
-        # capped deliveries were ever seen, and the three-in-a-window rule could never fire.
+        # Held deliveries only. A delivery that is retrying before any hold is set is read
+        # from its attempt rows by retry_faults, one occurrence per settled failure.
         " WHERE d.hold_reason IS NOT NULL AND d.state NOT IN (?,?,?)"
         "   AND d.event_id > ?"
         " ORDER BY d.event_id LIMIT ?",
@@ -181,12 +187,19 @@ def retry_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> di
     the other sources use. Reading a fixed newest page instead left every failure behind it
     permanently unobserved once a store held more than one page of them.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     rows = store.all(
         "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,"
         "       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,"
         "       d.hold_reason, d.attempt_count"
         "  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
         " WHERE d.state NOT IN (?,?,?)"
+        # SETTLED attempts only. delivery.py inserts the row in_flight with a provisional
+        # held_uncertain state before the transport call returns, so three healthy sends
+        # observed mid-flight used to reach the degraded threshold. A reconciled uncertain
+        # outcome is settled too, and stays eligible: nobody could establish that it landed.
+        "   AND a.internal_state = 'settled'"
         "   AND a.state IS NOT NULL AND a.state NOT IN (?,?)"
         "   AND a.rowid > ?"
         " ORDER BY a.rowid LIMIT ?",
@@ -230,6 +243,8 @@ def sync_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dic
     Twenty jobs failing against one unreachable document are one problem. The target is the
     domain; the jobs are its occurrences.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     rows = store.all(
         "SELECT sync_id, relationship_id, issue_key, target, target_ref, attempts, last_error"
         "  FROM sync_outbox WHERE state = ? AND sync_id > ? ORDER BY sync_id LIMIT ?",
@@ -266,6 +281,8 @@ def observation_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None)
     new attempt time to key on - so at degraded, permanent starvation would be the one failure
     that could never reach the threshold.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     rows = store.all(
         "SELECT g.relationship_id, g.execution_generation, g.dispatch_turn_id,"
         "       p.turn_id, p.last_polled_at, p.last_attempt_at, p.last_error, p.last_status"
@@ -405,6 +422,8 @@ def sweep(store, *, product="crw", scope=None, readings=(), limit=SWEEP_LIMIT,
     about absence: clearing from it would withdraw a still-broken fault that happened to sort
     past the bound. Only the classes whose source was read to the end can clear.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     scope = dict(scope or {})
     cursors, pages = read_cursors(store)
     by_class = {
@@ -463,6 +482,8 @@ def recovered(store, derived, *, product, scope, limit=SWEEP_LIMIT, complete=DER
     The ledger side rotates too: always reading the first page of open faults left later ones
     open forever behind a persistent prefix.
     """
+    # Validated before it reaches SQL, where LIMIT -1 means no limit at all.
+    limit = faults.bounded(limit, "limit")
     rows = store.all(
         "SELECT fault_id, fault_class, signature, cycle, scope FROM fault_ledger"
         " WHERE product = ? AND state IN (?,?,?) AND cleared_at IS NULL"
@@ -514,10 +535,14 @@ def still_present(store, fault_class, signature) -> dict:
         return store.one(
             "SELECT 1 FROM deliveries d"
             " WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)"
+            # Settled attempts in both branches, for the reason the derivations give: an
+            # in-flight row's state is provisional, and letting it count as presence would
+            # keep a recovered fault open for as long as some unrelated send was running.
             "   AND (COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id"
+            "                     AND a.internal_state = 'settled'"
             "                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, '')"
             "        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id"
-            "                     AND a2.state = ?))"
+            "                     AND a2.internal_state = 'settled' AND a2.state = ?))"
             " LIMIT 1",
             (signature.get("recipient"), *SETTLED_DELIVERY, signature.get("attemptState"),
              signature.get("attemptState")))

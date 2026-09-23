@@ -84,7 +84,11 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
 | `observation_unmeasured` | relationship | `unmeasured:<relationship>:<turn>` | a later reading that establishes something | notice |
 
-A retrying delivery is read from its ATTEMPT rows, not from the delivery. The hold reason
+A retrying delivery is read from its SETTLED attempt rows, not from the delivery. An
+attempt row is written in_flight with a provisional `held_uncertain` state before the
+transport call returns, so every reader of attempt state waits for `internal_state` to
+be `settled`; otherwise three healthy sends caught mid-flight would reach the degraded
+threshold. A reconciled uncertain outcome is settled, and stays eligible. The hold reason
 is only set at a cap, so a query that required one saw nothing until a delivery had
 already given up, and the degraded tier - three observations inside a window - could
 never be reached. An attempt's request id advances once per actual failure rather than
@@ -323,6 +327,48 @@ happened is the work the fix cycle exists for.
 | `fault_targets` | where a scope's fault issues are filed |
 | `fault_cursors` | where each source stopped and how many full pages it has taken, so the sweep rotates and still wraps |
 
+## Python API
+
+This is the surface CRW-206 and any other product builds on. Everything below takes a
+`Store` and an injected clock and performs no network call.
+
+```
+faults.register_class(name, *, component, clears, threshold=None, window=None)
+faults.observation(*, product, fault_class, severity, signature, occurrence_key,
+                   scope=None, observed_at=None, detail="", evidence=(), cleared=False)
+faults.fault_id(product, fault_class, signature)
+
+ledger = faults.FaultLedger(store, clock)
+ledger.record(observation)                 -> faultId, recorded, state, publication
+ledger.set_target(scope_key, tracker_ref)
+ledger.get(fault_id)
+ledger.snapshot(scope_key=None, state=None, limit=20, after=None) -> faults, next
+ledger.occurrences(fault_id, limit=3)
+ledger.remediations(fault_id, limit=20)
+ledger.record_fix(fault_id, ref=..., detail="")
+ledger.record_reverification(fault_id, method=..., ref=..., outcome=..., detail="")
+ledger.resolve(fault_id)
+ledger.prune(fault_id, keep=...)
+
+ledger.next(limit=4)                       # publications a credential holder may act on
+ledger.claim(publication_id, owner=...)    -> claimToken
+ledger.operation(publication_id, claim_token=...)
+ledger.reconcile(publication_id, observed_text, searched=False)
+ledger.complete(publication_id, readback=..., claim_token=None, external_ref=None)
+ledger.fail(publication_id, claim_token=..., error=...)
+ledger.expire_leases()
+ledger.retry(publication_id)
+
+faultsweep.sweep(store, product="crw", scope=None, readings=(), limit=32)
+faultsweep.record_all(ledger, batch, store=store)
+```
+
+Every `limit` is a positive integer and is refused otherwise, because SQLite reads
+`LIMIT -1` as no limit. A listing is continued by passing the `next` it returned as
+`after`; the cursor is a rowid, so faults recorded between pages land after it. A second
+product registers its classes once at import and feeds `record`; the ledger, the
+suppression rules and the publication path need nothing else from it.
+
 ## Commands
 
 ```
@@ -330,6 +376,7 @@ fault-target      --scope <key> --tracker-ref <ref>
 fault-observe     --observation <json|@path>
 fault-sweep       [--product <name>] [--project <key>] [--readings <json|@path>]
 fault-show        [--fault <id>] [--scope <key>] [--fault-state <state>] [--limit <n>]
+                  [--after <next>]
 fault-fix         --fault <id> --ref <ref> [--detail <text>]
 fault-reverify    --fault <id> --method suite|command|observation --ref <text>
                   --outcome passed|absent|failed [--detail <text>]

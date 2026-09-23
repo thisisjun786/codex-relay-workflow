@@ -1547,15 +1547,18 @@ def _fault_json(value, what):
 
 
 def cmd_fault_show(services, args) -> dict:
+    # One validated bound, applied on both branches. The listing branch used to take no bound
+    # at all, so the flag an operator passed to keep the answer small reached nothing.
+    limit = _positive(args.limit, "--limit")
     if args.fault:
         record = services.faults.get(args.fault)
         if record is None:
             raise PayloadExit({"faultId": args.fault, "found": False}, EXIT_REFUSED)
-        record["occurrences"] = services.faults.occurrences(
-            args.fault, limit=_positive(args.limit, "--limit"))
-        record["remediations"] = services.faults.remediations(args.fault)
+        record["occurrences"] = services.faults.occurrences(args.fault, limit=limit)
+        record["remediations"] = services.faults.remediations(args.fault, limit=limit)
         return record
-    return services.faults.snapshot(scope_key=args.scope, state=args.fault_state)
+    return services.faults.snapshot(scope_key=args.scope, state=args.fault_state,
+                                    limit=limit, after=args.after)
 
 
 def cmd_fault_fix(services, args) -> dict:
@@ -3709,7 +3712,10 @@ def build_parser() -> argparse.ArgumentParser:
     # option of the same name overwrites it in the namespace, so every fault-show read an
     # unconfigured default store and answered that the fault did not exist.
     fault_show.add_argument("--fault-state", choices=list(faults_module.STATES))
-    fault_show.add_argument("--limit", type=int, default=3)
+    fault_show.add_argument("--limit", type=int, default=20,
+                            help="faults per page, or occurrences and remediations with --fault")
+    fault_show.add_argument("--after", type=int,
+                            help="continue a listing from the next value the last page returned")
     fault_show.set_defaults(handler=cmd_fault_show)
 
     fault_fix = subparsers.add_parser("fault-fix")

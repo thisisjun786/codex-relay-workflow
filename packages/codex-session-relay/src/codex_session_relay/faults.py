@@ -98,6 +98,9 @@ BASE_BACKOFF = 30.0
 MAX_BACKOFF = 900.0
 DEFAULT_WINDOW = 21600.0
 RENDERED_OCCURRENCES = 3
+# What an operator listing shows. Both bound a query, and both are refused below 1.
+SHOWN_PER_PAGE = 20
+SHOWN_PER_FAULT = 20
 
 # One observation is enough for something that is not being performed at all; three inside the
 # window for something working badly, because once may be weather; a notice is recorded for an
@@ -136,6 +139,12 @@ def _bounded(value, name, ceiling=1000):
         raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
                            f"{name} is a positive integer, not {value!r}")
     return min(value, ceiling)
+
+
+# Public name for the other fault modules. One rule for every bound in the fault path, so a
+# second copy cannot drift from it.
+def bounded(value, name, ceiling=1000):
+    return _bounded(value, name, ceiling)
 
 
 def _named(value):
@@ -659,11 +668,25 @@ class FaultLedger:
         )
         return [_occurrence(row) for row in rows]
 
-    def remediations(self, identifier) -> list:
-        return [dict(row) for row in self.store.all(
-            "SELECT * FROM fault_remediations WHERE fault_id = ? ORDER BY rowid", (identifier,))]
+    def remediations(self, identifier, *, limit=SHOWN_PER_FAULT) -> list:
+        """The newest remediations, oldest first. A fault reopened many times has many."""
+        limit = _bounded(limit, "limit")
+        rows = self.store.all(
+            "SELECT * FROM fault_remediations WHERE fault_id = ? ORDER BY rowid DESC LIMIT ?",
+            (identifier, limit))
+        return [dict(row) for row in reversed(rows)]
 
-    def snapshot(self, *, scope_key=None, state=None) -> dict:
+    def snapshot(self, *, scope_key=None, state=None, limit=SHOWN_PER_PAGE,
+                 after=None) -> dict:
+        """One page of faults, oldest first, with where the next page starts.
+
+        Bounded at every level it reads. It used to load every fault in the store with every
+        publication each one had ever queued, so the listing that exists for an operator to
+        glance at grew with the store's whole history. Nested lists are capped per fault, and
+        the page is continued by rowid, which is stable: a fault recorded between two pages
+        lands after the cursor rather than shifting everything it was compared against.
+        """
+        limit = _bounded(limit, "limit")
         clauses, params = [], []
         if scope_key is not None:
             clauses.append("scope_key = ?")
@@ -671,19 +694,37 @@ class FaultLedger:
         if state is not None:
             clauses.append("state = ?")
             params.append(state)
+        if after is not None:
+            if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+                raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                                   f"after is a non-negative integer, not {after!r}")
+            clauses.append("rowid > ?")
+            params.append(after)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        rows = [dict(row) for row in self.store.all(
-            "SELECT * FROM fault_ledger" + where + " ORDER BY rowid", tuple(params))]
+        # One row past the page, to learn whether there is a next page without a second query.
+        fetched = self.store.all(
+            "SELECT rowid AS seq, * FROM fault_ledger" + where + " ORDER BY rowid LIMIT ?",
+            (*params, limit + 1))
+        truncated = len(fetched) > limit
+        rows = [dict(row) for row in fetched[:limit]]
         for row in rows:
             row["occurrences"] = self.occurrences(row["fault_id"])
-            row["publications"] = [dict(entry) for entry in self.store.all(
+            publications = self.store.all(
                 "SELECT publication_id, kind, trigger_key, state, attempts, external_ref,"
-                "  last_error FROM fault_publications WHERE fault_id = ? ORDER BY rowid",
-                (row["fault_id"],))]
+                "  last_error FROM fault_publications WHERE fault_id = ?"
+                " ORDER BY rowid DESC LIMIT ?",
+                (row["fault_id"], SHOWN_PER_FAULT + 1))
+            row["publicationsTruncated"] = len(publications) > SHOWN_PER_FAULT
+            row["publications"] = [dict(entry) for entry in
+                                   reversed(publications[:SHOWN_PER_FAULT])]
         return {
             "schema": LEDGER_SCHEMA, "scopeKey": scope_key, "faults": rows,
+            "limit": limit,
+            "next": rows[-1]["seq"] if truncated else None,
             "limits": "derived from this store only. A queued publication is not an issue"
-                      " anybody has written, and a confirmed one is not an issue anybody read",
+                      " anybody has written, and a confirmed one is not an issue anybody read."
+                      " Pass next as after to continue; nested lists keep the newest"
+                      f" {SHOWN_PER_FAULT} per fault",
         }
 
     # ------------------------------------------------------------------ recording

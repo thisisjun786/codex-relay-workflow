@@ -1515,5 +1515,158 @@ class SeventhReviewFindings(RelayTestCase):
         self.assertIsNone(positions[-1], "it wraps rather than running off the end")
 
 
+class ProvisionalRowsAndBounds(RelayTestCase):
+    """PR126 threads kvpuT and kvpv9, each closed as a class.
+
+    The first: an attempt row is inserted in_flight with a provisional held_uncertain state
+    before the transport call returns, and every reader of attempt state has to wait for it to
+    settle. The second: a bound an operator passes has to reach the query it is meant to bound.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.ledger = faults.FaultLedger(self.store, self.clock)
+        self.ledger.set_target("crw:CRW", TRACKER)
+        self.register()
+        self.relationship = self.store.one(
+            "SELECT relationship_id FROM relationships")["relationship_id"]
+
+    def delivery(self, event_id="event-f", hold=None):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO deliveries (event_id, relationship_id, kind,"
+                "  recipient_task_id, recipient_thread_id, state, attempt_count, hold_reason,"
+                "  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (event_id, self.relationship, "completion_event", "01parent-task",
+                 "01parent-task", "queued", 3, hold, self.clock.iso(), self.clock.iso()))
+
+    def attempt(self, index, *, internal, state="held_uncertain", event_id="event-f"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO attempts (request_id, event_id, attempt_no, kind,"
+                "  internal_state, state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)",
+                (f"del-f-{index:03d}", event_id, index + 1, "completion_event", internal,
+                 state, self.clock.iso(), self.clock.iso()))
+
+    def test_sends_still_in_flight_are_not_failures(self):
+        """Three healthy sends observed mid-flight used to reach the degraded threshold."""
+        self.delivery()
+        for index in range(3):
+            self.attempt(index, internal="in_flight")
+        derived = faultsweep.retry_faults(self.store, product=PRODUCT, scope={})
+        self.assertEqual([], derived["observations"])
+        for _round in range(3):
+            faultsweep.record_all(self.ledger, faultsweep.sweep(self.store), store=self.store)
+        self.assertEqual(0, self.store.one(
+            "SELECT COUNT(*) AS n FROM fault_ledger WHERE fault_class = ?",
+            ("delivery_stalled",))["n"])
+
+    def test_a_reconciled_uncertain_outcome_stays_eligible(self):
+        """Settled as uncertain means nobody could establish that it landed, which is a fact."""
+        self.delivery()
+        self.attempt(0, internal="settled", state="held_uncertain")
+        self.attempt(1, internal="in_flight")
+        derived = faultsweep.retry_faults(
+            self.store, product=PRODUCT, scope={})["observations"]
+        self.assertEqual(["delivery:del-f-000"], [entry["occurrenceKey"] for entry in derived])
+
+    def test_a_held_delivery_is_named_by_its_last_settled_attempt(self):
+        self.delivery(hold="attempt_cap")
+        self.attempt(0, internal="settled", state="withheld_pre_send")
+        self.attempt(1, internal="in_flight")
+        derived = faultsweep.delivery_faults(
+            self.store, product=PRODUCT, scope={})["observations"]
+        self.assertEqual(1, len(derived))
+        self.assertEqual("withheld_pre_send", derived[0]["signature"]["attemptState"])
+        self.assertEqual("delivery:del-f-000", derived[0]["occurrenceKey"])
+
+    def test_an_in_flight_row_does_not_keep_a_recovered_fault_open(self):
+        signature = {"recipient": "01parent-task", "attemptState": "held_uncertain"}
+        self.delivery()
+        self.attempt(0, internal="in_flight")
+        self.assertIsNone(faultsweep.still_present(self.store, "delivery_stalled", signature))
+        self.attempt(1, internal="settled")
+        self.assertIsNotNone(faultsweep.still_present(self.store, "delivery_stalled",
+                                                      signature))
+
+    def fill(self, count):
+        for index in range(count):
+            self.ledger.record(faults.observation(
+                product=PRODUCT, fault_class="report_omitted", severity=faults.BROKEN,
+                signature={"relationship": f"rel-{index:03d}", "turn": "t"},
+                occurrence_key=f"k{index}", scope=SCOPE))
+
+    def test_the_listing_is_paged_and_its_cursor_is_stable(self):
+        self.fill(5)
+        first = self.ledger.snapshot(limit=2)
+        self.assertEqual(2, len(first["faults"]))
+        self.assertIsNotNone(first["next"])
+        # A fault recorded between pages lands after the cursor instead of shifting the pages.
+        self.fill(6)
+        second = self.ledger.snapshot(limit=2, after=first["next"])
+        third = self.ledger.snapshot(limit=10, after=second["next"])
+        seen = [row["fault_id"] for page in (first, second, third) for row in page["faults"]]
+        self.assertEqual(len(seen), len(set(seen)))
+        self.assertEqual(6, len(seen))
+        self.assertIsNone(third["next"])
+
+    def test_nested_lists_are_bounded_per_fault(self):
+        answer = self.ledger.record(omission("a"))
+        for index in range(faults.SHOWN_PER_FAULT + 3):
+            self.ledger.record_fix(answer["faultId"], ref=f"PR #{index}")
+        row = self.ledger.snapshot(limit=1)["faults"][0]
+        self.assertLessEqual(len(row["publications"]), faults.SHOWN_PER_FAULT)
+        self.assertTrue(row["publicationsTruncated"])
+        self.assertEqual(faults.SHOWN_PER_FAULT,
+                         len(self.ledger.remediations(answer["faultId"])))
+
+    def test_a_bound_that_bounds_nothing_is_refused_on_every_listing(self):
+        for call in (lambda: self.ledger.snapshot(limit=0),
+                     lambda: self.ledger.snapshot(limit=-1),
+                     lambda: self.ledger.snapshot(after=-1),
+                     lambda: self.ledger.remediations("x", limit=0)):
+            with self.assertRaises(faults.FaultRefused):
+                call()
+
+    def test_a_sweep_bound_that_bounds_nothing_is_refused(self):
+        """The sweep and each public adapter pass limit to SQL, where -1 means unlimited."""
+        for call in (
+            lambda: faultsweep.sweep(self.store, limit=-1),
+            lambda: faultsweep.sweep(self.store, limit=0),
+            lambda: faultsweep.retry_faults(self.store, product=PRODUCT, scope={}, limit=-1),
+            lambda: faultsweep.delivery_faults(self.store, product=PRODUCT, scope={}, limit=0),
+            lambda: faultsweep.sync_faults(self.store, product=PRODUCT, scope={}, limit=-5),
+            lambda: faultsweep.observation_faults(self.store, product=PRODUCT, scope={},
+                                                  limit=0),
+            lambda: faultsweep.recovered(self.store, [], product=PRODUCT, scope={}, limit=-1),
+        ):
+            with self.assertRaises(faults.FaultRefused):
+                call()
+
+    def invoke(self, *argv):
+        import contextlib
+        import io
+
+        from codex_session_relay import cli
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = cli.main(["--state", str(self.store.path.parent), *argv])
+        return code, json.loads(buffer.getvalue())
+
+    def test_the_command_line_listing_takes_its_bound_and_continues(self):
+        self.fill(3)
+        code, refusal = self.invoke("fault-show", "--limit", "-1")
+        self.assertEqual(2, code)
+        self.assertEqual("fault_observation_malformed", refusal["reason"])
+        code, first = self.invoke("fault-show", "--limit", "2")
+        self.assertEqual(0, code)
+        self.assertEqual(2, len(first["faults"]))
+        code, rest = self.invoke("fault-show", "--limit", "2", "--after", str(first["next"]))
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(rest["faults"]))
+        self.assertIsNone(rest["next"])
+
+
 if __name__ == "__main__":
     unittest.main()
