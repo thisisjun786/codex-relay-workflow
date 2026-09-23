@@ -746,8 +746,9 @@ class BridgeRecordPolicyTest(unittest.TestCase):
             "a role pair its own allowlist omits":
                 (lambda: write_policy(broken, contradiction), broken),
             "no such file": (lambda: None, self.home.destination.parent / "absent.json"),
-            "a padded path": (lambda: None, str(self.policy) + " "),
-            "a leading space": (lambda: None, " " + str(self.policy)),
+            # A file by the padded name exists and parses, so the padding is the only refusal.
+            "a padded path": (lambda: write_policy(Path(str(self.policy) + " ")),
+                              str(self.policy) + " "),
             "an unknown user's home": (lambda: None, "~crw218-no-such-user/policy.json"),
         }
         for label, (prepare, policy) in cases.items():
@@ -1195,8 +1196,6 @@ class BridgeLauncherPolicyTest(unittest.TestCase):
             "no digest": {"path": str(self.policy)},
             "an extra key": dict(self.reference(), note="x"),
             "a relative path": self.reference(path="execution-policy.json"),
-            "a padded path": self.reference(path=str(self.policy) + " "),
-            "a leading space": self.reference(path=" " + str(self.policy)),
             "a newline": self.reference(path=str(self.policy) + "\n"),
             "an empty path": self.reference(path=""),
             "a short digest": self.reference(digest=self.digest[:32]),
@@ -1206,6 +1205,17 @@ class BridgeLauncherPolicyTest(unittest.TestCase):
             with self.subTest(label):
                 self.record(executionPolicy=reference)
                 self.assert_refused(self.start())
+
+    def test_a_padded_path_is_refused_even_when_a_file_by_that_name_exists(self):
+        """The bridge strips the variable, so it would open the unpadded file instead.
+
+        The padded file exists and matches its digest, so only the padding check stands between
+        this record and a bridge started under a file other than the one the record names.
+        """
+        padded = Path(str(self.policy) + " ")
+        digest = write_policy(padded, OTHER_POLICY)
+        self.record(executionPolicy=self.reference(path=str(padded), digest=digest))
+        self.assert_refused(self.start(), "whitespace")
 
     def test_a_policy_the_launcher_cannot_read_is_refused_naming_the_record(self):
         absent = self.home / "absent.json"
