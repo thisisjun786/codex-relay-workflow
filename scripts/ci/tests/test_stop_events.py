@@ -915,3 +915,98 @@ class ReviewRoundFourControls(unittest.TestCase):
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["rowsUnreadable"], [str(path)])
+
+
+class ReviewRoundFiveControls(unittest.TestCase):
+    """Red-first controls for the fifth review round (CRW-212, PR #144).
+
+    The records of one event are written by one owner in one run, so every reference between them
+    resolves to the record it names and every value two of them carry agrees: the owner's slot and
+    pid in the host file and the claim, the outcome's slot and guard result against its accepted
+    row, the accepted row's place, and the claim a duplicate names. One value changed in any of
+    them, and the reading does not vouch for the event.
+    """
+
+    SLOT = "20000101/" + "0" * 32 + ".json"
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+        self.count = 0
+
+    def one_event(self):
+        """One Stop through both registrations of one root: host file, claim, outcome, an accepted
+        row and a duplicate row, all written by the real paths."""
+        self.count += 1
+        root = self.base / ("event-%d" % self.count)
+        root.mkdir()
+        host = Host(root)
+        payload = at_stop(host, self.document, 0)
+        run_one(host.declared(), payload)
+        run_one(host.checkout(), payload)
+        rows = {json.loads(p.read_text(encoding="utf-8"))["acceptance"]: p
+                for p in host.row_paths()}
+        records = {"host": next(host_ledger_of(host).iterdir()),
+                   "claim": host.journal / "accepted" / host.ledger()[0][0],
+                   "outcome": host.journal / "accepted" / host.ledger()[1][0],
+                   "accepted": rows["accepted"], "duplicate": rows["duplicate"]}
+        return host, records
+
+    def change(self, path, change):
+        body = json.loads(path.read_text(encoding="utf-8"))
+        change(body)
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+    def test_a_complete_event_reads_true(self):
+        host, _records = self.one_event()
+        self.assertEqual(verify(host.journal)[:1] + (verify(host.journal)[1]["verdict"],),
+                         (0, "TRUE"))
+
+    def test_records_of_one_event_that_disagree_are_not_vouched_for(self):
+        slot = self.SLOT
+        cases = [
+            ("claim names another slot", "claim",
+             lambda b: b["claimedBy"].__setitem__("attemptRow", slot)),
+            ("host file names another slot", "host",
+             lambda b: b["claimedBy"].__setitem__("attemptRow", slot)),
+            ("host file names another owner", "host",
+             lambda b: b["claimedBy"].__setitem__("pid", b["claimedBy"]["pid"] + 1)),
+            ("outcome names another slot", "outcome", lambda b: b.__setitem__("attemptRow", slot)),
+            ("outcome held what the row released", "outcome", lambda b: b.__setitem__("held", True)),
+            ("outcome decided otherwise", "outcome",
+             lambda b: b.__setitem__("guardDecision", "block")),
+            ("outcome saw another state", "outcome",
+             lambda b: b.__setitem__("guardState", "declared")),
+            ("outcome ended otherwise", "outcome",
+             lambda b: b.__setitem__("adapterOutcome", "guard_timed_out")),
+            ("accepted row calls itself a duplicate", "accepted",
+             lambda b: b.__setitem__("adapterOutcome", "duplicate_invocation")),
+            ("accepted row held without an answer", "accepted",
+             lambda b: (b.__setitem__("held", True),
+                        b.__setitem__("adapterOutcome", "guard_timed_out"))),
+            ("duplicate row printed a hold", "duplicate", lambda b: b.__setitem__("held", True)),
+        ]
+        for label, which, change in cases:
+            with self.subTest(case=label):
+                host, records = self.one_event()
+                self.change(records[which], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 label + " was vouched for")
+
+    def test_a_duplicate_naming_a_claim_its_own_root_does_not_hold_is_not_vouched_for(self):
+        root = self.base / "two-roots"
+        root.mkdir()
+        host = Host(root)
+        other, command = host.registration_with_its_own_root("other-journal")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.declared(), payload)
+        run_one(command, payload)
+        [duplicate] = [p for day in sorted(other.iterdir()) if DAY.match(day.name)
+                       for p in sorted(day.iterdir()) if ROW.match(p.name)]
+        self.change(duplicate, lambda b: b.__setitem__("acceptedAs",
+                                                        "accepted/" + b["eventKey"] + ".json"))
+        code, answer = verify(host.journal, other)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))

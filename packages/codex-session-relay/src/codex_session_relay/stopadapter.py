@@ -1157,6 +1157,8 @@ def run(payload, codex_home=None, environ=None, settings=None):
     except BaseException as error:  # noqa: BLE001 - a detector that dies must still release
         record["adapterOutcome"] = ADAPTER_FAULTED
         record["fault"] = type(error).__name__ + ": " + str(error)
+        # This path prints nothing, so whatever was decided before the fault, nothing was held.
+        record["held"] = False
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
         written = None
         try:

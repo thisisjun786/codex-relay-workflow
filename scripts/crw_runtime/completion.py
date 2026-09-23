@@ -1655,6 +1655,8 @@ def run(payload, codex_home=None, environ=None, settings=None):
     except BaseException as error:  # noqa: BLE001 - a detector that dies must still release
         record["adapterOutcome"] = ADAPTER_FAULTED
         record["fault"] = type(error).__name__ + ": " + str(error)
+        # This path prints nothing, so whatever was decided before the fault, nothing was held.
+        record["held"] = False
         record["elapsedMs"] = round((time.monotonic() - started) * 1000)
         written = None
         try:
@@ -1714,11 +1716,14 @@ def _ledger_shape(body, key, outcome):
         return (isinstance(body.get("at"), str) and isinstance(body.get("adapterOutcome"), str)
                 and body.get("journalPolicy") in JOURNAL_POLICIES
                 and isinstance(body.get("held"), bool)
+                # Only a guard's answer can hold, exactly as run() decides it.
+                and (body["held"] is False or body["adapterOutcome"] == GUARD_ANSWERED)
                 and (body.get("attemptRow") is None or isinstance(body.get("attemptRow"), str)))
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("claimedAt"), str) and isinstance(body.get("stopHookActive"), bool)
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
             and isinstance(claimed_by, dict) and isinstance(claimed_by.get("attemptRow"), str)
+            and _is_count(claimed_by.get("pid"))
             and isinstance(claimed_by.get("hostLedger"), str) and bool(claimed_by.get("hostLedger"))
             # A claim is filed under the key of the event it names, recomputed here, so a claim
             # whose session, turn, flag or answer was not that event's is not read as its record.
@@ -1751,19 +1756,23 @@ def _row_shape(row):
             return False
         # And each kind carries what it is written with, so a row stripped of the invocation it
         # records is not counted as that invocation.
-        outcome, asked, where = (row.get("adapterOutcome"), row.get("guardInvoked"),
-                                 row.get("acceptedAs"))
-        if not isinstance(outcome, str) or not isinstance(asked, bool):
+        outcome, asked, where, held = (row.get("adapterOutcome"), row.get("guardInvoked"),
+                                       row.get("acceptedAs"), row.get("held"))
+        if not isinstance(outcome, str) or not isinstance(asked, bool) or not isinstance(held, bool):
+            return False
+        # Only a guard's answer can hold, exactly as run() decides it.
+        if held and outcome != GUARD_ANSWERED:
             return False
         if acceptance == ACCEPTED:
-            return asked is True and where == LEDGER_DIRECTORY + "/" + key + ".json"
+            return (asked is True and where == LEDGER_DIRECTORY + "/" + key + ".json"
+                    and outcome not in (DUPLICATE_INVOCATION, ARBITRATION_FAILED))
         if acceptance == DUPLICATE:
             return (outcome == DUPLICATE_INVOCATION
                     and where in (LEDGER_DIRECTORY + "/" + key + ".json",
                                   "/".join(HOST_LEDGER_PARTS + (key + ".json",))))
         if acceptance == UNARBITRATED:
             return outcome == ARBITRATION_FAILED and asked is False and where is None
-        return where is None
+        return where is None and outcome not in (DUPLICATE_INVOCATION, ARBITRATION_FAILED)
     if acceptance == UNESTABLISHED:
         return (key is None and isinstance(identity, dict)
                 and identity.get("established") is False
@@ -1781,11 +1790,20 @@ def _host_shape(body, key):
             return False
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
-            and isinstance(claimed_by.get("attemptRow"), str)
+            and isinstance(claimed_by.get("attemptRow"), str) and _is_count(claimed_by.get("pid"))
             and (claimed_by.get("journalRoot") is None
                  or isinstance(claimed_by.get("journalRoot"), str))
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
                                  body["answerItem"]))
+
+
+def _is_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+# The guard's result as the outcome and the accepted row both record it. One owner writes both in
+# one run, from one record, so any difference is a record that is not what that run wrote.
+GUARD_RESULT_FIELDS = ("adapterOutcome", "guardDecision", "guardState", "held")
 
 
 def _identity_of(spelled):
@@ -1827,7 +1845,11 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
     not know; an entry in a ledger that is not one of its records; an outcome with no claim in its
     root, or naming another session or turn than its claim; a claim with no outcome in its root
     (its owner died before answering); an outcome whose accepted row is missing or is not that
-    event's accepted row (including none under every_invocation); a host file whose event has no
+    event's accepted row (including none under every_invocation); records of one event that
+    disagree (recordsThatDisagree): the host file, the claim, the outcome and the accepted row are
+    written by one owner in one run, so they name one slot and one process, the accepted row sits
+    in that slot, the outcome and that row carry one guard result, and a duplicate that found the
+    accepted record in its own root finds it there; a host file whose event has no
     claim in the root it names, or names a root this reading was not given (its owner died between
     the two files, its root could not hold the claim, or the root was left out); a claim whose host
     file is not in the ledger it names; a duplicate whose event has no claim in any root read; a
@@ -1848,7 +1870,8 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
               "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": [],
               "foreignLedgerEntries": [], "invocationsUnrecorded": [], "acceptedRowsMissing": [],
               "duplicatesWithoutClaim": [], "hostFilesWithoutClaim": [],
-              "claimsWithoutHostFile": [], "turnsWithMoreThanOneEvent": 0,
+              "claimsWithoutHostFile": [], "recordsThatDisagree": [],
+              "turnsWithMoreThanOneEvent": 0,
               "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
                                     "pairsWithMoreThanOneRow": 0}}
 
@@ -2006,7 +2029,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
             selected.add(row["eventKey"])
 
     counts = answer["unjudgedInvocations"]
-    pairs, accepted_rows, duplicate_rows = {}, {}, []
+    pairs, accepted_rows, duplicate_rows, accepted_at = {}, {}, [], {}
     for root, where, row in rows:
         chosen = in_window(row.get("at"), row.get("sessionId"), row.get("turnId"))
         if chosen and row.get("sessionId") and row.get("turnId"):
@@ -2031,11 +2054,16 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
             continue
         if acceptance == ACCEPTED:
             accepted_rows.setdefault(key, []).append(where)
+            accepted_at.setdefault((root, key), []).append(where)
             if key not in files_of[root]:
                 answer["acceptedRowsWithoutLedger"].append(where)
         elif acceptance == DUPLICATE:
             answer["duplicateInvocations"] += 1
             duplicate_rows.append((key, where))
+            if row["acceptedAs"] == LEDGER_DIRECTORY + "/" + key + ".json" \
+                    and key not in files_of[root]:
+                # It found the accepted record in its own root, which does not hold one.
+                answer["recordsThatDisagree"].append(where)
             if row.get("guardInvoked") is not False:
                 answer["guardAskedOnDuplicate"].append(where)
         else:
@@ -2055,6 +2083,19 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
             if claim is None:
                 continue
             events_per_turn.setdefault((claim["sessionId"], claim["turnId"]), set()).add(key)
+            # One owner wrote the host file, this claim, the outcome and the accepted row in one
+            # run: they name one slot and one process, and the accepted row sits in that slot.
+            slot, pid = claim["claimedBy"]["attemptRow"], claim["claimedBy"]["pid"]
+            claim_path = str(Path(root) / LEDGER_DIRECTORY / (key + ".json"))
+            this_root = _identity_of(root)
+            for _identity, path, body in host_files.get(key, []):
+                owner = body["claimedBy"]["journalRoot"]
+                if owner and _identity_of(owner) == this_root and (
+                        body["claimedBy"]["attemptRow"] != slot or body["claimedBy"]["pid"] != pid):
+                    answer["recordsThatDisagree"].append(path)
+            for where in accepted_at.get((root, key), []):
+                if where != str(Path(root) / slot):
+                    answer["recordsThatDisagree"].append(where)
             named = claim["claimedBy"]["hostLedger"]
             identity = ledger_identity.get(os.path.abspath(named))
             if identity is None or not any(entry[0] == identity
@@ -2070,16 +2111,22 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
             if outcome["journalPolicy"] == NO_JOURNAL:
                 answer["invocationsUnrecorded"].append(key)
             row = outcome["attemptRow"]
+            outcome_path = str(Path(root) / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX))
             if row is None and outcome["journalPolicy"] == EVERY_INVOCATION:
                 # Every invocation was to leave a row, so the accepted one's is missing: its write
                 # failed, and what the event was answered with rests on the outcome alone.
                 answer["acceptedRowsMissing"].append(key)
             elif row is not None:
+                if row != slot:
+                    answer["recordsThatDisagree"].append(outcome_path)
                 named_row = _read_row(root, row)
                 if (named_row is None or named_row.get("recordVersion") != RECORD_VERSION
                         or named_row.get("acceptance") != ACCEPTED
                         or named_row.get("eventKey") != key):
                     answer["acceptedRowsMissing"].append(key)
+                elif any(named_row.get(field) != outcome.get(field)
+                         for field in GUARD_RESULT_FIELDS):
+                    answer["recordsThatDisagree"].append(outcome_path)
         for _identity, path, body in host_files.get(key, []):
             owner = body["claimedBy"]["journalRoot"]
             owned_by = reached.get(_identity_of(owner)) if owner else None
@@ -2097,7 +2144,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
     for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
                   "outcomesWithoutClaim", "invocationsUnrecorded", "acceptedRowsMissing",
                   "ledgerUnreadable", "duplicatesWithoutClaim", "foreignLedgerEntries",
-                  "hostFilesWithoutClaim", "claimsWithoutHostFile"):
+                  "hostFilesWithoutClaim", "claimsWithoutHostFile", "recordsThatDisagree"):
         answer[field] = sorted(set(answer[field]))
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
@@ -2107,6 +2154,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
           or answer["invocationsUnrecorded"] or answer["acceptedRowsMissing"]
           or answer["foreignLedgerEntries"] or answer["duplicatesWithoutClaim"]
           or answer["hostFilesWithoutClaim"] or answer["claimsWithoutHostFile"]
+          or answer["recordsThatDisagree"]
           or answer["unjudgedInvocations"] or answer["legacyRows"] or not events):
         answer["verdict"] = UNREADABLE_VERDICT
     else:

@@ -1858,6 +1858,11 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   in the same root;
 - a host file whose event has no claim in the root it names, or that names a root the reading was
   not given, and a claim whose host file is missing;
+- records of one event that disagree (`recordsThatDisagree`): the host file, the claim, the
+  outcome and the accepted row are written by one owner in one run, so they name one slot and one
+  process, the accepted row sits in that slot, the outcome and that row carry one guard result
+  (`adapterOutcome`, `guardDecision`, `guardState`, `held`), only a guard's answer holds, and a
+  duplicate that found the accepted record in its own root finds it there;
 - a duplicate whose event has no claim in any root read, or a ledger written under `no_journal`;
 - any invocation in the window it cannot judge, or nothing to judge.
 
