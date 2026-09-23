@@ -488,28 +488,44 @@ class F2EveryShapeTheComparisonReads(_Seam):
         agreeing = {
             "the same object, keys in another order": (self.PROFILE, reordered),
         }
+        absent = object()
+        # (recorded, reported, the refusal): the last two are review 5 of d88c169e - a recorded
+        # profile the answer does not report was skipped, and the turn started unverified.
         refusing = {
-            "record 0, answer false": (0, False),
+            "record 0, answer false": (0, False, "unverifiable_permission_profile"),
             "extends null in the record, absent in the answer": (
-                self.PROFILE, {"id": "profile-1", "rules": []}),
+                self.PROFILE, {"id": "profile-1", "rules": []},
+                "unverifiable_permission_profile"),
+            "a recorded profile, answered null": (self.PROFILE, None, "setting_unobservable"),
+            "a recorded profile, not answered at all": (
+                self.PROFILE, absent, "setting_unobservable"),
         }
         number = 0
-        for label, (recorded, reported) in {**agreeing, **refusing}.items():
+        for label, case in {**agreeing, **refusing}.items():
+            recorded, reported = case[:2]
             for flagged in (True, False):
                 number += 1
                 with self.subTest(label, settings_free=flagged):
                     record = dict(seam.AUTHORIZED.data, expectedPermissionProfile=recorded)
                     settings = record_based(record) if flagged else TaskSettings(record)
-                    adapter, calls = self._adapter(
-                        resume=self._answer(activePermissionProfile=reported),
-                        status="notLoaded")
+                    answer = self._answer(activePermissionProfile=reported)
+                    if reported is absent:
+                        del answer["activePermissionProfile"]
+                    adapter, calls = self._adapter(resume=answer, status="notLoaded")
                     receipt = adapter.send_message(
                         f"sup-8{number:011d}-a1", "thread-1", "hi", settings)
                     if label in agreeing:
                         self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
                     else:
-                        self.assert_withheld_before_any_turn(
-                            receipt, calls, "unverifiable_permission_profile")
+                        self.assert_withheld_before_any_turn(receipt, calls, case[2])
+        for number, flagged in enumerate((True, False), start=1):
+            with self.subTest("no profile recorded, none answered", settings_free=flagged):
+                record = dict(seam.AUTHORIZED.data)
+                settings = record_based(record) if flagged else TaskSettings(record)
+                adapter, calls = self._adapter(resume=self._answer(), status="notLoaded")
+                receipt = adapter.send_message(
+                    f"sup-85000000000{number}-a1", "thread-1", "hi", settings)
+                self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
 
     def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
         host = FakeHostAdapter(clock=None)

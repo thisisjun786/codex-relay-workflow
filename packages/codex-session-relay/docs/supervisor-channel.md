@@ -658,7 +658,8 @@ unreadable sandbox), where it used to raise and be recorded as an unknown outcom
 comparison between the record and the answer is made on JSON values, where 0 and false differ;
 Python's equality said they agreed. A field the pinned policy does not declare, and the
 permission profile, which is the host's own value carried whole, have no type to hold them to
-and are compared exactly. A parent's or a child's pair, which policy derived, is
+and are compared exactly; a recorded profile the answer does not report, or reports as null,
+is a refusal like any other absent answer. A parent's or a child's pair, which policy derived, is
 resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
 load a thread without transmitting, so an operator message to an unloaded supervisor through it
 still waits for the host to load that thread.

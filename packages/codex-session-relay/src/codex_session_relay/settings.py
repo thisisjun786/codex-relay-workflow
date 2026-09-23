@@ -508,12 +508,20 @@ class TaskSettings:
                               "expected": expected, "returned": returned})
 
         profile = response.get("activePermissionProfile")
-        if profile is not None and (_canonical(profile)
-                                    != _canonical(self.data.get("expectedPermissionProfile"))):
+        expected_profile = self.data.get("expectedPermissionProfile")
+        if profile is None and expected_profile is not None:
+            # Absence is not agreement, here as for every other field the record holds: a record
+            # that names a profile has to see the host report one before a turn may start. This
+            # was skipped - only a REPORTED profile was compared - so a recorded profile the
+            # answer left out, or answered null, went unverified (the CRW-215 live-findings
+            # review of d88c169e). A record with no profile still accepts an answer with none.
+            found.append({"code": SETTING_UNOBSERVABLE, "field": "activePermissionProfile",
+                          "expected": expected_profile, "returned": None})
+        elif profile is not None and _canonical(profile) != _canonical(expected_profile):
             # A profile we did not anticipate is a permission source we cannot interpret.
             found.append({"code": UNVERIFIABLE_PERMISSION_PROFILE,
                           "field": "activePermissionProfile",
-                          "expected": self.data.get("expectedPermissionProfile"),
+                          "expected": expected_profile,
                           "returned": profile})
         return found
 
