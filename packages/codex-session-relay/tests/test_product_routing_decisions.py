@@ -997,9 +997,13 @@ class FoldedReviewFindings(RouteRows):
         from codex_session_relay import routes
 
         with self.store.transaction() as db:
-            routes.store_incident(db, self.clock, "c" * 32, {"occurrenceKey": "reading:r1"})
+            # More readings than any stored-incident bound: the first must still be known.
+            for n in range(routes.MAX_STORED_INCIDENTS + 4):
+                routes.store_incident(db, self.clock, "c" * 32,
+                                      {"occurrenceKey": f"reading:r{n}"}, keep=None)
         self.assertEqual("c" * 32, completion._replayed(self.store, ["c" * 32], "reading:r1"))
-        self.assertIsNone(completion._replayed(self.store, ["c" * 32], "reading:r2"))
+        self.assertEqual("c" * 32, completion._replayed(self.store, ["c" * 32], "reading:r0"))
+        self.assertIsNone(completion._replayed(self.store, ["c" * 32], "reading:other"))
 
 
 class ClosurePending(Completion):

@@ -1,9 +1,11 @@
 """The digest: what changed in routed records since the last digest, for a midpoint check.
 
-Nothing here runs on a clock or calls a model. Somebody asks for a digest; for each route of the
-page it reads, it first discharges what the route owes (the obligations of confirmed writes, the
-project a confirmed create made), then compares the route with the snapshot it last reported and
-answers only the difference:
+Nothing here runs on a clock or calls a model. Somebody asks for a digest. It first binds the
+projects confirmed creates made, because binding one moves its member defects wherever they sit
+in the listing, and a member reported as held in the same answer that moved it would be a
+decision already made. Then, for each route of the page it reads, it discharges what that route
+owes (the obligations of its confirmed writes, which change only that route), reads it again, and
+compares it with the snapshot it last reported, answering only the difference:
 
 - a new severe record, whether the ledger raised its severity or a pending incident claimed it;
 - a new decision somebody has to make - a pending classification, a hold, an issue whose project
@@ -20,6 +22,20 @@ delivery of the notices belong to the ledger's one notification path.
 from . import intake, ledger_port, products, routes
 
 PAGE = 100
+
+
+def _bind_created_projects(router):
+    """Every project proposal whose create confirmed, bound before anything is reported."""
+    bound, after = [], None
+    while True:
+        page = routes.listing(router.store, stages=(products.STAGE_FILED,),
+                              dispositions=(products.PROJECT_PROPOSAL,), limit=PAGE,
+                              after=after)
+        for route in page["routes"]:
+            bound.extend(intake.reconcile_route(router, route)["bound"])
+        after = page["next"]
+        if after is None:
+            return bound
 
 
 def _entry(route, now):
@@ -41,7 +57,7 @@ def digest(router, *, limit=500, after=None) -> dict:
     port = router.port
     port.ready("route-digest")
     limit = min(max(int(limit), 1), 5000)
-    linked, bound = [], []
+    linked, bound = [], _bind_created_projects(router)
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
     while read < limit:
@@ -52,13 +68,12 @@ def digest(router, *, limit=500, after=None) -> dict:
                 if route["stage"] == products.STAGE_SUPERSEDED:
                     # Its incidents live on under the product it was classified into.
                     continue
-                # Reconciled inside the digest's own paging, so every route the digest reaches
-                # is also discharged, however many routes come before it.
-                done = intake.reconcile_route(router, route)
-                linked.extend(done["queued"])
-                bound.extend(done["bound"])
-                if done["queued"] or done["bound"]:
-                    route = routes.get(router.store, route["fault_id"])
+                # Discharged inside the digest's own paging, so every route the digest reaches
+                # is reconciled however many come before it, and read again afterwards: the
+                # page was read before the projects above were bound and before this discharge.
+                if route["disposition"] != products.PROJECT_PROPOSAL:
+                    linked.extend(intake.reconcile_route(router, route)["queued"])
+                route = routes.get(router.store, route["fault_id"])
                 now = routes.snapshot(route, port.get(route["fault_id"]))
                 before = route["reported"]
                 if now == before:

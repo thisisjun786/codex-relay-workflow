@@ -205,8 +205,9 @@ round's first write is again a comment. After twenty closed rounds the check ref
 decision goes to a person.
 
 A reading that already failed on a closed round is recognised when it is handed in again. A retry
-of an old reading is old evidence, so it opens no round. Each round keeps its newest sixteen
-failing readings for that comparison.
+of an old reading is old evidence, so it opens no round. Each round keeps every failing reading it
+recorded for that comparison, one small row each, so how many readings came after it does not
+matter.
 
 A mismatch closes only on evidence. A later reading can carry a fix reference and a verification
 reference; then the fix is recorded, a reverification that passed is recorded, and the record is
@@ -235,10 +236,13 @@ named the same way everywhere:
 | `completion_mismatch_open` | an open completion mismatch |
 | `project_proposed` | a project proposal whose project is not bound yet |
 
-`route-digest` answers a midpoint check. It first runs `route-reconcile`, then compares every
-route with the snapshot it last reported and answers only what changed. That covers new severe
-records, new decisions, resolutions of records that owned an issue, and routine accumulation
-summarized per product. Each new decision is also raised as a ledger notification under its
+`route-digest` answers a midpoint check. It first binds the projects that confirmed creates
+made. Binding one moves its member defects wherever they sit in the listing, and reporting a
+member as held in the same answer would announce a decision already made. Then, for each route it
+reads, it discharges what that route owes, reads the route again, and compares it with the
+snapshot it last reported. It answers only what changed: new severe records, new decisions,
+resolutions of records that owned an issue, and routine accumulation summarized per product.
+Each new decision is also raised as a ledger notification under its
 decision name. The ledger keeps one notification per record and reason, so a decision is
 announced once however often digests run. A severe pending incident or a severe hold is raised
 at intake under the same name. Asked again with nothing changed, the digest answers quiet and

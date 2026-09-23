@@ -206,10 +206,10 @@ def evaluate(reading, context) -> dict:
     pending = any(not entry["closure"]["ready"] for entry in checks if "closure" in entry)
     if verdicts & set(OPEN_VERDICTS):
         overall = MISMATCH
-    elif pending:
-        overall = CLOSURE_PENDING
     elif UNVERIFIED in verdicts:
         overall = UNVERIFIED
+    elif pending:
+        overall = CLOSURE_PENDING
     else:
         overall = CONSISTENT
     return {"subject": reading["subject"], "product": reading["product"],
@@ -395,11 +395,11 @@ def check(router, record) -> dict:
                               stage=products.STAGE_FILED, target=owner,
                               origin=reading["origin"], claimed_severity="degraded",
                               detail=entry["reason"])
-                # Kept on the round's route, so the same reading handed in again after this
-                # round closes is recognised rather than opening the next one.
+                # Kept on the round's route, every one of them, so the same reading handed in
+                # again after this round closes is recognised rather than opening the next one.
                 routes.store_incident(db, router.clock, ids["mismatch"], {
                     "occurrenceKey": key, "subject": reading["subject"], "check": name,
-                    "verdict": verdict, "observedAt": reading["observedAt"]})
+                    "verdict": verdict, "observedAt": reading["observedAt"]}, keep=None)
                 written.append({"check": name, "faultId": ids["mismatch"], "recorded": verdict})
             if verdict == UNVERIFIED:
                 port.record(port.observation(fault_class=products.UNVERIFIED, severity="notice",
@@ -443,6 +443,6 @@ def _close(port, fault_id, row, closure, key):
 def _replayed(store, closed, key):
     """The closed round that already recorded this reading, or None."""
     for fault_id in closed:
-        if any(kept.get("occurrenceKey") == key for kept in routes.incidents(store, fault_id)):
+        if routes.stored_incident(store, fault_id, key):
             return fault_id
     return None

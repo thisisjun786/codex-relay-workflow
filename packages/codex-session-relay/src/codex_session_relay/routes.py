@@ -135,9 +135,18 @@ def set_reported(db, clock, fault_id, snapshot):
                (products.canonical(snapshot), clock.iso(), fault_id))
 
 
-def store_incident(db, clock, fault_id, incident):
-    """Keep this incident as the route's newest input; drop the oldest past the bound."""
-    incident_id = sha256_hex(f"{fault_id}|{incident['occurrenceKey']}")[:32]
+def _incident_id(fault_id, key):
+    return sha256_hex(f"{fault_id}|{key}")[:32]
+
+
+def store_incident(db, clock, fault_id, incident, *, keep=MAX_STORED_INCIDENTS):
+    """Keep this incident as the route's newest input; drop the oldest past the bound.
+
+    keep=None keeps every one. A completion mismatch round keeps every failing reading it
+    recorded, because recognising a reading handed in again must not depend on how many others
+    came after it; each is one small row, and a round ends when its mismatch is closed.
+    """
+    incident_id = _incident_id(fault_id, incident["occurrenceKey"])
     seq = db.execute("SELECT COALESCE(MAX(recorded_seq), 0) + 1 AS n FROM route_incidents"
                      " WHERE fault_id = ?", (fault_id,)).fetchone()["n"]
     db.execute("INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,"
@@ -145,10 +154,19 @@ def store_incident(db, clock, fault_id, incident):
                "   record = excluded.record, recorded_at = excluded.recorded_at,"
                "   recorded_seq = excluded.recorded_seq",
                (incident_id, fault_id, products.canonical(incident), clock.iso(), seq))
-    db.execute("DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN"
-               "  (SELECT incident_id FROM route_incidents WHERE fault_id = ?"
-               "    ORDER BY recorded_seq DESC LIMIT ?)",
-               (fault_id, fault_id, MAX_STORED_INCIDENTS))
+    if keep is not None:
+        db.execute("DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN"
+                   "  (SELECT incident_id FROM route_incidents WHERE fault_id = ?"
+                   "    ORDER BY recorded_seq DESC LIMIT ?)",
+                   (fault_id, fault_id, keep))
+
+
+def stored_incident(store, fault_id, key):
+    """The id of the input this route recorded under this occurrence key, or None. One key
+    lookup, no scan."""
+    row = store.one("SELECT incident_id FROM route_incidents WHERE incident_id = ?",
+                    (_incident_id(fault_id, key),))
+    return row["incident_id"] if row else None
 
 
 def incidents(store, fault_id) -> list:
@@ -157,7 +175,8 @@ def incidents(store, fault_id) -> list:
     return [json.loads(row["record"]) for row in rows]
 
 
-def listing(store, *, product=None, stages=None, limit=20, after=None) -> dict:
+def listing(store, *, product=None, stages=None, dispositions=None, limit=20,
+            after=None) -> dict:
     """One page of routes, oldest first, continued by rowid like the ledger's own listing."""
     limit = min(max(int(limit), 1), 1000)
     clauses, params = [], []
@@ -167,6 +186,9 @@ def listing(store, *, product=None, stages=None, limit=20, after=None) -> dict:
     if stages:
         clauses.append("stage IN (" + ",".join("?" * len(stages)) + ")")
         params.extend(stages)
+    if dispositions:
+        clauses.append("disposition IN (" + ",".join("?" * len(dispositions)) + ")")
+        params.extend(dispositions)
     if after is not None:
         clauses.append("rowid > ?")
         params.append(int(after))
