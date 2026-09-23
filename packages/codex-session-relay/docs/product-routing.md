@@ -19,7 +19,7 @@ Every surface enters in one shape, `product-incident/1`:
 {
   "schema": "product-incident/1",
   "product": "beta-meter",
-  "repository": "thisisjun786/beta-meter",
+  "repository": "example-org/beta-meter",
   "surface": "real_use",
   "phase": "in_use",
   "component": "billing",

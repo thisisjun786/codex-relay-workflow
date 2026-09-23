@@ -17,17 +17,17 @@ from codex_session_relay.routing import ProductRouter
 from .support import RelayTestCase
 
 ALPHA = {
-    "schema": "product-registry/1", "product": "alpha-notes", "workspace": "jun786",
+    "schema": "product-registry/1", "product": "alpha-notes", "workspace": "example-ws",
     "team": "ALN", "familyLabel": "제품:Alpha Notes",
-    "repositories": ["thisisjun786/alpha-notes"],
+    "repositories": ["example-org/alpha-notes"],
     "surfaces": {"dev_run": {"method": "CRW managed run tool results", "active": True},
                  "verification": {"method": "CRW verification verdicts", "active": True},
                  "user_report": {"method": "reports filed through the parent", "active": True}},
     "testTarget": {"team": "TST", "project": "proj-test"},
 }
 BETA = {
-    "schema": "product-registry/1", "product": "beta-meter", "workspace": "jun786",
-    "team": "BTM", "familyLabel": "제품:Beta Meter", "repositories": ["thisisjun786/beta-meter"],
+    "schema": "product-registry/1", "product": "beta-meter", "workspace": "example-ws",
+    "team": "BTM", "familyLabel": "제품:Beta Meter", "repositories": ["example-org/beta-meter"],
     "surfaces": {"real_use": {"method": "error events the product forwards", "active": True},
                  "user_report": {"method": "support inbox forwarded by the parent",
                                  "active": False}},
@@ -116,9 +116,9 @@ class ResolveProduct(unittest.TestCase):
         alpha = products.read_registry(ALPHA)
         beta = products.read_registry(BETA)
         shared = products.read_registry(dict(BETA, product="gamma-tools",
-                                             repositories=["thisisjun786/shared-lib"]))
+                                             repositories=["example-org/shared-lib"]))
         also = products.read_registry(dict(ALPHA, product="delta-kit",
-                                           repositories=["thisisjun786/shared-lib"]))
+                                           repositories=["example-org/shared-lib"]))
         self.registries = {r["product"]: r for r in (alpha, beta, shared, also)}
 
     def resolve(self, **fields):
@@ -132,25 +132,25 @@ class ResolveProduct(unittest.TestCase):
 
     def test_a_repository_one_product_claims_names_that_product(self):
         self.assertEqual("alpha-notes",
-                         self.resolve(product=None, repository="thisisjun786/alpha-notes"))
+                         self.resolve(product=None, repository="example-org/alpha-notes"))
 
     def test_a_repository_several_products_claim_resolves_to_nothing(self):
-        self.assertIsNone(self.resolve(product=None, repository="thisisjun786/shared-lib"))
+        self.assertIsNone(self.resolve(product=None, repository="example-org/shared-lib"))
 
     def test_a_defect_seen_in_a_crw_run_is_not_filed_under_crw(self):
         # The run is CRW-managed, but the repository is alpha-notes', so alpha-notes owns it.
         registries = dict(self.registries,
                           crw=products.read_registry(dict(ALPHA, product="crw", team="CRW",
-                                                          repositories=["thisisjun786/crw"])))
+                                                          repositories=["example-org/crw"])))
         found = placement.resolve_product(
-            registries, incident(product=None, repository="thisisjun786/alpha-notes"))
+            registries, incident(product=None, repository="example-org/alpha-notes"))
         self.assertEqual("alpha-notes", found[0])
 
 
 class Workspace(unittest.TestCase):
     def test_a_resolved_product_files_in_its_own_workspace(self):
         registry = products.read_registry(ALPHA)
-        self.assertEqual("jun786", placement.workspace_for(incident(), registry))
+        self.assertEqual("example-ws", placement.workspace_for(incident(), registry))
 
     def test_an_incident_claiming_another_workspace_for_a_product_is_refused(self):
         registry = products.read_registry(ALPHA)
@@ -298,8 +298,8 @@ class Decide(unittest.TestCase):
 
 class Labels(unittest.TestCase):
     def test_an_issue_carries_its_repository_label_and_never_the_family_label(self):
-        labels = placement.issue_labels(incident(repository="thisisjun786/alpha-notes"))
-        self.assertEqual(["thisisjun786/alpha-notes"], labels)
+        labels = placement.issue_labels(incident(repository="example-org/alpha-notes"))
+        self.assertEqual(["example-org/alpha-notes"], labels)
         self.assertNotIn(ALPHA["familyLabel"], labels)
 
 
