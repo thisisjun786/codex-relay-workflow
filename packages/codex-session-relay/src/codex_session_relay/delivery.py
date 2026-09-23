@@ -1657,7 +1657,8 @@ class DeliveryService:
             return MERGE_TURN_GRANT_UNREADABLE
         return grant_supersession_in(db, turn, grant)
 
-    def _supersession_reason(self, db, event_id: str):
+    @staticmethod
+    def _supersession_reason(db, event_id: str):
         """Is this still the thing it was queued to say? Read inside the caller's write.
 
         Two rules, and the first is the one the 2026-09-16 reproduction needs: a generation
@@ -1679,7 +1680,7 @@ class DeliveryService:
             # cannot make it stale - and measuring it there is what lost a wake permanently,
             # since a promotion does not come round twice for a parent that already holds the
             # target. Its own subject decides.
-            return self._grant_supersession(db, event)
+            return DeliveryService._grant_supersession(db, event)
         relationship = db.execute(
             "SELECT execution_generation FROM relationships WHERE relationship_id = ?",
             (event["relationship_id"],),
@@ -2148,6 +2149,18 @@ def _status_for_record(observation) -> str:
     if observation.runtime_status in ("idle", "active", "notLoaded", "systemError"):
         return observation.runtime_status
     return "unknown"
+
+
+def supersession_reason(db, event_id: str):
+    """Why a delivery no longer says anything current, or None while it still does.
+
+    The rule the send path applies before any transport call, read on the caller's connection
+    and writing nothing, for a reader that holds no delivery service. The fault sweep asks it so
+    that a delivery whose obligation was overtaken - a later generation, an answered revision
+    request, a newer final revision, a regranted merge turn - is never reported as a current
+    fault, including one parked at its attempt cap, whose state can no longer be rewritten.
+    """
+    return DeliveryService._supersession_reason(db, event_id)
 
 
 class _NotClaimable(Exception):
