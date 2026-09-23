@@ -77,17 +77,21 @@ def policy_for(directory):
 # ------------------------------------------------------------------- roles (CRW-127)
 #
 # The third question. The two above it can both be answered correctly by a task that is still on
-# the wrong model, because each of CRW's three levels is meant to run on a different pair. These
+# the wrong model, because each of CRW's three levels runs on the pair decided for its role. These
 # cases assert the same thing the rest of this file does: not that an error was raised, but that
 # nothing was dispatched.
 
-PARENT_MODEL = "devin/swe-2"
-PARENT_EFFORT = "max"
-# What the parent ran on for part of 2026-09-21, before it was restored to the pair above. Kept
-# because a superseded pair is not a second valid answer, and because it is the case where a
-# name is shared across roles: it carries the child's effort under a different model, which
-# must not be what makes the check work.
-SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
+# The project parent's pair. Since 2026-09-23 it is also the child's (MODEL and EFFORT), so no
+# case here can tell the two roles apart by their pairs; each case instead states a pair that is
+# not the named role's own and shows the role question refusing it.
+PARENT_MODEL = "anthropic/claude-opus-5-5"
+PARENT_EFFORT = "xhigh"
+# What the parent ran on until that move, and on this host still an `allowed` entry. It differs
+# from the current pair in model and in effort, so the single-axis cases take one half of it at a
+# time, and whole it is the pair that presence and the allowlist both approve while the role
+# question refuses it for either role. Kept because a superseded pair is not a second valid answer.
+SUPERSEDED_PARENT = ("devin/swe-2", "max")
+SUPERSEDED_EXECUTION = {"model": SUPERSEDED_PARENT[0], "reasoning_effort": SUPERSEDED_PARENT[1]}
 # What the child ran on until 2026-09-23, when it moved to MODEL and kept its effort. Kept for
 # the same reason as the parent's: a superseded pair is refused for its role. Because it keeps
 # the child's effort name, the model is the only axis that can refuse it.
@@ -98,9 +102,12 @@ def roles_policy(directory=None, *, roles=None, allowed=True):
     """A policy declaring roles, with the allowlist present or absent as the case needs."""
     policy = {}
     if allowed:
+        # The host's own shape: one entry for the pair both roles run on, and the parent's
+        # superseded pair, which stays approved for work that names no role. Listing the
+        # parent's pair as a second entry would name one model twice, which the file refuses.
         policy["allowed"] = [
             {"model": MODEL, "efforts": [EFFORT]},
-            {"model": PARENT_MODEL, "efforts": [PARENT_EFFORT]},
+            {"model": SUPERSEDED_PARENT[0], "efforts": [SUPERSEDED_PARENT[1]]},
         ]
     policy["roles"] = roles if roles is not None else {
         "supervisor": {"expectation": "record"},
@@ -138,19 +145,18 @@ def test_a_word_that_is_not_a_role_is_refused_like_one_that_was_never_declared()
 @pytest.mark.parametrize(
     ("role", "model", "effort", "field"),
     [
-        # A parent on the child's pair: the exact shape of the observed failure, where both the
-        # presence and the allowlist questions answer yes. Since the restore the two roles
-        # differ in model and in effort, so this row is wrong on both counts at once.
-        ("parent", MODEL, EFFORT, "model"),
+        # A parent on the pair it left: the exact shape of the observed failure, where both the
+        # presence and the allowlist questions answer yes. It is wrong in model and in effort at
+        # once, and the model is compared first, so that is the field reported.
+        ("parent", *SUPERSEDED_PARENT, "model"),
         # Then one axis at a time. A wrong-effort case has to state a name that really differs
-        # from the role it names or it proves nothing about the comparison: for the parent that
-        # is the interim pair's xhigh, which the child still runs on, and for the child it is
-        # the parent's max. The last row holds the child's own effort so that only the model is
-        # wrong -- the coordinator's retry, which changed the model and kept the effort it
-        # already had.
+        # from the role it names or it proves nothing about the comparison; the superseded
+        # pair's max is that name for either role. The last row holds the child's own effort so
+        # that only the model is wrong -- the coordinator's retry, which changed the model and
+        # kept the effort it already had.
         ("parent", PARENT_MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
-        ("child", MODEL, PARENT_EFFORT, "reasoning_effort"),
-        ("child", PARENT_MODEL, EFFORT, "model"),
+        ("child", MODEL, SUPERSEDED_PARENT[1], "reasoning_effort"),
+        ("child", SUPERSEDED_PARENT[0], EFFORT, "model"),
     ],
 )
 def test_a_pair_that_is_not_this_roles_pair_is_refused(role, model, effort, field):
@@ -165,8 +171,9 @@ def test_an_effort_name_belongs_to_its_model_and_never_stands_in_for_another():
 
     A coordinator whose send was withheld changed the model to the parent's and kept the previous
     effort. Both spellings load as themselves, and each is refused for the other's role. The pair
-    the parent ran on in the interim is the one whose effort name differs from the restored one,
-    so it is the fixture this rule is checked against rather than an alternative still accepted.
+    the parent left on 2026-09-23 is the one whose effort name differs from the current one, so
+    this file declares it for the other role and checks the rule against it, rather than
+    accepting it as an alternative.
     """
     superseded_model, superseded_effort = SUPERSEDED_PARENT
     policy = declared(roles={
@@ -176,7 +183,7 @@ def test_an_effort_name_belongs_to_its_model_and_never_stands_in_for_another():
     assert policy.summary()["roles"]["parent"]["reasoningEffort"] == PARENT_EFFORT
     assert policy.summary()["roles"]["child"]["reasoningEffort"] == superseded_effort
     assert PARENT_EFFORT != superseded_effort
-    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "max"
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").reasoning_effort == "xhigh"
     with pytest.raises(ExecutionRefused):
         policy.authorize(PARENT_MODEL, superseded_effort, role="parent")
     with pytest.raises(ExecutionRefused):
@@ -188,12 +195,17 @@ def test_the_pair_a_role_used_to_run_on_is_refused_like_any_other_wrong_pair():
 
     Once the file declares the new one, the old one is what a request citing that role must not
     carry -- which is the whole reason a pair change costs a file edit and not a code change.
+    This host still approves the old pair for work that names no role, so the refusal has to be
+    the role question's alone.
     """
     policy = declared()
     with pytest.raises(ExecutionRefused) as raised:
         policy.authorize(*SUPERSEDED_PARENT, role="parent")
     assert raised.value.code == "execution_role_mismatch"
     assert raised.value.allowed == [PARENT_MODEL]
+    # The allowlist did not refuse it: the same request naming no role is authorized.
+    assert policy.authorize(*SUPERSEDED_PARENT).model == SUPERSEDED_PARENT[0]
+    assert policy.authorize(PARENT_MODEL, PARENT_EFFORT, role="parent").model == PARENT_MODEL
 
 
 def test_the_pair_the_child_used_to_run_on_is_refused_on_the_model_alone():
@@ -284,9 +296,11 @@ def test_a_role_pair_the_allowlist_omits_is_refused_at_startup_not_at_creation()
     fails execution_not_allowed. It used to load cleanly and surface at the first creation
     attempt, as a refusal naming the allowlist rather than the contradiction that caused it.
     """
+    # The file a parent move leaves behind when only the roles row is edited: the allowlist
+    # still approves the pair the parent left and not the one it moved to.
     with pytest.raises(ExecutionPolicyError) as raised:
         ExecutionPolicy.from_mapping({
-            "allowed": [{"model": MODEL, "efforts": [EFFORT]}],
+            "allowed": [{"model": SUPERSEDED_PARENT[0], "efforts": [SUPERSEDED_PARENT[1]]}],
             "roles": {"parent": {"model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}},
         })
     # It names the role and the pair, because those are what the operator has to change.
@@ -616,7 +630,7 @@ async def test_a_refusal_leaves_the_request_id_usable(bridge, fake_server, tmp_p
 @pytest.mark.parametrize(
     ("role", "pair", "code"),
     [
-        ("parent", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_mismatch"),
+        ("parent", SUPERSEDED_EXECUTION, "execution_role_mismatch"),
         ("parent", {"model": PARENT_MODEL, "reasoning_effort": SUPERSEDED_PARENT[1]},
          "execution_role_mismatch"),
         ("reviewer", {"model": MODEL, "reasoning_effort": EFFORT}, "execution_role_unknown"),
@@ -649,7 +663,7 @@ async def test_a_corrected_role_request_succeeds_under_the_same_id(
     bridge = configured_bridge(roles_policy())
     with pytest.raises(ExecutionRefused):
         await bridge.create_thread("retried", str(tmp_path), prompt="work", role="parent",
-                                   **EXECUTION)
+                                   **SUPERSEDED_EXECUTION)
     receipt = await bridge.create_thread(
         "retried", str(tmp_path), prompt="work", role="parent",
         model=PARENT_MODEL, reasoning_effort=PARENT_EFFORT,
@@ -1015,7 +1029,8 @@ async def test_an_exception_on_the_resume_path_must_state_its_directory(
 # back reporting the new pair; the two it had loaded came back reporting the old one and their
 # messages were withheld. Nobody recorded residency at the time, so the cause is not established,
 # and these cases deliberately do not assert one. They run the same request against both candidate
-# hosts and assert that the bridge is safe under either.
+# hosts and assert that the bridge is safe under either. Each thread is created on EXECUTION and
+# asked to resume on SUPERSEDED_EXECUTION, which differs from it in model and in effort.
 
 
 async def test_a_loaded_thread_reports_its_own_pair_and_the_message_is_withheld(
@@ -1028,8 +1043,7 @@ async def test_a_loaded_thread_reports_its_own_pair_and_the_message_is_withheld(
     fake.resident = {thread_id}
     fake.resume_adopts = True
     delivered = await bridge.send_message_to_thread(
-        "resident-send", thread_id, "work",
-        {"model": PARENT_MODEL, "reasoning_effort": PARENT_EFFORT},
+        "resident-send", thread_id, "work", dict(SUPERSEDED_EXECUTION),
     )
     assert delivered["status"] == "failed"
     assert delivered["statusBeforeResume"] == "idle"
@@ -1054,8 +1068,7 @@ async def test_an_unloaded_thread_never_lets_an_echo_stand_as_proof_of_preservat
     fake.resident = set()
     fake.resume_adopts = adopts
     delivered = await bridge.send_message_to_thread(
-        "absent-send", thread_id, "work",
-        {"model": PARENT_MODEL, "reasoning_effort": PARENT_EFFORT},
+        "absent-send", thread_id, "work", dict(SUPERSEDED_EXECUTION),
     )
     assert delivered["statusBeforeResume"] == "notLoaded"
     assert delivered["echoIndependence"] == "not_established"
@@ -1084,7 +1097,7 @@ async def test_a_resume_for_the_wrong_role_never_reads_or_resumes_the_thread(
     with pytest.raises(ExecutionRefused) as raised:
         await bridge.send_message_to_thread(
             "send-wrong-role", created["threadId"], "work",
-            {"model": MODEL, "reasoning_effort": EFFORT}, None, "parent",
+            dict(SUPERSEDED_EXECUTION), None, "parent",
         )
     assert raised.value.code == "execution_role_mismatch"
     assert fake.calls[before:] == [], "a refused send reached the host"
@@ -1115,8 +1128,7 @@ async def test_a_worktree_launch_for_the_wrong_role_creates_nothing(
                 "excludeTmpdirEnvVar": False,
                 "excludeSlashTmp": False,
             },
-            model=MODEL,
-            reasoning_effort=EFFORT,
+            **SUPERSEDED_EXECUTION,
             role="parent",
         )
     assert raised.value.code == "execution_role_mismatch"

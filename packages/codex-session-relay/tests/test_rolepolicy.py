@@ -21,15 +21,20 @@ from codex_session_relay.transport import WITHHELD_PRE_SEND
 from .support import CHILD, PARENT, DeliveryTestCase, task_settings
 
 # The pair the project parent runs on. It moved from devin/swe-2 at max to xai/grok-4.6 at
-# xhigh on 2026-09-21 and was restored to devin/swe-2 at max later the same day. Each move was
-# an edit to the policy file and a restart: no pair is written in code, so nothing here had to
-# change except the fixture that names one.
-PARENT_MODEL = "devin/swe-2"
-PARENT_EFFORT = "max"
-# The interim pair, superseded the same day. Kept as a fixture proving a superseded pair is
-# refused for its role like any other wrong pair, not carried as a second answer the checks
-# still accept.
-SUPERSEDED_PARENT = ("xai/grok-4.6", "xhigh")
+# xhigh on 2026-09-21, was restored to devin/swe-2 at max later the same day, and moved to
+# anthropic/claude-opus-5-5 at xhigh on 2026-09-23, the pair the child already ran. Each move
+# was an edit to the policy file and a restart: no pair is written in code, so nothing here had
+# to change except the fixture that names one.
+PARENT_MODEL = "anthropic/claude-opus-5-5"
+PARENT_EFFORT = "xhigh"
+# The pair the parent left on 2026-09-23. It differs from the current pair in model and in
+# effort, so the single-axis cases take one half of it at a time. Kept as a fixture proving a
+# superseded pair is refused for its role like any other wrong pair, not carried as a second
+# answer the checks still accept.
+SUPERSEDED_PARENT = ("devin/swe-2", "max")
+# The interim pair of 2026-09-21. It shares the current effort name under another model, so a
+# record still carrying it is stale for the parent on the model alone.
+INTERIM_PARENT = ("xai/grok-4.6", "xhigh")
 # The pair an issue child runs on. It moved from anthropic/claude-opus-5 to
 # anthropic/claude-opus-5-5 on 2026-09-23 at the same effort, and that move too was an edit to
 # the policy file and nothing else.
@@ -116,15 +121,16 @@ class PolicyResolution(unittest.TestCase):
         self.assertEqual(resolved.expectation("child").reasoning_effort, CHILD_EFFORT)
         self.assertIsNone(resolved.expectation("supervisor").model)
         self.assertIsNotNone(resolved.digest)
-        # The comparison is exact equality on the whole pair, so whether two roles happen to
-        # share a name is never what makes it work. Since the restore they differ in model and
-        # effort both, and it is the superseded parent pair that now carries the child's effort
-        # name under a different model.
-        self.assertNotEqual(resolved.expectation("parent").model,
-                            resolved.expectation("child").model)
+        # The comparison is exact equality on the whole pair, per role, so whether two roles
+        # happen to share a name, or since 2026-09-23 a whole pair, is never what makes it work.
+        # What the fixtures below rely on is stated here: the pair the parent left differs from
+        # the current one on both axes, and the interim pair shares the current effort name
+        # under another model.
+        self.assertNotEqual(SUPERSEDED_PARENT[0], PARENT_MODEL)
         self.assertNotEqual(SUPERSEDED_PARENT[1], PARENT_EFFORT)
-        self.assertEqual(SUPERSEDED_PARENT[1],
-                         resolved.expectation("child").reasoning_effort)
+        self.assertNotEqual(INTERIM_PARENT[0], PARENT_MODEL)
+        self.assertEqual(INTERIM_PARENT[1],
+                         resolved.expectation("parent").reasoning_effort)
 
 
 class DeliveryUnderARolePolicy(DeliveryTestCase):
@@ -166,9 +172,9 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         policy said anything about this role, and going through the recorder now would be
         refused at registration by the very check this one backs up.
 
-        It differs from the parent pair by MODEL alone. Before the restore the default fixture
-        pair happened to do that; holding the property on purpose is what keeps this case
-        proving the model half of the comparison and not only the effort half.
+        It differs from the parent pair by MODEL alone: the fixture's default model at the
+        parent's effort. Holding that property on purpose is what keeps this case proving the
+        model half of the comparison and not only the effort half.
         """
         _relationship, event_id = self.queued_event(
             settings=task_settings("/parent", reasoningEffort=PARENT_EFFORT),
@@ -218,10 +224,10 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
     def test_the_pair_this_role_used_to_run_on_is_recognised_as_superseded(self):
         """A pair change costs a file edit, and the old pair stops being an answer.
 
-        The parent was restored to devin/swe-2 at max, leaving xai/grok-4.6 at xhigh behind. A
-        record still carrying the interim pair is stale for its role in exactly the way any
-        other wrong pair is, and it is kept here as a fixture rather than as an alternative
-        that still passes.
+        The parent moved from devin/swe-2 at max to anthropic/claude-opus-5-5 at xhigh on
+        2026-09-23. A record still carrying the pair it left is stale for its role in exactly the
+        way any other wrong pair is, and so is one carrying the interim grok pair of 2026-09-21.
+        Both are kept here as fixtures rather than as alternatives that still pass.
         """
         from pathlib import Path
 
@@ -243,6 +249,16 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
             str(Path(self.tmp).resolve()), model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
         )
         self.assertIsNone(rolepolicy.check_record(current, "parent", policy))
+        interim = task_settings(
+            str(Path(self.tmp).resolve()),
+            model=INTERIM_PARENT[0], reasoningEffort=INTERIM_PARENT[1],
+        )
+        finding = rolepolicy.check_record(interim, "parent", policy)
+        self.assertIsNotNone(finding, "the interim pair must not read as current either")
+        self.assertEqual(
+            finding["code"], RefusalReason.SETTINGS_RECORD_STALE_FOR_ROLE.value
+        )
+        self.assertEqual(finding["recorded"]["model"], INTERIM_PARENT[0])
 
     def test_the_pair_a_child_used_to_run_on_is_recognised_as_superseded(self):
         """The child's move is the same file edit, and its old pair stops being an answer too.
@@ -587,9 +603,10 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         package with them.
 
         A record like this one is what a half-finished pair move leaves behind. The parent went
-        to xai/grok-4.6 at xhigh and back to devin/swe-2 at max, and a record carried across one
-        of those moves on a single axis names a pair no policy ever declared while still looking
-        like the role's own on whichever half is compared.
+        to xai/grok-4.6 at xhigh, back to devin/swe-2 at max, and on to
+        anthropic/claude-opus-5-5 at xhigh, and a record carried across one of those moves on a
+        single axis names a pair no policy ever declared while still looking like the role's own
+        on whichever half is compared.
         """
         policy = rolepolicy.declared()
         authorized = self._authorized_parent_record()
@@ -1046,7 +1063,8 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
             endpoint=Endpoint(PARENT, "host-a", cwd="/parent", cxc_session="cxc-parent"),
         )
         # The parent pair, cited as parent, for the task this registration will bind as a child.
-        # Every value here is individually legitimate; only their combination is not.
+        # Every value here is individually legitimate; only their combination is not. Since
+        # 2026-09-23 that pair is the child's too, so the cited role is the whole contradiction.
         child_settings = task_settings(
             self.root, model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT,
         )
@@ -1135,7 +1153,8 @@ class AnOperatorExceptionIsRecognisedRatherThanContradicted(DeliveryTestCase):
 
         os.environ[rolepolicy.ENVIRONMENT_VARIABLE] = write_policy(Path(self.tmp))
         # Created citing child, now being bound as a parent: the contradiction, on a fresh
-        # binding with nothing to replay.
+        # binding with nothing to replay. The child's pair is the parent's too since 2026-09-23,
+        # so the cited role is the only thing wrong here.
         record_settings(
             self.store, self.clock, PARENT,
             task_settings("/parent", model=CHILD_MODEL, reasoningEffort=CHILD_EFFORT),

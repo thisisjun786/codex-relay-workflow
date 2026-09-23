@@ -206,7 +206,7 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
   ],
   "roles": {
     "supervisor": {"expectation": "record"},
-    "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+    "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"},
     "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
   },
   "exceptions": {
@@ -222,8 +222,10 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 ```
 
 Efforts are scoped to their model, so this file approves `opus/xhigh` and `sol/high` and
-refuses `opus/high`, which nobody wrote down. It is read once at startup from this
-process's environment; a file that is configured and cannot be used stops the server
+refuses `opus/high`, which nobody wrote down. It approves `swe-2/max` for a request that names
+no role and refuses it for one naming `parent`, because the role question is asked first and
+the parent row names another pair. It is read once at startup from this process's
+environment; a file that is configured and cannot be used stops the server
 rather than degrading to presence-only. Directories are compared by exact string
 equality, so an entry that is absolute but not canonical is refused at startup rather
 than loading cleanly and then matching nothing.
