@@ -356,8 +356,8 @@ class FourthReviewFindings(RelayTestCase):
     def test_generation_ten_is_not_skipped_by_a_cursor_that_stopped_at_nine(self):
         page = faultsweep._page([], [{"relationship_id": "rel-x",
                                       "execution_generation": 9}], "anchor", None, 1)
-        self.assertEqual("rel-x:" + "9".rjust(20, "0"), page["cursor"])
-        self.assertLess(page["cursor"], "rel-x:" + "10".rjust(20, "0"))
+        self.assertEqual("rel-x:" + "9".rjust(20, "0"), page["cursor"]["at"])
+        self.assertLess(page["cursor"]["at"], "rel-x:" + "10".rjust(20, "0"))
 
     def test_a_cleared_flag_that_is_not_a_boolean_is_refused(self):
         bad = dict(omission("a"), cleared="false")
@@ -527,7 +527,7 @@ class FifthReviewFindings(RelayTestCase):
         first = faultsweep.sweep(self.store, readings=[reading])
         faultsweep.record_all(self.ledger, first, store=self.store)
         identifier = faults.fault_id(PRODUCT, "observation_unmeasured",
-                                     {"relationship": self.relationship})
+                                     {"relationship": self.relationship, "turn": "turn-7"})
         self.assertIsNone(self.ledger.get(identifier)["cleared_at"])
         second = faultsweep.sweep(self.store, readings=[
             dict(reading, reportingState="reported")])
@@ -542,12 +542,29 @@ class FifthReviewFindings(RelayTestCase):
         faultsweep.record_all(self.ledger, faultsweep.sweep(self.store, readings=[reading]),
                               store=self.store)
         identifier = faults.fault_id(PRODUCT, "observation_unmeasured",
-                                     {"relationship": self.relationship})
+                                     {"relationship": self.relationship, "turn": "turn-7"})
         self.assertIsNone(self.ledger.get(identifier)["cleared_at"])
         faultsweep.record_all(self.ledger, faultsweep.sweep(
             self.store, readings=[dict(reading, reportingState="in_progress")]),
             store=self.store)
         self.assertIsNotNone(self.ledger.get(identifier)["cleared_at"])
+
+    def test_a_notice_recorded_per_relationship_is_still_answered_by_a_reading(self):
+        """Notices were per relationship before they were per turn; those rows still clear."""
+        legacy = self.ledger.record(faults.observation(
+            product=PRODUCT, fault_class="observation_unmeasured", severity=faults.NOTICE,
+            signature={"relationship": self.relationship},
+            occurrence_key=f"unmeasured:{self.relationship}:turn-1", scope=SCOPE))
+        reading = {"schema": faultsweep.OBSERVATION_SCHEMA,
+                   "relationshipId": self.relationship,
+                   "selectors": {"turn": "turn-7"}, "reportingState": "reported"}
+        faultsweep.record_all(self.ledger, faultsweep.sweep(self.store, readings=[reading]),
+                              store=self.store)
+        self.assertIsNotNone(self.ledger.get(legacy["faultId"])["cleared_at"])
+        again = faultsweep.record_all(
+            self.ledger, faultsweep.sweep(self.store, readings=[
+                dict(reading, selectors={"turn": "turn-8"})]), store=self.store)
+        self.assertEqual(0, again["recorded"], "the per-relationship clear is recorded once")
 
     def test_a_re_observed_occurrence_still_carries_a_scope_move(self):
         """Familiar occurrence, new project. The write must follow the fault, not the key."""
@@ -974,6 +991,50 @@ class DaemonPass(DeliveryTestCase):
         self.assertEqual(1, report.faultsRecorded)
         self.assertFalse(report.quiet)
 
+    def test_a_selection_given_to_the_daemon_reaches_the_managed_readings(self):
+        """B5: the daemon reads its own managed turns only if it is handed the selection."""
+        import inspect
+        from unittest import mock
+
+        from codex_session_relay.daemon import RelayDaemon, TickReport
+
+        self.assertIn("fault_selection", inspect.signature(RelayDaemon).parameters,
+                      "the daemon cannot be given the selection omitted.observe reads through")
+        seen = []
+
+        def readings(_store, selection, **_kw):
+            seen.append(selection)
+            return {"readings": [], "gaps": [], "cursor": None, "filled": False,
+                    "complete": True}
+
+        daemon = RelayDaemon(self.store, self.registry, self.intake, self.delivery, self.ack,
+                             self.reconciler, self.adapter, clock=self.clock,
+                             faults=faults.FaultLedger(self.store, self.clock),
+                             fault_selection="the-selection")
+        with mock.patch.object(faultsweep, "managed_readings", readings):
+            daemon._sweep_faults(TickReport())
+        self.assertEqual(["the-selection"], seen)
+
+    def test_unsent_writes_are_a_note_when_they_appear_and_again_when_they_change(self):
+        """B11: a tick carries the attention warning, once per change rather than every tick."""
+        from codex_session_relay.daemon import TickReport
+
+        ledger = faults.FaultLedger(self.store, self.clock)
+        ledger.set_target(product="crw", project="CRW", team=TRACKER, project_ref="proj-CRW")
+        daemon = self.daemon(ledger)
+        ledger.record(omission("a"))
+        first = TickReport()
+        daemon._sweep_faults(first)
+        self.assertIn(ledger.attention()["warning"], first.notes)
+        second = TickReport()
+        daemon._sweep_faults(second)
+        self.assertEqual([], second.notes)
+        publication = ledger.next()[0]["publication_id"]
+        ledger.claim(publication, owner="operator")
+        third = TickReport()
+        daemon._sweep_faults(third)
+        self.assertIn(ledger.attention()["warning"], third.notes)
+
 
 class CommandLine(RelayTestCase):
     """In process, so this module measures no wall time and starts no subprocess."""
@@ -1021,6 +1082,96 @@ class CommandLine(RelayTestCase):
         code, refusal = self.invoke("fault-resolve", "--fault", recorded["faultId"])
         self.assertEqual(2, code)
         self.assertEqual("fault_unverified", refusal["reason"])
+
+    NEW_FAULT_COMMANDS = (
+        "fault-adopt", "fault-move", "fault-queue", "fault-update", "fault-cancel",
+        "fault-stage", "fault-policy", "fault-limit", "fault-attention", "fault-relink",
+        "fault-notifications", "fault-notification-raise", "fault-notification-reserve",
+        "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile",
+    )
+
+    def test_every_new_fault_command_has_a_handler_and_runs_offline(self):
+        from codex_session_relay import cli
+
+        choices = cli.build_parser()._subparsers._group_actions[0].choices
+        for name in self.NEW_FAULT_COMMANDS:
+            self.assertIn(name, choices, name)
+            self.assertTrue(callable(choices[name].get_default("handler")), name)
+            self.assertIn(name, cli.OFFLINE_COMMANDS, name)
+
+    def test_status_shows_the_unsent_fault_writes(self):
+        """B11: a write waiting for a target is visible where status is read."""
+        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER)
+        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
+        code, status = self.invoke("status")
+        self.assertEqual(0, code)
+        self.assertIn("faults", status)
+        self.assertEqual(1, status["faults"]["unsent"]["awaitingTarget"])
+        self.assertIn("awaitingTarget", status["faults"]["warning"])
+
+    def test_fault_next_says_why_each_write_waits(self):
+        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER)
+        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
+        code, queue = self.invoke("fault-next")
+        self.assertEqual(0, code)
+        self.assertEqual([], queue["publications"])
+        self.assertIn("held", queue, "the queue does not say why a write waits")
+        self.assertEqual(["awaiting_target"], [entry["reason"] for entry in queue["held"]])
+
+    def test_one_publication_is_shown_with_its_attempts(self):
+        self.invoke("fault-target", "--product", "crw", "--project", "CRW", "--team", TRACKER,
+                    "--project-ref", "proj-CRW")
+        self.invoke("fault-observe", "--observation", json.dumps(omission("cli-1")))
+        _code, queue = self.invoke("fault-next")
+        publication = queue["publications"][0]["publication_id"]
+        self.invoke("fault-claim", "--publication", publication, "--owner", "operator")
+        code, shown = self.invoke("fault-show", "--publication", publication)
+        self.assertEqual(0, code)
+        self.assertEqual(publication, shown["publication_id"])
+        self.assertEqual(["operator"], [attempt["owner"] for attempt in shown["attempts"]])
+
+    def test_the_sweep_command_continues_a_readings_batch(self):
+        readings = [{"schema": faultsweep.OBSERVATION_SCHEMA, "relationshipId": f"rel-{n}",
+                     "selectors": {"turn": "turn-1"}, "reportingState": "unreported"}
+                    for n in range(3)]
+        path = self.artifact("readings.json", json.dumps(readings))
+        code, swept = self.invoke("fault-sweep", "--readings", "@" + path,
+                                  "--readings-after", "2")
+        self.assertEqual(0, code)
+        self.assertEqual(3, swept["readingsTotal"])
+        self.assertIsNone(swept["readingsNext"])
+        code, listing = self.invoke("fault-show", "--fault-class", "report_omitted")
+        self.assertEqual([{"relationship": "rel-2", "turn": "turn-1"}],
+                         [json.loads(row["signature"]) for row in listing["faults"]])
+
+    def test_a_kind_module_is_imported_before_the_command_runs(self):
+        import sys
+
+        from codex_session_relay import cli
+
+        name = "crw205_cli_probe_kind"
+        module = f"crw205_cli_probe_module_{id(self)}"
+        directory = pathlib.Path(self.artifact(module + ".py", (
+            "from codex_session_relay import faults\n"
+            f"faults.register_kind({name!r}, creates=False, requires_issue=False,"
+            " target=None, evidence='fields', confirm=lambda expected, observed: [])\n"
+        ))).parent
+        sys.path.insert(0, str(directory))
+        self.addCleanup(sys.path.remove, str(directory))
+        self.addCleanup(sys.modules.pop, module, None)
+        self.addCleanup(faults.KINDS.pop, name, None)
+        _code, recorded = self.invoke("fault-observe", "--observation", json.dumps(
+            faults.observation(product=PRODUCT, fault_class="observation_unmeasured",
+                               severity=faults.NOTICE, signature={"relationship": "rel-1"},
+                               occurrence_key="u1", scope=SCOPE)))
+        self.assertNotIn(name, faults.KINDS)
+        code, queued = self.invoke("--kind-module", module, "fault-queue", "--fault",
+                                   recorded["faultId"], "--kind", name, "--trigger", "t1")
+        self.assertEqual(0, code, queued)
+        self.assertTrue(queued["queued"])
+        code, refusal = self.invoke("--kind-module", "no_such_module_crw205", "fault-attention")
+        self.assertEqual(cli.EXIT_USAGE, code)
+        self.assertIn("no_such_module_crw205", refusal["detail"])
 
 
 class TheFaultPathReachesNoNetwork(unittest.TestCase):
@@ -1512,16 +1663,22 @@ class SeventhReviewFindings(RelayTestCase):
         self.assertTrue(done["confirmed"])
         self.assertEqual("REL-77", done["external_ref"])
 
-    def test_a_cursor_wraps_after_a_bounded_run_of_full_pages(self):
+    def test_a_rotation_over_many_full_pages_reaches_the_last_attempt_and_then_wraps(self):
+        """A cursor that wrapped after a fixed run of full pages never read what lay past it."""
         self.delivery()
-        for index in range(faultsweep.SWEEP_LIMIT * faultsweep.PAGES_BEFORE_WRAP):
+        total = faultsweep.SWEEP_LIMIT * 5 + 3
+        for index in range(total):
             self.attempt(index)
-        positions = []
-        for _round in range(faultsweep.PAGES_BEFORE_WRAP):
+        seen, positions = set(), []
+        for _round in range(7):
             batch = faultsweep.sweep(self.store)
             faultsweep.record_all(self.ledger, batch, store=self.store)
+            seen.update(entry["occurrenceKey"] for entry in batch["observations"]
+                        if entry["faultClass"] == "delivery_stalled")
             positions.append(batch["cursors"].get("delivery_retrying"))
-        self.assertIsNone(positions[-1], "it wraps rather than running off the end")
+        self.assertEqual({f"delivery:del-{index:03d}" for index in range(total)}, seen)
+        self.assertIsNone(positions[5], "the short sixth page ends the rotation")
+        self.assertIsNotNone(positions[6], "and the next sweep starts another")
 
 
 class ProvisionalRowsAndBounds(RelayTestCase):

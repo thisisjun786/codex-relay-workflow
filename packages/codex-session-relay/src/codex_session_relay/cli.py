@@ -75,6 +75,10 @@ OFFLINE_COMMANDS = (
     "fault-target", "fault-observe", "fault-sweep", "fault-show", "fault-fix",
     "fault-reverify", "fault-resolve", "fault-next", "fault-claim", "fault-operation",
     "fault-reconcile", "fault-complete", "fault-fail", "fault-retry", "fault-prune",
+    "fault-adopt", "fault-move", "fault-queue", "fault-update", "fault-cancel", "fault-stage",
+    "fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications",
+    "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack",
+    "fault-notification-fail", "fault-notification-reconcile",
     "service status", "service enable", "service disable", "service stop",
     # Records which execution policy file this service's daemon is launched with. It writes
     # one small file next to the intent and reaches no host, so an operator can configure a
@@ -1502,7 +1506,8 @@ def cmd_fault_target(services, args) -> dict:
 
 
 def cmd_fault_observe(services, args) -> dict:
-    return services.faults.record(_fault_json(args.observation, "observation"))
+    adopt = _fault_json(args.adopt, "adoption") if args.adopt else None
+    return services.faults.record(_fault_json(args.observation, "observation"), adopt=adopt)
 
 
 def cmd_fault_sweep(services, args) -> dict:
@@ -1510,13 +1515,22 @@ def cmd_fault_sweep(services, args) -> dict:
     from . import faultsweep
 
     readings = _fault_json(args.readings, "readings") if args.readings else []
+    after = args.readings_after
+    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+        from .errors import RefusalReason
+        from .faults import FaultRefused
+
+        raise FaultRefused(RefusalReason.FAULT_OBSERVATION_MALFORMED,
+                           f"--readings-after is a non-negative integer, not {after!r}")
     batch = faultsweep.sweep(
         services.store, product=args.product,
         scope={"projectKey": args.project} if args.project else {}, readings=readings,
+        readings_after=after,
     )
     recorded = faultsweep.record_all(services.faults, batch, store=services.store)
     return {"read": recorded["read"], "recorded": recorded["recorded"],
             "queued": recorded["queued"], "gaps": recorded["gaps"],
+            "readingsNext": batch["readingsNext"], "readingsTotal": batch["readingsTotal"],
             "limits": batch["limits"]}
 
 
@@ -1552,14 +1566,23 @@ def cmd_fault_show(services, args) -> dict:
     # One validated bound, applied on both branches. The listing branch used to take no bound
     # at all, so the flag an operator passed to keep the answer small reached nothing.
     limit = _positive(args.limit, "--limit")
+    if args.publication:
+        # One write: its kind, state, trigger, target, payload, what it created, and its
+        # newest attempts - the read a kind's caller uses to find what a create made.
+        shown = services.faults.publication(args.publication)
+        shown["attempts"] = services.faults.attempts(args.publication, limit=limit)
+        return shown
     if args.fault:
         record = services.faults.get(args.fault)
         if record is None:
             raise PayloadExit({"faultId": args.fault, "found": False}, EXIT_REFUSED)
         record["occurrences"] = services.faults.occurrences(args.fault, limit=limit)
         record["remediations"] = services.faults.remediations(args.fault, limit=limit)
+        record["publications"] = services.faults.publications(args.fault, limit=limit)
+        record["progress"] = services.faults.progress(args.fault)
         return record
-    return services.faults.snapshot(scope_key=args.scope, state=args.fault_state,
+    return services.faults.snapshot(product=args.product, fault_class=args.fault_class,
+                                    scope_key=args.scope, state=args.fault_state,
                                     limit=limit, after=args.after)
 
 
@@ -1579,8 +1602,11 @@ def cmd_fault_resolve(services, args) -> dict:
 
 
 def cmd_fault_next(services, args) -> dict:
+    """What a writer may act on now, and why everything else pending waits."""
     services.faults.expire_leases()
-    return {"publications": services.faults.next(limit=_positive(args.limit, "--limit"))}
+    state = services.faults.queue_state(limit=_positive(args.limit, "--limit"))
+    return {"publications": state["ready"], "held": state["held"],
+            "budgets": state["budgets"]}
 
 
 def cmd_fault_claim(services, args) -> dict:
@@ -1618,6 +1644,114 @@ def cmd_fault_retry(services, args) -> dict:
 
 def cmd_fault_prune(services, args) -> dict:
     return services.faults.prune(args.fault, keep=args.keep)
+
+
+def cmd_fault_adopt(services, args) -> dict:
+    return services.faults.adopt(args.fault, external_ref=args.external_ref,
+                                 scope=_fault_json(args.scope, "scope"))
+
+
+def cmd_fault_move(services, args) -> dict:
+    return services.faults.move(args.fault, scope=_fault_json(args.scope, "scope"))
+
+
+def cmd_fault_queue(services, args) -> dict:
+    payload = _fault_json(args.payload, "payload") if args.payload else None
+    return services.faults.queue(args.fault, kind=args.kind, trigger=args.trigger,
+                                 payload=payload)
+
+
+def cmd_fault_update(services, args) -> dict:
+    value = _fault_json(args.value, "value") if args.value is not None else None
+    return services.faults.request_update(args.fault, op=args.op, value=value)
+
+
+def cmd_fault_cancel(services, args) -> dict:
+    return services.faults.cancel(args.publication, reason=args.reason)
+
+
+def cmd_fault_stage(services, args) -> dict:
+    return services.faults.record_stage(args.fault, stage=args.stage, ref=args.ref,
+                                        detail=args.detail or "")
+
+
+def cmd_fault_policy(services, args) -> dict:
+    """Read a product's suppression policies, or change one prospectively (with a reason)."""
+    if args.fault_class is None:
+        return {"product": args.product, "policies": services.faults.policies(args.product)}
+    if args.severity is None or args.reason is None:
+        raise SystemExit2("changing a policy names --fault-class, --severity and --reason",
+                          EXIT_USAGE)
+    return services.faults.set_policy(args.product, args.fault_class, args.severity,
+                                      threshold=args.threshold, window=args.window,
+                                      reason=args.reason)
+
+
+def cmd_fault_limit(services, args) -> dict:
+    """Read a product's write budgets, or set one kind's."""
+    if args.kind is None:
+        return {"product": args.product, "limits": services.faults.limits(args.product)}
+    if args.max_count is None or args.window is None:
+        raise SystemExit2("setting a budget names --kind, --max-count and --window",
+                          EXIT_USAGE)
+    return services.faults.set_limit(args.product, args.kind, max_count=args.max_count,
+                                     window=args.window)
+
+
+def cmd_fault_attention(services, args) -> dict:
+    return services.faults.attention()
+
+
+def cmd_fault_relink(services, args) -> dict:
+    return services.faults.relink(limit=_positive(args.limit, "--limit"))
+
+
+def cmd_fault_notifications(services, args) -> dict:
+    return services.faults.notifications(state=args.notification_state,
+                                         limit=_positive(args.limit, "--limit"),
+                                         after=args.after)
+
+
+def cmd_fault_notification_raise(services, args) -> dict:
+    return services.faults.raise_notification(args.fault, reason=args.reason, ref=args.ref)
+
+
+def cmd_fault_notification_reserve(services, args) -> dict:
+    return services.faults.reserve_notifications(owner=args.owner,
+                                                 limit=_positive(args.limit, "--limit"))
+
+
+def cmd_fault_notification_ack(services, args) -> dict:
+    return services.faults.ack_notification(args.notification, token=args.token, ref=args.ref)
+
+
+def cmd_fault_notification_fail(services, args) -> dict:
+    return services.faults.fail_notification(args.notification, token=args.token,
+                                             error=args.error)
+
+
+def cmd_fault_notification_reconcile(services, args) -> dict:
+    return services.faults.reconcile_notification(args.notification,
+                                                  delivered=args.delivered == "yes",
+                                                  ref=args.ref)
+
+
+def _import_kind_modules(args) -> None:
+    """--kind-module: import the modules that register publication kinds in THIS process.
+
+    A kind is registered by importing the module that declares it, and a publication whose
+    kind this process has not registered is never offered, claimed or issued (invariant 13).
+    So a writer handling another product's kind names that module here, and one that does not
+    simply never sees those writes.
+    """
+    import importlib
+
+    for name in getattr(args, "kind_module", None) or ():
+        try:
+            importlib.import_module(name)
+        except ImportError as error:
+            raise SystemExit2(f"--kind-module {name!r} could not be imported: {error}",
+                              EXIT_USAGE) from error
 
 
 def _read_text(value: str) -> str:
@@ -1807,6 +1941,10 @@ def cmd_status(services, args) -> dict:
     unenforced = getattr(services.store, "unenforced_indexes", [])
     if unenforced:
         payload["unenforcedIndexes"] = unenforced
+    # Fault writes nobody has sent, uncertain ones, and issues outside their project. Shown
+    # where status is read, so a write stuck behind a missing target or a spent budget does
+    # not wait for somebody to think of asking the ledger.
+    payload["faults"] = services.faults.attention()
     return payload
 
 
@@ -2567,6 +2705,9 @@ def _run_bounded(services, service, args, *, require_intent: bool, monotonic=Non
                 # pass records and queues; the Linear write itself needs a credential this
                 # process does not hold.
                 faults=services.faults,
+                # And so this relay's own managed turns are read for what they owe, through
+                # the same CRW-180 projection reporting-show uses, a few per tick.
+                fault_selection=services.selection,
             )
             try:
                 service.publish_worker_policy(rolepolicy.snapshot_record())
@@ -3217,6 +3358,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-session-relay")
     parser.add_argument("--state")
     parser.add_argument("--socket")
+    parser.add_argument("--kind-module", action="append", default=[],
+                        help="import a module that registers a fault publication kind"
+                             " (repeatable); a kind this process has not registered is never"
+                             " offered, claimed or issued")
     parser.add_argument("--json", action="store_true", default=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -3708,16 +3853,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     fault_observe = subparsers.add_parser("fault-observe")
     fault_observe.add_argument("--observation", required=True, help="JSON, or @path")
+    fault_observe.add_argument("--adopt",
+                               help="JSON {externalRef, scope}, or @path: adopt this existing"
+                                    " issue at the first record instead of creating one")
     fault_observe.set_defaults(handler=cmd_fault_observe)
 
     fault_sweep = subparsers.add_parser("fault-sweep")
     fault_sweep.add_argument("--product", default="crw")
     fault_sweep.add_argument("--project")
     fault_sweep.add_argument("--readings", help="reporting-observation/1 JSON list, or @path")
+    fault_sweep.add_argument("--readings-after", type=int, default=0,
+                             help="continue a readings batch from the readingsNext the last"
+                                  " sweep returned")
     fault_sweep.set_defaults(handler=cmd_fault_sweep)
 
     fault_show = subparsers.add_parser("fault-show")
     fault_show.add_argument("--fault")
+    fault_show.add_argument("--publication",
+                            help="one write, with what it created and its newest attempts")
+    fault_show.add_argument("--product")
+    fault_show.add_argument("--fault-class")
     fault_show.add_argument("--scope")
     # NOT --state. That is the global option naming the store directory, and a subcommand
     # option of the same name overwrites it in the namespace, so every fault-show read an
@@ -3805,6 +3960,102 @@ def build_parser() -> argparse.ArgumentParser:
     fault_prune.add_argument("--fault", required=True)
     fault_prune.add_argument("--keep", type=int, default=20)
     fault_prune.set_defaults(handler=cmd_fault_prune)
+
+    fault_adopt = subparsers.add_parser("fault-adopt")
+    fault_adopt.add_argument("--fault", required=True)
+    fault_adopt.add_argument("--external-ref", required=True, help="the existing issue")
+    fault_adopt.add_argument("--scope", required=True,
+                             help="JSON of the issue's scope (its projectKey), or @path")
+    fault_adopt.set_defaults(handler=cmd_fault_adopt)
+
+    fault_move = subparsers.add_parser("fault-move")
+    fault_move.add_argument("--fault", required=True)
+    fault_move.add_argument("--scope", required=True, help="JSON, or @path")
+    fault_move.set_defaults(handler=cmd_fault_move)
+
+    fault_queue = subparsers.add_parser("fault-queue")
+    fault_queue.add_argument("--fault", required=True)
+    fault_queue.add_argument("--kind", required=True,
+                             help="a registered kind; the issue create is never queued here")
+    fault_queue.add_argument("--trigger", required=True)
+    fault_queue.add_argument("--payload", help="JSON, or @path")
+    fault_queue.set_defaults(handler=cmd_fault_queue)
+
+    fault_update = subparsers.add_parser("fault-update")
+    fault_update.add_argument("--fault", required=True)
+    fault_update.add_argument("--op", required=True, choices=list(faults_module.UPDATE_OPS))
+    fault_update.add_argument("--value", help="JSON, or @path (a string value is quoted)")
+    fault_update.set_defaults(handler=cmd_fault_update)
+
+    fault_cancel = subparsers.add_parser("fault-cancel")
+    fault_cancel.add_argument("--publication", required=True)
+    fault_cancel.add_argument("--reason", required=True)
+    fault_cancel.set_defaults(handler=cmd_fault_cancel)
+
+    fault_stage = subparsers.add_parser("fault-stage")
+    fault_stage.add_argument("--fault", required=True)
+    fault_stage.add_argument("--stage", required=True, choices=list(faults_module.STAGES))
+    fault_stage.add_argument("--ref", required=True)
+    fault_stage.add_argument("--detail")
+    fault_stage.set_defaults(handler=cmd_fault_stage)
+
+    fault_policy = subparsers.add_parser("fault-policy")
+    fault_policy.add_argument("--product", required=True)
+    fault_policy.add_argument("--fault-class")
+    fault_policy.add_argument("--severity", choices=list(faults_module.SEVERITIES))
+    fault_policy.add_argument("--threshold", type=int)
+    fault_policy.add_argument("--window", type=float, help="seconds")
+    fault_policy.add_argument("--reason")
+    fault_policy.set_defaults(handler=cmd_fault_policy)
+
+    fault_limit = subparsers.add_parser("fault-limit")
+    fault_limit.add_argument("--product", required=True)
+    fault_limit.add_argument("--kind")
+    fault_limit.add_argument("--max-count", type=int)
+    fault_limit.add_argument("--window", type=float, help="seconds")
+    fault_limit.set_defaults(handler=cmd_fault_limit)
+
+    subparsers.add_parser("fault-attention").set_defaults(handler=cmd_fault_attention)
+
+    fault_relink = subparsers.add_parser("fault-relink")
+    fault_relink.add_argument("--limit", type=int, default=faults_module.RELINK_PER_CALL)
+    fault_relink.set_defaults(handler=cmd_fault_relink)
+
+    fault_notifications = subparsers.add_parser("fault-notifications")
+    # NOT --state, for the reason fault-show gives.
+    fault_notifications.add_argument("--notification-state")
+    fault_notifications.add_argument("--limit", type=int, default=20)
+    fault_notifications.add_argument("--after")
+    fault_notifications.set_defaults(handler=cmd_fault_notifications)
+
+    notification_raise = subparsers.add_parser("fault-notification-raise")
+    notification_raise.add_argument("--fault", required=True)
+    notification_raise.add_argument("--reason", required=True)
+    notification_raise.add_argument("--ref")
+    notification_raise.set_defaults(handler=cmd_fault_notification_raise)
+
+    notification_reserve = subparsers.add_parser("fault-notification-reserve")
+    notification_reserve.add_argument("--owner", required=True)
+    notification_reserve.add_argument("--limit", type=int, default=20)
+    notification_reserve.set_defaults(handler=cmd_fault_notification_reserve)
+
+    notification_ack = subparsers.add_parser("fault-notification-ack")
+    notification_ack.add_argument("--notification", required=True)
+    notification_ack.add_argument("--token", required=True)
+    notification_ack.add_argument("--ref", required=True)
+    notification_ack.set_defaults(handler=cmd_fault_notification_ack)
+
+    notification_fail = subparsers.add_parser("fault-notification-fail")
+    notification_fail.add_argument("--notification", required=True)
+    notification_fail.add_argument("--token", required=True)
+    notification_fail.add_argument("--error", required=True)
+    notification_fail.set_defaults(handler=cmd_fault_notification_fail)
+
+    notification_reconcile = subparsers.add_parser("fault-notification-reconcile")
+    notification_reconcile.add_argument("--notification", required=True)
+    notification_reconcile.add_argument("--delivered", required=True, choices=["yes", "no"])
+    notification_reconcile.add_argument("--ref", required=True)
+    notification_reconcile.set_defaults(handler=cmd_fault_notification_reconcile)
 
 
     show = subparsers.add_parser("show")
@@ -4625,6 +4876,7 @@ def main(argv=None) -> int:
         # it cannot fail startup: an unreadable or absent policy resolves to Unresolved, which
         # withholds rather than raises.
         rolepolicy.declared()
+        _import_kind_modules(args)
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK

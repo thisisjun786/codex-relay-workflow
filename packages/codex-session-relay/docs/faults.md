@@ -26,8 +26,9 @@ a path that reaches the outcome without passing through that function is a defec
 
 1. **One issue per fault.** Only `open_record` creates a fault's issue; the slot is taken by an
    owned issue or a non-cancelled `open_record`, and there is one `open_record` row per fault,
-   ever. Enforced by `_issue_slot()`, called from `next()`, `claim()`, `operation()`, `retry()`,
-   `queue()`, `adopt()` and revival.
+   ever. Enforced by `_issue_slot()`, which `record()`, `_enqueue()` (revival included),
+   `next()`, `claim()`, `operation()`, `retry()` and `adopt()` consult; `queue()` refuses the
+   create kind outright.
 2. **An issued create is never repeated on a guess.** Handing out an operation marks it issued; a
    lapse or failure after that makes it uncertain; only `reconcile()` with an attested end of the
    request frees it. Enforced by `operation()` and `reconcile()`.
@@ -36,8 +37,9 @@ a path that reaches the outcome without passing through that function is a defec
    `_claimed()`.
 4. **Only unissued writes are cancelled, and cancelling spends nothing earlier.** Pending, failed
    and claimed-not-issued rows only; a claimed one refunds its own attempt and budget. Enforced by
-   `cancel()`, the only path that cancels (adoption, withdrawal, pre-issue cancel and
-   `set_project` supersession all call it).
+   `_cancel()`, the only path that cancels: `cancel()` is its public form, and adoption,
+   withdrawal, a pre-issue cancel, a create whose fault already owns an issue, and `set_project`
+   supersession all call it.
 5. **A clear withdraws what nothing landed for.** Owning an issue is not a write having landed.
    Enforced by `_landed()` inside `_transition()`.
 6. **A cause that comes back is a new occurrence.** The first active observation after a clear
@@ -189,26 +191,26 @@ a path that reaches the outcome without passing through that function is a defec
 
 Two entry points, and neither ever stores anything for a fault that has not been recorded:
 
-- ~record(observation, *, adopt=None)~ with ~adopt={"externalRef": ..., "scope": {...}}~ adopts
+- `record(observation, *, adopt=None)` with `adopt={"externalRef": ..., "scope": {...}}` adopts
   the existing issue in the SAME transaction as the fault's first record, before suppression can
   open it. A caller that decides the owner before recording uses this.
-- ~adopt(fault_id, *, external_ref, scope)~ adopts for a fault already recorded (aliases
-  resolved); an unknown id is refused with ~fault_unknown~. It returns ~{faultId, externalRef,
-  state, cancelled, publication}~.
+- `adopt(fault_id, *, external_ref, scope)` adopts for a fault already recorded (aliases
+  resolved); an unknown id is refused with `fault_unknown`. It returns `{faultId, externalRef,
+  state, cancelled, publication}`.
 
 Either way:
 
 - Not open yet: the adoption is stored against that fault and materializes when suppression opens
-  the record - the first publication is a comment on ~externalRef~ instead of a create.
+  the record - the first publication is a comment on `externalRef` instead of a create.
 - Already open: it materializes at once; a pending, failed or claimed-not-issued create is
-  cancelled, the fault owns ~externalRef~, and the opening comment is queued.
-- ~scope~ carries the owner's ~projectKey~ and the identity's workspace; the fault moves to it.
-- Refused with ~fault_adopt_conflict~ when the fault owns a different issue, holds a stored
+  cancelled, the fault owns `externalRef`, and the opening comment is queued.
+- `scope` carries the owner's `projectKey` and the identity's workspace; the fault moves to it.
+- Refused with `fault_adopt_conflict` when the fault owns a different issue, holds a stored
   adoption naming a different issue, or has an issued or uncertain create (reconcile it first).
-  Refused with ~fault_scope_conflict~ for another real workspace. Adopting the same issue again
+  Refused with `fault_scope_conflict` for another real workspace. Adopting the same issue again
   changes nothing.
 - An alias only ever points at a recorded fault, and an adoption only ever belongs to one, so no
-  alias registration - by ~move()~ or by the legacy lookup in ~record()~ - has an adoption to carry.
+  alias registration - by `move()` or by the legacy lookup in `record()` - has an adoption to carry.
 
 ### Move
 
@@ -332,18 +334,25 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   count - the settings, sandbox, approval and role-binding refusals the settings check raises -
   so a recipient withheld as paused, archived or unloaded never counts. Only the delivery's
   CURRENT streak counts. A streak ENDS, and the fault (degraded) clears, on exactly the same
-  events: the delivery is sent (a settled attempt after the refusal) or settles, or its newest
-  withholding carries another reason. A busy deferral in between ends neither, because it says
-  nothing about the settings that were refused; three refusals for one reason are repetition
-  whatever waited between them. A streak that ended is never counted again. `managed_start_failed`: the host
+  events: the delivery is sent (a settled attempt, journaled `delivery_attempted`, after the
+  refusal) or settles, a person pauses or archives the assignment (`delivery_withheld_inactive`),
+  or its newest withholding carries another reason. A busy deferral in between ends neither,
+  because it says nothing about the settings that were refused; three refusals for one reason are
+  repetition whatever waited between them. A streak that ended is never counted again. Signature
+  `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
   answered a managed start without publishing a child (broken; clears when a later receipt for
   that request is accepted - the registry replaces a non-publishing receipt - which is the only
   transition the registry offers an armed request).
 - No source emits an active and a clearing observation for one fault in one sweep: a reading
   batch is reduced to the last reading per relationship and turn BEFORE it is paged. A paused, archived,
   busy or waiting recipient is never a fault.
-- Constructed with `fault_selection`, the daemon reads CRW-180 readings for attached managed
-  turns through `omitted.observe`, a bounded number per tick; an observer error is a gap.
+- Constructed with `fault_selection` (the bounded run passes the store selection), the daemon
+  reads CRW-180 readings for attached managed turns through `omitted.observe`,
+  `MANAGED_READINGS_PER_SWEEP` (8) per tick in a rotation over the settlements: each settled
+  turn once, of a relationship still on its managed start's generation, never the standby
+  (bootstrap) turn. The call is the one `reporting-show` makes - the selection, marker root,
+  workspace, hashed assignment, child session and turn - and writes nothing. An observer error is
+  a `managed_reading_failed` gap.
 - Every source is read in rotations bounded by its upper key at rotation start, and every
   rotation reaches the end.
 - `reading_faults(..., limit, after)` and `sweep(..., readings_after)` return
@@ -361,8 +370,8 @@ follow it too.
 ### Attention and notifications
 
 - `attention()` counts unsent writes - ready, awaiting target, held, claimed (live or lapsed
-  lease), failed, uncertain, awaiting record - and returns a warning; `status` shows it and a
-  daemon tick carries it as a note.
+  lease), failed, uncertain, awaiting record - and returns a warning; `status` shows it under
+  `faults`, and a daemon tick carries it as a note on the tick where it appears or changes.
 - Notifications are `blocking` (a broken fault opened), `decision` (a write became uncertain
   or failed for good) and `resolved`. `notifications(*, limit)` lists pending ones with their
   eligibility: a paused, cancelled or archived relationship withholds one; a parent recipient
@@ -445,9 +454,10 @@ same ledger without this package learning anything about it:
 }
 ```
 
-`product`, `faultClass` and `signature` decide identity. `scope` decides where the record is filed
-and is deliberately outside identity: a relationship can be re-read into a different project
-without becoming a different fault. `severity` and the class decide suppression.
+`product`, `faultClass`, `signature` and `scope.workspace` decide identity. The rest of `scope`
+decides where the record is filed and is deliberately outside identity: a relationship can be
+re-read into a different project without becoming a different fault. `severity` and the class
+decide suppression.
 `occurrenceKey` decides whether this is a new occurrence or the same one read again.
 
 `observedAt` is the observer's own clock and is kept as displayed evidence ONLY. Nothing this
@@ -459,11 +469,12 @@ same shape. Nothing in the ledger, the suppression rules or the publication path
 
 ## Identity: what makes two observations the same fault
 
-`fault_id = sha256(product | faultClass | canonical(signature))[:32]`, with the signature
-rendered as JSON with sorted keys so two callers building the same dictionary in a different
-order produce the same id.
+`fault_id = sha256(product | faultClass | canonical(signature) [| workspace=<w>])[:32]`, with the
+signature rendered as JSON with sorted keys so two callers building the same dictionary in a
+different order produce the same id. The workspace part is present only when the observation
+names one, so every id computed before workspaces joined identity is unchanged.
 
-What is deliberately NOT in it: the time, the occurrence, the attempt, the scope, and — the one
+What is deliberately NOT in it: the time, the occurrence, the attempt, the project, and — the one
 that is easy to get wrong — the individual event. Each changes while the fault stays the same,
 and an identity carrying any of them files a second issue every time the system fails again.
 
@@ -478,7 +489,13 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `record_sync_failed` | target and target ref | `(sync_id, attempts)` | the sweep no longer deriving it | broken |
 | `observation_stalled` | relationship and generation | `(relationship, generation, turn, last_attempt_at)` | the sweep no longer deriving it | `broken` when never polled, degraded otherwise |
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
-| `observation_unmeasured` | relationship | `unmeasured:<relationship>:<turn>` | a later reading that establishes something | notice |
+| `observation_unmeasured` | relationship and turn | `unmeasured:<relationship>:<turn>` | a later reading of the same turn that establishes something | notice |
+| `delivery_refused` | relationship and refusal reason | `refused:<journal seq>` | the streak ending: a send, the delivery settling, a pause, or another reason | degraded |
+| `managed_start_failed` | issue key | `managed:<request>:<receipt status>` | a later receipt for that request being accepted | broken |
+
+A notice recorded per relationship before notices were per turn is still answered: any
+establishing reading of that relationship clears it, under one constant key, so the clear is
+recorded at most once. The two collected classes are described under [Collection](#collection).
 
 A retrying delivery is read from its SETTLED attempt rows, not from the delivery. An
 attempt row is written in_flight with a provisional `held_uncertain` state before the
@@ -554,7 +571,9 @@ published, and the rule is a table rather than a judgment:
 | `degraded` | 3 within the window | it is working badly, and once may be weather |
 | `notice` | never | recorded for the operator, never filed |
 
-`CLASS_POLICY` is the only place a class overrides that. The window bounds which occurrences
+`CLASS_POLICY` is the only place a class overrides that, and `set_policy` the only way a product
+adjusts a degraded threshold or window - prospectively, journaled, and never for broken or notice
+(see [Policy](#policy)). The window bounds which occurrences
 count, and it is counted from `fault_timeline` rather than from the evidence rows, because
 `fault-prune` removes evidence an operator has finished reading and that must not change what
 the next observation decides.
@@ -569,13 +588,15 @@ in from outside — is never cleared that way, because a reading nobody supplied
 nothing. That is the difference between the thing being gone and nobody having looked, and it
 is why an `unmeasured` reading never clears an omission.
 
-A fault that never earned a Linear record is withdrawn when it clears — including one a locally
-recorded fix moved to `fix_pending`, which is still a fault no record carries. A fault that owns a
-record is not closed by clearing, because the closed loop below is what closes it.
+A fault for which no write has landed is withdrawn when it clears, and its unsent writes are
+cancelled — including one a locally recorded fix moved to `fix_pending`, and one that owns an
+adopted issue no write has reached yet (invariant 5). A fault with a landed write is not closed by
+clearing, because the closed loop below is what closes it.
 
 Suppression is also the only thing that opens a record. Recording a fix or a resolution against
 a fault the threshold never published queues nothing: a remediation must not be the back door
-through which a notice reaches Linear.
+through which a notice reaches Linear. `queue()` is an explicit caller act for another kind and
+refuses the issue create.
 
 Occurrences stay append-only. `fault-prune` is an explicit operator act that records in the
 journal how many rows it removed, because a store that silently discards its own evidence on a
@@ -660,26 +681,34 @@ Handing out a create operation marks the row `issued`. From there:
   row — one that never reached the connector — is safely released;
 - nothing but `reconcile` leaves `uncertain`. The caller reports what it observed: the marker
   found confirms the row against the issue that already exists; the marker absent moves it back
-  to `pending` for one further create, and only when the caller attests that it looked. An
-  unattested negative read changes nothing, because a negative read is not proof of absence.
+  to `pending` for one further create only when the caller attests that it looked AND somebody
+  attests that the issuing request has ended (`fail(..., ended=True)` by the holder, or
+  `reconcile(..., prior_ended=True, reason=...)`). Anything less leaves it uncertain, because a
+  negative read is not proof of absence while a request may still land.
 
 This is the same reasoning the coordination document uses for its conditional replacement, at
 the one place where that technique is unavailable: you cannot conditionally replace a document
 that does not exist yet.
 
-`open_record` also needs somewhere to file, which `fault_targets` supplies per scope. A scope
-with no configured target is not an error and does not lose the fault: it stays recorded, its
-publication waits, and `fault-target` backfills what was waiting. Filing into a guessed project
-would be worse than waiting.
+`open_record` also needs somewhere to file: a team and a project, owned by the fault's product
+and set per scope with `set_target` ([Targets and project linkage](#targets-and-project-linkage)).
+A scope with no configured target, or none with a project, is not an error and does not lose the
+fault: it stays recorded, its publication waits as awaiting target, and setting the target
+re-points what was waiting. Filing into a guessed project would be worse than waiting.
 
 ## What runs by itself, and what does not
 
 The daemon's tick sweeps the store and records what it finds, so a fault is detected and queued
 without anybody asking. The pass is bounded like every other pass — each source reads at most
 `SWEEP_LIMIT` rows — and it ROTATES: `fault_cursors` remembers where each source stopped and the
-next sweep resumes there, wrapping to the start when a page comes back short. A fixed prefix
-re-read on every tick would have starved everything behind it forever, which is the same shape
-the delivery window keeps a per-parent cursor to avoid. The scan over open faults rotates too, for the same reason.
+upper key it captured when its rotation started, the next sweep resumes there, and a short page
+ends the rotation. Every row present when a rotation starts is read within that rotation, however
+many full pages it takes; a row behind the cursor or past the captured bound is read by the next
+one (invariant 14, `faultsweep._rotation()`). A fixed prefix re-read on every tick would have
+starved everything behind it forever, and a cursor that wrapped after a fixed number of full
+pages starved everything past them. The scan over open faults rotates too, for the same reason.
+Given the store selection, the tick also reads the relay's own managed turns through the CRW-180
+projection, a few per tick ([Collection](#collection)).
 
 Recovery is asked of each fault DIRECTLY - an existence query for its own signature -
 rather than by differencing against a page. A page is a bounded prefix, so once a source
@@ -689,8 +718,10 @@ query is exact however large the source is, and a class this cannot ask about is
 never cleared by absence.
 
 The pass counts only what was NEWLY recorded, so a steady-state failure read again on every tick
-does not hold the loop at its fastest cadence forever. A daemon given no ledger ticks exactly as
-it did before.
+does not hold the loop at its fastest cadence forever. One refused observation is one
+`observation_refused` gap and the rest of the batch is still recorded. Unsent writes are carried
+as a note when the warning appears or changes. A daemon given no ledger ticks exactly as it did
+before.
 
 It cannot own the other half. The relay holds no Linear credential by design, so the write is
 performed by the process that does — the coordination parent, or an operator running the
@@ -720,77 +751,160 @@ happened is the work the fix cycle exists for.
 | `fault_timeline` | the single sequence every lifecycle decision is ordered by, never pruned |
 | `fault_remediations` | append-only fixes and structured reverifications, per cycle |
 | `fault_publications` | the outbox: what must be written to Linear, and how far it got |
-| `fault_targets` | where a scope's fault issues are filed |
-| `fault_cursors` | where each source stopped and how many full pages it has taken, so the sweep rotates and still wraps |
+| `fault_targets` | the team a scope's fault issues are filed with |
+| `fault_target_projects` | the product that owns a scope's target, and the project its issue creates are filed in |
+| `fault_cursors` | each source's rotation position: where it stopped and the upper key captured when the rotation started (`pages` is no longer read) |
+| `fault_publication_payloads` | a write's payload, the project it was queued with, and why it was last held |
+| `fault_publication_attempts` | every claim of a write: owner, takeover, claim and issue times, outcome |
+| `fault_links` | the project an owned issue is linked to as read back, and the link revision |
+| `fault_adoptions` | an existing issue a fault adopts, until suppression opens the record |
+| `fault_aliases` | another id naming the same fault: a move out of `unassigned`, or a legacy id |
+| `fault_budget_uses` | budget units consumed, per product, kind and ref |
+| `fault_limits` | per-product budget overrides, per kind |
+| `fault_notifications` | blocking, decision and resolved notifications and their delivery state |
+| `fault_policies` | per-product suppression overrides, with the reason |
 
 ## Python API
 
 This is the surface CRW-206 and any other product builds on. Everything below takes a
-`Store` and an injected clock and performs no network call.
+`Store` and an injected clock and performs no network call. The contract sections above say what
+each call promises; this is the list.
 
 ```
 faults.register_class(name, *, component, clears, threshold=None, window=None)
+faults.register_kind(name, *, creates, requires_issue, target, evidence, confirm,
+                     validate=None, pre_issue=None)
 faults.observation(*, product, fault_class, severity, signature, occurrence_key,
                    scope=None, observed_at=None, detail="", evidence=(), cleared=False)
-faults.fault_id(product, fault_class, signature)
+faults.fault_id(product, fault_class, signature, *, workspace=None)
+faults.target_key(product, *, workspace=None, project=None)
 
 ledger = faults.FaultLedger(store, clock)
-ledger.record(observation)                 -> faultId, recorded, state, publication
-ledger.set_target(scope_key, tracker_ref)
-ledger.get(fault_id)
-ledger.snapshot(scope_key=None, state=None, limit=20, after=None) -> faults, next
-ledger.occurrences(fault_id, limit=3)
-ledger.remediations(fault_id, limit=20)
-ledger.record_fix(fault_id, ref=..., detail="")
-ledger.record_reverification(fault_id, method=..., ref=..., outcome=..., detail="")
+ledger.record(observation, *, adopt=None)  -> faultId, recorded, state, publication
+ledger.canonical_id(product, fault_class, signature, *, workspace=None)
+ledger.adopt(fault_id, *, external_ref, scope)
+ledger.move(fault_id, *, scope)
+ledger.set_target(*, product, workspace=None, project=None, team, project_ref=None)
+ledger.targets(product=None, *, limit=20, after=None)
+ledger.relink(*, limit=100)
+ledger.get(fault_id)                       # carries linkState and linkedProject
+ledger.snapshot(*, product=None, fault_class=None, scope_key=None, state=None,
+                limit=20, after=None)      -> faults, next
+ledger.occurrences(fault_id, *, limit=3)
+ledger.remediations(fault_id, *, limit=20)
+ledger.record_fix(fault_id, *, ref, detail="")
+ledger.record_reverification(fault_id, *, method, ref, outcome, detail="")
+ledger.record_stage(fault_id, *, stage, ref, detail="")
+ledger.progress(fault_id)
 ledger.resolve(fault_id)
-ledger.prune(fault_id, keep=...)
+ledger.prune(fault_id, *, keep)
+ledger.set_policy(product, fault_class, severity, *, threshold=None, window=None, reason)
+ledger.policies(product)
 
-ledger.next(limit=4)                       # publications a credential holder may act on
-ledger.claim(publication_id, owner=...)    -> claimToken
-ledger.operation(publication_id, claim_token=...)
-ledger.reconcile(publication_id, observed_text, searched=False)
-ledger.complete(publication_id, readback=..., claim_token=None, external_ref=None)
-ledger.fail(publication_id, claim_token=..., error=...)
+ledger.queue(fault_id, *, kind, trigger, payload=None)
+ledger.request_update(fault_id, *, op, value)
+ledger.publication(publication_id)
+ledger.publications(fault_id, *, kind=None, state=None, limit=20, after=None)
+ledger.attempts(publication_id, *, limit=20)
+ledger.next(*, limit=4)                    # fair across products
+ledger.queue_state(*, limit=20)            -> ready, held (with reasons), budgets
+ledger.claim(publication_id, *, owner, takeover=False)   -> claimToken
+ledger.operation(publication_id, *, claim_token)
+ledger.reconcile(publication_id, observed_text=None, *, searched=False, observed=None,
+                 prior_ended=False, reason=None)
+ledger.complete(publication_id, *, readback=None, claim_token=None, external_ref=None,
+                project_ref=None, observed=None)
+ledger.fail(publication_id, *, claim_token, error, ended=False)
+ledger.cancel(publication_id, *, reason)
 ledger.expire_leases()
 ledger.retry(publication_id)
 
-faultsweep.sweep(store, product="crw", scope=None, readings=(), limit=32)
-faultsweep.record_all(ledger, batch, store=store)
+ledger.budget(product, kind)
+ledger.consume(product, kind, *, ref)
+ledger.set_limit(product, kind, *, max_count, window)
+ledger.limits(product)
+
+ledger.attention()
+ledger.raise_notification(fault_id, *, reason, ref=None)
+ledger.notifications(*, state=None, limit=20, after=None)
+ledger.reserve_notifications(*, owner, limit=20)
+ledger.ack_notification(notification_id, *, token, ref)
+ledger.fail_notification(notification_id, *, token, error)
+ledger.reconcile_notification(notification_id, *, delivered, ref)
+
+faultsweep.sweep(store, *, product="crw", scope=None, readings=(), limit=32, policy=None,
+                 readings_after=0, selection=None, now=None)
+    -> observations, clears, gaps, completeSources, cursors, readingsNext, readingsTotal
+faultsweep.reading_faults(readings, *, product, scope, store=None, limit=32, after=0)
+faultsweep.managed_readings(store, selection, *, limit=8, cursor=None, now=None)
+faultsweep.record_all(ledger, batch, *, store=None)
 ```
 
 Every `limit` is a positive integer and is refused otherwise, because SQLite reads
 `LIMIT -1` as no limit. A listing is continued by passing the `next` it returned as
 `after`; the cursor is a rowid, so faults recorded between pages land after it. A second
-product registers its classes once at import and feeds `record`; the ledger, the
+product registers its classes and kinds once at import and feeds `record`; the ledger, the
 suppression rules and the publication path need nothing else from it.
 
 ## Commands
 
 ```
-fault-target      --scope <key> --tracker-ref <ref>
-fault-observe     --observation <json|@path>
+fault-target      --product <p> [--workspace <w>] [--project <key>] --team <team>
+                  [--project-ref <project>]
+fault-observe     --observation <json|@path> [--adopt <json|@path>]
 fault-sweep       [--product <name>] [--project <key>] [--readings <json|@path>]
-fault-show        [--fault <id>] [--scope <key>] [--fault-state <state>] [--limit <n>]
-                  [--after <next>]
+                  [--readings-after <n>]
+fault-show        [--fault <id> | --publication <id>] [--product <p>] [--fault-class <c>]
+                  [--scope <key>] [--fault-state <state>] [--limit <n>] [--after <next>]
 fault-fix         --fault <id> --ref <ref> [--detail <text>]
 fault-reverify    --fault <id> --method suite|command|observation --ref <text>
                   --outcome passed|absent|failed [--detail <text>]
+fault-stage       --fault <id> --stage accepted|assigned|merged|installed --ref <ref>
+                  [--detail <text>]
 fault-resolve     --fault <id>
+fault-adopt       --fault <id> --external-ref <issue> --scope <json|@path>
+fault-move        --fault <id> --scope <json|@path>
+fault-queue       --fault <id> --kind <kind> --trigger <text> [--payload <json|@path>]
+fault-update      --fault <id> --op set_project|reopen|add_relation|add_label
+                  [--value <json|@path>]
 fault-next        [--limit <n>]
-fault-claim       --publication <id> --owner <name>
+fault-claim       --publication <id> --owner <name> [--takeover]
 fault-operation   --publication <id> --claim-token <token>
-fault-reconcile   --publication <id> --observed <text|@path> [--searched]
-fault-complete    --publication <id> [--claim-token <token>] --readback <text|@path>
-                  [--external-ref <ref>]
-fault-fail        --publication <id> --claim-token <token> --error <text>
+fault-reconcile   --publication <id> [--observed <text|@path>]
+                  [--observed-fields <json|@path>] [--searched]
+                  [--prior-ended --reason <text>]
+fault-complete    --publication <id> [--claim-token <token>] [--readback <text|@path>]
+                  [--external-ref <ref>] [--project-ref <project>]
+                  [--observed-fields <json|@path>]
+fault-fail        --publication <id> --claim-token <token> --error <text> [--ended]
+fault-cancel      --publication <id> --reason <text>
 fault-retry       --publication <id>
+fault-relink      [--limit <n>]
+fault-policy      --product <p> [--fault-class <c> --severity <s> --reason <text>
+                  [--threshold <n>] [--window <seconds>]]
+fault-limit       --product <p> [--kind <kind> --max-count <n> --window <seconds>]
+fault-attention
+fault-notifications          [--notification-state <state>] [--limit <n>] [--after <next>]
+fault-notification-raise     --fault <id> --reason <text> [--ref <ref>]
+fault-notification-reserve   --owner <name> [--limit <n>]
+fault-notification-ack       --notification <id> --token <token> --ref <ref>
+fault-notification-fail      --notification <id> --token <token> --error <text>
+fault-notification-reconcile --notification <id> --delivered yes|no --ref <ref>
 fault-prune       --fault <id> --keep <n>
 ```
 
-`--fault-state` rather than `--state`: that name belongs to the global option naming the store
-directory, and a subcommand option of the same name overwrites it in the namespace, so every
-such command would read an unconfigured default store and answer that the fault did not exist.
+Every one of these reads and writes the store and never calls the host, so each is listed in
+`OFFLINE_COMMANDS`. `fault-next` returns the writes ready now, the held ones with the reason each
+waits, and the budgets. `fault-show --fault` adds the fault's publications and stage progress;
+`fault-show --publication` shows one write with what it created and its newest attempts. `status`
+carries `attention()` under `faults`. The global option `--kind-module <module>` (repeatable)
+imports a module that registers a publication kind before the command runs; a process that does
+not import it never offers, claims or issues that kind's writes.
+
+`--fault-state`, `--notification-state` and never `--state`: that name belongs to the global option
+naming the store directory, and a subcommand option of the same name overwrites it in the
+namespace, so every such command would read an unconfigured default store and answer that the
+fault did not exist.
 
 Status: implemented in this package, with the suite as the proof. Detection and queuing run in
 the daemon tick; the Linear write is performed by a credential holder outside this package.

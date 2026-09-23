@@ -242,7 +242,16 @@ register_class(
 )
 register_class(
     "observation_unmeasured", component="reporting",
-    clears="a later reading of the same relationship that establishes something",
+    clears="a later reading of the same turn that establishes something",
+)
+register_class(
+    "delivery_refused", component="delivery",
+    clears="the delivery being sent or settling, or its newest withholding naming another"
+           " reason",
+)
+register_class(
+    "managed_start_failed", component="managed_start",
+    clears="a later receipt for the same request being accepted",
 )
 
 
@@ -1169,9 +1178,7 @@ class FaultLedger:
             escalated = severity != row["severity"]
             policy = self._policy(db, row["product"], fact["faultClass"], severity)
             suppression = self._suppression(db, identifier, policy, now)
-            opened = bool(row["external_ref"]) or db.execute(
-                "SELECT 1 FROM fault_publications WHERE fault_id = ? AND kind = ?"
-                " AND state != ?", (identifier, OPEN_RECORD, CANCELLED)).fetchone() is not None
+            opened = _issue_slot(db, row)[0] is not None
             state, cycle, reopened, trigger_key = _transition(
                 row["state"], row["cycle"], cleared=fact["cleared"],
                 publishable=suppression["publish"], escalated=escalated, severity=severity,
@@ -1235,7 +1242,8 @@ class FaultLedger:
     def _adopt(self, db, row, adoption, now):
         """Invariant 1 applied to an existing issue: the fault owns it, or nothing changes."""
         ref, scope = adoption["externalRef"], adoption["scope"]
-        if row["external_ref"]:
+        holder, create = _issue_slot(db, row)
+        if holder == SLOT_ISSUE:
             if row["external_ref"] != ref:
                 raise FaultRefused(RefusalReason.FAULT_ADOPT_CONFLICT,
                                    f"this fault already owns {row['external_ref']!r}")
@@ -1245,8 +1253,6 @@ class FaultLedger:
         if stored is not None and stored["external_ref"] != ref:
             raise FaultRefused(RefusalReason.FAULT_ADOPT_CONFLICT,
                                f"this fault already adopts {stored['external_ref']!r}")
-        create = db.execute("SELECT * FROM fault_publications WHERE fault_id = ? AND kind = ?",
-                            (row["fault_id"], OPEN_RECORD)).fetchone()
         if create is not None and create["state"] in (ISSUED, UNCERTAIN, CONFIRMED):
             raise FaultRefused(
                 RefusalReason.FAULT_ADOPT_CONFLICT,
@@ -1649,22 +1655,21 @@ class FaultLedger:
         row = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                          (identifier,)).fetchone()
         reason = trigger_key.split(":")[0]
-        create = db.execute("SELECT * FROM fault_publications WHERE fault_id = ? AND kind = ?",
-                            (identifier, OPEN_RECORD)).fetchone()
+        holder, create = _issue_slot(db, row)
         if reason == TRIGGER_OPEN:
             adopted = self._materialize(db, identifier, now)
             if adopted is not None:
                 return adopted
-            if row["external_ref"]:
+            if holder == SLOT_ISSUE:
                 return self._insert_publication(db, row, APPEND_COMMENT, trigger_key, now,
                                                 remediation=remediation, clears=clears)
-            if create is not None and create["state"] != CANCELLED:
+            if holder == SLOT_CREATE:
                 return {"publicationId": create["publication_id"], "kind": OPEN_RECORD,
                         "trigger": trigger_key, "queued": False, "awaitingTarget": False,
                         "awaitingRecord": False, "reason": "the create is already queued"}
             return self._insert_publication(db, row, OPEN_RECORD, TRIGGER_OPEN, now,
                                             remediation=remediation, clears=clears)
-        if not row["external_ref"] and (create is None or create["state"] == CANCELLED):
+        if holder is None:
             return {"publicationId": None, "kind": None, "trigger": trigger_key,
                     "queued": False, "awaitingTarget": False, "awaitingRecord": False,
                     "reason": "this fault has never been published, so nothing is written for"
@@ -2030,6 +2035,13 @@ class FaultLedger:
             pair = (row["fault_product"], row["kind"])
             if remaining.get(pair, 1) <= 0:
                 continue
+            if row["kind"] == OPEN_RECORD:
+                # The query excludes these already; asked again through the one function that
+                # decides the slot, so a change to that rule cannot miss this path.
+                fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                                   (row["fault_id"],)).fetchone()
+                if _issue_slot(db, fault)[0] == SLOT_ISSUE:
+                    continue
             remaining[pair] = remaining.get(pair, 1) - 1
             chosen.append(row)
             if len(chosen) >= limit:
@@ -2068,7 +2080,7 @@ class FaultLedger:
             return "backing_off"
         fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                            (row["fault_id"],)).fetchone()
-        if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+        if row["kind"] == OPEN_RECORD and _issue_slot(db, fault)[0] == SLOT_ISSUE:
             return "issue_owned"
         if spec["requires_issue"] and not fault["external_ref"]:
             return "awaiting_record"
@@ -2109,7 +2121,7 @@ class FaultLedger:
                 )
             fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                                (row["fault_id"],)).fetchone()
-            if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+            if row["kind"] == OPEN_RECORD and _issue_slot(db, fault)[0] == SLOT_ISSUE:
                 self._cancel(db, row, "the fault already owns an issue", stamp)
                 refusal = FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
                                        "this fault owns an issue, so its create was cancelled")
@@ -2170,7 +2182,7 @@ class FaultLedger:
             extra = db.execute("SELECT * FROM fault_publication_payloads WHERE"
                                " publication_id = ?", (publication,)).fetchone()
             queued_project = extra["project_ref"] if extra else None
-            if row["kind"] == OPEN_RECORD and fault["external_ref"]:
+            if row["kind"] == OPEN_RECORD and _issue_slot(db, fault)[0] == SLOT_ISSUE:
                 self._cancel(db, row, "the fault already owns an issue", now)
                 outcome = (RefusalReason.FAULT_STATE_CONFLICT,
                            "this fault owns an issue, so its create was cancelled")
@@ -2610,9 +2622,9 @@ class FaultLedger:
                     f"retry offers a failed publication again; this one is {row['state']}" + (
                         ". An uncertain write is reconciled, not retried"
                         if row["state"] == UNCERTAIN else ""))
-            owner = db.execute("SELECT external_ref FROM fault_ledger WHERE fault_id = ?",
+            owner = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
                                (row["fault_id"],)).fetchone()
-            if row["kind"] == OPEN_RECORD and owner["external_ref"]:
+            if row["kind"] == OPEN_RECORD and _issue_slot(db, owner)[0] == SLOT_ISSUE:
                 raise FaultRefused(RefusalReason.FAULT_STATE_CONFLICT,
                                    "this fault already owns an issue; its create is not retried")
             db.execute(
@@ -2845,6 +2857,28 @@ def _json(text):
 def _exists(db, identifier):
     return db.execute("SELECT 1 FROM fault_ledger WHERE fault_id = ?",
                       (identifier,)).fetchone() is not None
+
+
+SLOT_ISSUE = "issue"
+SLOT_CREATE = "create"
+
+
+def _issue_slot(db, fault):
+    """Invariant 1: who holds this fault's one issue slot.
+
+    Returns (SLOT_ISSUE, None) when the fault owns an issue, (SLOT_CREATE, row) when a
+    non-cancelled open_record holds it, and (None, row_or_None) when the slot is free - the row
+    then being a cancelled create, which is revived under its own id and never joined by a
+    second one. Every path that decides whether a fault is opened, whether a create may be
+    queued, offered, claimed, issued or retried, and whether an issue may be adopted asks this.
+    """
+    if fault["external_ref"]:
+        return SLOT_ISSUE, None
+    create = db.execute("SELECT * FROM fault_publications WHERE fault_id = ? AND kind = ?",
+                        (fault["fault_id"], OPEN_RECORD)).fetchone()
+    if create is not None and create["state"] != CANCELLED:
+        return SLOT_CREATE, create
+    return None, create
 
 
 def _landed(db, identifier):

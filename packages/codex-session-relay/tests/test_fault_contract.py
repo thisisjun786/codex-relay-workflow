@@ -285,6 +285,182 @@ class B5_TheSupportedBoundariesAreCollected(RelayTestCase):
                          ["managed_start_failed"])
 
 
+class B5_ARefusalStreakEndsOnlyWhereTheContractSays(RelayTestCase):
+    """Post-merge blocker 5, continued: only a delivery's CURRENT refusal streak counts.
+
+    A streak ends on a settled send, on a person pausing the work, on a withholding for another
+    reason, or on the delivery settling - and never on a busy deferral, which says nothing about
+    the settings that were refused.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.assertIn("delivery_refused", faults.CLASS_POLICY, "refusals are not collected")
+
+    def journal(self, kind, detail="", *, event="e1"):
+        with self.store.transaction():
+            self.store.journal(kind, event, detail, at="t")
+
+    def refuse(self, reason="settings_incomplete", *, event="e1"):
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO deliveries (event_id, relationship_id, kind,"
+                " recipient_task_id, recipient_thread_id, state, attempt_count, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (event, "rel-1", "completion", "parent", "parent", "withheld_pre_send", 0,
+                 "t", "t"))
+        self.journal("delivery_withheld", {"reason": reason, "detail": "no"}, event=event)
+
+    def refused(self, batch=None):
+        batch = batch if batch is not None else faultsweep.sweep(self.store)
+        return [entry for entry in batch["observations"]
+                if entry["faultClass"] == "delivery_refused"]
+
+    def test_a_settled_send_between_refusals_ends_the_first_streak(self):
+        self.refuse()
+        self.refuse()
+        self.journal("delivery_attempted", {"requestId": "r1", "state": "withheld_pre_send"})
+        self.refuse()
+        self.refuse()
+        self.assertEqual(2, len(self.refused()))
+
+    def test_a_busy_deferral_between_refusals_ends_nothing(self):
+        self.refuse()
+        self.journal("delivery_deferred_busy")
+        self.refuse()
+        self.refuse()
+        self.assertEqual(3, len(self.refused()))
+
+    def test_a_person_pausing_the_assignment_ends_the_streak(self):
+        for _ in range(3):
+            self.refuse()
+        self.journal("delivery_withheld_inactive", {"relationshipId": "rel-1", "status": "paused"})
+        self.assertEqual([], self.refused())
+
+    def test_a_delivery_that_settled_has_no_streak(self):
+        for _ in range(3):
+            self.refuse()
+        with self.store.transaction() as db:
+            db.execute("UPDATE deliveries SET state = 'dispatched' WHERE event_id = 'e1'")
+        self.assertEqual([], self.refused())
+
+    def test_another_reason_ends_the_streak_and_clears_the_fault(self):
+        ledger = faults.FaultLedger(self.store, self.clock)
+        for _ in range(3):
+            self.refuse()
+        faultsweep.record_all(ledger, faultsweep.sweep(self.store), store=self.store)
+        identifier = faults.fault_id(PRODUCT, "delivery_refused",
+                                     {"relationship": "rel-1", "errorCode": "settings_incomplete"})
+        self.assertEqual(faults.OPEN, ledger.get(identifier)["state"])
+        self.refuse("unsupported_sandbox_type")
+        batch = faultsweep.sweep(self.store)
+        self.assertEqual(["unsupported_sandbox_type"],
+                         [entry["signature"]["errorCode"] for entry in self.refused(batch)])
+        self.assertIn(identifier, [faults.fault_id(PRODUCT, entry["faultClass"],
+                                                   entry["signature"])
+                                   for entry in batch["clears"]])
+
+
+class B5_AFailedManagedStartClearsWhenAccepted(RelayTestCase):
+    """The registry replaces a non-publishing receipt; an accepted one is the only way out."""
+
+    def test_an_accepted_receipt_clears_the_failed_start(self):
+        self.assertIn("managed_start_failed", faults.CLASS_POLICY)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO managed_start_requests (request_id, issue_key,"
+                " request_fingerprint, fingerprint_version, workspace, marker_root,"
+                " socket_identity, create_request_id, dispatch_request_id, state, revision,"
+                " receipt_status, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("req-1", "CRW-9", "fp", "v1", "/w", "/m", "sock", "create-1", "dispatch-1",
+                 "create_armed", 2, "failed", "t", "t"))
+        ledger = faults.FaultLedger(self.store, self.clock)
+        faultsweep.record_all(ledger, faultsweep.sweep(self.store), store=self.store)
+        identifier = faults.fault_id(PRODUCT, "managed_start_failed", {"issueKey": "CRW-9"})
+        self.assertEqual(faults.OPEN, ledger.get(identifier)["state"])
+        with self.store.transaction() as db:
+            db.execute("UPDATE managed_start_requests SET receipt_status = 'accepted'")
+        batch = faultsweep.sweep(self.store)
+        self.assertIn(identifier, [faults.fault_id(PRODUCT, entry["faultClass"],
+                                                   entry["signature"])
+                                   for entry in batch["clears"]])
+
+
+class B5_ManagedTurnsAreReadThroughTheProjection(RelayTestCase):
+    """The relay's own managed turns are read through omitted.observe, which is consumed as
+    reporting-show consumes it: the selection, the marker root, the workspace, the hashed
+    assignment, the child session and the turn. Nothing else supplies CRW-180 readings to a
+    daemon, so without this the omission class only ever saw what an operator typed in."""
+
+    def setUp(self):
+        from .support import CHILD
+
+        super().setUp()
+        self.assertIn("selection", inspect.signature(faultsweep.sweep).parameters,
+                      "the sweep cannot read the relay's own managed turns")
+        self.register()
+        row = self.store.one("SELECT relationship_id, execution_generation FROM relationships")
+        self.relationship = row["relationship_id"]
+        self.child = CHILD
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO managed_start_requests (request_id, issue_key,"
+                " request_fingerprint, fingerprint_version, workspace, marker_root,"
+                " socket_identity, create_request_id, dispatch_request_id, state, revision,"
+                " child_task_id, standby_turn_id, relationship_id, execution_generation,"
+                " receipt_status, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("req-1", "CRW-9", "fp", "v1", "/w", "/m", "sock", "create-1", "dispatch-1",
+                 "attached", 3, CHILD, "standby-1", self.relationship,
+                 row["execution_generation"], "accepted", "t", "t"))
+            for turn, status in (("turn-9", "completed"), ("turn-9", "failed"),
+                                 ("standby-1", "completed")):
+                db.execute("INSERT INTO assignment_settlements VALUES (?,?,?,?,?)",
+                           (self.relationship, CHILD, turn, status, "t"))
+
+    def observed(self, answer):
+        from unittest import mock
+
+        from codex_session_relay import omitted
+
+        calls = []
+
+        def observe(selection, **kw):
+            calls.append({"selection": selection, **kw})
+            if isinstance(answer, Exception):
+                raise answer
+            return {"schema": faultsweep.OBSERVATION_SCHEMA, "reportingState": answer,
+                    "relationshipId": self.relationship,
+                    "selectors": {"turn": kw["turn"], "session": kw["session"]}}
+
+        with mock.patch.object(omitted, "observe", observe):
+            batch = faultsweep.sweep(self.store, selection="the-selection", now="t")
+        return calls, batch
+
+    def test_each_settled_turn_is_read_once_and_the_standby_turn_never(self):
+        from codex_session_relay import marker
+
+        calls, batch = self.observed("unreported")
+        self.assertEqual([{"selection": "the-selection", "root": "/m", "workspace": "/w",
+                           "assignment": marker.assignment_id("dispatch-1"),
+                           "session": self.child, "turn": "turn-9", "now": "t"}], calls)
+        self.assertEqual([{"relationship": self.relationship, "turn": "turn-9"}],
+                         [entry["signature"] for entry in batch["observations"]
+                          if entry["faultClass"] == "report_omitted" and not entry["cleared"]])
+
+    def test_an_observer_error_is_a_gap_and_the_sweep_goes_on(self):
+        calls, batch = self.observed(OSError("marker unreadable"))
+        self.assertEqual(1, len(calls))
+        self.assertEqual(["managed_reading_failed"], [gap["gap"] for gap in batch["gaps"]])
+
+    def test_a_relationship_past_its_managed_generation_is_not_read(self):
+        with self.store.transaction() as db:
+            db.execute("UPDATE relationships SET execution_generation = execution_generation + 1")
+        calls, _batch = self.observed("unreported")
+        self.assertEqual([], calls)
+
+
 class B6_WorkspaceIsPartOfIdentity(ContractCase):
     """Post-merge blocker 6: two workspaces merged into one fault and overwrote each other."""
 

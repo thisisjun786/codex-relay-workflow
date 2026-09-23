@@ -500,6 +500,12 @@ CREATE TABLE IF NOT EXISTS journal (
     subject TEXT,
     detail  TEXT
 );
+-- Read by the fault sweep's refusal source, which pages delivery_withheld rows by sequence and
+-- asks, per delivery, whether anything later ended the refusal streak. Each index also carries
+-- the sequence (the rowid), so both reads are range scans; without them every sweep scanned the
+-- whole journal.
+CREATE INDEX IF NOT EXISTS journal_kind ON journal (kind);
+CREATE INDEX IF NOT EXISTS journal_subject ON journal (subject);
 
 CREATE TABLE IF NOT EXISTS store_challenge (
     nonce      TEXT PRIMARY KEY,
@@ -1071,10 +1077,13 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 -- the starvation shape the delivery window already keeps a per-parent cursor to avoid.
 CREATE TABLE IF NOT EXISTS fault_cursors (
     source     TEXT PRIMARY KEY,
+    -- JSON {"at", "until"}: where the source's rotation stopped and the upper key it captured
+    -- when the rotation started. A plain value written before rotations were bounded reads as
+    -- a position with no bound yet.
     position   TEXT,
-    -- Consecutive FULL pages taken since this source last wrapped. These keys are not
-    -- monotonic insertion sequences, so a cursor that only wrapped on a short page would
-    -- never come back for a row behind it while full pages kept arriving.
+    -- No longer read. It counted full pages before a forced wrap, which starved every row past
+    -- them; a rotation bounded by its upper key replaced that. Kept because this store adds
+    -- tables and never drops columns.
     pages      INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
 );
