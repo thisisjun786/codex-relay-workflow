@@ -429,11 +429,13 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   status. The last two come after the host ACCEPTED the creation - its receipt named an unusable
   identity, or settings that did not match the request - so the incident says a child may exist
   that the relay could not attach, never that none was published. The incident states only what
-  the answer establishes: a child the answer names (the `retainedChildTaskId` a partial creation
-  left, or the registry's child) is named and said not to be attached; `unknown` says whether a
-  child was created is not established; only a definite answer that names no child is stated as
-  the host reporting none. A recorded receipt that is not accepted still decides where one
-  exists. The newest creation-stage row is found through the partial index
+  the answer establishes: a child the journaled answer names (the `retainedChildTaskId` a partial
+  creation left) is named and said not to be attached; `unknown` says whether a child was created
+  is not established; only a definite journaled answer whose receipt named no child says so. A
+  recorded receipt that is not accepted still decides where one exists, and says nothing about a
+  child either way: the registry keeps a child id only for a receipt it accepts (an accepted one
+  missing its thread or standby id is stored as `partial` with none), so from that row whether
+  the host created a child is not established. The newest creation-stage row is found through the partial index
   `journal_managed_creation`, which holds only those rows, so it is one probe however many rows
   a request's retries journaled. Any other
   reason at that stage - a worker that cannot take the pair - means the host was not asked on

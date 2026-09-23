@@ -124,7 +124,7 @@ STREAK_ENDS = ("delivery_attempted", "delivery_withheld_inactive")
 # are free text for other kinds, and json_extract on text that is not JSON raises.
 _REASON = "(CASE WHEN json_valid({t}.detail) THEN json_extract({t}.detail, '$.reason') END)"
 # The receipt the registry attaches a managed start on. Anything else recorded against an
-# armed request is the host answering without publishing a child.
+# armed request is the host answering without the registry publishing a child.
 ACCEPTED_RECEIPT = "accepted"
 # A managed start journals every result it returns (managed.ManagedStart.result, kind
 # managed_start_observed, subject = the request id), and the creation stage is where the host is
@@ -184,41 +184,44 @@ ACCEPTED_UNATTACHED = {
 }
 
 
-def _answer_facts(issue, status, child=None) -> tuple:
-    """(detail, actual, impact) for a managed start's answer, in the answer's own terms.
+def _answer_facts(issue, status, answer=None) -> tuple:
+    """(detail, actual, impact) for a managed start's answer, stating only what it establishes.
 
-    A child the answer names - one a partial creation left and the start retained, or the one
-    the registry recorded - is named, and said not to be attached. An unknown answer
-    establishes nothing about creation either way, named child or not, and says so; only a
-    definite answer that names no child is stated as the host reporting none.
+    The journaled creation answer carries the thread id the host's receipt named
+    (retainedChildTaskId): a named child is named and said not to be attached, and only a
+    definite answer whose receipt named none says so. A receipt the registry recorded (answer
+    None) carries no child at all - the registry keeps a child id only for a receipt it
+    accepts, and stores an accepted one missing an id as partial with none - so from that row
+    whether the host created a child is not established. Nor is it from an unknown answer.
     """
     if status in ACCEPTED_UNATTACHED:
         actual = ACCEPTED_UNATTACHED[status]
         return (f"a managed start for {issue} was answered {status}: {actual}", actual,
                 f"a child the host created for {issue} is not attached to any assignment,"
                 " and no managed child is working on it")
-    if status == "unknown":
-        if _named(child):
-            actual = (f"the host answered unknown naming child {child}, so whether that child"
-                      " was created is not established; the relay retained it and did not"
-                      " attach it")
-            impact = (f"child {child}, if the host created it, is not attached to any"
-                      f" assignment, and no managed child is working on {issue}")
-        else:
-            actual = ("the host answered unknown, so whether it created a child for"
-                      f" {issue} is not established")
-            impact = (f"no attached child is working on {issue}, and any child the host did"
-                      " create is not attached")
-        return (f"a managed start for {issue} was answered unknown: {actual}", actual, impact)
-    if _named(child):
+    child = answer.get("retainedChildTaskId") if answer is not None else None
+    if _named(child) and status == "unknown":
+        actual = (f"the host answered unknown naming child {child}, so whether that child"
+                  " was created is not established; the relay retained it and did not"
+                  " attach it")
+        impact = (f"child {child}, if the host created it, is not attached to any"
+                  f" assignment, and no managed child is working on {issue}")
+    elif _named(child):
         actual = (f"the host answered {status} after creating child {child}, which the relay"
                   " retained and did not attach")
-        return (f"a managed start for {issue} was answered {status}: {actual}", actual,
-                f"child {child} is not attached to any assignment, and no managed child is"
-                f" working on {issue}")
-    return (f"a managed start for {issue} was answered {status} and the host reported no child",
-            f"the host answered {status} and reported no child",
-            f"no child is working on {issue}")
+        impact = (f"child {child} is not attached to any assignment, and no managed child is"
+                  f" working on {issue}")
+    elif answer is None or status == "unknown":
+        said = (f"the registry recorded the host's answer {status} and keeps a child id only"
+                " for an answer it accepts" if answer is None
+                else "the host answered unknown")
+        actual = f"{said}, so whether the host created a child for {issue} is not established"
+        impact = (f"no attached child is working on {issue}, and any child the host did"
+                  " create is not attached")
+    else:
+        actual = f"the host answered {status} and its receipt named no child"
+        impact = f"no child is working on {issue}"
+    return (f"a managed start for {issue} was answered {status}: {actual}", actual, impact)
 
 
 def _unaccepted_answer(store, row) -> tuple:
@@ -871,7 +874,7 @@ def refusal_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> 
 
 
 def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=None) -> dict:
-    """Managed starts the host answered without publishing a child.
+    """Managed starts the host answered without the relay attaching a child.
 
     An armed request with no accepted receipt, and an answer: a recorded receipt that is not
     accepted, or - since managed.ManagedStart records a receipt only for an accepted creation -
@@ -883,8 +886,8 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
     after, until, _ = _rotation(store, cursor,
                                 "SELECT MAX(request_id) FROM managed_start_requests")
     rows = [] if until is None else store.all(
-        "SELECT request_id, issue_key, receipt_status, child_task_id, workspace, revision,"
-        "       updated_at FROM managed_start_requests"
+        "SELECT request_id, issue_key, receipt_status, workspace, revision, updated_at"
+        "  FROM managed_start_requests"
         " WHERE state = 'create_armed' AND (receipt_status IS NULL OR receipt_status != ?)"
         "   AND request_id > ? AND request_id <= ?"
         " ORDER BY request_id LIMIT ?",
@@ -896,20 +899,16 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
         if status is None:
             continue
         evidence = [_evidence("row", f"managed_start_requests:{row['request_id']}", {
-            "receiptStatus": row["receipt_status"], "childTaskId": row["child_task_id"],
-            "requestRevision": row["revision"], "workspace": row["workspace"],
-            "updatedAt": row["updated_at"],
+            "receiptStatus": row["receipt_status"], "requestRevision": row["revision"],
+            "workspace": row["workspace"], "updatedAt": row["updated_at"],
         })]
-        child = row["child_task_id"]
         if answer is not None:
             evidence.append(_evidence("row", f"journal:{answer['seq']}", {
                 "kind": MANAGED_OBSERVED, "state": answer["state"], "stage": CREATION_STAGE,
                 "reason": answer["reason"], "retainedChildTaskId": answer["retainedChildTaskId"],
                 "standbyRecovery": answer["standbyRecovery"],
             }))
-            if _named(answer["retainedChildTaskId"]):
-                child = answer["retainedChildTaskId"]
-        detail, actual, impact = _answer_facts(row["issue_key"], status, child)
+        detail, actual, impact = _answer_facts(row["issue_key"], status, answer)
         limits = ["the registry keeps only the latest receipt of an armed request"]
         if answer is not None:
             limits = ["read from the newest creation answer the managed start journaled; a start"
