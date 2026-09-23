@@ -1748,7 +1748,9 @@ IDENTITY_FIELDS = ("established", "reason", "answerItem", "transcriptPath", "sca
 # journal's answer from a write that went nowhere before it. A row the journal did write is never
 # rewritten (the fault path's retry cannot create the slot again), so journalledAs reaches a file
 # only as None, and only beside a fault.
-ROW_KEYS = ROW_FIELDS + PAYLOAD_FIELDS + GUARD_CALL_FIELDS + ANSWER_FIELDS + ("detail",)
+# What every row that did not fault ends with: _release() and the guard path both set it.
+SETTLED_FIELDS = ("detail",)
+ROW_KEYS = ROW_FIELDS + PAYLOAD_FIELDS + GUARD_CALL_FIELDS + ANSWER_FIELDS + SETTLED_FIELDS
 FAULT_KEYS = ("fault", "journalledAs")
 
 
@@ -1798,7 +1800,7 @@ def _row_fields_written(row):
     if outcome == ADAPTER_FAULTED:
         if not isinstance(row.get("fault"), str):
             return False
-    elif "detail" not in row:
+    elif any(field not in row for field in SETTLED_FIELDS):
         return False
     if outcome == ADAPTER_FAULTED:
         if not _fault_prefix_written(row):
@@ -2057,7 +2059,6 @@ def _host_shape(body, key):
             and _fields_exactly(claimed_by, HOST_CLAIMED_BY_FIELDS)
             and isinstance(body.get("stopHookActive"), bool)
             and _slot(claimed_by.get("attemptRow")) and _is_count(claimed_by.get("pid"))
-            and "journalRoot" in claimed_by
             and (claimed_by.get("journalRoot") is None
                  or isinstance(claimed_by.get("journalRoot"), str))
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
