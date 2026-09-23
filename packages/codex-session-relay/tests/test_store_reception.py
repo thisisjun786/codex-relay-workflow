@@ -711,6 +711,46 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         self.assertEqual((held["dispatchRequestId"], held["mode"]),
                          ("dispatch-return", packets.NON_LOOP))
 
+    def test_a_revision_generation_keeps_the_tenures_mode_and_workflow(self):
+        # A correction opens a generation under a new dispatch inside the same tenure. The
+        # mode and workflow the tenure's assignment gave still hold there, so a resume after
+        # the correction is read against them rather than left unread.
+        relationship = self.registered(child=self.CREATED, issue="REL-FIRST",
+                                       dispatch="dispatch-first", turn="turn-first")
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "created-ledger.json")
+        _code, first = self.packet_check(self.first_assignment(dispatch="dispatch-first"),
+                                         receiver_id=self.CREATED, ledger=ledger)
+        self.assertTrue(first["act"], first)
+        self.registry.open_generation(rid, dispatch_request_id="dispatch-rev-2",
+                                      reason="needs_changes_revision")
+        correction = self.correction(relationship, generation=2, recipient=self.CREATED,
+                                     issue="REL-FIRST")
+        _code, corrected = self.packet_check(correction, receiver_id=self.CREATED,
+                                             observation=self.observed(), ledger=ledger)
+        self.assertEqual(corrected["disposition"], packets.ACCEPTED, corrected)
+        resume = packets.compose(
+            direction=P2C, purpose="resume", relation_id=rid, sender=PARENT,
+            recipient=self.CREATED, subject="resume-after-correction", issue="REL-FIRST",
+            relation_revision=self.revision(relationship), callback=self.a_callback(),
+            policy_record=self.a_policy(),
+            artifact=packets.pull_request(repository=REPOSITORY, number=107, head_sha=HEAD))
+        _code, resumed = self.packet_check(resume, receiver_id=self.CREATED,
+                                           observation=self.observed(), ledger=ledger)
+        self.assertEqual(resumed["disposition"], packets.ACCEPTED, resumed)
+        self.assertEqual(resumed["provenance"].get("mode"),
+                         "ledger: assignment " + first["messageId"])
+        # And a resume naming another workflow in that generation is still refused.
+        other = packets.compose(
+            direction=P2C, purpose="resume", relation_id=rid, sender=PARENT,
+            recipient=self.CREATED, subject="resume-other", issue="REL-FIRST",
+            relation_revision=self.revision(relationship), callback=self.a_callback(),
+            policy_record=self.a_policy(workflow="CXC Loop under another procedure"),
+            artifact=packets.pull_request(repository=REPOSITORY, number=107, head_sha=HEAD))
+        _code, refused = self.packet_check(other, receiver_id=self.CREATED,
+                                           observation=self.observed(), ledger=ledger)
+        self.assertEqual(self.kinds(refused), [packets.WRONG_WORKFLOW])
+
     def test_a_policy_of_the_wrong_shape_is_refused_and_leaves_the_ledger_usable(self):
         # Read back from disk, a packet never went through policy(). A workflow that is not
         # text used to be accepted and written into the ledger, which the next check then
@@ -812,6 +852,28 @@ class WhatTheStoreCannotAnswer(StoreReception):
                 ledger = os.path.join(self.tmp, "cut-%d.json" % number)
                 with open(ledger, "w", encoding="utf-8") as handle:
                     json.dump(damaged, handle)
+                code, answer = self.packet_check(one, receiver_id=CHILD,
+                                                 observation=self.observed(), ledger=ledger)
+                self.assertEqual(code, cli.EXIT_USAGE, answer)
+
+    def test_a_ledger_entry_no_writer_could_produce_is_damaged(self):
+        # Applied is recorded only for an accepted packet some check said to act on, so an
+        # entry saying applied without both is damage, not a reading - read, it would treat
+        # work the receiver was never told to do as done.
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        message = one["envelope"]["messageId"]
+        for number, change in enumerate(({"applied": True, "toldToAct": False},
+                                         {"applied": True, "disposition": packets.REFUSAL}), 1):
+            with self.subTest(change=change):
+                document = receiver.empty_ledger(CHILD)
+                document["answered"][message] = {**{
+                    "contentDigest": packets.content_digest(one),
+                    "disposition": packets.ACCEPTED, "applied": True, "toldToAct": True},
+                    **change}
+                ledger = os.path.join(self.tmp, "impossible-%d.json" % number)
+                with open(ledger, "w", encoding="utf-8") as handle:
+                    json.dump(document, handle)
                 code, answer = self.packet_check(one, receiver_id=CHILD,
                                                  observation=self.observed(), ledger=ledger)
                 self.assertEqual(code, cli.EXIT_USAGE, answer)
