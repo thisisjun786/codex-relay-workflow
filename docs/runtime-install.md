@@ -1866,10 +1866,14 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   session, turn, `stop_hook_active` and answer item do not hash to its key;
 - a row that records something at a stage it did not reach, or leaves out what a stage it reached
   records: the payload's session, turn and flag come with the settings' mode or not at all, a
-  release always says why, a guard call's detail is present exactly when its process neither
-  exited nor was signalled, the configuration and an established transcript path are absolute, an
-  unestablished reason is one the adapter gives, and it carries the transcript path and answer
-  item only where that reason is reached after them;
+  release always says why, and a duplicate or an unowned release in the one sentence the adapter
+  has for it, a guard call's detail is present exactly when its process neither exited nor was
+  signalled, the settings path is absolute and normalized and an established transcript path
+  absolute, an unestablished reason is one the adapter gives, and it carries the transcript path
+  and answer item only where that reason is reached after them;
+- a path in a ledger record in a form its writer never gives it: a claim's host ledger that is not
+  absolute, normalized and ending in `crw-completion-hook/stop-events`, or a host file's journal root
+  that is not absolute (the settings require it);
 - a row version it does not know, an entry in a ledger that is not one of its records, or an entry
   in a journal root or a day directory that the adapter never writes there
   (`foreignJournalEntries`): the root holds only real day directories (never a link to one) and
@@ -1914,7 +1918,8 @@ judges what each file holds and that it is the regular file the adapter creates,
 writer's bytes; a regular file holding those same bytes, put in a record's place, is not told
 apart from the one the adapter wrote, since inode, owner, mode and times are not judged. It cannot
 contradict the values the adapter observed once and recorded in one place (timings, the
-transcript path, the guard's stderr and detail, the configuration path, which of the two modes the
+transcript path as the host sent it, the guard's stderr, the detail of a guard call or a refused
+input, another absolute settings path or journal root, which of the two modes the
 settings named, and the receipt values an answer carries). It checks the types of those the adapter
 forms itself and the time format, not the values; the receipt values are copied from the guard's
 answer as they came, so any JSON value there is one the adapter writes. A duplicate row records

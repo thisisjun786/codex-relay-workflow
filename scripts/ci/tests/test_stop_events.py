@@ -1398,3 +1398,55 @@ class ReviewRoundTwelveControls(OneEventRecords, unittest.TestCase):
                 code, answer = verify(host.journal)
                 self.assertEqual((code, answer["verdict"]), (0, "TRUE"),
                                  which + " rewritten in its writer's own bytes was refused")
+
+
+class ReviewRoundThirteenControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the thirteenth review round (CRW-212, PR #144).
+
+    Every path a record carries has the form its writer gives it: the host ledger a claim names is
+    os.path.abspath of the Codex home joined with crw-completion-hook/stop-events, the settings path
+    a row names is _settled() (absolute and normalized), and the journal root a host file names is
+    the settings' own, which they require to be absolute.
+    """
+
+    def test_a_path_in_a_form_its_writer_never_gives_is_not_vouched_for(self):
+        def relative(value):
+            return os.path.relpath(value, os.getcwd())
+        def dotted(value):
+            head, tail = os.path.split(value)
+            return head + "/./" + tail
+        def copied_ledger(value):
+            copy = self.base / ("ledger-copy-%d" % self.count)
+            shutil.copytree(value, copy)
+            return str(copy)
+        cases = [
+            ("claim", ("claimedBy", "hostLedger"), relative),
+            ("claim", ("claimedBy", "hostLedger"), dotted),
+            ("claim", ("claimedBy", "hostLedger"), copied_ledger),
+            ("host", ("claimedBy", "journalRoot"), relative),
+            ("accepted", ("configuration",), dotted),
+            ("duplicate", ("configuration",), dotted),
+        ]
+        for which, field, form in cases:
+            where = ".".join((which,) + field)
+            with self.subTest(field=where, form=form.__name__):
+                host, records = self.one_event()
+                def change(body):
+                    target = body
+                    for part in field[:-1]:
+                        target = target[part]
+                    target[field[-1]] = form(target[field[-1]])
+                self.change(records[which], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 where + " in " + form.__name__ + " form was vouched for")
+
+    def test_a_release_that_always_says_one_thing_says_nothing_else(self):
+        """A duplicate and an unowned release carry run()'s one sentence for them."""
+        for value in ("", "the guard was not asked", None):
+            with self.subTest(value=value):
+                host, records = self.one_event()
+                self.change(records["duplicate"], lambda body: body.__setitem__("detail", value))
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 "a duplicate saying %r was vouched for" % (value,))

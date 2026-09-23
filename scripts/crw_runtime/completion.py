@@ -345,6 +345,12 @@ ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED, UN
 
 DUPLICATE_INVOCATION = "duplicate_invocation"
 ARBITRATION_FAILED = "arbitration_failed"
+# What those two releases say, always in these words: neither has anything of its own to report.
+DUPLICATE_DETAIL = ("this Stop event already has its accepted record, so the guard was not asked"
+                    " again")
+UNARBITRATED_DETAIL = ("the host's record of this Stop event could be neither made nor found, so"
+                       " no invocation can own it and the guard was not asked")
+FIXED_DETAILS = {DUPLICATE_INVOCATION: DUPLICATE_DETAIL, ARBITRATION_FAILED: UNARBITRATED_DETAIL}
 # What faults_only leaves out of the journal. Only journal() reads this: the guard fields and the
 # hook output still follow ANSWERED, so a duplicate never carries a verdict nobody asked for.
 QUIET = (GUARD_ANSWERED, DUPLICATE_INVOCATION)
@@ -1639,13 +1645,10 @@ def run(payload, codex_home=None, environ=None, settings=None):
             record["acceptance"] = acceptance
             record["acceptedAs"] = accepted_as
             if acceptance == DUPLICATE:
-                return _release(config, record, DUPLICATE_INVOCATION,
-                                "this Stop event already has its accepted record, so the guard"
-                                " was not asked again", started, slot)
+                return _release(config, record, DUPLICATE_INVOCATION, DUPLICATE_DETAIL,
+                                started, slot)
             if acceptance == UNARBITRATED:
-                return _release(config, record, ARBITRATION_FAILED,
-                                "the host's record of this Stop event could be neither made nor"
-                                " found, so no invocation can own it and the guard was not asked",
+                return _release(config, record, ARBITRATION_FAILED, UNARBITRATED_DETAIL,
                                 started, slot)
             if acceptance == ACCEPTED:
                 claimed = key
@@ -1810,7 +1813,9 @@ def _row_fields_written(row):
         return False
     # The types the adapter writes these in; their values are observations nothing else records.
     configuration = row.get("configuration")
+    # As _settled() gives it: absolute and normalized.
     if (not isinstance(configuration, str) or not os.path.isabs(configuration)
+            or configuration != os.path.normpath(configuration)
             or not _is_count(row.get("elapsedMs"), zero=True)
             or not (row.get("detail") is None or isinstance(row.get("detail"), str))):
         return False
@@ -1829,6 +1834,9 @@ def _row_fields_written(row):
     # process that exited or was signalled and always has one otherwise.
     if (outcome in BEFORE_THE_GUARD + (DUPLICATE_INVOCATION, ARBITRATION_FAILED)
             and not isinstance(row.get("detail"), str)):
+        return False
+    # A duplicate and an unowned release say why in run()'s own words and no others.
+    if outcome in FIXED_DETAILS and row.get("detail") != FIXED_DETAILS[outcome]:
         return False
     if outcome in FROM_THE_GUARD and ((row.get("detail") is None)
                                       != (row.get("processEnding") in (EXITED, SIGNALLED))):
@@ -1970,6 +1978,13 @@ CLAIMED_BY_FIELDS = ("pid", "attemptRow", "hostLedger")
 HOST_CLAIMED_BY_FIELDS = ("pid", "journalRoot", "attemptRow")
 
 
+def _host_ledger_named(value):
+    """Whether a claim names a host ledger in the form host_ledger() gives it: absolute,
+    normalized, and ending in the ledger's own two parts."""
+    return (isinstance(value, str) and os.path.isabs(value) and value == os.path.normpath(value)
+            and tuple(Path(value).parts[-len(HOST_LEDGER_PARTS):]) == HOST_LEDGER_PARTS)
+
+
 def _fields_exactly(body, fields):
     """Whether a record holds these fields and no others."""
     return isinstance(body, dict) and set(body) == set(fields)
@@ -1999,7 +2014,7 @@ def _ledger_shape(body, key, outcome):
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
             and isinstance(claimed_by, dict) and _slot(claimed_by.get("attemptRow"))
             and _is_count(claimed_by.get("pid"))
-            and isinstance(claimed_by.get("hostLedger"), str) and bool(claimed_by.get("hostLedger"))
+            and _host_ledger_named(claimed_by.get("hostLedger"))
             # A claim is filed under the key of the event it names, recomputed here, so a claim
             # whose session, turn, flag or answer was not that event's is not read as its record.
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
@@ -2095,8 +2110,10 @@ def _host_shape(body, key):
             and _fields_exactly(claimed_by, HOST_CLAIMED_BY_FIELDS)
             and isinstance(body.get("stopHookActive"), bool)
             and _slot(claimed_by.get("attemptRow")) and _is_count(claimed_by.get("pid"))
+            # The settings' own journal root, which they require to be absolute, or none.
             and (claimed_by.get("journalRoot") is None
-                 or isinstance(claimed_by.get("journalRoot"), str))
+                 or (isinstance(claimed_by.get("journalRoot"), str)
+                     and os.path.isabs(claimed_by["journalRoot"])))
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
                                  body["answerItem"]))
 
