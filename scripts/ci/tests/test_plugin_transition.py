@@ -779,6 +779,44 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(answer["record"]["wanted"].get("executionPolicy"), reference,
                          json.dumps(answer, indent=2)[:2000])
 
+    def test_a_policy_edited_while_the_rebuilt_record_is_written_is_refused(self):
+        """The transition's answer comes from the same post-write check as register-mcp's."""
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord, hostrecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        retired = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                        owner=bridgerecord.OWNER_PLUGIN,
+                                        execution_policy=reference)
+        (home / (bridgerecord.RECORD_NAME + ".superseded-20210101T000000Z")).write_text(
+            json.dumps(retired), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        real = hostrecord.atomic_write
+
+        def edited_first(path, text):
+            if Path(path).name == bridgerecord.RECORD_NAME:
+                policy.write_text("{}", encoding="utf-8")
+            return real(path, text)
+
+        hostrecord.atomic_write = edited_first
+        try:
+            answer = steps.mcp_record_install(host, {}, apply=True)
+        finally:
+            hostrecord.atomic_write = real
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn("now hashes to", json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists())
+
     def test_a_newest_archive_that_became_a_pipe_refuses(self):
         self._refuses_with_newest_archive_replaced(os.mkfifo)
 

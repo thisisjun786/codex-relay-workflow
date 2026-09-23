@@ -1221,6 +1221,14 @@ moved aside and registered again, and a thread started in between has no bridge 
 differs from the relay's launch declaration, which names only the file. The digest is what lets a
 changed file fail visibly instead of being enforced unregistered.
 
+A success is only ever reported against the policy as it stands when the answer is given. The
+digest is taken before the write, and nothing locks the policy file, so the record is read back
+under its own lock after the write and the file is hashed again. If the file changed in between,
+the record this run wrote is removed, leaving no record as before the run, and the run answers
+`record_policy_changed` with exit 1. A rerun over an installed record whose file has changed
+since gets the same answer and leaves that record where it is. The transition's record step
+writes through the same function and refuses the same way.
+
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
 record. A version-2 record is also refused while the crw package this host loads ships a launcher

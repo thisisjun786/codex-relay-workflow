@@ -57,6 +57,9 @@ WOULD_CREATE = "record_would_create"
 CREATED = "record_created"
 CHANGED_UNDERNEATH = "record_changed_underneath"
 APPLIED_UNVERIFIED = "record_applied_unverified"
+# The record is, or would be, the one wanted, and the policy file it names no longer hashes to
+# the digest it records. Not settled: the launcher refuses such a record at every start.
+POLICY_CHANGED = "record_policy_changed"
 # The outcomes that mean the record now says what this run asked it to, or would with --apply.
 SETTLED = (UNCHANGED, CREATED, WOULD_CREATE)
 
@@ -310,6 +313,20 @@ def same_registration(found, wanted):
     return isinstance(found, dict) and identity(found) == identity(wanted)
 
 
+# The repair for a record whose policy reference no longer describes the file: there is no
+# command that rewrites a record, so it goes aside and is registered again.
+_POLICY_REPAIR = ("move {path} aside by hand (or retire it with plugin_transition.py disable,"
+                  " which also retires the Stop settings), then run register-mcp again. Threads"
+                  " started in between find no record and start no bridge; threads already"
+                  " running keep the bridge they spawned")
+
+
+def _policy_now(wanted):
+    """policy_file_complaints for the policy a record names, or [] when it names none."""
+    reference = wanted.get(POLICY_FIELD) if isinstance(wanted, dict) else None
+    return [] if reference is None else policy_file_complaints(reference)
+
+
 def outcome_for(wanted, found):
     if not found.usable:
         return found.state
@@ -333,6 +350,15 @@ def write(path, wanted, *, apply=False):
 
     Decided twice and acted on once. The first reading answers the caller; the second happens
     under the lock, and a file that moved in between is refused rather than written over.
+
+    A record that names a policy is settled only against the policy as it stands when the
+    answer is given. The digest was taken before this was called, and the policy file is not
+    under this lock, so an edit in between would leave a record every new thread's launcher
+    refuses. The file is asked again after the write, with the written record read back under
+    the lock: a mismatch removes the record this run wrote, which leaves the path as it was
+    found (absent, the only state a write starts from), and answers POLICY_CHANGED. An
+    already-installed record whose policy no longer matches is not this run's, so it is left as
+    it is and answered the same way.
     """
     path = Path(path)
     unusable = complaints(wanted)
@@ -346,6 +372,14 @@ def write(path, wanted, *, apply=False):
         answer["reading"] = found.refusal()
         return answer
     if outcome == UNCHANGED:
+        stale = _policy_now(wanted)
+        if stale:
+            answer["outcome"] = POLICY_CHANGED
+            answer["detail"] = ("this record is already installed, and " + "; ".join(stale)
+                                + ", so the launcher refuses to start the bridge from it. The"
+                                " record was left as it was")
+            answer["repair"] = _POLICY_REPAIR.format(path=path)
+            return answer
         answer["detail"] = "this record is already installed"
         return answer
     if outcome == DIFFERS:
@@ -359,11 +393,7 @@ def write(path, wanted, *, apply=False):
             # The one difference an operator produces in the ordinary course of things: the policy
             # file was edited, or a policy is being added to a record written before this field
             # existed. Named with its repair, because there is no command that rewrites it.
-            answer["repair"] = ("move " + str(path) + " aside by hand (or retire it with"
-                                " plugin_transition.py disable, which also retires the Stop"
-                                " settings), then run register-mcp again. Threads started in"
-                                " between find no record and start no bridge; threads already"
-                                " running keep the bridge they spawned")
+            answer["repair"] = _POLICY_REPAIR.format(path=path)
         return answer
     if not apply:
         answer["detail"] = "would write this record; nothing was written"
@@ -377,6 +407,29 @@ def write(path, wanted, *, apply=False):
             return answer
         hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
         back = read_json_without_blocking(path, "the bridge MCP record")
+        stale = _policy_now(wanted) if back.usable and back.value == wanted else []
+        if stale:
+            # Only the bytes this run wrote, still under the lock that wrote them.
+            try:
+                os.unlink(str(path))
+            except OSError:
+                pass  # the reading below says what is there now, and the answer reports it
+            gone = read_json_without_blocking(path, "the bridge MCP record")
+    if stale:
+        removed = gone.state == reading.ABSENT
+        answer["outcome"] = POLICY_CHANGED
+        answer["wrote"] = True
+        answer["rolledBack"] = removed
+        answer["detail"] = ("the execution policy changed while this record was being written: "
+                            + "; ".join(stale) + ". The launcher would refuse to start the bridge"
+                            " from it, so "
+                            + ("the record this run wrote was removed and nothing is installed"
+                               if removed else
+                               "this run tried to remove the record it wrote and could not"
+                               " confirm it is gone (" + str(gone.state) + ")"))
+        answer["repair"] = ("run register-mcp again against the file as it now stands"
+                            if removed else _POLICY_REPAIR.format(path=path))
+        return answer
     answer["outcome"] = CREATED
     answer["applied"] = True
     answer["wrote"] = True

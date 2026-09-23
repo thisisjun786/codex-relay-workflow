@@ -902,6 +902,61 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.split()[-1:], ["True"], done.stdout + done.stderr)
 
+    # register-mcp in a process whose record write first rewrites the policy file: the edit
+    # lands after the policy was read and hashed, and before the record naming that hash exists.
+    EDITS_THE_POLICY_AT_THE_WRITE = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import hostrecord\n"
+        "policy = sys.argv[2]\n"
+        "real = hostrecord.atomic_write\n"
+        "def edited_first(path, text):\n"
+        "    if os.path.basename(str(path)) == 'crw-bridge-mcp.json':\n"
+        "        with open(policy, 'w', encoding='utf-8') as handle:\n"
+        "            handle.write('{\"roles\": {\"child\": {\"model\": \"a/b\",'\n"
+        "                         ' \"reasoningEffort\": \"low\"}}}\\n')\n"
+        "    return real(path, text)\n"
+        "hostrecord.atomic_write = edited_first\n"
+        "import runtime_install\n"
+        "raise SystemExit(runtime_install.main(sys.argv[3:]))\n"
+    )
+
+    def test_a_policy_edited_while_the_record_is_written_is_not_reported_installed(self):
+        """Devin, PR #137: the digest was taken before the write and never asked again.
+
+        The launcher hashes the file at every start, so a record naming the old digest starts no
+        bridge on any new thread, and register-mcp answered created and exit 0 over it.
+        """
+        done = subprocess.run(
+            [sys.executable, "-c", self.EDITS_THE_POLICY_AT_THE_WRITE, str(ROOT / "scripts"),
+             str(self.policy), "register-mcp", "--codex-home", str(self.home.codex_home),
+             "--bridge-command", str(self.bridge), "--owner", "plugin", "--execution-policy",
+             str(self.policy), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        output = done.stdout + done.stderr
+        emitted = json.loads(done.stdout)
+        self.assertNotEqual(hashlib.sha256(self.policy.read_bytes()).hexdigest(), self.digest,
+                            "the hook has to have changed the policy for this to prove anything")
+        self.assertNotEqual(done.returncode, 0, output)
+        self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
+        self.assertIn("now hashes to", emitted.get("detail") or "", output)
+        self.assertFalse(self.record.exists(), "the record this run wrote goes with the run: "
+                         + output)
+
+    def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
+        """The path that writes nothing is settled against the file as it stands too."""
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        wanted = json.loads(self.record.read_text(encoding="utf-8"))
+        before = self.record.read_bytes()
+        write_policy(self.policy, {"roles": {"child": {"model": "a/b",
+                                                       "reasoningEffort": "low"}}})
+        answer = bridgerecord.write(self.record, wanted, apply=True)
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertNotIn(answer["outcome"], bridgerecord.SETTLED)
+        self.assertIn("now hashes to", answer["detail"])
+        self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
+
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
                                       "--bridge-command", str(self.bridge),

@@ -5388,6 +5388,7 @@ def _register_mcp_owned(args, codex_home):
               **({"differingFields": written["differingFields"]}
                  if "differingFields" in written else {}),
               **({"repair": written["repair"]} if "repair" in written else {}),
+              **({"rolledBack": written["rolledBack"]} if "rolledBack" in written else {}),
               "preservedHow": "the Codex configuration was read and not written",
               "executionPolicy": policy,
               "activation": (
