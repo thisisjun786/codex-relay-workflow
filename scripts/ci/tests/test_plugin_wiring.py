@@ -10,6 +10,8 @@ relay is a file these cases create, and every command runs against a temporary C
 """
 
 import contextlib
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -28,6 +30,35 @@ from crw_runtime import bridgerecord, completion, hooks, reading
 import plugin
 
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
+BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
+BRIDGE_LAUNCHER = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+
+# The bridge's own policy module, loaded from this checkout. It imports nothing outside the
+# standard library, so the launcher's variables and digests are compared with the real reader
+# here rather than with a copy of its constants.
+sys.path.insert(0, str(BRIDGE_SOURCE))
+from codex_thread_bridge import execution  # noqa: E402
+
+# A policy the bridge's parser accepts: roles only, the shape this host uses.
+POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+                    "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}
+# Another valid policy, so a changed file is a different policy rather than a broken one.
+OTHER_POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
+                          "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}
+
+
+def write_policy(path, mapping=POLICY):
+    data = json.dumps(mapping, indent=2).encode("utf-8")
+    Path(path).write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
+
+
+def load_launcher():
+    """The packaged launcher as a module. Its main() runs only under __main__."""
+    spec = importlib.util.spec_from_file_location("crw_bridge_mcp_under_test", BRIDGE_LAUNCHER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 try:  # The configuration reader arrived in 3.11 and this repository still supports 3.10.
     import tomllib  # noqa: F401
@@ -589,6 +620,222 @@ class BridgeRecordTest(unittest.TestCase):
                          bridgerecord.OWNER_USER)
 
 
+class BridgeRecordPolicyTest(unittest.TestCase):
+    """register-mcp --execution-policy: the record names the file and its digest, and nothing else.
+
+    The policy is judged by the bridge's own parser before anything is written, a rerun that
+    changes nothing writes nothing, and every other difference is refused like any other conflict.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Home(self.stack)
+        self.bridge = self.home.destination / "current" / "bin" / "codex-thread-bridge"
+        self.bridge.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.bridge.chmod(0o755)
+        self.policy = self.home.destination.parent / "execution-policy.json"
+        self.digest = write_policy(self.policy)
+
+    @property
+    def record(self):
+        return self.home.codex_home / bridgerecord.RECORD_NAME
+
+    def register(self, *extra, policy=None):
+        arguments = ["register-mcp", "--codex-home", str(self.home.codex_home),
+                     "--bridge-command", str(self.bridge), "--owner", "plugin"]
+        if policy is not False:
+            arguments += ["--execution-policy", str(policy or self.policy)]
+        return run(*arguments, *extra)
+
+    def install_package(self, launcher_text=None):
+        """An installed crw package in the cache; the shipped one unless a launcher is given."""
+        version = self.home.codex_home / "plugins" / "cache" / "crw" / "crw" / "0.4.0"
+        shutil.copytree(ROOT / "plugins" / "crw", version)
+        if launcher_text is not None:
+            (version / "wiring" / "crw_bridge_mcp.py").write_text(launcher_text,
+                                                                  encoding="utf-8")
+        return version / "wiring" / "crw_bridge_mcp.py"
+
+    def test_the_record_names_the_file_and_its_digest_and_nothing_it_says(self):
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        document = json.loads(self.record.read_text(encoding="utf-8"))
+        self.assertEqual(document["recordVersion"], bridgerecord.POLICY_RECORD_VERSION)
+        self.assertEqual(document["executionPolicy"],
+                         {"path": str(self.policy), "digest": self.digest})
+        self.assertEqual(bridgerecord.complaints(document), [])
+        # The record carries no policy content. The report carries what get_capabilities
+        # discloses anyway, the mode and the role pairs, and says whose parser judged it.
+        raw = self.record.read_text(encoding="utf-8")
+        for pair in POLICY["roles"].values():
+            self.assertNotIn(pair["model"], raw)
+        self.assertEqual(emitted["executionPolicy"]["digest"], self.digest)
+        self.assertEqual(emitted["executionPolicy"]["roles"],
+                         execution.ExecutionPolicy.from_mapping(POLICY).summary()["roles"])
+        self.assertIn(str(BRIDGE_SOURCE), emitted["executionPolicy"]["parsedWith"])
+        self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+
+    def test_a_plan_judges_the_policy_and_writes_nothing(self):
+        status, emitted, output = self.register()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.WOULD_CREATE, output)
+        self.assertEqual(emitted["executionPolicy"]["digest"], self.digest, output)
+        self.assertFalse(self.record.exists(), output)
+
+    def test_an_unchanged_rerun_is_unchanged_and_writes_nothing(self):
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.UNCHANGED, output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_an_edited_policy_is_a_different_registration_and_is_refused(self):
+        """Another VALID policy at the same path: the digest is what differs."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        write_policy(self.policy, OTHER_POLICY)
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.DIFFERS, output)
+        self.assertIn(bridgerecord.POLICY_FIELD, emitted["differingFields"], output)
+        self.assertIn("aside", emitted["repair"], output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_every_other_difference_in_the_policy_is_refused_too(self):
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        other = self.home.destination.parent / "other-policy.json"
+        write_policy(other)
+        for label, policy in (("another file with the same bytes", other),
+                              ("no policy at all", False)):
+            with self.subTest(label):
+                status, emitted, output = self.register("--apply", policy=policy)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], bridgerecord.DIFFERS, output)
+                self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_a_record_written_before_the_field_existed_is_not_rewritten_in_place(self):
+        """Adding a policy changes what the bridge starts under, so it is a conflict as well."""
+        self.assertEqual(self.register("--apply", policy=False)[0], 0)
+        before = self.record.read_bytes()
+        self.assertEqual(json.loads(before)["recordVersion"], bridgerecord.RECORD_VERSION)
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("aside", emitted["repair"], output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+        # The repair it names works: once the old record is out of the way, the same run lands.
+        self.record.rename(self.record.with_name(bridgerecord.RECORD_NAME + ".pre-policy"))
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(json.loads(self.record.read_text())["executionPolicy"]["digest"],
+                         self.digest)
+
+    def test_a_policy_the_bridge_would_refuse_is_never_recorded(self):
+        contradiction = {"allowed": [{"model": "devin/swe-2", "efforts": ["max"]}],
+                         "roles": POLICY["roles"]}
+        broken = self.home.destination.parent / "broken.json"
+        cases = {
+            "not JSON": (lambda: broken.write_text("{ not json", encoding="utf-8"), broken),
+            "a role pair its own allowlist omits":
+                (lambda: write_policy(broken, contradiction), broken),
+            "no such file": (lambda: None, self.home.destination.parent / "absent.json"),
+            "a padded path": (lambda: None, str(self.policy) + " "),
+            "a leading space": (lambda: None, " " + str(self.policy)),
+            "an unknown user's home": (lambda: None, "~crw218-no-such-user/policy.json"),
+        }
+        for label, (prepare, policy) in cases.items():
+            with self.subTest(label):
+                prepare()
+                status, emitted, output = self.register("--apply", policy=policy)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "execution_policy_unreadable", output)
+                self.assertFalse(emitted["wrote"], output)
+                self.assertFalse(self.record.exists(), output)
+
+    def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
+        status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
+                                      "--bridge-command", str(self.bridge),
+                                      "--execution-policy", str(self.policy), "--apply")
+        self.assertEqual(status, 2, output)
+        self.assertIn("--execution-policy", emitted["detail"], output)
+        self.assertFalse(self.record.exists(), output)
+        self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+        with self.assertRaises(ValueError):
+            bridgerecord.document(command=str(self.bridge), owner=bridgerecord.OWNER_USER,
+                                  execution_policy={"path": str(self.policy),
+                                                    "digest": self.digest})
+
+    def test_a_relative_path_is_recorded_as_the_absolute_path_it_names(self):
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", self.policy.name, "--apply"],
+            capture_output=True, text=True, cwd=str(self.policy.parent))
+        self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
+        self.assertEqual(json.loads(self.record.read_text())["executionPolicy"]["path"],
+                         str(self.policy))
+
+    def test_an_installed_launcher_that_predates_the_record_refuses_the_write(self):
+        """Written first, the record would stop every new thread's bridge until the update."""
+        # The shipped launcher less the one declaration an older one lacks, which is what an
+        # installed 0.4.0 package from before this record version looks like to this check.
+        shipped = BRIDGE_LAUNCHER.read_text(encoding="utf-8")
+        declaration = "POLICY_RECORD_VERSION = " + str(bridgerecord.POLICY_RECORD_VERSION) + "\n"
+        self.assertIn(declaration, shipped)
+        old = self.install_package(launcher_text=shipped.replace(declaration, ""))
+        for extra in ((), ("--apply",)):
+            with self.subTest(extra or "plan"):
+                status, emitted, output = self.register(*extra)
+                self.assertNotEqual(status, 0, output)
+                self.assertEqual(emitted["outcome"], "launcher_predates_policy", output)
+                self.assertIn(str(old), emitted["detail"], output)
+                self.assertFalse(self.record.exists(), output)
+        # A record without a policy is what that launcher reads, and it is not held up.
+        self.assertEqual(self.register("--apply", policy=False)[0], 0)
+
+    def test_the_launcher_this_package_ships_accepts_the_write(self):
+        self.install_package()
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["outcome"], bridgerecord.CREATED, output)
+
+    def test_the_policy_is_part_of_what_the_record_starts(self):
+        base = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                     name="codex-thread-bridge",
+                                     execution_policy={"path": "/p", "digest": "a" * 64})
+        for changed in (
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge"),
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge",
+                                      execution_policy={"path": "/q", "digest": "a" * 64}),
+                bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                      name="codex-thread-bridge",
+                                      execution_policy={"path": "/p", "digest": "b" * 64})):
+            self.assertFalse(bridgerecord.same_registration(base, changed), changed)
+
+    def test_the_reader_refuses_every_shape_the_writer_never_produces(self):
+        good = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                     name="codex-thread-bridge",
+                                     execution_policy={"path": "/p", "digest": "a" * 64})
+        self.assertEqual(bridgerecord.complaints(good), [])
+        wrong = {
+            "version 1 naming a policy": dict(good, recordVersion=bridgerecord.RECORD_VERSION),
+            "version 2 naming none": {k: v for k, v in good.items() if k != "executionPolicy"},
+            "a user-owned policy record": dict(good, owner=bridgerecord.OWNER_USER),
+            "a padded path": dict(good, executionPolicy={"path": "/p ", "digest": "a" * 64}),
+            "a relative path": dict(good, executionPolicy={"path": "p", "digest": "a" * 64}),
+            "a bad digest": dict(good, executionPolicy={"path": "/p", "digest": "A" * 64}),
+            "an extra key": dict(good, executionPolicy={"path": "/p", "digest": "a" * 64,
+                                                        "roles": {}}),
+        }
+        for label, document in wrong.items():
+            with self.subTest(label):
+                self.assertNotEqual(bridgerecord.complaints(document), [])
+
+
 # ---------------------------------------------------------------- the packaged launchers
 
 
@@ -794,7 +1041,7 @@ class BridgeLauncherTest(unittest.TestCase):
         self.assertTrue(proof.exists(), done.stderr)
 
     def test_a_record_version_this_launcher_does_not_read_is_refused(self):
-        self.record(recordVersion=2)
+        self.record(recordVersion=bridgerecord.POLICY_RECORD_VERSION + 1)
         done = self.start()
         self.assertEqual(done.returncode, 2)
         self.assertIn("version", done.stderr)
@@ -820,8 +1067,14 @@ class BridgeLauncherTest(unittest.TestCase):
                       self.LAUNCHER.read_text(encoding="utf-8"))
 
     def test_the_launcher_and_the_writer_agree_on_the_record_version(self):
-        self.assertIn("RECORD_VERSION = " + str(bridgerecord.RECORD_VERSION),
-                      self.LAUNCHER.read_text(encoding="utf-8"))
+        """Compared as values, with the writer and with the bridge that reads the variables."""
+        launcher = load_launcher()
+        self.assertEqual((launcher.RECORD_VERSION, launcher.POLICY_RECORD_VERSION),
+                         bridgerecord.RECORD_VERSIONS)
+        self.assertEqual((launcher.POLICY_FIELD, tuple(launcher.POLICY_KEYS)),
+                         (bridgerecord.POLICY_FIELD, tuple(bridgerecord.POLICY_KEYS)))
+        self.assertEqual((launcher.POLICY_VARIABLE, launcher.DIGEST_VARIABLE),
+                         (execution.ENVIRONMENT_VARIABLE, execution.DIGEST_VARIABLE))
 
     def test_it_starts_the_executable_the_record_names_unchanged(self):
         proof = self.home / "started"
@@ -832,6 +1085,178 @@ class BridgeLauncherTest(unittest.TestCase):
         done = self.start()
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(proof.exists(), done.stderr)
+
+
+class BridgeLauncherPolicyTest(unittest.TestCase):
+    """A record naming the host's policy: the bridge gets it, or does not start.
+
+    Codex hands the launcher the App Server's bare environment, so these start it with nothing but
+    PATH and CODEX_HOME. The bridge it execs is a probe that asks the bridge's own policy module
+    what it would enforce, through from_environment -- the call the real server makes in main() --
+    and writes the answer down. A probe that never wrote anything was never started.
+    """
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw218-")))
+        self.proof = self.home / "proof.json"
+        self.probe = self.home / "probe.py"
+        self.probe.write_text(
+            "import json, os, sys\n"
+            "sys.path.insert(0, %r)\n"
+            "from codex_thread_bridge import execution\n"
+            "try:\n"
+            "    answer = {'summary': execution.ExecutionPolicy.from_environment(os.environ)"
+            ".summary()}\n"
+            "except execution.ExecutionPolicyError as error:\n"
+            "    answer = {'refused': str(error)}\n"
+            "answer['variables'] = {name: os.environ.get(name) for name in"
+            " (execution.ENVIRONMENT_VARIABLE, execution.DIGEST_VARIABLE)}\n"
+            "open(sys.argv[1], 'w').write(json.dumps(answer))\n" % str(BRIDGE_SOURCE),
+            encoding="utf-8")
+        self.policy = self.home / "execution-policy.json"
+        self.digest = write_policy(self.policy)
+
+    def reference(self, **overrides):
+        reference = {"path": str(self.policy), "digest": self.digest}
+        reference.update(overrides)
+        return reference
+
+    def record(self, **overrides):
+        document = {"recordVersion": bridgerecord.POLICY_RECORD_VERSION, "owner": "plugin",
+                    "serverName": "codex-thread-bridge", "bridgeExecutable": sys.executable,
+                    "args": [str(self.probe), str(self.proof)],
+                    "executionPolicy": self.reference()}
+        document.update(overrides)
+        for key in [name for name, value in document.items() if value is None]:
+            del document[key]
+        (self.home / bridgerecord.RECORD_NAME).write_text(json.dumps(document), encoding="utf-8")
+
+    def start(self, **environment):
+        return subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="",
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home),
+                                   **environment})
+
+    def answer(self):
+        return json.loads(self.proof.read_text(encoding="utf-8")) if self.proof.exists() else None
+
+    def assert_refused(self, done, *needles):
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIsNone(self.answer(), "a refused start must not reach the bridge")
+        for needle in needles:
+            self.assertIn(needle, done.stderr)
+
+    def test_the_bridge_is_started_under_the_policy_the_record_names(self):
+        self.record()
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        answer = self.answer()
+        self.assertEqual(answer["variables"], {execution.ENVIRONMENT_VARIABLE: str(self.policy),
+                                               execution.DIGEST_VARIABLE: self.digest})
+        self.assertEqual(answer["summary"]["digest"], self.digest)
+        self.assertEqual(answer["summary"]["roles"],
+                         execution.ExecutionPolicy.from_mapping(POLICY).summary()["roles"])
+        # The launcher's digest and the bridge's are the same function of the same bytes.
+        self.assertEqual(self.digest, execution.ExecutionPolicy.from_file(self.policy)
+                         .summary()["digest"])
+
+    def test_a_version_1_record_starts_with_no_policy_exactly_as_before(self):
+        self.record(recordVersion=bridgerecord.RECORD_VERSION, executionPolicy=None)
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        answer = self.answer()
+        self.assertEqual(answer["summary"], {"mode": "presence_only", "digest": None, "roles": {}})
+        self.assertEqual(answer["variables"], {execution.ENVIRONMENT_VARIABLE: None,
+                                               execution.DIGEST_VARIABLE: None})
+
+    def test_a_version_1_record_passes_its_environment_through_untouched(self):
+        """Exactly as before means a variable the host did set still reaches the bridge."""
+        self.record(recordVersion=bridgerecord.RECORD_VERSION, executionPolicy=None)
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: str(self.policy)})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["summary"]["digest"], self.digest)
+
+    def test_a_version_1_record_that_names_a_policy_is_refused(self):
+        """Started as version 1 it would run the bridge without the policy it names."""
+        self.record(recordVersion=bridgerecord.RECORD_VERSION)
+        self.assert_refused(self.start(), "version 2")
+
+    def test_a_policy_record_without_a_usable_reference_is_refused(self):
+        cases = {
+            "absent": None,
+            "not an object": "/etc/policy.json",
+            "no digest": {"path": str(self.policy)},
+            "an extra key": dict(self.reference(), note="x"),
+            "a relative path": self.reference(path="execution-policy.json"),
+            "a padded path": self.reference(path=str(self.policy) + " "),
+            "a leading space": self.reference(path=" " + str(self.policy)),
+            "a newline": self.reference(path=str(self.policy) + "\n"),
+            "an empty path": self.reference(path=""),
+            "a short digest": self.reference(digest=self.digest[:32]),
+            "an uppercase digest": self.reference(digest=self.digest.upper()),
+        }
+        for label, reference in cases.items():
+            with self.subTest(label):
+                self.record(executionPolicy=reference)
+                self.assert_refused(self.start())
+
+    def test_a_policy_the_launcher_cannot_read_is_refused_naming_the_record(self):
+        absent = self.home / "absent.json"
+        directory = self.home / "a-directory"
+        directory.mkdir()
+        cases = [("absent", absent), ("a directory", directory)]
+        if os.geteuid() != 0:
+            # root reads through a mode of 000, so the case exists only for everyone else.
+            locked = self.home / "locked.json"
+            write_policy(locked)
+            locked.chmod(0)
+            self.addCleanup(locked.chmod, 0o600)
+            cases.append(("unreadable", locked))
+        for label, path in cases:
+            with self.subTest(label):
+                self.record(executionPolicy=self.reference(path=str(path)))
+                self.assert_refused(self.start(), str(self.home / bridgerecord.RECORD_NAME),
+                                    "register-mcp")
+
+    def test_a_policy_changed_after_it_was_registered_is_refused(self):
+        """Another VALID policy, so this fails on the digest and not on a parse."""
+        self.record()
+        replaced = write_policy(self.policy, OTHER_POLICY)
+        self.assertNotEqual(replaced, self.digest)
+        self.assert_refused(self.start(), self.digest, replaced)
+
+    def test_an_inherited_variable_naming_another_file_is_refused(self):
+        other = self.home / "other-policy.json"
+        write_policy(other, OTHER_POLICY)
+        self.record()
+        self.assert_refused(self.start(**{execution.ENVIRONMENT_VARIABLE: str(other)}),
+                            str(other), "Unset the variable")
+
+    def test_an_inherited_digest_that_disagrees_is_refused(self):
+        self.record()
+        self.assert_refused(self.start(**{execution.DIGEST_VARIABLE: "0" * 64}), "0" * 64)
+
+    def test_an_inherited_variable_naming_the_same_file_is_not_a_conflict(self):
+        self.record()
+        spelled = str(self.home / "." / self.policy.name)
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: spelled,
+                             execution.DIGEST_VARIABLE: self.digest})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["variables"][execution.ENVIRONMENT_VARIABLE],
+                         str(self.policy))
+
+    def test_an_empty_inherited_variable_is_unset_as_the_bridge_reads_it(self):
+        self.record()
+        done = self.start(**{execution.ENVIRONMENT_VARIABLE: "  ",
+                             execution.DIGEST_VARIABLE: ""})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.answer()["summary"]["digest"], self.digest)
+
+    def test_a_user_owned_policy_record_still_stands_down(self):
+        self.record(owner="user")
+        self.assert_refused(self.start(), "second one")
 
 
 # ---------------------------------------------------------------- the package check

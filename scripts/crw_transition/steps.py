@@ -1725,10 +1725,23 @@ def mcp_record_install(host, options, *, apply=False):
         arguments = list(retired.get("args") or [])
     else:
         arguments = []
+    # The execution policy a plugin-owned record names is carried forward the same way, because a
+    # record rebuilt without it starts a bridge that checks no role and says nothing. From the live
+    # record when it is the plugin's; otherwise, with no live registration, from the newest retired
+    # record when that one was the plugin's -- a disable retires it and a later transition rebuilds
+    # it. A user-owned record never carries one, so nothing is invented for a manual install.
+    live = host["mcp"].get("record") or {}
+    if bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
+        policy = live.get(bridgerecord.POLICY_FIELD)
+    elif not registration and retired is not None \
+            and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN:
+        policy = retired.get(bridgerecord.POLICY_FIELD)
+    else:
+        policy = None
     try:
         wanted = bridgerecord.document(command=command, arguments=arguments,
                                        name=inventory.SERVER_NAME, issue="CRW-115",
-                                       owner=bridgerecord.OWNER_PLUGIN)
+                                       owner=bridgerecord.OWNER_PLUGIN, execution_policy=policy)
     except ValueError as error:
         return _answer("mcp record install", REFUSED, str(error))
     if not apply and host["mcp"]["recordOwner"] in (None, bridgerecord.OWNER_USER):

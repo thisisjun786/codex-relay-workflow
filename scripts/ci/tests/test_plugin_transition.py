@@ -613,6 +613,55 @@ class DisableAndRemoveKeepTheOperationalData(TransitionCase):
         self.assertEqual(code, 0)
 
 
+@needs_reader
+class ARecordedPolicySurvivesTheTransition(TransitionCase):
+    """A plugin record that names the host's execution policy keeps naming it.
+
+    The transition rebuilds the plugin-owned bridge record, and it used to build it with no policy
+    field at all. On a host whose record names one, a rerun then refused its own record, and a
+    rebuild after a disable wrote a record that starts a bridge checking no role.
+    """
+
+    def with_policy(self):
+        host = self.ready()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        policy = host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        # The repair register-mcp names for a record written before the field: move it aside,
+        # then register again with the policy.
+        record = host.home / "crw-bridge-mcp.json"
+        record.rename(record.with_name("crw-bridge-mcp.json.pre-policy"))
+        done = run([RUNTIME, "register-mcp", "--owner", "plugin", "--codex-home", host.home,
+                    "--bridge-command",
+                    host.destination / "current" / "bin" / "codex-thread-bridge",
+                    "--execution-policy", policy, "--apply"])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        reference = host.record()["executionPolicy"]
+        self.assertEqual(reference["path"], str(policy))
+        return host, reference
+
+    def test_a_rerun_on_a_host_whose_record_names_a_policy_changes_nothing(self):
+        host, reference = self.with_policy()
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.outcomes(answer)["mcp record install"], "already_done")
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
+
+    def test_a_transition_after_a_disable_restores_the_policy_it_retired(self):
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        self.assertIsNone(host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertEqual(host.record()["executionPolicy"], reference)
+        self.assertEqual(host.record()["recordVersion"], 2)
+
+
 class SwapStateReportsWhatItRead(TransitionCase):
     def test_the_pointer_and_the_record_are_reported_apart(self):
         host = self.ready()

@@ -13,10 +13,17 @@ have written the configuration entry.
 One owner registers this server. The configuration entry and this record are the two owners,
 they are refused against each other, and the record carries the owner so the launcher can
 stand down at run time as well.
+
+A plugin-owned record may also name the host's execution policy. The launcher Codex spawns
+inherits the App Server's bare environment, so without this the bridge it starts can read no
+policy at all and checks no role. The record names the FILE and the digest register-mcp read it
+under, and never what the file says: the bridge still parses the policy itself, and the digest is
+what lets the launcher and the bridge refuse a file that changed after it was registered.
 """
 
 import json
 import os
+import re
 from pathlib import Path
 
 from . import hostrecord, reading
@@ -26,6 +33,15 @@ from . import hostrecord, reading
 # the settings a Stop hook reads.
 RECORD_NAME = "crw-bridge-mcp.json"
 RECORD_VERSION = 1
+# A record that names an execution policy is its own version rather than version 1 with one more
+# key. A launcher that implements only version 1 refuses a version it does not read; handed an
+# extra key under the old number it would start the bridge without the policy and say nothing,
+# which is the silent presence-only start this field exists to end.
+POLICY_RECORD_VERSION = 2
+RECORD_VERSIONS = (RECORD_VERSION, POLICY_RECORD_VERSION)
+POLICY_FIELD = "executionPolicy"
+POLICY_KEYS = ("digest", "path")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 OWNER_USER = "user"
 OWNER_PLUGIN = "plugin"
@@ -59,7 +75,43 @@ def record_path(codex_home=None, environ=None):
     return Path(home).expanduser() / RECORD_NAME
 
 
-def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUGIN):
+def policy_path_complaints(path):
+    """Why a string cannot name the policy file the bridge will open, or an empty list.
+
+    Padding is refused rather than trimmed. The bridge strips the variable it reads, so a path
+    recorded with a trailing space would be checked here as one file and opened there as another.
+    A control character has no business in a path and cannot cross an environment at all.
+    """
+    if not isinstance(path, str) or not path:
+        return ["the execution policy path must be a non-empty string"]
+    wrong = []
+    if path != path.strip():
+        wrong.append("the execution policy path " + repr(path) + " has leading or trailing"
+                     " whitespace, which the bridge would strip and so open a different file")
+    if any(ord(character) < 32 or ord(character) == 127 for character in path):
+        wrong.append("the execution policy path " + repr(path) + " contains a control character")
+    if not os.path.isabs(path):
+        wrong.append("the execution policy path " + repr(path) + " must be absolute, because the"
+                     " packaged launcher runs from the installed package directory")
+    return wrong
+
+
+def policy_complaints(reference):
+    """What is wrong with an executionPolicy reference, field by field."""
+    if not isinstance(reference, dict):
+        return [POLICY_FIELD + " must be an object naming path and digest"]
+    if sorted(reference) != sorted(POLICY_KEYS):
+        return [POLICY_FIELD + " must have exactly the keys " + ", ".join(POLICY_KEYS)
+                + ", found " + ", ".join(sorted(map(str, reference)))]
+    wrong = policy_path_complaints(reference.get("path"))
+    digest = reference.get("digest")
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+        wrong.append(POLICY_FIELD + " digest must be 64 lowercase hexadecimal characters")
+    return wrong
+
+
+def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUGIN,
+             execution_policy=None):
     """The record, built once so the writer and the launcher cannot disagree about its shape."""
     if owner not in OWNERS:
         raise ValueError("owner must be one of " + ", ".join(OWNERS) + ", not " + repr(owner))
@@ -75,7 +127,17 @@ def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUG
         raise ValueError("the bridge executable must be an absolute path when owner is "
                          + OWNER_PLUGIN + ", because the packaged launcher runs from the"
                          " installed package directory")
-    return {
+    if execution_policy is not None:
+        if owner != OWNER_PLUGIN:
+            # The launcher stands down for a user-owned record before it reads anything else, so
+            # a policy written there would be read by nothing while looking like it applied.
+            raise ValueError("an execution policy is carried only by a " + OWNER_PLUGIN
+                             + "-owned record; a " + owner + "-owned registration is started"
+                             " by its Codex configuration entry, which never reads this record")
+        wrong = policy_complaints(execution_policy)
+        if wrong:
+            raise ValueError("; ".join(wrong))
+    record = {
         "recordVersion": RECORD_VERSION,
         "owner": owner,
         "serverName": name,
@@ -83,6 +145,10 @@ def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUG
         "args": [str(word) for word in (arguments or [])],
         "installedBy": issue,
     }
+    if execution_policy is not None:
+        record["recordVersion"] = POLICY_RECORD_VERSION
+        record[POLICY_FIELD] = {key: execution_policy[key] for key in POLICY_KEYS}
+    return record
 
 
 def complaints(found):
@@ -90,9 +156,10 @@ def complaints(found):
     if not isinstance(found, dict):
         return ["the record is a " + type(found).__name__ + ", not an object"]
     wrong = []
-    if found.get("recordVersion") != RECORD_VERSION:
-        wrong.append("recordVersion must be " + str(RECORD_VERSION) + ", found "
-                     + repr(found.get("recordVersion")))
+    version = found.get("recordVersion")
+    if version not in RECORD_VERSIONS:
+        wrong.append("recordVersion must be one of " + ", ".join(map(str, RECORD_VERSIONS))
+                     + ", found " + repr(version))
     if found.get("owner") not in OWNERS:
         wrong.append("owner must be one of " + ", ".join(OWNERS) + ", found "
                      + repr(found.get("owner")))
@@ -108,6 +175,15 @@ def complaints(found):
     if arguments is not None and (not isinstance(arguments, list)
                                   or not all(isinstance(word, str) for word in arguments)):
         wrong.append("args must be a list of strings when it is present at all")
+    if version == RECORD_VERSION and POLICY_FIELD in found:
+        # Refused rather than ignored, for the reason the version exists: the launcher of this
+        # version would start the bridge without it.
+        wrong.append("a version " + str(RECORD_VERSION) + " record names no " + POLICY_FIELD
+                     + "; a record that names one is version " + str(POLICY_RECORD_VERSION))
+    if version == POLICY_RECORD_VERSION:
+        if found.get("owner") != OWNER_PLUGIN:
+            wrong.append("only a " + OWNER_PLUGIN + "-owned record names an execution policy")
+        wrong.extend(policy_complaints(found.get(POLICY_FIELD)))
     return wrong
 
 
@@ -136,7 +212,11 @@ def owner_of(found):
 # starts. installedBy is evidence about who wrote the record and changes nothing about what
 # Codex spawns, so a rerun that only carries a different issue is the same registration and
 # has to stay idempotent rather than refuse.
-IDENTITY = ("owner", "serverName", "bridgeExecutable", "args")
+#
+# The execution policy is part of what it starts: the same executable under another policy file,
+# or under the same file with other contents, is a bridge that checks something else. So a
+# changed policy is a different registration, refused like a changed executable.
+IDENTITY = ("owner", "serverName", "bridgeExecutable", "args", POLICY_FIELD)
 
 
 def identity(found):
@@ -193,6 +273,15 @@ def write(path, wanted, *, apply=False):
             field for field in set(wanted) | set(found.value)
             if found.value.get(field) != wanted.get(field)) \
             if isinstance(found.value, dict) else None
+        if POLICY_FIELD in (answer["differingFields"] or []):
+            # The one difference an operator produces in the ordinary course of things: the policy
+            # file was edited, or a policy is being added to a record written before this field
+            # existed. Named with its repair, because there is no command that rewrites it.
+            answer["repair"] = ("move " + str(path) + " aside by hand (or retire it with"
+                                " plugin_transition.py disable, which also retires the Stop"
+                                " settings), then run register-mcp again. Threads started in"
+                                " between find no record and start no bridge; threads already"
+                                " running keep the bridge they spawned")
         return answer
     if not apply:
         answer["detail"] = "would write this record; nothing was written"

@@ -11,6 +11,7 @@ The components it installs need 3.11 or newer; that interpreter is resolved, not
 """
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -205,6 +206,14 @@ CHANGED = "CHANGED"
 BUSY = "BUSY"
 REGISTER_REFUSALS = tuple(dict.fromkeys(
     (codexconfig.CONFLICT,) + UNUSABLE_REGISTRATIONS + (APPLIED_UNVERIFIED, CHANGED, BUSY)))
+# register-mcp's two answers about an execution policy, each returned before anything is written.
+# The first is the bridge's own code for a file it cannot use; the second means an installed
+# launcher would refuse the record this run would write.
+POLICY_UNREADABLE = "execution_policy_unreadable"
+LAUNCHER_PREDATES_POLICY = "launcher_predates_policy"
+# Where this checkout keeps the bridge, so a policy is judged by the parser the bridge runs rather
+# than by a second reading of the same document written here.
+BRIDGE_SOURCE = ROOT / "packages" / "codex-thread-bridge" / "src"
 
 
 def now():
@@ -4754,6 +4763,136 @@ def _plugin_declared_servers(codex_home):
     return None if unreadable else declared
 
 
+def _execution_policy_reading(value):
+    """The policy a plugin-owned record would name, judged by the bridge's own parser.
+
+    Returns (reading, None) or (None, why). The reading carries the path as the record will name
+    it -- expanded and absolute, not resolved, because a link the operator chose is a path they
+    chose -- and the digest of the bytes the parser accepted, which is what the launcher and the
+    bridge compare at every start. The contents never leave this function except as the summary
+    get_capabilities discloses anyway: the mode and the declared role pairs.
+
+    The raw value is checked before it is expanded. Path.absolute() joins a padded value onto the
+    working directory, and the result would pass every later check while naming a directory
+    nobody meant.
+    """
+    if (not isinstance(value, str) or not value or value != value.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)):
+        return None, ("the execution policy path " + repr(value) + " is empty, padded with"
+                      " whitespace or contains a control character; the bridge strips the"
+                      " variable it reads, so such a path would be checked here as one file and"
+                      " opened there as another")
+    try:
+        candidate = str(Path(value).expanduser().absolute())
+    except (OSError, RuntimeError, ValueError) as error:
+        return None, ("the execution policy path " + repr(value) + " could not be expanded: "
+                      + type(error).__name__ + ": " + str(error))
+    wrong = bridgerecord.policy_path_complaints(candidate)
+    if wrong:
+        return None, "; ".join(wrong)
+    try:
+        if str(BRIDGE_SOURCE) not in sys.path:
+            sys.path.insert(0, str(BRIDGE_SOURCE))
+        from codex_thread_bridge import execution
+    except (ImportError, SyntaxError) as error:
+        return None, ("the bridge's policy parser could not be loaded from " + str(BRIDGE_SOURCE)
+                      + " (" + type(error).__name__ + ": " + str(error) + ")")
+    loaded = Path(execution.__file__).resolve()
+    if BRIDGE_SOURCE.resolve() not in loaded.parents:
+        # Another copy already imported in this interpreter would answer for a parser this
+        # checkout does not ship, and the reading would say otherwise.
+        return None, ("the bridge's policy parser was imported from " + str(loaded) + ", not from"
+                      " this checkout's " + str(BRIDGE_SOURCE) + ", so this run cannot say the"
+                      " policy was judged by the parser it ships")
+    try:
+        policy = execution.ExecutionPolicy.from_file(candidate)
+    except execution.ExecutionPolicyError as error:
+        return None, str(error)
+    summary = policy.summary()
+    return {"path": candidate, "digest": summary["digest"], "mode": summary["mode"],
+            "roles": summary["roles"],
+            "parsedWith": "this checkout's bridge parser at " + str(BRIDGE_SOURCE)
+                          + "; the installed runtime parses the file again at every start and"
+                          " decides for itself"}, None
+
+
+def _implements_policy_records(launcher):
+    """Whether a launcher file declares the record version that carries an execution policy.
+
+    Read with ast and never executed: this is a file in somebody's plugin cache, and whether it
+    implements a contract is a question about what it says, not something to run it to find out.
+    """
+    try:
+        tree = ast.parse(Path(launcher).read_text(encoding="utf-8"))
+    except (OSError, ValueError, SyntaxError):
+        return False
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                and node.value.value == bridgerecord.POLICY_RECORD_VERSION
+                and any(isinstance(target, ast.Name) and target.id == "POLICY_RECORD_VERSION"
+                        for target in node.targets)):
+            return True
+    return False
+
+
+def _launchers_without_policy(codex_home):
+    """Installed launchers of this server that would refuse a record naming a policy, or None.
+
+    A launcher older than the version-2 record refuses it on its version, which is the right
+    answer and still an outage: every thread started afterwards has no bridge. So a record that
+    names a policy is not written while an installed package would start it through one of those.
+    An absent cache, or none declaring this server, is a real answer and allows the write: the
+    record is inert until a package is installed, and installing one brings its own launcher.
+
+    None means the cache could not be read, which refuses rather than guesses. What the cache
+    holds is not proof of what a running App Server loaded; see plugin-packaging.md.
+    """
+    cache = Path(codex_home) / "plugins" / "cache"
+    if not cache.is_dir():
+        return []
+
+    def _children(directory):
+        # os.scandir for the reason _plugin_declared_servers gives: it raises on a directory it
+        # cannot read instead of leaving it out.
+        with os.scandir(directory) as entries:
+            return [Path(entry.path) for entry in entries if entry.is_dir()]
+
+    try:
+        versions = sorted(version
+                          for marketplace in _children(cache)
+                          for package in _children(marketplace)
+                          for version in _children(package))
+    except OSError:
+        return None
+    stale = []
+    for version in versions:
+        manifest_path = version / ".codex-plugin" / "plugin.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            named = manifest.get("mcpServers") if isinstance(manifest, dict) else None
+            if not (isinstance(named, str) and named.strip()):
+                continue
+            relative = named[2:] if text_prefix(named, "./", at="start") else named
+            document = json.loads((version / relative).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        servers = document.get("mcpServers") if isinstance(document, dict) else None
+        if not isinstance(servers, dict):
+            return None
+        entry = servers.get(MCP_NAME)
+        if entry is None:
+            continue
+        arguments = entry.get("args") if isinstance(entry, dict) else None
+        script = next((word for word in (arguments if isinstance(arguments, list) else [])
+                       if isinstance(word, str) and text_prefix(word, "./", at="start")), None)
+        launcher = version / script[2:] if script else None
+        if launcher is None or not _implements_policy_records(launcher):
+            stale.append(str(launcher or version))
+    return stale
+
+
 def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=None):
     """Why this owner may not register the bridge, given what this host already holds.
 
@@ -4911,21 +5050,47 @@ def _register_mcp_owned(args, codex_home):
     reporting are not. That line matters: a ValueError from a render is a defect in this
     command and must keep raising, while a configuration that cannot be decoded is a refusal.
     """
+    owner = getattr(args, "owner", bridgerecord.OWNER_USER)
+    policy_argument = getattr(args, "execution_policy", None)
+    if policy_argument is not None and owner != bridgerecord.OWNER_PLUGIN:
+        # Refused before anything is read. A user-owned registration is started by its
+        # configuration entry, which never reads the record, so a policy named here would be
+        # recorded, reported and ignored.
+        emit({"command": "register-mcp", "owner": owner, "outcome": codexconfig.CONFLICT,
+              "detail": "--execution-policy is carried by the record the packaged launcher reads,"
+                        " which only the " + bridgerecord.OWNER_PLUGIN + " owner writes; a "
+                        + bridgerecord.OWNER_USER + "-owned registration is started by its Codex"
+                        " configuration entry and would never see it",
+              "applied": False, "wrote": False, "otherTablesPreserved": True,
+              "note": "nothing was written"})
+        return EXIT_USAGE
     path, before = read_config(codex_home)
     if not before.usable:
         return refused("register-mcp", before, path=str(path), applied=False, wrote=False,
                        otherTablesPreserved=True,
                        note="nothing was written: the file was not read")
     before_text = before.value
-    owner = getattr(args, "owner", bridgerecord.OWNER_USER)
     record_path = bridgerecord.record_path(codex_home)
+    policy = None
+    if policy_argument is not None:
+        policy, why = _execution_policy_reading(policy_argument)
+        if policy is None:
+            emit({"command": "register-mcp", "owner": owner, "path": str(path),
+                  "record": str(record_path), "outcome": POLICY_UNREADABLE, "detail": why,
+                  "applied": False, "wrote": False, "otherTablesPreserved": True,
+                  "note": "nothing was written: a record naming a policy the bridge would refuse"
+                          " is a bridge that never starts"})
+            return EXIT_REFUSED
     # Built before anything is written, for both owners, because the ownership decision needs
     # it and because a record that cannot be built is a reason to register nothing rather than
     # a result to report after the registration has already landed.
     try:
         wanted = bridgerecord.document(command=args.bridge_command,
                                        arguments=args.bridge_arg or [], name=args.name,
-                                       issue=getattr(args, "issue", None), owner=owner)
+                                       issue=getattr(args, "issue", None), owner=owner,
+                                       execution_policy=(
+                                           {"path": policy["path"], "digest": policy["digest"]}
+                                           if policy is not None else None))
     except ValueError as error:
         emit({"command": "register-mcp", "owner": owner, "path": str(path),
               "record": str(record_path), "outcome": codexconfig.CONFLICT,
@@ -4945,6 +5110,24 @@ def _register_mcp_owned(args, codex_home):
                       " reported with its evidence rather than joined."})
         return EXIT_REFUSED
     if owner == bridgerecord.OWNER_PLUGIN:
+        if policy is not None:
+            stale = _launchers_without_policy(codex_home)
+            if stale is None or stale:
+                emit({"command": "register-mcp", "owner": owner, "path": str(path),
+                      "record": str(record_path), "outcome": LAUNCHER_PREDATES_POLICY,
+                      "detail": (
+                          "the installed plugin cache under " + str(Path(codex_home) / "plugins"
+                                                                    / "cache")
+                          + " could not be read, so whether its launcher reads a record naming"
+                            " an execution policy was not established" if stale is None else
+                          "the installed launcher " + ", ".join(stale) + " reads record version "
+                          + str(bridgerecord.RECORD_VERSION) + " only and would refuse this"
+                          " record, leaving every thread started afterwards without a bridge."
+                          " Update the plugin package first, restart Codex so it loads it, then"
+                          " run this again"),
+                      "executionPolicy": policy, "applied": False, "wrote": False,
+                      "otherTablesPreserved": True, "note": "nothing was written"})
+                return EXIT_REFUSED
         # The declaration is the package's, so this command writes the one fact the package
         # cannot carry and leaves the configuration alone. Reported as that: a record written
         # and no registration made, because on this host there is none until the plugin is
@@ -4960,7 +5143,16 @@ def _register_mcp_owned(args, codex_home):
               "record": str(record_path), "outcome": written["outcome"],
               "detail": written.get("detail"), "applied": written["applied"],
               "wrote": written["wrote"], "otherTablesPreserved": True,
+              **({"differingFields": written["differingFields"]}
+                 if "differingFields" in written else {}),
+              **({"repair": written["repair"]} if "repair" in written else {}),
               "preservedHow": "the Codex configuration was read and not written",
+              "executionPolicy": policy,
+              "activation": (
+                  "Codex starts this server for each thread it loads (observed on Codex Desktop"
+                  " 0.154.0), so a thread started after this record is written runs the bridge"
+                  " under it and a thread already running keeps the bridge it spawned. Read"
+                  " get_capabilities in a new thread to observe it."),
               "note": "The record was written and no MCP server was registered. The plugin"
                       " package declares the server, so install that package to register it."
                       " Written, registered and a tool actually called stay three claims."})
@@ -5191,6 +5383,11 @@ def build_parser():
                                " the CRW plugin declares the server itself; both together would"
                                " run a second bridge")
     register.add_argument("--issue", default="CRW-114")
+    register.add_argument("--execution-policy",
+                          help="the host's execution policy file, for the plugin owner only. The"
+                               " record names the file and the digest this run read it under,"
+                               " never its contents; the packaged launcher hands both to the"
+                               " bridge and refuses a file that changed since")
     register.add_argument("--apply", action="store_true")
     register.set_defaults(handler=cmd_register_mcp)
 
