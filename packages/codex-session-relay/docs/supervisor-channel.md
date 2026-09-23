@@ -656,10 +656,15 @@ as its characters, so a host root "/" read as one it names. A host answer of any
 refusal before any turn on both resume routes (`setting_unobservable`, or a difference for an
 unreadable sandbox), where it used to raise and be recorded as an unknown outcome. Every
 comparison between the record and the answer is made on JSON values, where 0 and false differ;
-Python's equality said they agreed. A field the pinned policy does not declare, and the
-permission profile, which is the host's own value carried whole, have no type to hold them to
-and are compared exactly; a recorded profile the answer does not report, or reports as null,
-is a refusal like any other absent answer. A parent's or a child's pair, which policy derived, is
+Python's equality said they agreed. A key the pinned contract does not declare - in the sandbox
+policy or in an environment, which is compared whole - and the permission profile, which is the
+host's own value carried whole, have no type to hold them to and are compared exactly; a
+recorded profile the answer does not report, or reports as null, is a refusal like any other
+absent answer. What this verifies is the record's host settings, the fields the resume contract
+defines: the sandbox, the approval policy, the cwd, the roots, the model, the effort, the
+environments and the permission profile. The relay's own keys in a record (`citedRole`,
+`citedException`) are checked by the role policy, and any other top-level key is neither
+transmitted nor compared. A parent's or a child's pair, which policy derived, is
 resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
 load a thread without transmitting, so an operator message to an unloaded supervisor through it
 still waits for the host to load that thread.

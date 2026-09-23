@@ -527,6 +527,43 @@ class F2EveryShapeTheComparisonReads(_Seam):
                     f"sup-85000000000{number}-a1", "thread-1", "hi", settings)
                 self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
 
+    def test_an_environment_is_compared_whole(self):
+        """Fresh-context review 6 of bb6ca6e4: normalise_environments kept three keys of each entry.
+
+        A key a recorded environment held and the answer lacked was dropped before the
+        comparison, so it went unverified and the turn started. An environment is compared whole,
+        as the sandbox is: its declared keys typed, any other key as the same JSON value, and only
+        its roots allowed to narrow after a load that transmitted nothing.
+        """
+        extra = {"environmentId": "local", "cwd": seam.WORKTREE,
+                 "runtimeWorkspaceRoots": [seam.WORKTREE], "extraAuthorization": "restricted"}
+        plain = {"environmentId": "local", "cwd": seam.WORKTREE,
+                 "runtimeWorkspaceRoots": [seam.WORKTREE]}
+        cases = {
+            "recorded, not answered": ([extra], [plain], False),
+            "answered, not recorded": ([plain], [extra], False),
+            "answered as another value": ([extra], [dict(extra, extraAuthorization=0)], False),
+            "recorded and answered alike": ([extra], [dict(extra)], True),
+        }
+        number = 0
+        for label, (recorded, reported, agrees) in cases.items():
+            for flagged in (True, False):
+                number += 1
+                with self.subTest(label, settings_free=flagged):
+                    record = dict(seam.AUTHORIZED.data, environments=recorded)
+                    settings = record_based(record) if flagged else TaskSettings(record)
+                    adapter, calls = self._adapter(
+                        resume=self._answer(thread={"environments": reported}),
+                        status="notLoaded")
+                    receipt = adapter.send_message(
+                        f"sup-95{number:010d}-a1", "thread-1", "hi", settings)
+                    if agrees:
+                        self.assertEqual(receipt["status"], "accepted", receipt.get("error"))
+                    else:
+                        self.assert_withheld_before_any_turn(
+                            receipt, calls,
+                            "settings_differ_after_load" if flagged else "settings_not_preserved")
+
     def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
         host = FakeHostAdapter(clock=None)
         host.add_thread("thread-1", status="notLoaded",

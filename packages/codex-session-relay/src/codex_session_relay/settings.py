@@ -137,18 +137,23 @@ def normalise_policy(policy):
 
 
 def normalise_environments(environments):
-    """None stays None. It means unknown, and unknown is never flattened into empty."""
+    """None stays None. It means unknown, and unknown is never flattened into empty.
+
+    Each entry is kept WHOLE. It used to keep only environmentId, cwd and runtimeWorkspaceRoots,
+    so a key a recorded environment held and the answer lacked was dropped before any comparison
+    could see it, and the turn started with it unverified (the CRW-215 live-findings review of
+    bb6ca6e4). An environment is compared the way the sandbox is: its declared keys typed
+    (environments_problem), every other key as the same JSON value, and only its roots filled
+    in - TurnEnvironmentParams says an omitted roots list defaults to the cwd.
+    """
     if environments is None:
         return None
     out = []
     for entry in environments:
-        roots = entry.get("runtimeWorkspaceRoots")
-        out.append({
-            "environmentId": entry["environmentId"],
-            "cwd": entry["cwd"],
-            # TurnEnvironmentParams says an omitted roots list defaults to cwd.
-            "runtimeWorkspaceRoots": list(roots) if roots is not None else [entry["cwd"]],
-        })
+        one = dict(entry)
+        roots = one.get("runtimeWorkspaceRoots")
+        one["runtimeWorkspaceRoots"] = list(roots) if roots is not None else [entry["cwd"]]
+        out.append(one)
     return out
 
 
@@ -585,7 +590,7 @@ def _roots_within(returned, recorded) -> bool:
 
 
 def _environments_within(returned, recorded) -> bool:
-    """The same environments, in the same order, each at its recorded cwd, with roots within.
+    """The same environments, in the same order, each whole as recorded, with roots within.
 
     The selection itself is exact: another environment, a missing one or an empty selection is a
     different place to run, not a narrower one. Only each environment's roots may shrink.
@@ -593,7 +598,11 @@ def _environments_within(returned, recorded) -> bool:
     if returned is None or recorded is None or len(returned) != len(recorded):
         return False
     for got, allowed in zip(returned, recorded):
-        if got["environmentId"] != allowed["environmentId"] or got["cwd"] != allowed["cwd"]:
+        # Everything but the roots exactly, as JSON: the id, the cwd and any key the pinned
+        # contract does not declare, which has no type to hold it to and so has to be the same.
+        rest = [{key: value for key, value in one.items() if key != "runtimeWorkspaceRoots"}
+                for one in (got, allowed)]
+        if _canonical(rest[0]) != _canonical(rest[1]):
             return False
         if not _roots_within(got["runtimeWorkspaceRoots"], allowed["runtimeWorkspaceRoots"]):
             return False
