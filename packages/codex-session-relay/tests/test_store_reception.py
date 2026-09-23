@@ -884,6 +884,59 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         self.assertEqual(code, 0, answer)
         self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
 
+    def test_a_tenure_the_store_answers_two_ways_is_unread(self):
+        # The registration journal and the generation rows each say where the current tenure
+        # began. Where one of them is damaged they disagree, and the tenure is unread rather
+        # than taken from whichever still answers - which, for a lost reopening, was the
+        # earlier tenure.
+        damage = (("UPDATE journal SET kind = x'00' WHERE kind = 'relationship_tenure_reopened'"
+                   " AND subject = ?"),
+                  ("UPDATE generations SET reason = 'needs_changes_revision'"
+                   " WHERE relationship_id = ? AND reason IS NULL"))
+        for number, statement in enumerate(damage, 1):
+            with self.subTest(damage=statement):
+                child, issue = CHILD + "-twoways%d" % number, "REL-TWO-%d" % number
+                self.adapter.add_thread(child)
+                relationship = self.registered(child=child, issue=issue, project=None,
+                                               dispatch="dispatch-two-%d" % number)
+                rid = relationship["relationshipId"]
+                ledger = os.path.join(self.tmp, "two-%d.json" % number)
+                # The first tenure's assignment is held, so the earlier tenure's mode and
+                # workflow would answer a resume if the earlier tenure were taken as current.
+                _code, first = self.packet_check(
+                    self.first_assignment(dispatch="dispatch-two-%d" % number, issue=issue,
+                                          subject=issue),
+                    receiver_id=child, ledger=ledger)
+                self.assertEqual(first["disposition"], packets.ACCEPTED, first)
+                stale = self.resume_for(relationship, child, issue, "resume-two-%d" % number)
+                successor = child + "-b"
+                self.adapter.add_thread(successor)
+                other = self.registry.register(
+                    parent=self.parent,
+                    child=Endpoint(successor, HOST, cwd=self.root, cxc_session="cxc-" + successor),
+                    issue_key=issue, artifact_roots=[self.root],
+                    allowed_recipients=[PARENT, successor],
+                    dispatch_request_id="dispatch-two-b-%d" % number,
+                    dispatch_turn_id="turn-two-b-%d" % number, supersedes=rid, project_key=None)
+                record_settings(self.store, self.clock, successor,
+                                task_settings(self.root, model=CHILD_MODEL,
+                                              reasoningEffort=CHILD_EFFORT),
+                                source="creation_result")
+                self.registry.register(
+                    parent=self.parent,
+                    child=Endpoint(child, HOST, cwd=self.root, cxc_session="cxc-" + child),
+                    issue_key=issue, artifact_roots=[self.root],
+                    allowed_recipients=[PARENT, child],
+                    dispatch_request_id="dispatch-two-return-%d" % number,
+                    dispatch_turn_id="turn-two-return-%d" % number,
+                    supersedes=other["relationshipId"], project_key=None)
+                self.store.db.execute(statement, (rid,))
+                code, answer = self.packet_check(stale, receiver_id=child,
+                                                 observation=self.observed(), ledger=ledger)
+                self.assertEqual(code, 0, answer)
+                self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
+                self.assertFalse(answer["act"], answer)
+
     def test_a_store_value_of_the_wrong_shape_never_ends_as_a_host_failure(self):
         # Every column the reader reads, holding what SQLite lets any column hold. The answer
         # is a refusal or a reading that says what it could not read - never a host error -
