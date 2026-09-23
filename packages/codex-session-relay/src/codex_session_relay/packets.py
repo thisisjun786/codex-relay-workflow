@@ -828,6 +828,9 @@ UNREADABLE = "unreadable"
 # is what a first assignment names.
 RELATION_STATUS = "relationStatus"
 DISPATCH_REQUEST = "dispatchRequestId"
+# The generation the registration that began the current tenure opened. A tenure is one
+# registration of the child on the relationship; a returning registration reuses the id.
+TENURE_GENERATION = "tenureGeneration"
 
 # The one record key whose PRESENT nothing is an answer rather than a gap. A relationship
 # registered without a project has no link and therefore no revision, and the store says so
@@ -944,6 +947,25 @@ def _reception(one, region, record, problems, gaps) -> dict:
                  one.get(GENERATION), record.get(GENERATION),
                  "a receipt emitted under a generation the assignment is not in is refused,"
                  " so a message naming one produces work that cannot be handed back")
+    elif one.get(GENERATION) is not None:
+        # Not required here, but stated: a packet that says which generation it belongs to
+        # is held to it, which is how a sender binds a resume or a note to its tenure.
+        _compare(problems, gaps, STALE_GENERATION, GENERATION,
+                 one.get(GENERATION), record.get(GENERATION),
+                 "this packet says it belongs to another generation than the current one")
+    if not first and "relationRevision" in record and record["relationRevision"] is None \
+            and one.get(GENERATION) is None and record.get(TENURE_GENERATION) != 1 \
+            and region["direction"] in (envelope.PARENT_TO_CHILD, envelope.CHILD_TO_PARENT):
+        # An unscoped relationship has no link revision to tie a packet to its tenure, and
+        # this packet states no generation. Once the relationship has returned to its child
+        # (or the reading cannot say it has not), a delayed packet from the earlier tenure
+        # agrees with every field it carries; it is unchecked rather than accepted. A scoped
+        # relationship's link revision moves with every returning registration instead.
+        gaps.append(mismatch(UNREADABLE, GENERATION, expected=None, found=None,
+                             reason="this unscoped relationship has had more than one tenure"
+                                    " (or the reading cannot say), and a packet stating"
+                                    " neither a revision nor a generation cannot be told from"
+                                    " one sent in an earlier tenure"))
     if CRITERIA_DIGEST in required:
         _compare(problems, gaps, STALE_CRITERIA, CRITERIA_DIGEST,
                  one.get(CRITERIA_DIGEST), record.get(CRITERIA_DIGEST),

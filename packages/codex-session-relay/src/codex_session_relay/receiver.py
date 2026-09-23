@@ -51,7 +51,11 @@ LEDGER_VERSION = 1
 # dispatches inside a tenure and do not begin one, so the mode and workflow the tenure's
 # accepted assignment gave hold through them.
 TENURE_DISPATCH = "tenureDispatchRequestId"
-TENURE_REASONS = ("initial_assignment",)  # and NULL, which a returning registration writes
+# What the registry journals when a registration begins a tenure: the initial registration,
+# and a returning one with the generation it opened. A generation opened for a revision (or
+# with any reason) is journalled as generation_opened and begins nothing.
+REGISTERED = "relationship_registered"
+REOPENED = "relationship_tenure_reopened"
 
 # What a store that is not the shape this reader expects raises. A missing table or column
 # named in SQL is an sqlite3.Error; a column read by name from a row whose table lacks it is an
@@ -233,12 +237,18 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     _read_link(rows, rid, row, answer, notes)
     _read_criteria(rows, connection, rid, answer, notes)
     _read_settings(rows, row, answer, notes)
-    begun = rows.one("SELECT dispatch_request_id FROM generations WHERE relationship_id = ?"
-                     " AND execution_generation <= ? AND (reason IS NULL OR reason IN (%s))"
-                     " ORDER BY execution_generation DESC LIMIT 1"
-                     % ",".join("?" * len(TENURE_REASONS)),
-                     (rid, row["execution_generation"], *TENURE_REASONS))
-    tenure = None if begun is None else begun["dispatch_request_id"]
+    start = _tenure_start(rows, rid, row["execution_generation"], notes)
+    tenure = None
+    if start is not None:
+        answer(packets.TENURE_GENERATION, start,
+               "journal (the registration that began the current tenure)")
+        begun = rows.one("SELECT dispatch_request_id FROM generations"
+                         " WHERE relationship_id = ? AND execution_generation = ?", (rid, start))
+        if begun is None:
+            notes.append("no generations row holds generation %d, which the registration that"
+                         " began the current tenure opened, so its dispatch is unread" % start)
+        else:
+            tenure = begun["dispatch_request_id"]
     if tenure is not None:
         answer(TENURE_DISPATCH, tenure,
                "generations (the registration that began the current tenure)")
@@ -259,6 +269,40 @@ def _read_store(connection, fields, sources, notes, *, receiver, role, sender_ro
     elif ledger is not None:
         notes.append("the reception ledger holds no accepted assignment for " + rid
                      + ", so the mode and the workflow are unread")
+
+
+def _tenure_start(rows, rid, current, notes):
+    """The generation the current tenure's registration opened, or None where unread.
+
+    Read from the journal the registry writes in the same transaction as the registration,
+    because the generations table records why a generation opened only as a free reason: a
+    revision could be opened with the initial reason, and a row can be missing. The latest
+    returning registration at or below the current generation began the tenure; with none,
+    the initial registration did, at generation 1. A journal that answers neither, or holds a
+    reopening it cannot read, leaves the tenure unread.
+    """
+    reopened = rows.all("SELECT detail FROM journal WHERE kind = ? AND subject = ?"
+                        " ORDER BY seq DESC", (REOPENED, rid))
+    starts = []
+    for one in reopened:
+        try:
+            generation = json.loads(one["detail"] or "{}").get("executionGeneration")
+        except (ValueError, AttributeError):
+            generation = None
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            notes.append("a returning registration of " + rid + " is journalled without a"
+                         " readable generation, so the current tenure is unread")
+            return None
+        starts.append(generation)
+    earlier = [generation for generation in starts if generation <= current]
+    if earlier:
+        return max(earlier)
+    if rows.one("SELECT 1 FROM journal WHERE kind = ? AND subject = ? LIMIT 1",
+                (REGISTERED, rid)) is not None:
+        return 1
+    notes.append("the journal holds no registration of " + rid + ", so the current tenure is"
+                 " unread")
+    return None
 
 
 def _opened_by(rows, row):
@@ -634,7 +678,7 @@ def record_answer(ledger, packet, answer) -> bool:
         ledger["assignments"][relationship] = {
             "mode": settings.get(packets.MODE), "workflow": settings.get("workflow"),
             "messageId": identifier,
-            "dispatchRequestId": answer["record"].get(packets.DISPATCH_REQUEST)}
+            "dispatchRequestId": dispatch}
         changed = True
     return changed
 

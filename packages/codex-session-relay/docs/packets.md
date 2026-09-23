@@ -120,7 +120,12 @@ nothing.
 A record key that is missing, or holds nothing, is unread and produces an `unreadable` gap. One
 key has a definite nothing: `relationRevision` holding null says the relationship is unscoped,
 so it has no link and no revision, and a packet stating a revision for it is refused while one
-stating none agrees. The relation revision is always compared except on a first assignment,
+stating none agrees. A scoped relationship's link revision moves with every returning
+registration, so a packet from an earlier tenure is refused as `superseded_relation`. An
+unscoped one has no such mark: once it has returned to its child, a packet that states
+neither a revision nor a generation cannot be told from one sent in an earlier tenure and is
+a gap. A generation is compared whenever a packet states one, required or not, so a sender
+binds any packet to its generation by stating it. The relation revision is always compared except on a first assignment,
 and the relationship must be live: `relationStatus` other than `active` or `paused` is refused as
 `superseded_relation`. A packet on a paused relationship can be accepted, since it is current;
 acting on it still waits for `relationship-resume`.
@@ -200,7 +205,9 @@ receiver has recorded acting on it, and, once an assignment is accepted, the mod
 that assignment gave, for the current tenure. A tenure is one registration of the child on
 the relationship - the initial one, or a returning one after a supersession, which reuses the
 relationship id - and is identified by the dispatch of the generation that registration
-opened. Revision generations open under their own dispatches inside a tenure, so the mode and
+opened, read from the registry's journal of registrations (`relationship_registered`,
+`relationship_tenure_reopened`) rather than from a generation's free reason; a tenure whose
+registration or opening row cannot be read is unread. Revision generations open under their own dispatches inside a tenure, so the mode and
 workflow hold through a correction; a returning registration begins a new tenure, the
 earlier one's mode and workflow are then unread, and the new tenure's assignment defines and
 replaces them. Writes happen under a lock
