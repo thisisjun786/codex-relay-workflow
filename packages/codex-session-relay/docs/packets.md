@@ -151,7 +151,7 @@ answer's `provenance` names what answered it.
 |---|---|
 | the receiver's own role id | the receiver (`--receiver`) |
 | relationId, the other task, issue, relationStatus, generation | `relationships` |
-| dispatchRequestId | `generations`, the current generation |
+| dispatchRequestId | `generations`, the current generation; read for every parent-child packet, since it says which tenure the packet belongs to, so a reading without it (or not a dispatch id) is a gap |
 | relationRevision | `scope_links` through the relationship's project link, only while that link is live, has no successor and still joins this relationship's two tasks (otherwise a gap); null when unscoped |
 | criteriaDigest | `canonical_criteria`, a managed set with one digest |
 | policy | `authorized_settings` of the child: model, effort, the sandbox policy with its declared defaults, and the approval policy |
@@ -203,9 +203,12 @@ the earlier tenure's mode and workflow are then unread, and the new tenure's ass
 defines and replaces them. Writes happen under a lock
 on a sidecar file, in a directory created if it is missing, and replace the ledger atomically,
 with the directory synced after the rename. A ledger with an entry that is not one - an
-answer without its digest, disposition or applied flag, or an assignment that cannot name the
-accepted assignment its mode came from (an execution mode, the workflow and the message id) -
-is refused as damaged rather than read through. What reaches the ledger cannot be damaged in
+answer missing its digest, disposition, whether a check said act or whether it was applied, or
+an assignment that cannot name the accepted assignment its mode came from (an execution mode,
+the workflow, the message id and the dispatch it was accepted under) - is refused as damaged
+rather than read through; a missing field is never read as its harmless default, because a
+lost "applied" would hand a finished correction back to be done again. What reaches the
+ledger cannot be damaged in
 that way: a policy whose model, effort or workflow is not text is refused before anything is
 compared, so no packet can write an entry the next check would refuse.
 

@@ -920,6 +920,18 @@ def _reception(one, region, record, problems, gaps) -> dict:
     _compare(problems, gaps, WRONG_ISSUE, ISSUE, one.get(ISSUE), record.get(ISSUE),
              "the issue binding is what makes this the assignment it claims to be")
     _liveness(problems, gaps, record)
+    if not first and region["direction"] in (envelope.PARENT_TO_CHILD,
+                                              envelope.CHILD_TO_PARENT) \
+            and not (isinstance(record.get(DISPATCH_REQUEST), str)
+                     and record[DISPATCH_REQUEST].strip()):
+        # Which dispatch opened the current generation is which tenure this packet belongs
+        # to, and so which accepted assignment's mode and workflow apply to it. Unread, the
+        # tenure is unchecked, and so is a reading of it that is not a dispatch id at all.
+        # (A first assignment compares it as its relation, above.)
+        gaps.append(mismatch(UNREADABLE, DISPATCH_REQUEST, expected=None, found=None,
+                             reason="the receiver could not read which dispatch opened the"
+                                    " current generation, so which tenure this packet"
+                                    " belongs to is unchecked"))
     if not first:
         # Always compared, and a record that cannot answer is a gap: skipping the comparison
         # when the revision was unread is what let an unchecked link come back accepted. The

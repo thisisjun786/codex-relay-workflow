@@ -478,6 +478,8 @@ def _read_keys(direction, purpose):
     keys = {"relationId", packets.RECORD_TASK_KEY[sender_role],
             packets.RECORD_TASK_KEY[recipient_role], "issue", "relationRevision",
             "relationStatus"}
+    if direction in (P2C, C2P):
+        keys.add(packets.DISPATCH_REQUEST)  # which tenure the packet belongs to
     if packets.GENERATION in required:
         keys.add("generation")
     if packets.CRITERIA_DIGEST in required:

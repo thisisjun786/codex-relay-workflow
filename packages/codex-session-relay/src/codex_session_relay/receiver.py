@@ -538,26 +538,28 @@ def load_ledger(path, receiver) -> dict:
 
 
 def _entry_problem(ledger):
-    """What makes an entry unreadable, or None. Every entry, so none can fail later mid-check."""
+    """What makes an entry unreadable, or None. Every entry, so none can fail later mid-check.
+
+    Every field an entry is written with is required, not defaulted. A missing "applied" read
+    as false handed a correction already done back to be done again; a ledger that has lost
+    part of what it recorded is damaged, and is refused rather than read as if it had said
+    the harmless thing.
+    """
     for identifier, entry in ledger["answered"].items():
         if not isinstance(entry, dict) or not isinstance(entry.get("contentDigest"), str) \
                 or not entry["contentDigest"].strip() \
                 or entry.get("disposition") not in packets.DISPOSITIONS \
-                or not isinstance(entry.get("applied", False), bool):
+                or not isinstance(entry.get("applied"), bool) \
+                or not isinstance(entry.get("toldToAct"), bool):
             return ("answered entry " + repr(identifier) + " is not a content digest, a"
-                    " disposition and whether it was applied")
-        if not isinstance(entry.get("toldToAct", False), bool):
-            return ("answered entry " + repr(identifier) + " is not a content digest, a"
-                    " disposition and whether it was applied")
+                    " disposition, whether a check said act and whether it was applied")
     for relationship, entry in ledger["assignments"].items():
         # The mode it holds is read as the mode of an accepted assignment, so the entry has to
         # be able to name that assignment: an execution mode, a workflow and a message id,
-        # and the dispatch as text or null (a later assignment may have read none).
+        # and the dispatch it was accepted under.
         if not isinstance(entry, dict) or entry.get("mode") not in packets.MODES or any(
                 not isinstance(entry.get(name), str) or not entry[name].strip()
-                for name in ("workflow", "messageId")) or (
-                entry.get("dispatchRequestId") is not None
-                and not isinstance(entry["dispatchRequestId"], str)):
+                for name in ("workflow", "messageId", "dispatchRequestId")):
             return ("assignment entry " + repr(relationship) + " is not an execution mode, a"
                     " workflow, the message id of the assignment and a dispatch id")
     return None
@@ -604,7 +606,7 @@ def record_answer(ledger, packet, answer) -> bool:
     recorded = ledger["assignments"].get(relationship) if relationship else None
     if accepted and state in (packets.FIRST, packets.REPLAY) \
             and region.get("direction") == envelope.PARENT_TO_CHILD \
-            and region.get("purpose") == "assignment" and relationship \
+            and region.get("purpose") == "assignment" and relationship and dispatch \
             and (recorded is None or recorded.get("dispatchRequestId") != dispatch):
         settings = packet.get(packets.POLICY) or {}
         ledger["assignments"][relationship] = {
