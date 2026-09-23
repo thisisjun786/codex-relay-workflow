@@ -88,20 +88,22 @@ def _write(db_path, select, insert, same):
 
 
 def record_claim(db_path, *, assignment, session_id, dispatch_request_id, marker_root,
-                 workspace, at) -> dict:
+                 workspace, issue_key, at) -> dict:
     """Record that this session's relay writes its declarations into this store."""
     return _write(
         db_path,
-        ("SELECT dispatch_request_id, marker_root, workspace, capability FROM"
+        ("SELECT dispatch_request_id, marker_root, workspace, issue_key, capability FROM"
          " reporting_sessions WHERE assignment_id = ? AND session_id = ?",
          (assignment, session_id)),
         ("INSERT INTO reporting_sessions (assignment_id, session_id, dispatch_request_id,"
-         " marker_root, workspace, capability, recorded_at) VALUES (?,?,?,?,?,?,?)",
+         " marker_root, workspace, issue_key, capability, recorded_at)"
+         " VALUES (?,?,?,?,?,?,?,?)",
          (assignment, session_id, dispatch_request_id, str(marker_root), str(workspace),
-          CAPABILITY, at)),
+          issue_key, CAPABILITY, at)),
         lambda row: (row["dispatch_request_id"], row["marker_root"], row["workspace"],
-                     row["capability"]) == (dispatch_request_id, str(marker_root),
-                                            str(workspace), CAPABILITY),
+                     row["issue_key"], row["capability"]) == (
+                         dispatch_request_id, str(marker_root), str(workspace), issue_key,
+                         CAPABILITY),
     )
 
 

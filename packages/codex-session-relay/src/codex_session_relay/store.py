@@ -1084,6 +1084,9 @@ CREATE TABLE IF NOT EXISTS reporting_sessions (
     dispatch_request_id TEXT NOT NULL,
     marker_root         TEXT NOT NULL,
     workspace           TEXT NOT NULL,
+    -- The issue the intent was declared for, so the store reader checks the registration
+    -- against the same declared identity the marker reader does.
+    issue_key           TEXT,
     capability          TEXT NOT NULL,
     recorded_at         TEXT NOT NULL,
     PRIMARY KEY (assignment_id, session_id)

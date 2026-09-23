@@ -211,12 +211,31 @@ class _AdmissionReader:
 
 def _registry_evidence(row, facts, root, workspace, assignment, session, turn):
     declared = facts["intent"]
-    if (row["child_task_id"] != session or facts["bound"].get("taskId") != session
-            or row["issue_key"] != declared.get("issueKey")
+    problem = _identity_problem(row, session=session, bound_task=facts["bound"].get("taskId"),
+                                issue_key=declared.get("issueKey"), workspace=workspace,
+                                assignment=assignment)
+    if problem:
+        raise Unmeasured(problem)
+    return _admission(row, session, root, workspace, turn)
+
+
+def _identity_problem(row, *, session, bound_task, issue_key, workspace, assignment):
+    """Whether the relay's registration is the assignment this reading is about, or why not.
+
+    Shared by both readers, so neither classifies a turn the other would refuse to. The
+    registered child must be the session, the task the coordinator bound must be that session
+    too, and the registration's issue, working directory and dispatch must be the ones the
+    assignment was declared with. The marker reader takes the binding and the declared issue
+    from the marker; the store reader takes the binding from the registration itself - the
+    coordinator's statement of who the child is, in this store - and the issue and workspace
+    from the claim record the child's relay wrote beside the marker (declarations.py).
+    """
+    if (row["child_task_id"] != session or bound_task != session
+            or row["issue_key"] != issue_key
             or not row["child_cwd"] or _path(row["child_cwd"]) != workspace
             or marker.assignment_id(row["dispatch_request_id"]) != assignment):
-        raise Unmeasured("registry_identity_mismatch")
-    return _admission(row, session, root, workspace, turn)
+        return "registry_identity_mismatch"
+    return None
 
 
 def _admission(row, session, root, workspace, turn):
@@ -541,6 +560,11 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
         if len(rows) != 1:
             raise Unmeasured("registration_unresolved")
         row = rows[0]
+        problem = _identity_problem(row, session=session, bound_task=current["child_task_id"],
+                                    issue_key=claimed["issue_key"],
+                                    workspace=_path(claimed["workspace"]), assignment=assignment)
+        if problem:
+            raise Unmeasured(problem)
         admission, requests = _admission(row, session, _path(claimed["marker_root"]),
                                          _path(claimed["workspace"]), turn)
         result.update(turnAdmission=admission, managedRequests=requests)

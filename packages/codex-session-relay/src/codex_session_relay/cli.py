@@ -3125,12 +3125,22 @@ def cmd_intent_claim(services, args) -> dict:
         record = declarations.not_recorded(
             "claim_not_standing", "the marker does not stand on this claim, so this session"
             " records nothing about how it reports")
+    elif (not intent.correlated(facts, published["sessionId"], args.assignment)
+          or not (facts.get("intent") or {}).get("workspace")
+          or _resolved(facts["intent"]["workspace"]) != _resolved(args.workspace)):
+        # The same preconditions the marker reader checks before it classifies anything:
+        # the claim correlates with the intent, and the intent was declared for this
+        # workspace. A claim the marker reader would refuse to read is not recorded as one
+        # the store may derive from.
+        record = declarations.not_recorded(
+            "claim_uncorrelated", "the claim does not correlate with the intent declared for"
+            " this workspace, so the store derives nothing for this session")
     else:
         record = declarations.record_claim(
             declarations.store_of(facts), assignment=args.assignment,
             session_id=published["sessionId"], dispatch_request_id=args.dispatch_request_id,
             marker_root=_resolved(_marker_root(args)), workspace=_resolved(args.workspace),
-            at=services.clock.iso())
+            issue_key=(facts.get("intent") or {}).get("issueKey"), at=services.clock.iso())
     return _with_store_record(published, record)
 
 

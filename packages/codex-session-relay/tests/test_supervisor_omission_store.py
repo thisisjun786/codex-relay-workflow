@@ -208,6 +208,28 @@ class OnePredicateForBothReaders(ChildCommands, GuardTestCase):
         _by_marker, past = self.both(grace=1)
         self.assertEqual(self.verdict(past)[2:], (True, omitted.OWED))
 
+    def test_a_registration_for_another_workspace_is_refused_by_both_before_classifying(self):
+        """Review 2 on 8ffc74c6: the store reader classified what the marker reader refused.
+
+        The identity the registration names - child, binding, issue, working directory,
+        dispatch - is one predicate both readers apply before the facts reach classify().
+        """
+        relation = self.managed_with_store_records()
+        self.evaluate()
+        self.settle(relation)
+        self.store.db.execute("UPDATE relationships SET child_cwd = ?",
+                              (str(Path(self.tmp) / "somewhere-else"),))
+        selection = resolve_state_dir(str(self.store.path.parent))
+        with mock.patch.object(omitted, "classify", wraps=omitted.classify) as spy:
+            by_marker = omitted.observe(selection, self.markers, self.workspace, self.assignment,
+                                        CHILD, DISPATCH_TURN, LATER)
+            by_store = omitted.derive(self.store, self.rid, state_directory=str(selection.path),
+                                      now=LATER, grace=0, turn=DISPATCH_TURN)
+        for reading in (by_marker, by_store):
+            self.assertEqual((reading["reportingState"], reading["reason"], reading["owed"]),
+                             ("unmeasured", "registry_identity_mismatch", False))
+        self.assertEqual(spy.call_count, 0, "neither reader classified a turn it cannot place")
+
 
 # ----------------------------------------------------------------- the daemon
 
@@ -318,6 +340,24 @@ class AnLLMThatOmitsItsReport(StoreOmissionCase):
         self.assertEqual(self.upward(), [], "I-247: the transport start re-derived it")
         self.assertEqual(self.channel.get(message["message_id"])["hold_reason"],
                          SUPERSEDED_HOLD)
+
+
+class ARegistrationThatIsNotTheClaimedAssignment(StoreOmissionCase):
+    """Review 2 on 8ffc74c6: a registration naming another working directory than the claim."""
+
+    def test_the_daemon_sends_nothing_for_a_turn_the_marker_reader_cannot_place(self):
+        self.claim_through_cli()
+        self.store.db.execute("UPDATE relationships SET child_cwd = ? WHERE relationship_id = ?",
+                              (str(Path(self.tmp) / "somewhere-else"), self.rid))
+        self.the_turn_ends()
+        self.tick(advance=self.grace + 1)
+        self.tick(advance=3600)
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])
+        _code, derived = relay("--state", self.state_directory(), "reporting-derive",
+                               "--relationship", self.rid)
+        self.assertEqual((derived.get("reportingState"), derived.get("reason")),
+                         ("unmeasured", "registry_identity_mismatch"))
 
 
 class OneLogicalOmissionAcrossRestarts(StoreOmissionCase):

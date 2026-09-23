@@ -192,7 +192,9 @@ by the command that writes the marker fact, after it, mirroring the fact the mar
 on (`declarations.py`):
 
 - `intent-claim` records in `reporting_sessions` that this session's relay writes its
-  declarations into this store, with the marker root and workspace the claim used;
+  declarations into this store, with the marker root and workspace the claim used and the issue
+  the intent was declared for - only for a claim that correlates with an intent declared for
+  that workspace, the preconditions the marker reader checks before it reads a turn;
 - `intent-disposition` records the turn's declared outcome in `turn_declarations`,
   create-once like the marker file.
 
@@ -208,13 +210,22 @@ to see both. Running the command again retries only the store record.
 own settlement, the admission, the recorded declaration, the receipt where readiness was
 declared, and whether a later turn was admitted. It hands those facts to `omitted.classify`,
 the same predicate `reporting-show`'s reader (`omitted.observe`) hands its facts to; neither
-reader classifies anything itself, and `tests/test_supervisor_omission_store.py` feeds one
+reader classifies anything itself, and neither classifies a turn the other would refuse to place: the registration's identity - child, binding, issue, working directory and dispatch - is one predicate (`_identity_problem`) both apply first, the store reader against the workspace and issue its claim record carries. `tests/test_supervisor_omission_store.py` feeds one
 fact set through both and compares the facts and the answer. The diagnosis is CRW-180's,
 unchanged. Beside it the predicate answers whether a report is still OWED: not when the turn's
 own final receipt exists (it goes upward as its own fact), not when a later turn was admitted
 (the work went on), and not inside `omission_grace_seconds` after the settlement (300 by
 default), which gives the parent, or the child it steers, the chance to answer first. A
 reading that owes nothing raises no obligation and is not a gap.
+
+The readers still read different sources, and where the marker and the store disagree about
+the assignment itself each answers from its own. A marker that never received
+`intent-register` leaves the marker reader without the relationship id it reads the store
+with, so it answers `unmeasured`; the store reader finds the registration through the dispatch
+the claim recorded, and the Stop hook already reads that turn as `managed_unregistered`, an
+omission. A marker registration naming another generation than the store's is read by the
+marker reader as a receipt that cannot count, and by the store reader against the registration
+in this store; that direction wakes nobody.
 
 The cut-over is the claim record. A turn whose session has no `reporting_sessions` row -
 every child that claimed before its relay wrote here, or through a relay that does not - is a
