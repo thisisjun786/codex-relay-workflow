@@ -42,6 +42,9 @@ LATER_TURN_ADMITTED = "later_turn_admitted"
 TURN_RECEIPTED = "turn_receipted"
 WITHIN_GRACE = "within_report_grace"
 GRACE_UNMEASURED = "report_grace_unmeasured"
+# derive()'s answer for a session whose relay never recorded that it writes declarations here:
+# the cut-over. Named, because the channel treats it apart from every other unmeasured reading.
+DECLARATIONS_NOT_RECORDED = "declarations_not_recorded"
 
 # One SELECT gives the registry, admission and terminal facts the same SQLite
 # snapshot. Filesystem reads happen afterwards, with this snapshot rechecked.
@@ -523,7 +526,7 @@ def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
             (assignment, session))
         if (claimed is None or claimed["dispatch_request_id"] != dispatch
                 or claimed["capability"] != CAPABILITY):
-            raise Unmeasured("declarations_not_recorded")
+            raise Unmeasured(DECLARATIONS_NOT_RECORDED)
         if turn is None:
             latest = store.one(LATEST_ADMITTED, (relationship_id,
                                                  current["execution_generation"]))

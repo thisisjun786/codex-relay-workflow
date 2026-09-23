@@ -232,6 +232,15 @@ one omission share its message id, and where they agree field for field they are
 as far as staging is concerned, so a parent's `reporting-show` staging and the daemon's
 derivation converge on one message.
 
+Where the turn's session records its declarations here, the store decides for EVERY omission,
+whatever reading it arrives with: staging asks it under the write lock and the transport start
+asks it again (`_omission_withdrawn`, from `_proposal_now`). A parent's `reporting-show`
+reading taken before the child declared the turn in progress is a proposal like any other; the
+staging refuses as `not_claimable`, or the message is held `superseded_by_report` at its
+transport start, and nobody is woken. Where the session records nothing here - a legacy
+admission - the store cannot see the declaration, and a caller's frozen reading stands as it
+always has, checked against the turn's final receipt.
+
 ### A staged row is a proposal
 
 A staged row is a proposal, not a commitment. Transport start re-derives the obligation's
@@ -314,6 +323,15 @@ have them describe a recipient they were never sent to. Staging it again refuses
 reports it under `refused`; the successor has not been told through this channel, and the
 obligation stands until the Linear record confirms it. Sending never re-addresses anything;
 which task a report is for is decided where it is staged.
+
+A message the hierarchy gives no addressee does not hold the queue. The claim keeps
+per-recipient order - a message waits while an older one to the same task can go - so an
+unsent message whose `resolve()` refuses (an archived assignment) or names other endpoints than
+the row does was, left claimable, the oldest message to its recipient for good, and every later
+report to that task waited behind it. `attempt()` holds it as `hierarchy_unresolved` when it
+meets either refusal. The hold is derived: staging and the next attempt release it on the same
+message once `resolve()` names its endpoints again, and staging re-addresses one that was never
+sent. Order is kept among the messages that have an addressee.
 
 ### Who moves a message out of sending
 
@@ -635,7 +653,9 @@ answered as a fact already reported.
 
 A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
 project by walking up the edge the assignment holds on its issue, and archiving the assignment
-releases that edge, so staging and sending refuse as `unregistered_scope` from then on. The
+releases that edge, so staging and sending refuse as `unregistered_scope` from then on, and
+the unsent message is held as `hierarchy_unresolved` so later reports to the same supervisor
+do not wait behind it. The
 obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
 goes out only if it is staged and sent before the assignment is archived. A superseded
 assignment is not affected, because its successor holds the edge.

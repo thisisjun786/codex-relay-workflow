@@ -408,6 +408,46 @@ class ALegacyAdmissionIsNeverDerived(StoreOmissionCase):
         self.assertEqual([one["staged"] for one in staged["staged"]], [True])
 
 
+class AParentsReadingIsAProposalToo(StoreOmissionCase):
+    """Review 1 on 460d3bae: an omission staged from a parent's reporting-show reading.
+
+    Where the child's relay records its declarations in the store, the store sees what the
+    child declared, so every omission - whatever reading it was staged from - is derived again
+    from the store under the staging lock and at the transport start (I-247). A reading taken
+    before the child declared the turn in progress must not wake anybody.
+    """
+
+    def parents_reading(self):
+        return {"schema": "reporting-observation/1", "reportingState": "unreported",
+                "relationshipId": self.rid, "reason": "terminal_without_report",
+                "selectors": {"state": self.channel.state_directory,
+                              "markerRoot": str(self.markers), "workspace": self.root,
+                              "assignment": ASSIGNMENT, "session": CHILD,
+                              "turn": DISPATCH_TURN}}
+
+    def test_a_declaration_after_the_parent_staged_voids_the_send(self):
+        self.claim_through_cli()
+        self.the_turn_ends()
+        staged = self.channel.stage_standing(PROJECT, observations=[self.parents_reading()])
+        self.assertEqual([one.get("staged") for one in staged["staged"]], [True])
+        message_id = staged["staged"][0]["messageId"]
+        self.declare_through_cli("in_progress")
+        self.tick(advance=self.grace + 1)
+        self.tick(advance=3600)
+        self.assertEqual(self.upward(), [], "the store says the turn declared in_progress")
+        self.assertEqual(self.channel.get(message_id)["hold_reason"], SUPERSEDED_HOLD)
+
+    def test_a_declaration_before_the_parent_stages_refuses_the_staging(self):
+        self.claim_through_cli()
+        self.declare_through_cli("in_progress")
+        self.the_turn_ends()
+        staged = self.channel.stage_standing(PROJECT, observations=[self.parents_reading()])
+        self.assertEqual([one.get("staged") for one in staged["staged"]], [])
+        self.tick(advance=self.grace + 1)
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])
+
+
 # ----------------------------------------------------------------- condition 3
 
 

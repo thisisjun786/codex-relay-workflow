@@ -221,3 +221,59 @@ class TheDaemonCommandRunsThePass(DaemonChannelCase):
         self.assertEqual(len(result["ticks"]), 1)
         self.assertEqual(len(self.upward()), 1, "the daemon command sent the owed report")
         self.assertEqual(result["ticks"][0].get("supervisorSent"), 1)
+
+class AReportWithNoAddresseeDoesNotHoldTheQueue(DaemonChannelCase):
+    """Review 1 on 460d3bae: an older message nobody can be addressed with blocked the rest.
+
+    The claim keeps per-recipient order: a message waits while an older one to the same task
+    can go. An archived assignment releases the edge resolve() walks, so its unsent message
+    was refused on every attempt and stayed claimable - the oldest message to its supervisor
+    for ever, with every later report to that supervisor waiting behind it.
+    """
+
+    def test_a_report_from_an_archived_assignment_does_not_block_a_live_one(self):
+        from codex_session_relay.models import TurnRef
+
+        stale = self.channel.stage(self.obligation(self.completed()))["messageId"]
+        self.registry.set_status(self.rid, "archived", actor="the parent archived it")
+
+        other = self.register(issue_key="REL-2", dispatch_request_id="dispatch-2",
+                              dispatch_turn_id="turn-dispatch-2")
+        self.linkage.attach_issue(other["relationshipId"], PROJECT)
+        path = self.artifact("second.txt", "the other deliverable")
+        payload = self.ready_payload(other, [path],
+                                     turn=TurnRef(channel_tests.CHILD, "turn-dispatch-2",
+                                                  "completed"))
+        self.accept(payload)
+        report_module.record(
+            self.store, self.clock, event_id=payload["eventId"],
+            repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.DONE,
+            cxc_reason="every recorded criterion was proved", summary="the other work is done",
+            next_action="merge", evidence=["pytest passed"])
+
+        for _ in range(3):
+            self.tick(advance=60)
+        sent = [one for one in self.messages() if one["state"] == DISPATCHED]
+        self.assertEqual(len(sent), 1, "the live assignment's report went up")
+        self.assertEqual(len(self.upward()), 1)
+        held = self.channel.get(stale)
+        self.assertNotEqual(held["state"], DISPATCHED, "the archived one has nobody to go to")
+        self.assertEqual(held["hold_reason"], "hierarchy_unresolved")
+
+    def test_the_hold_is_released_when_the_hierarchy_names_the_message_again(self):
+        stale = self.channel.stage(self.obligation(self.completed()))["messageId"]
+        refusing = self.linkage.up
+
+        def unresolvable(**kwargs):
+            answer = refusing(**kwargs)
+            return {**answer, "state": "unresolved", "levels": []}
+
+        self.linkage.up = unresolvable
+        self.tick()
+        self.assertEqual(self.channel.get(stale)["hold_reason"], "hierarchy_unresolved")
+        self.assertEqual(self.upward(), [])
+
+        del self.linkage.up
+        self.tick(advance=60)
+        self.assertEqual(self.channel.get(stale)["state"], DISPATCHED)
+        self.assertEqual(len(self.upward()), 1)
