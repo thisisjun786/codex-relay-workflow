@@ -1600,6 +1600,47 @@ class TheRolePolicyTheServiceDeclares(StoreReception):
         self.assertEqual((sorted(os.listdir(self.state)), os.stat(self.state).st_mtime_ns),
                          before)
 
+    def test_a_policy_file_too_deep_to_parse_ends_no_command_as_a_host_failure(self):
+        # Every command takes the role-policy snapshot before its handler, and a file its
+        # parser cannot descend raised out of it. After the receiver had acted, --applied then
+        # failed as a host error and the replays asked for the work again; --record, which
+        # reads no policy, failed the same way.
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        _code, first = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger)
+        self.assertTrue(first["act"], first)
+        policy = Path(self.policy_file)
+        original = policy.read_text(encoding="utf-8")
+
+        def restore():
+            policy.write_text(original, encoding="utf-8")
+            rolepolicy.reset()
+
+        self.addCleanup(restore)
+        policy.write_text("[" * 15000 + "]" * 15000, encoding="utf-8")
+        rolepolicy.reset()
+        code, applied = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger,
+                                          applied=True)
+        self.assertEqual(code, 0, applied)
+        code, supplied = self.packet_check(self.assignment, record={"childTaskId": CHILD})
+        self.assertEqual(code, 0, supplied)
+        self.assertEqual(supplied["recordSource"], "supplied", supplied)
+        code, checked = self.packet_check(self.assignment, receiver_id=CHILD)
+        self.assertEqual(code, 0, checked)
+        self.assertEqual(checked["disposition"], packets.UNAVAILABLE, checked)
+        self.assertIn(packets.POLICY, self.gap_fields(checked))
+        restore()
+        _code, replay = self.packet_check(self.assignment, receiver_id=CHILD, ledger=ledger)
+        self.assertFalse(replay["act"], replay)
+
+    def test_a_declaration_too_deep_to_parse_is_refused_as_unreadable(self):
+        from codex_session_relay.service import LAUNCH_POLICY
+        (Path(self.state) / LAUNCH_POLICY).write_text("[" * 15000 + "]" * 15000,
+                                                      encoding="utf-8")
+        self.environment_names(None)
+        code, answer = self.packet_check(self.assignment, receiver_id=CHILD)
+        self.assertEqual(code, cli.EXIT_REFUSED, answer)
+        self.assertEqual(answer.get("reason"), "launch_policy_unreadable", answer)
+
 
 class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
     def setUp(self):
