@@ -3175,14 +3175,22 @@ def _guard_fallback(services, args):
     and neither depends on discovery, so an ambiguity in discovery is genuinely unrelated to them
     and the hook goes on classifying and recording. What is left is not a selection at all.
 
+    Or it is one made for this run only: a --state, or a CODEX_SESSION_RELAY_STATE the hook
+    inherited. Either skips discovery instead of settling it, so where discovery for this socket
+    would have refused as ambiguous or unidentified, the override is refused the same way rather
+    than judged; see _override_refusal. Where discovery would have named one store, the override
+    is used, which is the same answer a sole discovered store gets.
+
     Two answers this refuses, and they are not worth the same. A store that records a different
     App Server socket EXISTS and opens: the guard reads an unrelated installation's rows, finds no
     relationship, and receipt_missing holds a child that has finished. An ambiguous or
     unidentified selection is returned only when no canonical database is there yet, so today that
     fallback names a file nothing can open and the guard already answers state_unreadable and
     releases; refusing instead trades that recorded release for the candidates and the commands
-    that tell them apart. Both are refused, because a selection nobody made is not one this
-    decision may rest on, and an operator who has to settle it should be told which stores.
+    that tell them apart. An override under that ambiguity is worth as much as the first kind: it
+    names a store that exists and opens, so judging it can hold a finished child on a store nobody
+    recorded. All of them are refused, because a selection nobody made is not one this decision
+    may rest on, and an operator who has to settle it should be told which stores.
 
     The Stop is then neither classified nor recorded, which is the cost and is said in the payload.
     Nothing is held: the adapter reads an exit of 2 carrying an error record as the relay refusing
@@ -3191,17 +3199,60 @@ def _guard_fallback(services, args):
     del args  # the selection is the subject here; the arguments only chose it
 
     def resolve():
-        refusal = _selection_refusal(services)
+        refusal = _selection_refusal(services, for_stop=True) or _override_refusal(services)
         if refusal is None:
             return str(services.selection.db_path)
         refusal["stopNotJudged"] = (
             "this Stop was neither classified nor recorded: no --db-path named a receipt store"
             " and the coordinator recorded none in the intent, so the only candidate left was"
-            " this selection"
+            + (" a state directory chosen for this run, while discovery for this socket does not"
+               " name one store" if "overriddenBy" in refusal else " this selection")
         )
         raise guard.StoreNotSelected(refusal)
 
     return resolve
+
+
+def _override_refusal(services):
+    """The ambiguity discovery would have reported, when a one-run override skipped it.
+
+    guard-evaluate only. resolve_state_dir returns --state and CODEX_SESSION_RELAY_STATE before
+    discovery runs, so their selections carry no candidates and _selection_refusal has nothing to
+    refuse. For every other command that is right: naming a directory is how an operator settles
+    an ambiguity, and it is what the recovery lines tell them to do. For a Stop it is not, because
+    the directory was chosen for one run and nobody recorded it, and the store it names exists and
+    opens - reproduced as a hold on a finished child. So the question discovery would have asked
+    is asked here, and answered the same way.
+
+    Nothing is asked without a socket. Ambiguity is defined by stores recording one, and a host
+    that configured none compares no provenance at all, which is the documented limit; refusing
+    there would switch off hooks that were never ambiguous about anything.
+    """
+    from .store import OVERRIDES, discover_state_dir
+
+    selection = services.selection
+    if selection.source not in OVERRIDES or not services.socket_path:
+        return None
+    refusal = _ambiguity_refusal(
+        services, discover_state_dir(services.socket_path), for_stop=True
+    )
+    if refusal is None:
+        return None
+    # Nothing would have been created: the override names a directory that already exists.
+    refusal.pop("wouldHaveCreated", None)
+    refusal["overriddenBy"] = selection.detail
+    refusal["selectedDirectory"] = str(selection.path)
+    refusal["detail"] += (
+        "; this run's state directory came from " + selection.detail + ", which skips"
+        " discovery rather than settling it, and a directory chosen for one run is not one"
+        " anybody recorded"
+    )
+    refusal["recover"].append(
+        "  this run's directory came from " + selection.detail + ". An override is read before"
+        " discovery on every Stop that carries it, so while it is set, discovery naming one"
+        " store does not decide which store is read"
+    )
+    return refusal
 
 
 def cmd_guard_evaluate(services, args) -> dict:
@@ -4506,7 +4557,25 @@ def _program() -> str:
     return shlex.quote(argv0 if os.path.dirname(argv0) else name)
 
 
-def _recovery_commands(services, selection, contested: bool) -> list:
+# What a Stop hook's refusal says in place of the final line below. That line tells an operator to
+# pass --state, which settles the ambiguity for every command except guard-evaluate: for a Stop, a
+# directory chosen for one run is exactly what is refused. These say only what the code guarantees
+# and prescribe nothing that writes, because which store holds an assignment, and what a host's
+# environment pins, are facts this refusal cannot observe.
+_STOP_RECOVERY = (
+    "  this Stop was released without being judged. It is not judged again later, and a --state"
+    " or CODEX_SESSION_RELAY_STATE does not change that: a directory chosen for one run is not"
+    " one anybody recorded",
+    "  a later Stop of this assignment is judged against a store when the hook's settings name it"
+    " with --db-path, or the intent records it as dbPath (both are written once, so neither can"
+    " be added to an existing installation or assignment), or when discovery for this socket"
+    " names exactly one store and nothing pins another directory for the hook",
+    "  which of the candidates holds this assignment is not something this refusal can"
+    " establish; the lines above read them without changing anything",
+)
+
+
+def _recovery_commands(services, selection, contested: bool, *, for_stop=False) -> list:
     """Complete commands for an operator who has only this refusal to work from.
 
     Every one of them READS. Provenance is recorded by opening a store with a socket, which
@@ -4517,6 +4586,11 @@ def _recovery_commands(services, selection, contested: bool) -> list:
     under different conditions from the ones that produced the refusal, and for the reason
     the doctor exemption exists in the first place: the socket is what makes two stores
     candidates for each other.
+
+    for_stop is guard-evaluate's refusal. Its first line drops CODEX_SESSION_RELAY_STATE when this
+    process has it, because a hook that inherited the variable hands it to whoever pastes the line
+    in the same environment, and doctor under a pinned directory does not look for siblings. And
+    its closing lines are _STOP_RECOVERY rather than the advice to pass --state.
     """
     import shlex
 
@@ -4532,7 +4606,7 @@ def _recovery_commands(services, selection, contested: bool) -> list:
         if services.socket_path else ""
     )
     lines = [
-        f"{program}{socket} doctor",
+        f"{_without_state_env() if for_stop else ''}{program}{socket} doctor",
         "  lists the candidates under siblingStores",
     ]
     for candidate in list(selection.ambiguous or selection.unidentified):
@@ -4543,6 +4617,9 @@ def _recovery_commands(services, selection, contested: bool) -> list:
         "  service status groups by project, so the candidate holding the assignments you"
         " expect is the one to keep"
     )
+    if for_stop:
+        lines.extend(_STOP_RECOVERY)
+        return lines
     if contested:
         # Said in the payload, not only in the docs. Choosing one of two claiming stores does
         # not retire the other, so the next default invocation is refused again and every
@@ -4664,7 +4741,7 @@ def _reads_no_selected_store(args) -> bool:
     return handler in MARKER_COMMANDS
 
 
-def _selection_refusal(services):
+def _selection_refusal(services, *, for_stop=False):
     """What is wrong with the store this run resolved for itself, as a payload, or None.
 
     Separated from the refusal so one question can be asked at two moments. Every other command
@@ -4685,7 +4762,8 @@ def _selection_refusal(services):
 
     An explicit --state or environment override never arrives here: both return from
     resolve_state_dir before any discovery runs, because a caller who named a directory has
-    already decided which participants share it.
+    already decided which participants share it. guard-evaluate is the one caller that asks what
+    discovery would have said anyway, through _override_refusal, and for_stop is that caller's.
     """
     selection = services.selection
     # A store records the socket it serves, and the first recording wins so nothing rewrites
@@ -4716,6 +4794,15 @@ def _selection_refusal(services):
                 "note": "using a store does not rewrite the socket it recorded, so neither"
                         " command here adopts anything; choose the matching pair",
             }
+    return _ambiguity_refusal(services, selection, for_stop=for_stop)
+
+
+def _ambiguity_refusal(services, selection, *, for_stop=False):
+    """The ambiguous or unidentified refusal for this selection, or None when it has neither.
+
+    Takes the selection rather than reading services.selection, because guard-evaluate asks it
+    about the selection discovery WOULD have made when an override skipped discovery.
+    """
     if not (selection.ambiguous or selection.unidentified):
         return None
     contested = bool(selection.ambiguous)
@@ -4737,7 +4824,7 @@ def _selection_refusal(services):
         # from, and every one of these reads a store without recording anything, so they are
         # safe to repeat: provenance is written by opening a store, which is what the
         # refusal prevented.
-        "recover": _recovery_commands(services, selection, contested),
+        "recover": _recovery_commands(services, selection, contested, for_stop=for_stop),
     }
 
 
