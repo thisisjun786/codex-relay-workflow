@@ -1178,6 +1178,67 @@ question is how the second bridge arrives.
 Writing the record is not registering a server. On a host with no plugin installed the record
 is inert, and the command says so rather than reporting an installation.
 
+### The execution policy the plugin bridge runs under
+
+Codex starts a plugin-declared server with the App Server's own environment, which on this host
+is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge started that way reads no
+execution policy: `get_capabilities` reports `presence_only` with no roles, and a child created
+through the Desktop tools is never asked whether it runs its role's pair. `--execution-policy`
+gives the plugin-owned record the one fact that closes that gap:
+
+    python3 scripts/runtime_install.py register-mcp --owner plugin \
+        --bridge-command <destination>/current/bin/codex-thread-bridge \
+        --execution-policy /path/to/execution-policy.json --apply
+
+The record becomes version 2 and gains `executionPolicy`, with two fields: `path`, the file as
+given (expanded and made absolute, not resolved, like the relay's own launch declaration), and
+`digest`, the SHA-256 of the bytes this run read. It never carries what the file says. Before
+anything is written, the file goes through the bridge's own parser from this checkout, so a
+policy the bridge would refuse to start under is refused here instead, as
+`execution_policy_unreadable`. The output reports the mode and the declared role pairs, the same
+values `get_capabilities` discloses, and says which parser judged them: the installed runtime
+parses the file again every time it starts and decides for itself.
+
+At every start the packaged launcher reads the record and does one of two things. It refuses and
+exits 2, naming the record and the repair, when the file is missing, is not a regular file,
+cannot be read, or no longer hashes to `digest`, and also when its own environment already names a
+different policy file or digest. Otherwise it execs the bridge with
+`CODEX_THREAD_BRIDGE_EXECUTION_POLICY` set to `path` and
+`CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` set to `digest`, and the bridge refuses to start if
+the bytes it parses hash to anything else. Refusing to start is the visible failure. The
+declaration marks the server not required, so the session continues without the bridge's tools,
+and it never continues with a bridge that checks no role. A version-1 record names no policy and
+starts exactly as it always did, with the environment the launcher was given.
+
+The policy is part of the registration's identity, so the only rerun that succeeds is an identical
+one. Any other difference is refused like any other conflict, and nothing is written: another file,
+the same file with other contents, a rerun that drops the flag, or adding a policy to a version-1
+record. The refusal names the repair. Move the record aside by hand, or retire it with
+`plugin_transition.py disable`, which also retires the Stop settings. Then run `register-mcp`
+again. Every edit to the policy file, including adding an exception, therefore has two
+consequences. The relay picks the edit up when its daemon restarts. The bridge record has to be
+moved aside and registered again, and a thread started in between has no bridge tools. That
+differs from the relay's launch declaration, which names only the file. The digest is what lets a
+changed file fail visibly instead of being enforced unregistered.
+
+Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
+because a user-owned registration is started by its configuration entry and never reads the
+record. A version-2 record is also refused while an installed crw package in the plugin cache
+ships a launcher that reads version 1 only (`launcher_predates_policy`): that launcher would refuse
+the record, and every thread started afterwards would have no bridge. The check reads the cache,
+which is not proof of what a running App Server loaded, so the order on a host is: install the
+runtime, update the plugin package, restart Codex so it loads the package, register, then start a
+new thread and read `get_capabilities`. An installed runtime older than the digest variable still
+reads the policy file, and the launcher's own digest check is then the only digest check.
+
+Codex starts the server once for each thread it loads. That was observed on Codex Desktop
+0.154.0: one App Server process with a separate bridge child per thread, and the child's start
+time matching the thread's creation to the second. A record written with `--apply` therefore takes
+effect for threads started afterwards, with no App Server restart, and a thread already running
+keeps the bridge it spawned. The launcher's own bytes arrive with a plugin package update, and
+picking that up follows Codex's plugin reload rule. Neither is established on a host until a new
+thread's `get_capabilities` reports the digest the record names.
+
 The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
 back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
 control characters and the three-quote sequence.

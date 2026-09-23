@@ -256,6 +256,14 @@ durable copy of the bridge executable and its arguments. The table standdown arc
 under the record's own `.superseded-` name before the bytes go, so a run interrupted between the
 two rebuilds the record from the archive instead of from the pointer default with no arguments.
 
+The same holds for the execution policy a plugin-owned record may name (see
+[the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under)).
+Step 7 carries it forward from the live record when that record is the plugin's, and otherwise,
+with no live registration, from the newest retired record when that one was the plugin's. A rerun
+on such a host is therefore `already_done`, and a transition after `disable` rebuilds a record
+naming the same file and digest instead of one that starts a bridge checking no role. A user-owned
+record never names a policy, so nothing is invented for a manual install.
+
 ## Update
 
 Nothing here migrates a session. The settings record the adapter, the interpreter and the relay
