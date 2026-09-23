@@ -74,15 +74,15 @@ def read_reading(record) -> dict:
     """One completion reading, validated. Missing requirements read unknown and missing
     observations unobservable, because an absent field is not evidence either way."""
     products._object(record, READING_SCHEMA, READING_KEYS, "a completion reading")
-    claims = record.get("claims") or {}
+    claims = products._absent(record.get("claims"), {})
     products._closed(claims, CLAIMS, "claims")
-    requires = record.get("requires") or {}
+    requires = products._absent(record.get("requires"), {})
     products._closed(requires, products.CHECKS, "requires")
-    observed = record.get("observed") or {}
+    observed = products._absent(record.get("observed"), {})
     products._closed(observed, products.CHECKS, "observed")
-    evidence = record.get("evidence") or {}
+    evidence = products._absent(record.get("evidence"), {})
     products._closed(evidence, products.CHECKS, "evidence")
-    exceptions = record.get("exceptions") or []
+    exceptions = products._absent(record.get("exceptions"), [])
     if not isinstance(exceptions, list):
         products.malformed("exceptions is a list")
     reading = {
@@ -92,8 +92,8 @@ def read_reading(record) -> dict:
         "claims": {claim: products._flag(claims.get(claim), f"claims.{claim}", default=False)
                    for claim in CLAIMS},
         "requires": {}, "observed": {}, "evidence": {}, "exceptions": [],
-        "origin": products._choice(record.get("origin") or products.OBSERVED, products.ORIGINS,
-                                   "origin"),
+        "origin": products._choice(products._absent(record.get("origin"), products.OBSERVED),
+                                   products.ORIGINS, "origin"),
         "observedAt": products._text(record.get("observedAt"), "observedAt", optional=True,
                                      limit=64),
     }
@@ -105,7 +105,7 @@ def read_reading(record) -> dict:
         vocabulary = ACCEPTANCE_OBSERVED if check == "acceptance" else RESULT_OBSERVED
         reading["observed"][check] = products._choice(
             observed.get(check, "unobservable"), vocabulary, f"observed.{check}")
-        entry = evidence.get(check) or {}
+        entry = products._absent(evidence.get(check), {})
         products._closed(entry, ("fix", "verification"), f"evidence.{check}")
         reading["evidence"][check] = {
             key: _ref(entry[key], f"evidence.{check}.{key}")
@@ -340,8 +340,16 @@ def check(router, record) -> dict:
     The subject must be an issue bound to the product as read back, because a mismatch is filed
     as a re-verification demand on the subject issue itself: the ledger adopts it, so its first
     write is a comment there, never a new issue and never a state change.
+
+    The transaction begins before the subject's binding and the ledger's records are read, so
+    the context a verdict is evaluated in is the context it is committed with.
     """
     reading = read_reading(record)
+    with router.store.composing():
+        return _record_reading(router, reading)
+
+
+def _record_reading(router, reading) -> dict:
     product = reading["product"]
     registry = router.registry(product)
     if registry is None:

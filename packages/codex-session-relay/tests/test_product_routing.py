@@ -1046,6 +1046,52 @@ class RegistryChanges(ProductRoutingCase):
         self.assertEqual("TST", moved["testTarget"]["team"])
 
 
+class TransactionBoundaries(ProductRoutingCase):
+    """What a decision is made from is read inside the transaction that records it."""
+
+    def test_every_decision_is_made_inside_the_transaction_that_records_it(self):
+        from unittest import mock
+
+        from codex_session_relay import completion, placement
+
+        seen = []
+        real_decide, real_evaluate = placement.decide, completion.evaluate
+
+        def decide(*args, **kwargs):
+            seen.append(("decide", self.store.in_transaction))
+            return real_decide(*args, **kwargs)
+
+        def evaluate(*args, **kwargs):
+            seen.append(("evaluate", self.store.in_transaction))
+            return real_evaluate(*args, **kwargs)
+
+        with mock.patch.object(placement, "decide", decide), \
+                mock.patch.object(completion, "evaluate", evaluate):
+            self.route()
+            unknown = self.route(product=None, repository="example-org/unknown",
+                                 occurrenceKey="u1")
+            self.router.classify(unknown["faultId"], {"product": "alpha-notes",
+                                                      "by": "operator"})
+            self.router.check_completion(reading("ALN-9", observed={"acceptance": "absent"}))
+        self.assertEqual({"decide", "evaluate"}, {name for name, _inside in seen})
+        self.assertEqual([], [name for name, inside in seen if not inside])
+
+    def test_a_late_binding_that_makes_a_filed_route_a_follow_up_is_stored(self):
+        answer = self.route(product="beta-meter", repository="example-org/beta-meter",
+                            surface="real_use", phase="in_use", component="billing",
+                            symptom="charge_twice", severity="degraded",
+                            context={"regressionOf": "PR#77"})
+        self.assertEqual(("new_issue", "filed"), (answer["disposition"], answer["stage"]))
+        self.assertIsNone(self.router.port.get(answer["faultId"])["external_ref"])
+        self.router.bind(binding("beta-meter", "issue", "BTM-5", state="done",
+                                 components=["billing"], symptoms=["refund_lost"],
+                                 fixRef="PR#77"))
+        route = routes.get(self.store, answer["faultId"])
+        self.assertEqual(("follow_up", ["BTM-5"]), (route["disposition"],
+                                                    route["target"]["relate"]))
+        self.assertIn("BTM-5", [o["toIssue"] for o in route["target"]["obligations"]])
+
+
 class TheContractIsBound(unittest.TestCase):
     """The live binding proof: on this checkout the corrected ledger contract is present, every
     function, keyword and refusal value the port relies on included, so nothing refuses by name

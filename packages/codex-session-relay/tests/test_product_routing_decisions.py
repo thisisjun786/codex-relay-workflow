@@ -104,6 +104,20 @@ class Validation(unittest.TestCase):
             products.read_binding(binding("alpha-notes", "issue", "ALN-21",
                                           followUpOf=[{"issue": "ALN-9", "checks": []}]))
 
+    def test_an_empty_value_of_the_wrong_type_is_refused_not_read_as_missing(self):
+        for fields in ({"context": []}, {"detail": []}, {"evidence": {}}, {"origin": ""},
+                       {"context": ""}):
+            with self.subTest(fields=fields), self.assertRaises(products.RouteRefused):
+                incident(**fields)
+        with self.assertRaises(products.RouteRefused):
+            products.read_registry(dict(ALPHA, surfaces=[]))
+        base = {"schema": "completion-reading/1", "product": "alpha-notes", "subject": "ALN-9"}
+        completion.read_reading(base)
+        for fields in ({"claims": []}, {"requires": []}, {"observed": []}, {"evidence": []},
+                       {"exceptions": ""}, {"evidence": {"acceptance": []}}, {"origin": ""}):
+            with self.subTest(fields=fields), self.assertRaises(products.RouteRefused):
+                completion.read_reading(dict(base, **fields))
+
     def test_numbers_without_json_text_are_refused_everywhere_a_scalar_is_read(self):
         for value in (float("nan"), float("inf"), float("-inf")):
             with self.subTest(value=value):

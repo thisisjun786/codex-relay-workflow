@@ -161,6 +161,13 @@ def _closed(record, keys, what):
         malformed(f"{what} carries keys this contract does not define: {unknown}")
 
 
+def _absent(value, default):
+    """The default only for a field that is absent or null. Any other value, an empty list or
+    string included, stays the caller's to type-check: reading [] as {} would accept a
+    malformed record as missing data and change the verdict built on it."""
+    return default if value is None else value
+
+
 def _text(value, name, *, optional=False, limit=MAX_TEXT):
     if value is None and optional:
         return None
@@ -239,7 +246,7 @@ def read_registry(record) -> dict:
     product = _product(record.get("product"), "product")
     if product == UNCLASSIFIED:
         malformed(f"{UNCLASSIFIED!r} is the pending-classification bucket, not a product")
-    surfaces = record.get("surfaces") or {}
+    surfaces = _absent(record.get("surfaces"), {})
     if not isinstance(surfaces, dict):
         malformed("surfaces is an object keyed by surface")
     watched = {}
@@ -397,7 +404,7 @@ def read_incident(record) -> dict:
     severity it has seen and nothing could lower one a classifier raised.
     """
     _object(record, INCIDENT_SCHEMA, INCIDENT_KEYS, "an incident")
-    context = record.get("context") or {}
+    context = _absent(record.get("context"), {})
     _closed(context, CONTEXT_KEYS, "context")
     cause = record.get("cause")
     if cause is not None:
@@ -411,7 +418,7 @@ def read_incident(record) -> dict:
         _closed(goal, GOAL_KEYS, "goal")
         goal = {"key": _key(goal.get("key"), "goal.key"),
                 "criteria": _text(goal.get("criteria"), "goal.criteria", optional=True)}
-    detail = record.get("detail") or {}
+    detail = _absent(record.get("detail"), {})
     _closed(detail, DETAIL_KEYS, "detail")
     return {
         "schema": INCIDENT_SCHEMA,
@@ -424,7 +431,7 @@ def read_incident(record) -> dict:
         "symptom": _key(record.get("symptom"), "symptom"),
         "severity": _choice(record.get("severity"), SEVERITIES, "severity"),
         "expected": _choice(record.get("expected"), EXPECTED, "expected", optional=True),
-        "origin": _choice(record.get("origin") or OBSERVED, ORIGINS, "origin"),
+        "origin": _choice(_absent(record.get("origin"), OBSERVED), ORIGINS, "origin"),
         "occurrenceKey": _text(record.get("occurrenceKey"), "occurrenceKey", limit=256),
         "observedAt": _text(record.get("observedAt"), "observedAt", optional=True, limit=64),
         "context": {
@@ -451,7 +458,7 @@ def read_evidence(values) -> list:
     of scalar readings. Nested structure, long text and anything past the byte bound are
     refused: evidence says where to look, it does not carry the thing looked at.
     """
-    values = values or []
+    values = _absent(values, [])
     if not isinstance(values, list):
         malformed("evidence is a list")
     if len(values) > MAX_EVIDENCE_ENTRIES:
@@ -528,11 +535,13 @@ def canonical(value) -> str:
 
 def read_page(limit, after, *, ceiling) -> tuple:
     """(limit, after) of a caller's page: a positive whole number, at most the ceiling, and no
-    cursor or one a listing returned. Refused rather than clamped, because a bound on what is
-    read is a bound on what is written too, and a nonsense one is no permission to do one."""
+    cursor or a non-negative whole number inside SQLite's rowid range. Refused rather than
+    clamped, because a bound on what is read is a bound on what is written too, and a nonsense
+    one is no permission to do one. A cursor in range is only a position: one no listing
+    returned starts the page at that rowid and reads nothing it should not."""
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         malformed(f"limit is a positive whole number, not {limit!r}")
     if after is not None and (isinstance(after, bool) or not isinstance(after, int)
                               or not 0 <= after <= MAX_CURSOR):
-        malformed(f"after is a cursor a listing returned, not {after!r}")
+        malformed(f"after is a non-negative rowid cursor, not {after!r}")
     return min(limit, ceiling), after

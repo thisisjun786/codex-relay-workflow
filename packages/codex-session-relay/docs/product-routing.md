@@ -38,7 +38,9 @@ Every surface enters in one shape, `product-incident/1`:
 The key set is closed. An incident carrying anything else is refused rather than stored, because
 an intake that kept whatever it was handed would be exactly the indiscriminate collection this
 feature must not do. `component` and `symptom` are keys, not prose: they decide identity, and
-two products describing a failure in similar words stay two failures.
+two products describing a failure in similar words stay two failures. Only an absent or null field
+reads as missing; an empty value of the wrong type, `[]` where an object belongs, is refused like
+any other malformed value.
 
 Evidence is a few references, never a transcript. Each entry has a `kind`, a `ref`, optionally
 a `source` and a flat `observed` object of scalar readings; at most sixteen entries and 4096
@@ -368,8 +370,16 @@ fault owns no issue yet, from its latest stored incident. It does this in the sa
 the binding, so a binding whose consequences were refused is not kept. Its answer lists what
 changed.
 
-`--limit` is a positive whole number and `--after` a cursor a listing returned. Anything else is
-refused before any work, because a bound on what a command reads is a bound on what it writes.
+`--limit` is a positive whole number, and `--after` a non-negative whole number inside SQLite's
+rowid range, normally the `next` a listing returned. Anything else is refused before any work,
+because a bound on what a command reads is a bound on what it writes.
+
+`route-intake`, `route-classify` and `completion-check` each run in one transaction from their
+first read to their last write. The registry, bindings, run owner and ledger records a decision
+is made from are the ones it commits with; a binding another process commits meanwhile is either
+seen or waits, and then decides the route again itself. That redecision stores any change to the
+route's placement, its disposition or its related issues, so a completed issue bound late makes a
+filed route the follow-up it is.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds

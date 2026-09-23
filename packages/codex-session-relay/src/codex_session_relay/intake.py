@@ -30,8 +30,19 @@ def _stored(value):
 
 
 def intake(router, record) -> dict:
-    """Route one incident. Refuses, writing nothing, when it cannot be collected here."""
+    """Route one incident. Refuses, writing nothing, when it cannot be collected here.
+
+    One transaction from the first read to the last write. The registry, the bindings and the
+    run's owner the decision is made from are the ones it commits with: a binding another
+    process commits meanwhile is either seen here or waits for this intake, and is then
+    decided with it by that binding's own redecision.
+    """
     incident = products.read_incident(record)
+    with router.store.composing():
+        return _intake(router, incident)
+
+
+def _intake(router, incident) -> dict:
     registries = router.registries()
     product, why = placement.resolve_product(registries, incident)
     registry = registries.get(product) if product else None
@@ -401,10 +412,14 @@ def _again(router, route, registry, bindings):
                            unverified_cause=current.get("unverifiedCause"))
     # The team counts only where a project is named: that is where the ledger's target for the
     # scope carries it, and a registry that moved the product to another team re-points there.
+    # Disposition and related issues count too: a binding that makes the route a follow-up of a
+    # completed issue changes what it owes, even where the project stays the same.
     if (target["project"], target["owner"], target["hold"],
-            target["team"] if target["project"] else None) == (
+            target["team"] if target["project"] else None,
+            decision["disposition"], sorted(target["relate"])) == (
             current["project"], current["owner"], current["hold"],
-            current["team"] if current["project"] else None):
+            current["team"] if current["project"] else None,
+            route["disposition"], sorted(current.get("relate") or [])):
         return None
     place = scope(route["workspace"], decision["project"])
     # Held with no project, a fault that owns no issue leaves its old project's scope: the
@@ -461,8 +476,14 @@ def read_classification(record) -> dict:
 
 
 def classify(router, fault_id, record) -> dict:
-    """Give a pending record its product: replay its incidents there and withdraw it."""
+    """Give a pending record its product: replay its incidents there and withdraw it. One
+    transaction from reading the pending record to withdrawing it, as for an intake."""
     classification = read_classification(record)
+    with router.store.composing():
+        return _classify(router, fault_id, classification)
+
+
+def _classify(router, fault_id, classification) -> dict:
     route = routes.get(router.store, fault_id)
     if route is None or route["product_key"] != products.UNCLASSIFIED:
         products.refuse(RefusalReason.ROUTE_STATE_CONFLICT,
