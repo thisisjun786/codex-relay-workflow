@@ -13,10 +13,13 @@ that an installed plugin loaded on any host.
 """
 
 import argparse
+import errno
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -140,8 +143,34 @@ def directory_payload(plugin_root):
                 errors.append(name + ": an empty directory still ships; remove it")
             continue
         mode = "100755" if path.stat().st_mode & 0o111 else "100644"
-        payload[name] = (mode, path.read_bytes())
+        try:
+            data = _regular_bytes(path)
+        except OSError as error:
+            errors.append("installed " + name + " could not be read as a regular file ("
+                          + type(error).__name__ + ": " + str(error) + "); the installer"
+                          " copies files, and this one is not a file it can copy")
+            continue
+        payload[name] = (mode, data)
     return payload, errors
+
+
+def _regular_bytes(path):
+    """A file's bytes from one descriptor opened without blocking and judged a regular file.
+
+    The transition runs this check on the cached package while it holds the bridge ownership
+    lock. A pipe there, or one swapped in after rglob saw a file, would hold an ordinary open, and
+    that lock with it, until something wrote to it.
+    """
+    descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        stream = os.fdopen(descriptor, "rb")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with stream:
+        return stream.read()
 
 
 def digest(payload):

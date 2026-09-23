@@ -12,6 +12,7 @@ import random
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from crw_runtime import bridgerecord, codexconfig, completion, hooks, pointer, reading
@@ -261,7 +262,8 @@ def newline_spelling(path):
     comparison are already translated.
     """
     try:
-        return b"\r\n" not in Path(path).read_bytes()
+        # Through a judged descriptor: read_mcp asks this under the bridge ownership lock.
+        return b"\r\n" not in reading.regular_bytes(path)
     except OSError:
         return None
 
@@ -405,21 +407,25 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
     if version is not None:
         answer["cacheVersion"] = str(version)
         manifest = version / ".codex-plugin" / "plugin.json"
-        answer["payload"]["manifest"] = manifest.is_file()
+        # Read through a descriptor opened without blocking. Asking is_file() and then opening
+        # the path let a FIFO put there in between hold this reader, and register-mcp asks it
+        # under the ownership lock.
+        found = bridgerecord.read_json_without_blocking(manifest, "the cached manifest")
+        answer["payload"]["manifest"] = found.state == reading.PRESENT
         declared = None
-        if manifest.is_file():
-            try:
-                document = json.loads(manifest.read_text(encoding="utf-8"))
-                if not isinstance(document, dict):
-                    # Valid JSON and not an object: a list or a string answers .get with an
-                    # AttributeError, and every command ended in an internal error over a cached
-                    # manifest this reader is supposed to report on.
-                    raise ValueError("the cached manifest is not an object, it is a "
-                                     + type(document).__name__)
-                declared = document.get("skills")
-            except (OSError, ValueError) as error:
+        if found.state == reading.PRESENT:
+            document = found.value
+            if not isinstance(document, dict):
+                # Valid JSON and not an object: a list or a string answers .get with an
+                # AttributeError, and every command ended in an internal error over a cached
+                # manifest this reader is supposed to report on.
                 answer["payload"]["manifest"] = False
-                answer["detail"] = "the cached manifest could not be read: " + str(error)
+                answer["detail"] = ("the cached manifest could not be read: the cached manifest"
+                                    " is not an object, it is a " + type(document).__name__)
+            else:
+                declared = document.get("skills")
+        elif found.state != reading.ABSENT:
+            answer["detail"] = "the cached manifest could not be read: " + str(found.detail)
         root = (version / str(declared)[2:].strip("/")) if isinstance(declared, str) \
             and declared.startswith("./") else None
         answer["payload"]["skills"] = bool(root and root.is_dir())
@@ -723,6 +729,37 @@ def archive_order(path, stem):
         return (stamp, int(suffix) if suffix else 0)
     except ValueError:
         return ("", -1)
+
+
+# The name retire() gives an archive: a UTC stamp, and a zero-padded collision suffix after it.
+_ARCHIVE_NAME = re.compile(r"(\d{8}T\d{6}Z)(?:-(\d{3,}))?")
+
+
+def archive_key(path, stem):
+    """The order of an archive named the way retire() names one, or None for any other name.
+
+    archive_order ranks a name it cannot parse below every other, so a selector built on it steps
+    over that entry to an older one. Where the choice decides what gets restored, a name nobody
+    can place is a question left unanswered, and the selector refuses on it instead.
+    """
+    matched = _ARCHIVE_NAME.fullmatch(str(Path(path).name)[len(stem):])
+    if matched is None:
+        return None
+    # A stamp retire() takes from the clock is a real UTC moment; one that is not -- a month 99,
+    # a second 99 -- was never written by it and cannot be placed against the ones that were.
+    try:
+        datetime.strptime(matched.group(1), "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return None
+    suffix = matched.group(2)
+    if suffix is None:
+        return matched.group(1), 0
+    # retire() names its first collision -001 and pads with "%03d": -000, or a padding it does
+    # not write such as -0001, is a name it never produced.
+    number = int(suffix)
+    if number < 1 or suffix != "%03d" % number:
+        return None
+    return matched.group(1), number
 
 
 def archives(home, stem):

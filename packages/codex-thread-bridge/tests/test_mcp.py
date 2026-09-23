@@ -1,7 +1,12 @@
 import asyncio
+import hashlib
 import json
 import os
+import shutil
 import sys
+from pathlib import Path
+
+import pytest
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -201,6 +206,132 @@ async def test_a_configured_policy_that_cannot_be_used_stops_the_server(fake_ser
     _, errors = await asyncio.wait_for(process.communicate(), timeout=60)
     assert process.returncode != 0
     assert "execution_policy_unreadable" in errors.decode()
+    assert not state.exists(), "the server stopped before it opened any durable state"
+    assert fake.calls == []
+
+
+# ------------------------------------------------------------- started the way Codex Desktop starts it
+#
+# Codex Desktop spawns this server through the crw plugin's launcher, with the App Server's bare
+# environment: no CODEX_HOME and no execution-policy variable. These start it the same way: the
+# repository's own launcher, copied to where an installation puts it under a temporary Codex home
+# and started from the package root the declaration names, so it has to find its record from its
+# own location. HOME is somewhere else, so a launcher that fell back to the user's home would find
+# no record rather than a real one. The launcher is outside this package, so a run of this suite
+# without the repository around it skips here -- and scripts/ci/packages.py fails any skipped
+# case, so the repository's own run never skips.
+
+LAUNCHER = Path(__file__).resolve().parents[3] / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+CHILD = {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
+ROLE_POLICY = {"roles": {"child": CHILD,
+                         "parent": {"model": "devin/swe-2", "reasoningEffort": "max"}}}
+
+
+def launched_by_the_plugin(tmp_path, socket, *, policy=ROLE_POLICY):
+    if not LAUNCHER.is_file():
+        pytest.skip("the crw plugin launcher is not beside this package: " + str(LAUNCHER))
+    home = tmp_path / "codex-home"
+    package = home / "plugins" / "cache" / "crw" / "crw" / "0.0.0"
+    (package / "wiring").mkdir(parents=True)
+    shutil.copyfile(LAUNCHER, package / "wiring" / LAUNCHER.name)
+    # What makes the directory six levels up a Codex home to the launcher, rather than only a
+    # directory that happens to be there.
+    (home / "config.toml").write_text("", encoding="utf-8")
+    record = {"recordVersion": 1, "owner": "plugin", "serverName": "codex-thread-bridge",
+              "bridgeExecutable": sys.executable,
+              "args": ["-m", "codex_thread_bridge.server", "--socket", str(socket),
+                       "--state-dir", str(tmp_path / "state")]}
+    digest = None
+    if policy is not None:
+        path = tmp_path / "execution-policy.json"
+        data = json.dumps(policy).encode()
+        path.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        record.update(recordVersion=2, executionPolicy={"path": str(path), "digest": digest})
+    (home / "crw-bridge-mcp.json").write_text(json.dumps(record))
+    # Only what the host hands a plugin server: the SDK's own short list (HOME, PATH and the
+    # like), which carries neither CODEX_HOME nor an execution-policy variable, with HOME moved.
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    parameters = StdioServerParameters(command=sys.executable, args=["./wiring/" + LAUNCHER.name],
+                                       cwd=str(package), env={"HOME": str(user_home)})
+    return parameters, digest
+
+
+async def test_the_plugin_launched_bridge_reports_the_host_policy_and_checks_the_role(
+    fake_server, tmp_path
+):
+    fake, socket = fake_server
+    params, digest = launched_by_the_plugin(tmp_path, socket)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        capabilities = await session.call_tool("get_capabilities", {})
+        reported = capabilities.structuredContent["executionPolicy"]
+        assert reported["digest"] == digest
+        assert reported["roles"]["child"] == {"role": "child", "expectation": "pair",
+                                              "model": CHILD["model"],
+                                              "reasoningEffort": CHILD["reasoningEffort"]}
+        before = list(fake.calls)
+        refused = await session.call_tool(
+            "create_thread",
+            {"request_id": "wrong-child", "cwd": str(tmp_path), "prompt": "READY",
+             "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh", "role": "child"},
+        )
+        assert refused.isError
+        assert "execution_role_mismatch" in str(refused.content)
+        # Not one call of any kind reached the host for the refused request.
+        assert fake.calls == before
+        created = await session.call_tool(
+            "create_thread",
+            {"request_id": "right-child", "cwd": str(tmp_path), "prompt": "READY",
+             "model": CHILD["model"], "reasoning_effort": CHILD["reasoningEffort"],
+             "role": "child"},
+        )
+        assert not created.isError, created.content
+        assert created.structuredContent["executionPolicy"]["digest"] == digest
+    assert fake.count("thread/start") == 1
+
+
+async def test_a_plugin_record_naming_no_policy_starts_exactly_as_before(fake_server, tmp_path):
+    fake, socket = fake_server
+    params, _ = launched_by_the_plugin(tmp_path, socket, policy=None)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        capabilities = await session.call_tool("get_capabilities", {})
+        assert capabilities.structuredContent["executionPolicy"] == {
+            "mode": "presence_only",
+            "digest": None,
+            "roles": {},
+        }
+
+
+async def test_a_server_started_expecting_another_digest_never_starts(fake_server, tmp_path):
+    """The bridge's own check, for a file that changed after the launcher looked at it."""
+    fake, socket = fake_server
+    policy = tmp_path / "execution-policy.json"
+    policy.write_text(json.dumps(ROLE_POLICY))
+    state = tmp_path / "state"
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "codex_thread_bridge.server",
+        "--socket",
+        str(socket),
+        "--state-dir",
+        str(state),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={
+            **os.environ,
+            "CODEX_THREAD_BRIDGE_EXECUTION_POLICY": str(policy),
+            "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST": "0" * 64,
+        },
+    )
+    _, errors = await asyncio.wait_for(process.communicate(), timeout=60)
+    assert process.returncode != 0
+    assert "execution_policy_unreadable" in errors.decode()
+    assert "changed after it was registered" in errors.decode()
     assert not state.exists(), "the server stopped before it opened any durable state"
     assert fake.calls == []
 
