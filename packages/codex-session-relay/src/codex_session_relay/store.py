@@ -1323,6 +1323,10 @@ GUARD_INDEXES = (
 
 STATE_ENV = "CODEX_SESSION_RELAY_STATE"
 PRECEDENCE = ("flag", "env", "xdg", "home")
+# The two sources resolve_state_dir returns before discovery runs. A selection from either carries
+# no ambiguity of its own, because nothing was discovered; discover_state_dir is how a caller asks
+# what discovery would have said without it.
+OVERRIDES = PRECEDENCE[:2]
 
 
 def _now_iso() -> str:
@@ -1404,6 +1408,19 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
         return StateSelection(
             Path(override).expanduser().absolute(), "env", f"{STATE_ENV}={override}", None
         )
+    return discover_state_dir(socket_path)
+
+
+def discover_state_dir(socket_path=None) -> StateSelection:
+    """What discovery alone selects: XDG_STATE_HOME or the home default, scoped by the socket.
+
+    resolve_state_dir returns an explicit --state or CODEX_SESSION_RELAY_STATE before any of this
+    runs, and every ordinary command is right to: a caller who named a directory decided which
+    participants share it. guard-evaluate asks this separately when an override reaches the store
+    it would judge a Stop against, because a directory chosen for one run is not a recorded choice,
+    and it must not settle an ambiguity this would have reported. Split out rather than repeated so
+    both answers come from one walk.
+    """
     xdg = os.environ.get("XDG_STATE_HOME")
     if xdg:
         base, source, detail = Path(xdg).expanduser(), "xdg", f"XDG_STATE_HOME={xdg}"

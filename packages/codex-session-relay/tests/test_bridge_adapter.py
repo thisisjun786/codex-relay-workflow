@@ -1743,7 +1743,7 @@ class ChildCreationUnderDeclaredPolicy(unittest.TestCase):
         self.assertIn("execution_role", str(raised.exception))
         self.assertEqual(calls, [])
 
-    def test_a_declared_child_pair_is_created_and_a_parent_pair_is_not(self):
+    def test_a_declared_child_pair_is_created_and_an_undeclared_pair_is_not(self):
         calls = []
 
         class Creating:

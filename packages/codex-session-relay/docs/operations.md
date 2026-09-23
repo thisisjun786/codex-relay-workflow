@@ -72,10 +72,12 @@ then read each candidate, carrying the same socket so the comparison is like for
 the one to keep. Neither command records provenance; only opening a store with a socket does
 that, so inspection is safe to repeat.
 
-Two things this recovery does not do. Selecting one of two claiming stores does not remove
-the ambiguity — both still record the socket, so the next invocation that relies on default
+Two things this recovery does not do. Selecting one of two claiming stores does not remove the
+ambiguity — both still record the socket, so the next invocation that relies on default
 discovery is refused again, and every participant of that assignment has to pass the same
-explicit `--state` until one of the stores is retired. And the different-socket refusal's
+explicit `--state` until one of the stores is retired. The Stop hook is the exception: a
+directory chosen for one run does not settle it for `guard-evaluate`, whose refusal ends
+differently (see the exemptions below). And the different-socket refusal's
 own recovery list adopts nothing: using a store does not rewrite the socket it recorded, so
 the two commands it prints only read the mismatched pair apart — this store under the socket
 it actually records, and the socket you asked for under whichever store belongs to it. The
@@ -128,12 +130,37 @@ closes. A host that configures no socket therefore keeps exactly what it had —
 and an inherited `CODEX_SESSION_RELAY_STATE` reaching another installation's store is read as
 though it were this one's. Configure it on any host where more than one installation exists.
 
-The ambiguous and unidentified halves do not remove a wrong answer either, today. Those selections
-are returned only when no canonical database is there yet, so the fallback names a file nothing can
-open, and the guard already answers `state_unreadable` and releases. For them the refusal trades a
-recorded release for a diagnosis: the candidate stores and the commands that tell them apart,
-instead of "receipts unreadable". Giving up the marker observation for that Stop is the cost, and
-it is the reason this boundary is written down here rather than left to the code.
+The ambiguous and unidentified halves do not remove a wrong answer either, today, when the
+selection is discovery's own. Those selections are returned only when no canonical database is
+there yet, so the fallback names a file nothing can open, and the guard already answers
+`state_unreadable` and releases. For them the refusal trades a recorded release for a diagnosis:
+the candidate stores and the commands that tell them apart, instead of "receipts unreadable".
+Giving up the marker observation for that Stop is the cost, and it is the reason this boundary
+is written down here rather than left to the code.
+
+A state directory chosen for one run is different, and there the refusal does remove a wrong
+answer. `--state`, or a `CODEX_SESSION_RELAY_STATE` the hook inherits from the host, returns
+from `resolve_state_dir` before discovery runs, so the selection carries no candidates of its
+own, and the store it names exists and opens: judged, a relationship missing from it reads as
+`receipt_missing` and holds a child that has finished. So when the guard reaches its third
+source through such an override and a socket is configured, it asks what discovery alone would
+have said (`discover_state_dir`). If that is ambiguous or unidentified, it refuses with the same
+reason, adding `overriddenBy` (the flag or the variable, as given) and `selectedDirectory`. If
+discovery would have named exactly one store, the override is used, which is the answer a sole
+discovered store gets. With no socket nothing is compared, the limit above. Every other command
+keeps `--state` as the way to settle an ambiguity; only the Stop refuses it, because nobody
+recorded that choice.
+
+The guard's ambiguous and unidentified refusals end with lines that are true for a Stop instead
+of the advice to pass `--state`: the Stop was released without being judged and is not judged
+again later; a later Stop of the assignment is judged when the hook's settings name a store with
+`--db-path` or the intent records it as `dbPath` (both are written once, so neither can be added
+to an existing installation or assignment), or when discovery names exactly one store and
+nothing pins another directory for the hook; and which candidate holds the assignment is not
+something the refusal can establish. For an override they add that it is read before discovery
+on every Stop that carries it. None of them writes anything. Their `doctor` line drops an
+inherited `CODEX_SESSION_RELAY_STATE`, because under a pinned directory `doctor` does not look
+for siblings.
 
 Neither half holds anything. A hook adapter reads an exit of 2 carrying the relay's own error
 record as the relay refusing a request it understood, prints no decision, and lets the turn end.

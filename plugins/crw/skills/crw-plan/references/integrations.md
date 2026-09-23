@@ -513,10 +513,11 @@ references them rather than keeping a second copy.
 
 #### Execution settings by role
 
-Each level runs on its own model and reasoning effort, and which pair belongs to which role is a
-recorded product decision rather than something a task infers. The supervisor's model is Jun's own
-selection and is never propagated, changed by automation, or copied to the level below it; the
-parent's and the child's come from the role policy.
+Each level runs on the model and reasoning effort decided for its role, and which pair belongs to
+which role is a recorded product decision rather than something a task infers. Two roles may be
+decided onto the same pair; each is still read and checked as its own role. The supervisor's
+model is Jun's own selection and is never propagated, changed by automation, or copied to the
+level below it; the parent's and the child's come from the role policy.
 
 | Role | Model and effort | Who decides |
 | --- | --- | --- |
