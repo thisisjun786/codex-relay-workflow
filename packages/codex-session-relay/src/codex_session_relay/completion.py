@@ -404,7 +404,11 @@ def check(router, record) -> dict:
                 routes.store_incident(db, router.clock, ids["mismatch"], {
                     "occurrenceKey": key, "subject": reading["subject"], "check": name,
                     "verdict": verdict, "observedAt": reading["observedAt"]}, keep=None)
-                written.append({"check": name, "faultId": ids["mismatch"], "recorded": verdict})
+                # The ledger decides whether this reading files: under the class default the
+                # first one does; a product whose own policy raises the threshold waits for that
+                # many. Its state says which, where "no new write queued by this call" would not.
+                written.append({"check": name, "faultId": ids["mismatch"], "recorded": verdict,
+                                "ledgerState": (port.get(ids["mismatch"]) or {}).get("state")})
             if verdict == UNVERIFIED:
                 port.record(port.observation(fault_class=products.UNVERIFIED, severity="notice",
                                              signature=_signature(reading, name), **observed))

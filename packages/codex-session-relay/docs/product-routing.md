@@ -136,10 +136,11 @@ into its product's existing suitable project.
 The proposal is a `project_needed` record of the product, recorded at notice under the scope
 `__projects__` (a target with the product's team and no project), so it can never file an issue
 itself. The create is queued on it explicitly as a ledger publication of routing's own
-`project_create` kind, under the trigger `need:<goal>:r<n>`, where n counts that record's earlier
-creates; a goal that qualifies again after a cancelled create gets its own write. The kind gets
-the ledger's single-create, uncertain, reconcile and readback rules unchanged, and two
-evaluations of the same goal converge on one record and one write.
+`project_create` kind. A create kind has one write per record: a goal that qualifies again
+after its create was cancelled revives that write under the same id with the new members, and the
+pre-issue check runs again before it is issued. The kind gets the ledger's single-create,
+uncertain, reconcile and readback rules unchanged, and two evaluations of the same goal converge
+on one record and one write.
 
 Immediately before the write is issued, the kind's pre-issue check recomputes the whole predicate
 from this store inside the ledger's own transaction: the policy still enabled, enough members
@@ -199,8 +200,13 @@ The subject must be an issue bound to the product as read back, because a mismat
 re-verification demand on the subject issue itself. It is a `completion_mismatch` record,
 one per subject and check, adopted by the subject issue and recorded at degraded. The class
 declares a threshold of one, since a reading that looked for the evidence and did not find it is
-the whole proof. Its first write is therefore a comment on the subject, never a new issue, and
-completion checks queue no update of any kind. A mismatch found again after its record was
+the whole proof. Under that default the first reading files, and its first write is a comment on
+the subject, never a new issue. The ledger's policy stays authoritative: a product that raises
+its own degraded threshold for `completion_mismatch` waits for that many readings, as for any
+class. Until then the mismatch is recorded, the subject's adoption is stored, and
+`route-show --attention` and the digest list it as `completion_mismatch_open`. The answer
+reports each recorded mismatch's ledger state (`observed` recorded, `open` filed). Completion
+checks queue no update of any kind. A mismatch found again after its record was
 resolved starts a new round, a new record for the same subject and check adopted the same way.
 Were it the old record coming back, the ledger's rule for a resolved fault that recurs would
 queue a reopen of the subject. A completion check never changes the subject's state, so the new

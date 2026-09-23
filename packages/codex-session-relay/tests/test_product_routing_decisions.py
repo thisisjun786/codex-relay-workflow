@@ -553,6 +553,10 @@ class LedgerPortBeforeBinding(RelayTestCase):
             absent={"queue"})))
         self.assertIn("faults.UNASSIGNED == 'unassigned'", ledger_port.missing(
             synthetic_contract(unassigned="nobody")))
+        # A refusal routing tells apart by value, renamed, closes the gate: otherwise the hold it
+        # stands for would become an uncaught refusal that no name or keyword check notices.
+        self.assertIn("RefusalReason('fault_adopt_conflict')", ledger_port.missing(
+            synthetic_contract(refusals=("fault_scope_conflict",))))
 
     def test_a_positional_only_parameter_is_a_gap_even_beside_a_catch_all(self):
         def positional(workspace, /, **kwargs):
@@ -586,9 +590,11 @@ class LedgerPortBeforeBinding(RelayTestCase):
                 self.assertNotIn("faultsweep", imported)
 
 
-def synthetic_contract(*, drop=frozenset(), absent=frozenset(), unassigned="unassigned"):
+def synthetic_contract(*, drop=frozenset(), absent=frozenset(), unassigned="unassigned",
+                       refusals=ledger_port.OWNER_REFUSALS):
     """A stand-in MODULE with exactly the signatures the gate asks for - used only to test the
     gate's own logic, never to route anything. Signatures are declared, not executed."""
+    import enum
     import inspect
     import types
 
@@ -609,6 +615,7 @@ def synthetic_contract(*, drop=frozenset(), absent=frozenset(), unassigned="unas
         for name, keywords in ledger_port.LEDGER_METHODS.items() if name not in absent})
     return types.SimpleNamespace(
         UNASSIGNED=unassigned, FaultLedger=ledger,
+        RefusalReason=enum.Enum("RefusalReason", {value.upper(): value for value in refusals}),
         **{name: function(name, keywords)
            for name, keywords in ledger_port.MODULE_FUNCTIONS.items()})
 

@@ -76,6 +76,12 @@ CAPABILITIES = (
     "claim", "fail", "reconcile", "record_fix", "record_reverification", "resolve",
 )
 
+# Ledger refusals routing tells apart BY VALUE: an owner who cannot take the fault now (another
+# issue, an issued create, another workspace) becomes a hold somebody decides. A contract that
+# renamed one of them would turn that hold into an uncaught refusal without failing a name or
+# keyword check, so the gate requires these values too.
+OWNER_REFUSALS = ("fault_adopt_conflict", "fault_scope_conflict")
+
 
 def missing(module=None) -> list:
     """What the corrected contract still lacks, or nothing when the port can bind.
@@ -94,6 +100,9 @@ def missing(module=None) -> list:
     ledger = getattr(module, "FaultLedger", None)
     for name, keywords in LEDGER_METHODS.items():
         gaps.extend(_signature_gaps(getattr(ledger, name, None), f"FaultLedger.{name}", keywords))
+    reasons = {getattr(member, "value", None)
+               for member in (getattr(module, "RefusalReason", None) or ())}
+    gaps.extend(f"RefusalReason({value!r})" for value in OWNER_REFUSALS if value not in reasons)
     return gaps
 
 

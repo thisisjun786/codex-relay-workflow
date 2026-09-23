@@ -160,7 +160,10 @@ def evaluate(router, product) -> dict:
             skipped.append({"goal": goal, "reasons": ["a project create for this goal is"
                                                       " already queued or done"]})
             continue
-        trigger = f"need:{goal}:r{len(rows)}"
+        # A create kind has one row per fault: a goal that qualifies again after a cancelled
+        # create revives that row under its id with this payload, and the pre-issue check runs
+        # again before it is issued. The trigger names the reason; it does not make a new write.
+        trigger = f"need:{goal}"
         # The family label belongs on the project, never on an issue.
         target = routes.plain_target(team=registry["team"], labels=[registry["familyLabel"]])
         with router.store.composing() as db:

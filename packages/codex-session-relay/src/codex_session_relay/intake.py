@@ -8,12 +8,13 @@ refuses before it writes anything.
 
 import json
 
-from . import placement, products, routes
+from . import ledger_port, placement, products, routes
 from .errors import RefusalReason, RelayError
 
 # Ledger refusals that mean "this owner cannot take the fault now", which routing turns into a
-# hold somebody decides rather than an error that loses the incident.
-OWNER_REFUSALS = ("fault_adopt_conflict", "fault_scope_conflict")
+# hold somebody decides rather than an error that loses the incident. Defined with the port,
+# whose gate requires the ledger to have them.
+OWNER_REFUSALS = ledger_port.OWNER_REFUSALS
 CLASSIFICATION_KEYS = ("product", "component", "symptom", "goal", "by")
 
 
