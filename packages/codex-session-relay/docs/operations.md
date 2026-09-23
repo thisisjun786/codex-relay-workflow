@@ -239,12 +239,27 @@ is refused rather than answered on the weaker measurement.
 The answer is bracketed on both sides. SQLite resolves the descriptor to a real name and opens
 that name on its own descriptor - which is what puts `-wal` and `-shm` beside the real file - so
 the connection is also asked which file it opened, through `PRAGMA database_list`, and the
-descriptor is checked again after the read. A store moved before, during or after the read is
-refused rather than answered, and `doctor` withdraws what a moved read had already published.
+descriptor is checked again after the read. A store that is still moved when the descriptor is
+asked is refused rather than answered, and `doctor` withdraws what a read had already published if
+the store is still moved at its closing check. SQLite's answer refuses a move made before or inside
+the connect and sees none after it. A move and a return that both land between two of the
+descriptor's checks are not observed.
 
-One limit remains, and no check on this side can observe it: a different file swapped ONTO the
-expected pathname inside SQLite's own resolve-then-open. The checks are observations rather than
-locks. What they remove is every move of this store, which is the reachable case.
+Nothing that could create a file runs first. The first statement that touches the file creates the
+log beside whichever name SQLite opened, so a query or transaction on a moved name leaves a stray
+`-wal` behind even when the answer is refused, and on the older builds measured (SQLite 3.34.1,
+3.37.2 and 3.38.5) so does `PRAGMA database_list` itself. So every connection, including
+`doctor`'s write probe, asks the descriptor again as soon as it is open - a readlink, which
+creates nothing - and asks SQLite which file it opened before any query or transaction.
+
+Two limits remain. One no check on this side can observe: a different file swapped ONTO the
+expected pathname inside SQLite's own resolve-then-open. The other is a rename landing after the
+descriptor's post-connect answer, which nothing checks before the next statement: SQLite keeps any
+log beside the validated name, a read's closing check withdraws its answer only if the store is
+still moved when it asks, and on the older builds measured, with the rename after SQLite's answer,
+the write probe can report writable a file that has just moved. The checks are observations rather
+than locks: the descriptor's refuse a store that is still moved when they ask, and a move and a
+return that both land between two of them go unobserved.
 
 And a store that is present but will not state its identity is not a store that is absent:
 `doctor` reports it as present and unidentified, and the lifecycle commands treat it as
