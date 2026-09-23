@@ -760,6 +760,30 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                 self.assertFalse(emitted["wrote"], output)
                 self.assertFalse(self.record.exists(), output)
 
+    def test_a_pipe_named_as_the_policy_is_refused_without_holding_the_lock(self):
+        """Registration decides under the ownership lock, so a read that blocks holds every run."""
+        pipe = self.home.destination.parent / "policy.fifo"
+        os.mkfifo(pipe)
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", str(pipe), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        emitted = json.loads(finished.stdout)
+        self.assertEqual(finished.returncode, 1, finished.stdout + finished.stderr)
+        self.assertEqual(emitted["outcome"], "execution_policy_unreadable")
+        self.assertIn("not a regular file", emitted["detail"])
+        self.assertFalse(self.record.exists())
+        # And the lock was released: the next run is not held up by the refused one.
+        self.assertEqual(self.register("--apply")[0], 0)
+
+    def test_a_path_this_system_cannot_encode_is_a_refusal_and_not_a_traceback(self):
+        import runtime_install
+        policy, why = runtime_install._execution_policy_reading(str(self.policy) + "\ud800")
+        self.assertIsNone(policy)
+        self.assertIn("encoded", why)
+        self.assertNotEqual(bridgerecord.policy_path_complaints("/p\ud800"), [])
+
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
                                       "--bridge-command", str(self.bridge),
@@ -1234,6 +1258,16 @@ class BridgeLauncherPolicyTest(unittest.TestCase):
                 self.record(executionPolicy=self.reference(path=str(path)))
                 self.assert_refused(self.start(), str(self.home / bridgerecord.RECORD_NAME),
                                     "register-mcp")
+
+    def test_a_pipe_named_as_the_policy_is_refused_without_blocking(self):
+        """Opening a FIFO for reading blocks until a writer arrives; the start must not wait."""
+        pipe = self.home / "policy.fifo"
+        os.mkfifo(pipe)
+        self.record(executionPolicy=self.reference(path=str(pipe)))
+        done = subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="", timeout=30,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+        self.assert_refused(done, "not a regular file")
 
     def test_a_policy_changed_after_it_was_registered_is_refused(self):
         """Another VALID policy, so this fails on the digest and not on a parse."""

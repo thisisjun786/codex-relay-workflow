@@ -93,6 +93,11 @@ def policy_path_complaints(path):
     if not os.path.isabs(path):
         wrong.append("the execution policy path " + repr(path) + " must be absolute, because the"
                      " packaged launcher runs from the installed package directory")
+    try:
+        os.fsencode(path)
+    except UnicodeError:
+        wrong.append("the execution policy path " + repr(path) + " cannot be encoded as a file"
+                     " name on this system")
     return wrong
 
 

@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -4804,8 +4805,30 @@ def _execution_policy_reading(value):
         return None, ("the bridge's policy parser was imported from " + str(loaded) + ", not from"
                       " this checkout's " + str(BRIDGE_SOURCE) + ", so this run cannot say the"
                       " policy was judged by the parser it ships")
+    # Read here, once, rather than by the parser's own from_file. This command holds the ownership
+    # lock while it decides, and opening a FIFO for reading blocks until something writes to it,
+    # so a path that is -- or is swapped to -- a pipe would hold every other registration until
+    # the run was killed. Opened without blocking and required to be a regular file on the
+    # descriptor that is then read, so there is no interval between the check and the read.
     try:
-        policy = execution.ExecutionPolicy.from_file(candidate)
+        descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError) as error:
+        return None, ("cannot read " + repr(candidate) + ": " + type(error).__name__ + ": "
+                      + str(error))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None, (repr(candidate) + " is not a regular file, so it is not read: a pipe"
+                          " or a device would be read differently by every process that opens it")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read()
+    except OSError as error:
+        return None, "cannot read " + repr(candidate) + ": " + str(error)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    try:
+        policy = execution.ExecutionPolicy.from_bytes(raw, candidate)
     except execution.ExecutionPolicyError as error:
         return None, str(error)
     summary = policy.summary()

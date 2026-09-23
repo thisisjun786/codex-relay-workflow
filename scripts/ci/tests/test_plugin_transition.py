@@ -661,6 +661,23 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(host.record()["executionPolicy"], reference)
         self.assertEqual(host.record()["recordVersion"], 2)
 
+    def test_a_newest_archive_that_cannot_be_read_refuses_rather_than_dropping_the_policy(self):
+        """Stepping over it to an older archive would rebuild a record that checks no role."""
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        archives = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        self.assertTrue(archives)
+        newest = max(archives, key=lambda path: path.stat().st_mtime_ns)
+        document = json.loads(newest.read_text(encoding="utf-8"))
+        self.assertEqual(document["executionPolicy"], reference)
+        document["executionPolicy"]["digest"] = "not a digest"
+        newest.write_text(json.dumps(document), encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertNotEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        self.assertIsNone(host.record())
+        self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
+
 
 class SwapStateReportsWhatItRead(TransitionCase):
     def test_the_pointer_and_the_record_are_reported_apart(self):

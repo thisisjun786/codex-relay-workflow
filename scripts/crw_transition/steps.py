@@ -195,6 +195,29 @@ def _retired_record(host):
             return document
     return None
 
+
+def _newest_retired_refusal(host):
+    """Why the newest retired bridge record cannot be read, or None when it reads or none exists.
+
+    _retired_record steps over an archive it cannot read and answers with an older one. For the
+    executable and its arguments that is the recovery this module has always made. For an
+    execution policy it is not: an older archive can predate the policy, and rebuilding from it
+    installs a record that starts a bridge checking no role while the run reports success. So a
+    rebuild that would take its policy from the archives asks this first and refuses instead.
+    """
+    home = Path(host["codexHome"])
+    found = inventory.archives(home, bridgerecord.RECORD_NAME + ".superseded-")
+    if not found:
+        return None
+    document, outcome, detail = bridgerecord.read(found[-1])
+    if document is not None:
+        return None
+    return ("the newest retired bridge record, " + str(found[-1]) + ", could not be read ("
+            + str(outcome) + (": " + str(detail) if detail else "") + "), so whether it named an"
+            " execution policy was not established. An older archive may predate the policy, and"
+            " a record rebuilt from it would start a bridge that checks no role. Repair or remove"
+            " that archive and rerun")
+
 def bridge_command(host):
     """The bridge the plugin record will name: what the host already used, or the pointer path."""
     record = (host["mcp"].get("record") or {})
@@ -1733,9 +1756,19 @@ def mcp_record_install(host, options, *, apply=False):
     live = host["mcp"].get("record") or {}
     if bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
         policy = live.get(bridgerecord.POLICY_FIELD)
-    elif not registration and retired is not None \
-            and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN:
-        policy = retired.get(bridgerecord.POLICY_FIELD)
+    elif not registration:
+        try:
+            unreadable = _newest_retired_refusal(host)
+        except OSError as error:
+            return _answer("mcp record install", REFUSED,
+                           "the retired records could not be listed (" + type(error).__name__
+                           + ": " + str(error) + "), so whether the newest named an execution"
+                           " policy was not established and nothing was written")
+        if unreadable:
+            return _answer("mcp record install", REFUSED, unreadable)
+        policy = (retired.get(bridgerecord.POLICY_FIELD)
+                  if retired is not None
+                  and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN else None)
     else:
         policy = None
     try:
