@@ -1,0 +1,220 @@
+# Product routing
+
+The fault ledger ([faults.md](faults.md)) turns a breakage of this relay into one record and one
+Linear issue. Product routing does the same for the products Jun builds or uses through Codex. It
+covers a tool failure in a CRW-managed run of another repository, a failing verification, a
+user's report, and an error a product explicitly forwards from real use. Each of these used to
+reach Linear only when somebody noticed it, copied it and filed it. Filing by hand is how defects
+ended up in the CRW team, in no project, or twice.
+
+Routing decides WHERE an incident belongs. It does not store faults, decide thresholds, file
+issues or count writes; the ledger does all of that, and routing reaches it through one adapter,
+`ledger_port.py`. Nothing here performs a network call, dispatches work, or calls a model.
+
+## The incident
+
+Every surface enters in one shape, `product-incident/1`:
+
+```json
+{
+  "schema": "product-incident/1",
+  "product": "beta-meter",
+  "repository": "thisisjun786/beta-meter",
+  "surface": "real_use",
+  "phase": "in_use",
+  "component": "billing",
+  "symptom": "charge_twice",
+  "severity": "broken",
+  "origin": "observed",
+  "occurrenceKey": "event:7f3a",
+  "observedAt": "2026-09-23T04:10:00+00:00",
+  "context": {"currentIssue": null, "run": null, "session": null, "regressionOf": null},
+  "detail": {"impact": "customers charged twice", "expected": "one charge",
+             "actual": "two charges", "reproduction": "pay with a retried card"},
+  "evidence": [{"kind": "event", "ref": "forwarded:7f3a", "observed": {"count": 2}}]
+}
+```
+
+The key set is closed. An incident carrying anything else is refused rather than stored, because
+an intake that kept whatever it was handed would be exactly the indiscriminate collection this
+feature must not do. `component` and `symptom` are keys, not prose: they decide identity, and
+two products describing a failure in similar words stay two failures.
+
+`surface` is one of `dev_run`, `verification`, `user_report` and `real_use`. Each product's
+registry record says which of them are watched and how they are collected. An incident from a
+surface the product does not watch is refused before anything is written, and `product-show`
+lists every surface, so one nobody connected reads **unobserved** rather than quiet.
+
+Severity is the observing source's own reading. Sources are on the harness side: CRW-managed runs
+and events a product explicitly connected. Classification can later name the product, component
+or goal; it never sets severity, because the ledger keeps the highest severity it has seen and
+nothing could lower one a classifier raised.
+
+## Where it belongs
+
+Routing reads two local snapshots a credential holder keeps current: the **registry** (per
+product: Linear workspace, team, family label, repositories, watched surfaces, triage project,
+test target) and the **bindings** (projects and issues read back from Linear, with the
+components and symptom keys they cover, their state, the fix that closed them and what they
+follow up). From those readings alone it decides, in this order:
+
+| Order | Condition | Disposition |
+| --- | --- | --- |
+| 1 | an expected state: cancelled, awaiting approval, recorded as unsupported | **observe**: recorded for an operator, never filed |
+| 2 | exactly one open issue covers the component AND the symptom | **accumulate** on that issue |
+| 3 | exactly one completed issue covers them | **reopen** that issue and comment the recurrence |
+| 4 | the incident comes from the current issue's own managed run and its component is in that issue's scope | **attach** as failure evidence to the current issue |
+| 5 | `regressionOf` names the fix of exactly one completed issue | **follow-up**: a new issue linked to it |
+| 6 | otherwise | **new issue** in the one active project covering the component, else the triage project |
+
+A component alone never makes two defects one: a shared component is two defects that happen to
+live near each other. Several open issues claiming one symptom, several projects covering one
+component with no goal to choose between them, or an owner issue that belongs to no project and a
+product with no triage project are **held** with the reason, and surfaced as decisions. Routing
+never picks the candidate that sorts first.
+
+"The current issue's own managed run" is checked against this store. `context.run` must be a
+relationship the relay registered, and its `issue_key` must equal `context.currentIssue`. A user
+report or a real-use event never attaches to a current issue, however its component reads.
+
+A defect is filed under the product it belongs to, not the product that saw it. A tool failure in
+a CRW-managed run of another repository goes to that repository's product and team. CRW is one
+registered product among others, and nothing defaults to it.
+
+### No issue without its project
+
+Issues are filed only into a scope whose ledger target names a project. A product with no suitable
+project and no triage project files nothing: its incidents are held, and the next binding of a
+project decides them again from their stored input. When a created issue's project reads back
+different from its target, the ledger keeps the issue and repairs the link on the same issue id.
+A family label, a team or a relation never stands in for the project.
+
+Labels follow the operating model: an issue carries the repository label of the repository it is
+about, and the product-family label belongs on the project.
+
+## Unclear ownership
+
+An incident whose product cannot be resolved is kept as ONE pending-classification record. That
+happens when it names an unregistered product, or a repository registered to no product or to
+several. The record lives under the ledger product `unclassified` at notice severity, so it can
+never be filed, and it keeps the incident's own severity beside it. A severe incident waiting for
+an owner is a decision for Jun, never a Linear issue in an arbitrary team.
+
+`route-classify` names the product, and optionally the component, symptom or goal, from an
+operator or from a bounded model judgement recorded with who made it. The stored incidents are
+replayed under that product, the pending record is withdrawn, and later incidents with the same
+pending identity are forwarded to the classified product. Replay counts at most the sixteen newest
+stored incidents, so the new record's occurrence count is a count of replayed observations.
+
+Identity carries the Linear workspace. A resolved product uses its registry workspace, and an
+incident declaring another is refused. A pending incident uses the workspace it declares, or
+`unassigned`, so two workspaces never share a pending record.
+
+## Shared causes
+
+When an incident names a cause in another product, typically a CRW fault that broke a product's
+run, the cause is verified first. The fault must exist, belong to the named product, and match
+the signature the incident gives for it. An unverified cause is held and merges nothing.
+
+A verified cause produces two records, linked once both own issues. The cause fault gains an
+occurrence at its own current severity, with evidence naming the affected product. The affected
+product's own defect is routed as above at its own severity. A severe impact in one product
+therefore reaches that product's team, and does not escalate a CRW record that its own observers
+judged minor. A cause that was resolved and comes back is reopened by its new occurrence, which
+is intended.
+
+## Projects
+
+A project is created only under an explicitly configured `project_creation` policy whose basis
+names this request. Creation needs no suitable project for the members' components, plus at least
+`minIndependentFixes` (two or more) distinct held defects sharing one declared user goal with
+completion criteria. Issue, file or error counts alone never create one, and a single defect goes
+into its product's existing suitable project.
+
+The create is a ledger publication of routing's own `project_create` kind. It gets the ledger's
+single-create, uncertain, reconcile and readback rules unchanged. Two evaluations of the same goal
+converge on one record and one write. Immediately before the write is issued, the kind re-checks
+the policy and the bindings. A suitable project bound meanwhile cancels the write while it is
+still unissued. When the create confirms, the project is bound and its member defects move into
+it in the same transaction.
+
+## Completion checks
+
+`completion-check` compares what a subject claims with what was observed, inside the bounds of
+what can be observed:
+
+| Check | Applies when | Mismatch |
+| --- | --- | --- |
+| acceptance | the issue is Done | the agreed acceptance evidence is absent or failed |
+| install, realUse | the PR merged | the result is required and absent |
+| handoff | the session ended | the artifact or handoff is required and absent |
+| recurrence | always | a fault the subject owns recurred after its newest fix |
+
+A requirement is required only when the reading says so. Deployment is never assumed mandatory,
+and an unknown requirement or an unobservable result is **unverified**, recorded under its own
+notice identity rather than guessed. A follow-up split counts as an exception only when read back
+from Linear: the follow-up is a different, open issue of the product that lists this subject and
+this check among what it took over. An approved scope reduction counts only with the approval and
+its reference. Anything else is **exception_unverified**.
+
+A mismatch files as a re-verification demand on the subject issue itself and changes no state. It
+closes only when a fix reference and a verification reference arrive, or through an approved
+exception. A requirement quietly dropped after a mismatch keeps it open. A legitimate Done
+produces no write at all.
+
+## Reporting
+
+`route-show --attention` lists what needs somebody: pending classifications, holds, issues whose
+project link is incomplete, and open completion mismatches. `route-digest` answers a midpoint
+check with the state that changed since the last digest: new severe records, new decisions,
+resolutions, and routine accumulation summarized per product. It is quiet when nothing changed
+and does no work of its own between events.
+
+## What this does not claim
+
+It sees what its inputs show. A product surface nobody connected is unobserved, and an incident
+nobody forwarded does not exist here. It does not claim detection inside products it cannot
+observe, and product-specific instrumentation belongs to that product's repository.
+
+Filing is not approval. Every filed record says execution is not approved. Creation, execution
+approval, assignment, the fix and the reverification are separate steps, and nothing here starts
+any of them.
+
+A queued write is not an issue anybody has written, and a confirmed one is not an issue anybody
+read.
+
+## Tables
+
+| Table | What it holds |
+| --- | --- |
+| `product_registry` | one validated registry record per product |
+| `product_bindings` | projects and issues as read back from Linear |
+| `routing_policy` | the explicit project creation policy and its basis |
+| `incident_routes` | per routed fault: disposition, stage, target, hold, origin, classification, the last reported snapshot |
+| `route_incidents` | the newest incidents per route, the input redecide and classification replay read |
+
+## Commands
+
+```
+product-register  --record <json|@path>
+product-bind      --record <json|@path>
+product-show      [--product <key>]
+route-policy      --record <json|@path>
+route-intake      --incident <json|@path>
+route-classify    --fault <id> --classification <json|@path>
+route-operation   --publication <id> --claim-token <token>
+route-complete    --publication <id> [--claim-token <token>] ...
+route-reconcile   [--product <key>] [--limit <n>]
+route-show        [--product <key>] [--attention] [--limit <n>] [--after <next>]
+route-digest      [--limit <n>]
+route-projects    --product <key>
+completion-check  --reading <json|@path>
+```
+
+Status: this contract is written ahead of its implementation. The registry, the decision and the
+completion verdicts do not depend on the ledger and land first. The paths that record, adopt,
+target, move, update or queue go through `ledger_port.py`. That adapter binds to the corrected
+CRW-205 ledger contract, and every one of its methods refuses with `route_ledger_pending` until
+then. Nothing here is evidence about an installed runtime, a live service, or anything written to
+Linear.
+
