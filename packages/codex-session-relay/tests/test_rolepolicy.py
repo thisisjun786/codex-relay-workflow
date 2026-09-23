@@ -301,7 +301,7 @@ class DeliveryUnderARolePolicy(DeliveryTestCase):
         self.assertIsNone(rolepolicy.bound_role(self.store, CHILD))
         settings = self.delivery._settings_for(CHILD, "idle")
         self.assertEqual(settings.data["model"], "anthropic/claude-opus-5")
-        self.assertFalse(settings.refuse_when_unloaded)
+        self.assertFalse(settings.settings_free_resume)
 
         """Declaring roles must not reach work that has nothing to do with these levels."""
         self.store.db.execute("DELETE FROM scope_bindings WHERE task_id = ?", (PARENT,))
@@ -569,21 +569,44 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         """The parent's own declared pair, recorded with no citation: what policy derives."""
         return task_settings("/parent", model=PARENT_MODEL, reasoningEffort=PARENT_EFFORT)
 
-    def test_an_unloaded_supervisor_is_not_resumed_with_a_pair_policy_never_derived(self):
-        """Its pair is the user's own selection and the transmitted pair is whatever was
-        recorded, which is exactly what goes stale when they change it. A resume may apply what
-        it transmits to a thread the host has to load first.
+    def test_an_unloaded_supervisor_is_loaded_with_nothing_transmitted_and_delivered(self):
+        """Its pair is the user's own selection, so it is never transmitted - and never needed.
+
+        This used to be refused before the transport and left there: a resume may apply what it
+        transmits to a thread the host has to load first, so the gate withheld the send until
+        something else loaded the supervisor, and the live host unloads an idle thread within
+        about a minute (CRW-215 live finding F1). The transport now resumes it with nothing
+        requested, which loads it under its own state, and compares that with the record before
+        any turn.
         """
         self.adapter.set_status(PARENT, "notLoaded")
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
-        self.assertIsNone(self.attempt(event_id))
-        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        self.assertIsNotNone(self.attempt(event_id))
+        self.assertEqual(len(self.adapter.sends), 1)
+        request_id = self.adapter.sends[0][0]
+        self.assertEqual(self.adapter.settings_free_resumes, [(request_id, PARENT)],
+                         "the supervisor was loaded with nothing transmitted")
+        self.assertTrue(self.adapter.settings_seen[-1][1].settings_free_resume)
+
+    def test_an_unloaded_supervisor_that_loads_as_something_else_is_withheld(self):
+        """Nothing was transmitted, so a difference is the record's or the host's: re-record."""
+        self.adapter.set_status(PARENT, "notLoaded")
+        record = task_settings("/parent")
+        loaded = {key: record[key] for key in ("sandbox", "cwd", "runtimeWorkspaceRoots",
+                                                "reasoningEffort")}
+        self.adapter.threads[PARENT].loaded_settings = dict(
+            loaded, approvalPolicy="never", model="someone/else-entirely",
+            activePermissionProfile=None,
+            thread={"id": PARENT, "environments": record["environments"]})
+        _relationship, event_id = self.queued_event(settings=record)
+        outcome = self.attempt(event_id)
+        self.assertEqual((outcome["deliveryState"], outcome["sendAttempted"],
+                          outcome["failedOperation"], outcome["turnId"]),
+                         (WITHHELD_PRE_SEND, "no", "thread/resume", None))
         self.assertEqual(self.delivery_row(event_id)["state"], WITHHELD_PRE_SEND)
-        detail = self.store.all(
-            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
-            ("delivery_withheld",),
-        )[0]["detail"]
-        self.assertIn("notLoaded", detail)
+        receipt = self.adapter.ledger[outcome["requestId"]]
+        self.assertEqual(receipt["rpcError"]["code"], "settings_differ_after_load")
+        self.assertEqual(receipt["settingsFindings"][0]["field"], "model")
 
     def test_the_same_supervisor_is_delivered_to_once_the_host_has_it_loaded(self):
         """Where the resume reports the thread's own state, the comparison means something."""
@@ -651,12 +674,13 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
 
 
-    def test_a_recipient_that_unloads_after_the_observation_is_still_refused(self):
+    def test_a_pair_policy_never_derived_is_never_transmitted_even_to_a_loaded_recipient(self):
         """The gate's status is older than the resume by a turn listing and a claim.
 
-        Deciding only on that older read let a recipient unload in between and be resumed under
-        exactly the pair the decision meant never to transmit, so the transport applies the same
-        rule on the read it takes immediately before resuming.
+        Deciding on that older read let a recipient unload in between and be resumed under
+        exactly the pair the decision meant never to transmit. So the gate decides on the pair,
+        not on the status: a supervisor's is flagged for a resume that transmits nothing whether
+        the host had it loaded or not.
         """
         from codex_session_relay.registry import load_settings
 
@@ -664,7 +688,7 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         _relationship, event_id = self.queued_event(settings=task_settings("/parent"))
         settings = self.delivery._settings_for(PARENT, "idle")
         self.assertTrue(
-            settings.refuse_when_unloaded,
+            settings.settings_free_resume,
             "a supervisor's pair is never policy-derived, so the transport must be told",
         )
         # And a recipient whose pair IS the declared one carries no such instruction.
@@ -681,7 +705,7 @@ class TheRelayHasItsOwnTransportAndMustApplyTheSameRule(DeliveryTestCase):
         )
         self.assertFalse(load_settings(self.store, CHILD) is None)
         child = self.delivery._settings_for(CHILD, "idle")
-        self.assertFalse(child.refuse_when_unloaded)
+        self.assertFalse(child.settings_free_resume)
 
 
 
