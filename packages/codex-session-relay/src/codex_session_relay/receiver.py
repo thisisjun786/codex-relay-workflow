@@ -65,7 +65,16 @@ REOPENED = "relationship_tenure_reopened"
 # INTEGER column compared with the journal's integer, a number where a task id belongs - raises
 # TypeError, ValueError or AttributeError from the reader's own arithmetic. Those are the same
 # answer: this store could not be read, and the reading comes back unavailable.
-STORE_FAULTS = (sqlite3.Error, IndexError, KeyError, TypeError, ValueError, AttributeError)
+# So is a JSON value nested deeper than the reader can descend, which raises RecursionError
+# from the decoder; the columns the reading parses catch it themselves, and this is the floor.
+STORE_FAULTS = (sqlite3.Error, IndexError, KeyError, TypeError, ValueError, AttributeError,
+                RecursionError)
+
+# How deeply a recorded settings object may nest and still be read. The relay writes them at
+# most four levels deep. Deeper is not a record any writer made, and without a bound whether it
+# could be read at all would depend on the interpreter's recursion limit (about a thousand
+# levels on 3.10, several thousand on 3.13), so one store would answer differently by host.
+RECORD_DEPTH = 32
 
 # What an observation may carry: the facts a forge or a filesystem answers and the store does
 # not. Anything else in one is refused, so an observation cannot smuggle a relationship field.
@@ -315,7 +324,7 @@ def _journal_tenure_start(rows, rid, current, notes):
     for one in reopened:
         try:
             generation = json.loads(one["detail"] or "{}").get("executionGeneration")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             generation = None
         if isinstance(generation, bool) or not isinstance(generation, int):
             notes.append("a returning registration of " + rid + " is journalled without a"
@@ -388,10 +397,32 @@ def _read_criteria(rows, connection, rid, answer, notes):
 
 def _settings(rows, task_id, notes):
     try:
-        return load_settings(rows, task_id)
-    except (ValueError, TypeError) as fault:
-        notes.append("the recorded settings of " + task_id + " are unreadable: " + str(fault))
+        held = load_settings(rows, task_id)
+    except (ValueError, TypeError, RecursionError) as fault:
+        notes.append("the recorded settings of " + task_id + " are unreadable: "
+                     + type(fault).__name__ + ": " + str(fault))
         return None
+    if held is not None and not _nested_within(held.data, RECORD_DEPTH):
+        # Parsed, and still not a reading: a value this deep would be copied into the record,
+        # and compared and printed from there, by whatever recursion the host allows.
+        notes.append("the recorded settings of " + task_id + " nest deeper than %d levels,"
+                     " which no writer records, so they are unread" % RECORD_DEPTH)
+        return None
+    return held
+
+
+def _nested_within(value, limit) -> bool:
+    """Whether a parsed JSON value nests no deeper than limit. Iterative, so it cannot recurse."""
+    pending = [(value, 1)]
+    while pending:
+        one, depth = pending.pop()
+        if depth > limit:
+            return False
+        if isinstance(one, dict):
+            pending.extend((inner, depth + 1) for inner in one.values())
+        elif isinstance(one, list):
+            pending.extend((inner, depth + 1) for inner in one)
+    return True
 
 
 def _read_settings(rows, row, answer, notes):

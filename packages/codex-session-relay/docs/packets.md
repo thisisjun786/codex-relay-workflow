@@ -154,7 +154,11 @@ it from a file. It opens the store read-only and never creates or migrates one; 
 cannot open or read - including one missing a table or column the reading names, or holding a
 value of the wrong shape where the reading computes with it - gives a
 record holding only the receiver's own id, so every other field is a gap. Each field in the
-answer's `provenance` names what answered it.
+answer's `provenance` names what answered it. Recorded settings that cannot be parsed, or that
+nest deeper than any record the relay writes (32 levels, checked without recursion, so the
+answer does not depend on the interpreter's recursion limit), are unread: the policy or the
+callback they answer is a gap and the rest of the reading stands. A reopening row in the
+registration journal that cannot be parsed leaves the tenure unread.
 
 | Record key | Answered by |
 |---|---|
