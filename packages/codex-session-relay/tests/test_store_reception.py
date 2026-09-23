@@ -478,6 +478,45 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
                                          ledger=ledger)
         self.assertFalse(after["act"], after)
 
+    def test_work_done_on_a_check_that_said_act_can_be_recorded_after_a_held_replay(self):
+        # Told to act, the receiver acts; before it records that, the same packet is checked
+        # again while the relationship is paused. The held replay does not take back what the
+        # first check told it, so the application can still be recorded, and after the resume
+        # the packet is not handed back to be done a second time.
+        relationship = self.registered()
+        rid = relationship["relationshipId"]
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        one = self.correction(relationship, generation=1)
+        _code, first = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                         ledger=ledger)
+        self.assertTrue(first["act"], first)
+        self.registry.set_status(rid, "paused", actor=PARENT)
+        _code, held = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                        ledger=ledger)
+        self.assertFalse(held["act"], held)
+        code, recorded = self.packet_check(one, receiver_id=CHILD, ledger=ledger, applied=True)
+        self.assertEqual(code, 0, recorded)
+        self.registry.resume(rid, expect_generation=1, expect_artifact_roots=[self.root],
+                             expect_allowed_recipients=[PARENT, CHILD], actor=PARENT)
+        _code, resumed = self.packet_check(one, receiver_id=CHILD, observation=self.observed(),
+                                           ledger=ledger)
+        self.assertFalse(resumed["act"], resumed)
+        self.assertTrue(resumed["repeat"]["applied"], resumed)
+
+    def test_an_empty_container_where_an_optional_field_belongs_is_refused(self):
+        relationship = self.registered()
+        base = packets.compose(direction=C2P, purpose="progress",
+                               relation_id=relationship["relationshipId"], sender=CHILD,
+                               recipient=PARENT, subject="progress-1", issue=ISSUE,
+                               relation_revision=self.revision(relationship))
+        for field, empty in (("artifact", []), ("artifact", {}), ("policy", []),
+                             ("policy", {}), ("callback", {})):
+            with self.subTest(field=field, empty=empty):
+                one = json.loads(json.dumps(base))
+                one[field] = empty
+                code, answer = self.packet_check(one, receiver_id=PARENT)
+                self.assertEqual(code, cli.EXIT_REFUSED, answer)
+
     def test_the_callback_pair_the_parent_left_is_refused(self):
         relationship = self.registered()
         one = self.correction(relationship, generation=1,
@@ -629,6 +668,48 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         self.assertEqual(self.kinds(answer), [packets.WRONG_MODE, packets.WRONG_WORKFLOW])
         self.assertEqual(answer["provenance"]["mode"],
                          "ledger: assignment " + first["messageId"])
+
+    def test_a_returning_tenure_takes_its_own_assignment(self):
+        # A -> B -> A: the returning registration reuses the relationship id under a later
+        # generation opened by a new dispatch. The mode and workflow the ledger holds belong to
+        # the first tenure, so the new tenure's assignment defines its own and replaces them.
+        relationship = self.registered(project=None)
+        ledger = os.path.join(self.tmp, "return-ledger.json")
+        _code, first = self.packet_check(self.first_assignment(dispatch="dispatch-1",
+                                                               issue=ISSUE),
+                                         receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(first["disposition"], packets.ACCEPTED, first)
+        successor = "01child-b"
+        self.adapter.add_thread(successor)
+        other = self.registry.register(
+            parent=self.parent,
+            child=Endpoint(successor, HOST, cwd=self.root, cxc_session="cxc-b"),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT, successor],
+            dispatch_request_id="dispatch-b", dispatch_turn_id="turn-b",
+            supersedes=relationship["relationshipId"], project_key=None)
+        record_settings(self.store, self.clock, successor,
+                        task_settings(self.root, model=CHILD_MODEL,
+                                      reasoningEffort=CHILD_EFFORT),
+                        source="creation_result")
+        returned = self.registry.register(
+            parent=self.parent,
+            child=Endpoint(CHILD, HOST, cwd=self.root, cxc_session="cxc-" + CHILD),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT, CHILD],
+            dispatch_request_id="dispatch-return", dispatch_turn_id="turn-return",
+            supersedes=other["relationshipId"], project_key=None)
+        self.assertEqual(returned["relationshipId"], relationship["relationshipId"])
+        again = self.first_assignment(
+            dispatch="dispatch-return", issue=ISSUE,
+            policy_record=self.a_policy(mode=packets.NON_LOOP,
+                                        workflow="an authorised read-only audit"))
+        _code, answer = self.packet_check(again, receiver_id=CHILD, ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+        self.assertEqual(sorted(entry["field"] for entry in answer["instructed"]),
+                         [packets.MODE, "workflow"])
+        with open(ledger, encoding="utf-8") as handle:
+            held = json.load(handle)["assignments"][returned["relationshipId"]]
+        self.assertEqual((held["dispatchRequestId"], held["mode"]),
+                         ("dispatch-return", packets.NON_LOOP))
 
     def test_a_policy_of_the_wrong_shape_is_refused_and_leaves_the_ledger_usable(self):
         # Read back from disk, a packet never went through policy(). A workflow that is not
