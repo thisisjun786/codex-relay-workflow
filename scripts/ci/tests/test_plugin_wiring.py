@@ -39,7 +39,7 @@ BRIDGE_LAUNCHER = ROOT / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
 sys.path.insert(0, str(BRIDGE_SOURCE))
 from codex_thread_bridge import execution  # noqa: E402
 
-# A policy the bridge's parser accepts: roles only, the shape this host uses.
+# A policy the bridge's parser accepts, declaring roles and no allowlist.
 POLICY = {"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
                     "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}
 # Another valid policy, so a changed file is a different policy rather than a broken one.

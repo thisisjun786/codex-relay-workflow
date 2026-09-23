@@ -1180,8 +1180,8 @@ is inert, and the command says so rather than reporting an installation.
 
 ### The execution policy the plugin bridge runs under
 
-Codex starts a plugin-declared server with the App Server's own environment, which on this host
-is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge started that way reads no
+Codex starts a plugin-declared server with the App Server's own environment. Measured on Codex
+Desktop 0.154.0 for Linux, that is `HOME LANG LOGNAME PATH SHELL USER` and nothing else. A bridge started that way reads no
 execution policy: `get_capabilities` reports `presence_only` with no roles, and a child created
 through the Desktop tools is never asked whether it runs its role's pair. `--execution-policy`
 gives the plugin-owned record the one fact that closes that gap:
