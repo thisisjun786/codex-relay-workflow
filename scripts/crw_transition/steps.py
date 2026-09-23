@@ -666,11 +666,17 @@ def _shape(words):
 
 
 def _plugin_checker(repo_root):
-    """This repository's own packaging check, loaded as a module for its manifest rules."""
+    """This repository's own packaging check, loaded as a module for its manifest rules.
+
+    Compiled from source read through a descriptor judged a regular file. The transition asks it
+    while it holds the bridge ownership lock, and an import opens the file by path, so a pipe put
+    there would hold that open and the lock with it.
+    """
     path = Path(repo_root) / "scripts" / "ci" / "plugin.py"
-    spec = importlib.util.spec_from_file_location("crw_ci_plugin", path)
+    spec = importlib.util.spec_from_loader("crw_ci_plugin", loader=None, origin=str(path))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module.__file__ = str(path)
+    exec(compile(reading.regular_text(path), str(path), "exec"), module.__dict__)  # noqa: S102
     return module
 
 

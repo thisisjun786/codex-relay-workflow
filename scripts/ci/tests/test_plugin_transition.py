@@ -4909,8 +4909,9 @@ class TheApprovalPolicySurvivesTheTransition(TransitionCase):
         self.assertIsNone(found["detail"])
 
 
-class CachedPackageReadsDoNotBlock(unittest.TestCase):
-    """The transition's checks read the cached package while it holds the ownership lock.
+class ReadsUnderTheOwnershipLockDoNotBlock(unittest.TestCase):
+    """The transition's checks read the configuration, the cached package and this checkout's
+    packaging check while it holds the ownership lock.
 
     A pipe there held an ordinary open, and the lock with it. Each check now reads through a
     descriptor opened without blocking and judged a regular file. Bounded by a timeout, so a
@@ -4955,6 +4956,32 @@ class CachedPackageReadsDoNotBlock(unittest.TestCase):
                              "--payload", str(self.root)])
         self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("could not be read as a regular file", done.stdout + done.stderr)
+
+    def test_the_configuration_newline_check_refuses_a_pipe(self):
+        """Review of 834969b7: read_mcp re-read config.toml's bytes by path under the lock."""
+        config = self.root.parent.parent / "config.toml"
+        os.mkfifo(config)
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import inventory\n"
+                   "print(inventory.newline_spelling(sys.argv[2]))\n")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"), str(config)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["None"], done.stdout)
+
+    def test_the_approval_value_set_is_not_imported_from_a_pipe(self):
+        """Review of 834969b7: the checker's source was imported by path under the lock."""
+        checkout = self.root.parent.parent / "checkout"
+        (checkout / "scripts" / "ci").mkdir(parents=True)
+        os.mkfifo(checkout / "scripts" / "ci" / "plugin.py")
+        program = ("import sys\n"
+                   "sys.path.insert(0, sys.argv[1])\n"
+                   "from crw_transition import steps\n"
+                   "print(steps._approval_modes(sys.argv[2]))\n")
+        done = self.bounded([sys.executable, "-c", program, str(ROOT / "scripts"),
+                             str(checkout)])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["None"], done.stdout)
 
 
 if __name__ == "__main__":

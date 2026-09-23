@@ -262,7 +262,8 @@ def newline_spelling(path):
     comparison are already translated.
     """
     try:
-        return b"\r\n" not in Path(path).read_bytes()
+        # Through a judged descriptor: read_mcp asks this under the bridge ownership lock.
+        return b"\r\n" not in reading.regular_bytes(path)
     except OSError:
         return None
 

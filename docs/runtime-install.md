@@ -1238,7 +1238,9 @@ read from one descriptor opened without blocking and judged as a regular file, n
 open of the path, so a pipe put in place of any of them cannot hold the lock. The transition reads
 the same way while it holds the lock: the configuration, the record and its archives, and, in the
 checks it repeats before removing anything, the cached package's manifest, declarations, launchers
-and payload. A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
+and payload, and the source of this checkout's packaging check. Two waits under the lock are bounded
+instead: the payload check and the interpreter probe run as subprocesses with timeouts of 300 and 30
+seconds. A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
 `record_differs` with the move-aside repair. The transition carries the recorded reference, so its
 preflight refuses a changed file, and its record step writes through the same function as
 `register-mcp`. An edit made after the last check is caught where every other one is: the launcher
