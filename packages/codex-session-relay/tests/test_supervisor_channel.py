@@ -574,7 +574,9 @@ class WhatTheReviewFound(ChannelTestCase):
 
         The claim is called directly, because that IS the window: attempt() converts a
         transport fault into an unknown outcome and settles it, so the only way to reach this
-        state is for the process to stop existing between the two.
+        state is for the process to stop existing between the two. It died before its
+        transport started, so the attempt has no stamp and provably sent nothing: the recovery
+        records that, gives the reserved send back and queues the report again.
         """
         _one, message_id = self.staged()
         self.channel._claim(message_id, now=self.clock.now(), owner="a worker that died",
@@ -585,17 +587,16 @@ class WhatTheReviewFound(ChannelTestCase):
         self.assertEqual(self.channel.stranded(now=row["lease_until"] + 1)[0]["message_id"],
                          message_id)
 
-        recovered = self.channel.attempt(message_id, self.adapter,
-                                         now=row["lease_until"] + 1)
-        self.assertIsNone(recovered, "an expired lease authorises no resend")
-        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
-        self.assertEqual(
-            len(self.store.all("SELECT request_id FROM supervisor_attempts")), 1,
-            "what that send did is unknown, and a second one is a second wake for one fact")
-        stranded = [json.loads(row["detail"]) for row in self.store.all(
-            "SELECT detail FROM journal WHERE kind = 'supervisor_message_stranded'")]
-        self.assertEqual(len(stranded), 1)
-        self.assertIn("unknown", stranded[0]["reason"])
+        self.channel._recover_if_stranded(row, row["lease_until"] + 1)
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+        attempt = self.store.one(
+            "SELECT state, send_attempted, retry_safe FROM supervisor_attempts"
+            " WHERE message_id = ?", (message_id,))
+        self.assertEqual(tuple(attempt), (WITHHELD_PRE_SEND, "no", 1))
+        released = [json.loads(one["detail"]) for one in self.store.all(
+            "SELECT detail FROM journal WHERE kind = 'supervisor_message_released'")]
+        self.assertEqual(len(released), 1)
+        self.assertIn("before the transport started", released[0]["reason"])
 
     def test_an_unverified_readback_cannot_replace_a_verified_one(self):
         """The two readings straddle the write, so the second one has to re-read inside it."""
@@ -1065,7 +1066,8 @@ class WhatTheThirdReviewRoundFound(ChannelTestCase):
             "reportingState": "unreported",
             "relationshipId": self.rid,
             "reason": "the turn settled without a report",
-            "selectors": {"state": "/state/relay", "markerRoot": "/marker",
+            # Taken against this channel's own store, which staging requires of a reading.
+            "selectors": {"state": self.channel.state_directory, "markerRoot": "/marker",
                           "workspace": self.root, "assignment": "asg-1",
                           "session": "01child-session", "turn": "turn-unreported-1"},
         }
@@ -1376,8 +1378,11 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
         reading = {"schema": "reporting-observation/1", "reportingState": "unreported",
                    "relationshipId": self.rid, "reason": "the turn settled without a report",
                    "selectors": selectors}
-        staged = self.channel.stage(supervision.from_observation(reading), reading=reading)
-        pointer = self.channel.show(staged["messageId"])["stagedFrom"]["recheck"]
+        # A channel whose store is that awkward directory: staging requires the reading to be
+        # taken against the store it is staged in.
+        channel = self.build_channel(state_directory=selectors["state"])
+        staged = channel.stage(supervision.from_observation(reading), reading=reading)
+        pointer = channel.show(staged["messageId"])["stagedFrom"]["recheck"]
         argv = shlex.split(pointer)
         args = cli.build_parser().parse_args(argv[1:])
         self.assertEqual(
@@ -1727,17 +1732,28 @@ class WhatTheSeventhReviewRoundFound(ChannelTestCase):
         self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
 
     def test_an_attempt_whose_transport_never_started_does_not_verify(self):
-        """Claimed and never sent: there is no send to measure a turn against."""
+        """Claimed and never sent: there is no send to measure a turn against.
+
+        The verification rule refuses such an attempt whatever the transcript holds, and is
+        checked directly. Through read_back the case no longer arises: the recovery queues a
+        message whose attempt never started (I-241), so there is nothing to read back.
+        """
         _one, message_id = self.staged()
-        _n, _request_id, message = self.channel._claim(
+        _n, request_id, message = self.channel._claim(
             message_id, now=self.clock.now(), owner="died before sending",
             recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
         landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        attempt = self.store.one(
+            "SELECT * FROM supervisor_attempts WHERE request_id = ?", (request_id,))
+        verified, detail, _origin, _turn = self.channel._verify_read_turn(
+            self.channel.get(message_id), attempt, landed.turn_id, self.adapter)
+        self.assertEqual(verified, channel_module.NO_HOST)
+        self.assertIn("no recorded transport start", detail)
+
         self.clock.advance(self.channel.policy.lease_seconds + 1)
-        answer = self.read_back(message_id, landed.turn_id)
-        self.assertEqual(answer["verified"], channel_module.NO_HOST)
-        self.assertIn("no recorded transport start", answer["detail"])
-        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.assertRefused(RefusalReason.NOT_CLAIMABLE, self.read_back, message_id,
+                           landed.turn_id)
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
 
     # ------------------------------------------------------------- the answer's shape
 
@@ -2379,3 +2395,163 @@ class EveryLineSelectsTheStoreItWasWrittenFrom(ChannelTestCase):
         self.assertNotEqual(corrected["messageId"], staged)
         self.assertEqual(self.packet_pr(corrected["messageId"]), 11)
         self.assertEqual(self.packet_pr(staged), 10)
+
+
+
+class WhatTheSeventhIndependentReviewFound(ChannelTestCase):
+    """Every exit between a claim and its transport gives back what the claim took, an omission is
+    read against the store it is staged in, and a block goes up as its newest statement while
+    nothing has been sent."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+    observation = WhatTheThirdReviewRoundFound.observation
+
+    def blocked(self, evidence, *, attempt):
+        """The same block, stated with the evidence given. Same generation, cause and summary;
+        the attempt makes it a new event, which is what a restatement is."""
+        from codex_session_relay import cxc
+
+        payload = self.execution_payload(self.relationship, "blocked_needs_input",
+                                         attempt=attempt)
+        self.accept(payload)
+        report_module.record(
+            self.store, self.clock, event_id=payload["eventId"],
+            repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.BLOCKED,
+            cxc_reason="the upstream package has not landed",
+            summary="waiting on the upstream package", next_action="wait for it",
+            evidence=[evidence])
+        return payload["eventId"]
+
+    def rate(self):
+        row = self.store.one(
+            "SELECT sends, last_send_at FROM recipient_rate WHERE recipient_task_id = ?",
+            (SUPERVISOR,))
+        return (row["sends"], row["last_send_at"]) if row is not None else (0, None)
+
+    def attempt_rows(self, message_id):
+        return [tuple(row) for row in self.store.all(
+            "SELECT attempt_no, state, send_attempted FROM supervisor_attempts"
+            " WHERE message_id = ? ORDER BY attempt_no", (message_id,))]
+
+    # ------------------------------------------------- a claim that never reached transport
+
+    def test_a_claim_that_died_before_its_transport_started_is_sent_after_all(self):
+        """RED: recovered to held_uncertain, which no readback could ever settle."""
+        _one, message_id = self.staged()
+        self.channel._claim(message_id, now=self.clock.now(), owner="a worker that died",
+                            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        expired = self.channel.get(message_id)["lease_until"] + 1
+        self.clock.advance(expired - self.clock.now())
+        record = self.channel.attempt(message_id, self.adapter, now=expired)
+        self.assertIsNotNone(record, "nothing was sent, so nothing stops the report going out")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.attempt_rows(message_id),
+                         [(1, WITHHELD_PRE_SEND, "no"), (2, DISPATCHED, "yes")])
+        self.assertEqual(len(self.adapter.sends), 1, "one wake for one fact")
+
+    def test_a_claim_recovered_before_its_owner_starts_the_transport_sends_nothing(self):
+        """RED: the owner coming back after the recovery found the report held uncertain."""
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claimed_then_recovered(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.clock.advance(self.channel.policy.lease_seconds + 1)
+            self.channel._recover_if_stranded(self.channel.get(message_id), self.clock.now())
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim", claimed_then_recovered):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(self.adapter.sends, [], "the owner's transport start found no claim")
+        self.assertEqual(self.channel.get(message_id)["state"], QUEUED)
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_send_the_hierarchy_cancelled_gives_its_budget_back(self):
+        """RED (Devin PRRT_kwDOUcYZMM6lCxSt): the reserved send stayed spent on nothing."""
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+
+        def claimed_then_handed_over(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            self.hand_over()
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim", claimed_then_handed_over):
+            self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, message_id,
+                               self.adapter)
+        self.assertEqual(self.rate(), (0, None), "the recipient's row is as it was")
+
+    def test_giving_a_send_back_keeps_a_later_senders_time(self):
+        """A reservation made after this one is somebody else's send, and its time stays."""
+        _one, message_id = self.staged()
+        claim = self.channel._claim
+        later = self.clock.now() + 1
+
+        def claimed_then_another_sender_then_handed_over(*args, **kwargs):
+            claimed = claim(*args, **kwargs)
+            with self.store.transaction() as db:
+                db.execute(
+                    "UPDATE recipient_rate SET sends = sends + 1, last_send_at = ?"
+                    " WHERE recipient_task_id = ?", (later, SUPERVISOR))
+            self.hand_over()
+            return claimed
+
+        with mock.patch.object(self.channel, "_claim",
+                               claimed_then_another_sender_then_handed_over):
+            self.assertRefused(RefusalReason.RELATION_OWNER_DRIFT, self.channel.attempt, message_id,
+                               self.adapter)
+        self.assertEqual(self.rate(), (1, later))
+
+    # ------------------------------------------------------ the store a reading is from
+
+    def test_an_omission_read_against_another_store_is_refused(self):
+        """RED: the packet pointed at this store and its recheck at another."""
+        base = self.observation()
+        reading = dict(base, selectors=dict(base["selectors"],
+                                            state=os.path.join(self.tmp, "another-store")))
+        refusal = self.assertRefused(
+            RefusalReason.CONTRADICTORY_OBSERVATION, self.channel.stage,
+            supervision.from_observation(reading), reading=reading)
+        self.assertIn("another store", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+
+    # ------------------------------------------------------- a block stated again
+
+    def test_a_block_stated_again_before_anything_is_sent_goes_up_as_its_newest_statement(self):
+        """RED: the second statement derived the same message and the packet kept the first's
+        evidence, so a correction made before the send had no way up."""
+        first = self.blocked("the log at /logs/wrong.txt", attempt=1)
+        one = self.obligation(first)
+        message_id = self.channel.stage(one)["messageId"]
+        self.clock.advance(5)
+        second = self.blocked("the log at /logs/right.txt", attempt=2)
+        self.assertEqual(self.obligation(second)["obligationId"], one["obligationId"],
+                         "the same block, said again")
+
+        # Staged from the first statement, as supervisor-stage --project holds it.
+        answer = self.channel.stage(one)
+        self.assertTrue(answer.get("restated"))
+        self.assertEqual(answer["messageId"], message_id)
+        row = self.channel.get(message_id)
+        self.assertEqual(row["event_id"], second)
+        self.assertIn(second, json.loads(row["packet"])[packets.EVIDENCE][0])
+        self.assertEqual(len(self.store.all("SELECT message_id FROM supervisor_messages")), 1)
+        self.assertEqual(len(self.store.all(
+            "SELECT seq FROM journal WHERE kind = ?", (supervision.JOURNAL_KIND,))), 1)
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertIn("show --event " + second, self.bytes_of(message_id))
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+
+    def test_a_block_already_sent_is_not_moved_by_being_stated_again(self):
+        """Positive control: once an attempt may have sent, the same block said again is not news."""
+        first = self.blocked("the log at /logs/wrong.txt", attempt=1)
+        message_id = self.channel.stage(self.obligation(first))["messageId"]
+        self.channel.attempt(message_id, self.adapter)
+        self.clock.advance(5)
+        second = self.blocked("the log at /logs/right.txt", attempt=2)
+        answer = self.channel.stage(self.obligation(second))
+        self.assertFalse(answer.get("restated"))
+        self.assertEqual(self.channel.get(message_id)["event_id"], first)
+        self.assertEqual(len(self.adapter.sends), 1)

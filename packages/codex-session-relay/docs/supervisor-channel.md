@@ -75,9 +75,10 @@ A bare `--socket` selects the socket-scoped default, which is not the store at a
 was chosen by `--state` or the environment, so the recipient's readback opened another database
 and found no such message. The readback line also carries the socket the send went through,
 canonicalised - that is the host the recipient's thread is on - and keeps
-`YOUR_RELAY_SOCKET` only when the writer had no socket, which a CLI send never lacks. The one
-line whose selection is not this store's is the `reporting-show` recheck, which uses the
-reading's own `--state`, because that is the selection that produced the reading.
+`YOUR_RELAY_SOCKET` only when the writer had no socket, which a CLI send never lacks. The
+`reporting-show` recheck carries the reading's own `--state`, the selection that produced the
+reading, and staging refuses a reading taken against any other store than the one it is staged
+in - so that line selects this store as well, and the packet and its recheck read one record.
 
 **status_response is deliberately absent, and that is the one named gap in this contract.**
 `BODY` is a dispatch instruction checked against DISPATCH-TASK-01, so requiring it of an answer
@@ -198,9 +199,22 @@ which task a report is for is decided where it is staged.
 A message leaves `sending` only through the claim that holds it: this message, this attempt
 number and this lease owner, all three in the predicate of the write that moves it. `_settle`
 records the transport's answer that way, and the transport-start write that finds the hierarchy
-moved releases the message the same way. The one other way out is recovery: a lease that
-expired with no receipt moves the message to `held_uncertain`, because nothing observed what
-that send did.
+moved releases the message the same way. The one other way out is recovery, which takes the
+row from a claim whose lease expired with no receipt, and what it does depends on a durable
+fact. `transport_started_at` is stamped only by the claim holding the row, inside the write
+that checks it still does, and committed before the transport is called. An attempt with no
+stamp therefore sent nothing and never will - its owner's own transport-start write now finds
+the row is not its own - so recovery records it as sending nothing and queues the report again.
+An attempt with a stamp may have sent, so recovery moves the message to `held_uncertain`,
+because nothing observed what that send did.
+
+Every exit between a claim and its transport gives back what the claim took. The claim spends
+one of the recipient's sends from the budget it shares with parent-child deliveries, and
+remembers on the attempt what the recipient's row held before; the transport-start refusal and
+the recovery of an attempt that never started both give that send back in the same write. Where
+nobody has reserved since, the row goes back to exactly what it was; where somebody has, their
+send time stays, because it is theirs, and only this attempt's count comes off. A claim that
+reaches its transport keeps what it spent, whatever the transport answers.
 
 Once recovery has declared an attempt uncertain, nothing that attempt's late receipt says moves
 the message. The receipt is still recorded on its attempt row - the attempt history keeps what
@@ -440,10 +454,12 @@ supervisor never reads it back stays held until somebody opens `supervisor-show`
 what to do. That is manual settlement, and it is deliberate: the only automatic way to find out
 whether an unanswered send landed would be to send it again.
 
-A send interrupted between its claim and its transport receipt is the same answer reached a
+A send interrupted between its transport start and its receipt is the same answer reached a
 different way. The claim commits first, so a process that stops existing in between leaves the
 row in `sending` with a lease nobody will settle. An expired lease moves it to
-`held_uncertain`, which authorises no resend, because nothing observed what that send did.
+`held_uncertain`, which authorises no resend, because nothing observed what that send did. A
+process that stopped between its claim and its transport start sent nothing, and the recovery
+queues that report again with the reserved send given back.
 `stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
 when `attempt()` or `read_back()` is called for that message again. The lease is re-checked
 inside that move, and a receipt that arrives after it is recorded on the attempt without moving
@@ -454,6 +470,16 @@ Staging decides whether anything is owed a second time under the write lock. The
 committing in between, and the insert then stood beside a journal entry that already said the
 report existed. Under the lock, an obligation already reported or discharged refuses as
 `not_claimable` and nothing is written.
+
+A block or a decision goes up as its newest statement. Both are keyed on their generation and
+their cause, so the child stating the same one again - with its evidence corrected, say - raises
+the same obligation from a newer event. Staging composes from the newest event that raises it,
+whichever statement the caller held, and a message staged from an earlier statement and never
+sent is restated in place: same message, same journal entry, a `supervisor_message_restated`
+entry naming both events, and the recipient's own bounds kept. Once an attempt may have sent,
+the newer statement is the same fact said again and is not reported again; staging answers
+that, naming the newer event's own evidence. A completion is keyed on its event, so a corrected
+completion is always its own message.
 
 A report still owed for an archived assignment has nobody to go to. `resolve()` finds the
 project by walking up the edge the assignment holds on its issue, and archiving the assignment
