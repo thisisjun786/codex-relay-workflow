@@ -1511,7 +1511,9 @@ def _release(config, record, outcome, detail, started, slot=None):
 PER_EVENT_PREDICATE = "one accepted record per Stop event (CRW-212)"
 SUPERSEDED_PREDICATE = ("exactly one row per (session, turn); superseded by CRW-212 because a"
                         " continuation is a new Stop event in the same turn")
-TRUE, FALSE, UNREADABLE_VERDICT = "TRUE", "FALSE", "UNREADABLE"
+TRUE = "TRUE"
+FALSE = "FALSE"
+UNREADABLE_VERDICT = "UNREADABLE"
 
 
 def _within(value, since, until):
