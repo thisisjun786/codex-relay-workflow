@@ -75,6 +75,10 @@ ENVIRONMENTS_UNKNOWN = "environments_unknown"
 UNVERIFIABLE_PERMISSION_PROFILE = "unverifiable_permission_profile"
 UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
 UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
+# A thread loaded by a resume that transmitted nothing is not what the record says. Nothing was
+# sent to change it, so what differs is the record or the host's own state, never a request the
+# host ignored: re-record from a reading the user stands behind rather than retrying.
+SETTINGS_DIFFER_AFTER_LOAD = "settings_differ_after_load"
 
 # The only approval policy this transport can carry, on the record and in the response alike.
 # It was compared in one place only for a while -- against the resume RESPONSE -- and what
@@ -149,11 +153,15 @@ class TaskSettings:
     def __init__(self, data: dict):
         self.data = dict(data or {})
         # Set by the delivery gate when this recipient's pair was not derived from its role's
-        # declared pair. The transport reads it after its OWN thread/read, because the status
-        # the gate saw is older than the resume by a turn listing and a claim, and a recipient
-        # that unloads in between would otherwise be resumed under exactly the pair the gate
-        # meant never to transmit.
-        self.refuse_when_unloaded = False
+        # declared pair: a supervisor's, which is the user's own selection, or one an exception
+        # admitted. Such a pair is never transmitted, loaded or not. A resume can apply what it
+        # transmits while the host materializes the thread, which would restore a value the user
+        # may have changed, and the unload can happen between any read and the resume. So the
+        # transport resumes this recipient with nothing requested (settings_free_resume_params):
+        # an unloaded thread loads under its own persisted state, a loaded one reports it, and
+        # mismatches(..., transmitted=False) compares that answer with the record before any
+        # turn starts.
+        self.settings_free_resume = False
 
     # ------------------------------------------------------------- validity
 
@@ -312,9 +320,18 @@ class TaskSettings:
                 params["config"].setdefault(section, {})[key] = policy[field]
         return params
 
+    @staticmethod
+    def settings_free_resume_params(thread_id: str) -> dict:
+        """The resume that transmits nothing: the bridge's own nothing-requested form.
+
+        It loads an unloaded thread under the thread's persisted state and reports what that
+        state is, and on a loaded thread it only reports. Nothing in it can set a setting.
+        """
+        return {"threadId": thread_id, "excludeTurns": True}
+
     # ------------------------------------------------------------ verifying
 
-    def mismatches(self, response: dict) -> list:
+    def mismatches(self, response: dict, *, transmitted: bool = True) -> list:
         """Ordered findings against a resume response. Order is behaviour, not presentation.
 
         The approval policy is checked FIRST. With an authorized policy of never, a returned
@@ -329,6 +346,15 @@ class TaskSettings:
         Within each field, ABSENCE is decided before difference. A host that reported nothing has
         told us nothing about whether the setting was applied, which is a different fact from a
         host that reported something else, and the two need different answers from a caller.
+
+        transmitted=False reads a resume that requested nothing (settings_free_resume_params).
+        The model, the effort, the whole sandbox policy, the approval policy, the cwd and the
+        environment selection are compared exactly as ever. The workspace roots are not: a load
+        that transmits nothing restores only what the host persists, and measured on the live
+        host it brought a thread back with its roots reduced to its cwd while every other field
+        held (CRW-215 live finding F2). So roots, at the top level and in each environment, may
+        come back NARROWER than recorded and never wider - a narrower set is inside what the
+        record authorizes, a wider one is not.
         """
         found = []
         returned_policy = response.get("approvalPolicy")
@@ -355,10 +381,12 @@ class TaskSettings:
                           "expected": self.data["environments"], "returned": None})
             return found
         expected_environments = normalise_environments(self.data["environments"])
-        if normalise_environments(returned_environments) != expected_environments:
+        got_environments = normalise_environments(returned_environments)
+        if not (_environments_within(got_environments, expected_environments)
+                if not transmitted else got_environments == expected_environments):
             found.append({"code": SETTINGS_NOT_PRESERVED, "field": "environments",
                           "expected": expected_environments,
-                          "returned": normalise_environments(returned_environments)})
+                          "returned": got_environments})
 
         expectations = {
             "sandbox": normalise_policy(self.data["sandbox"]),
@@ -386,6 +414,8 @@ class TaskSettings:
                 continue
             if field == "runtimeWorkspaceRoots":
                 returned = list(returned)
+                if not transmitted and _roots_within(returned, expected):
+                    continue
             if expected != returned:
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": field,
                               "expected": expected, "returned": returned})
@@ -398,6 +428,27 @@ class TaskSettings:
                           "expected": self.data.get("expectedPermissionProfile"),
                           "returned": profile})
         return found
+
+
+def _roots_within(returned, recorded) -> bool:
+    """Every root the host reports is one the record names: narrower is within, wider is not."""
+    return all(root in recorded for root in returned)
+
+
+def _environments_within(returned, recorded) -> bool:
+    """The same environments, in the same order, each at its recorded cwd, with roots within.
+
+    The selection itself is exact: another environment, a missing one or an empty selection is a
+    different place to run, not a narrower one. Only each environment's roots may shrink.
+    """
+    if returned is None or recorded is None or len(returned) != len(recorded):
+        return False
+    for got, allowed in zip(returned, recorded):
+        if got["environmentId"] != allowed["environmentId"] or got["cwd"] != allowed["cwd"]:
+            return False
+        if not _roots_within(got["runtimeWorkspaceRoots"], allowed["runtimeWorkspaceRoots"]):
+            return False
+    return True
 
 
 def refusal_code(findings) -> str:

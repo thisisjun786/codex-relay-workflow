@@ -130,11 +130,14 @@ transport call. A process that cannot read a role policy refuses role-bound send
 `role_policy_unconfigured` rather than skipping the check; that hold is retry-safe, so declaring
 the policy and restarting resumes the held deliveries with nothing lost.
 
-One further rule applies where the host reports a recipient as `notLoaded`. A resume transmits the
-recorded settings and may apply them to a thread the host has to load first, so a pair the policy
-did not derive — a supervisor's, whose pair is the user's own selection, or one admitted by an
-exception — is refused rather than transmitted, because it could restore a value the user has
-since changed. `doctor` reports the policy digest this process resolved; the bridge's own is
+One further rule applies to a pair the policy did not derive — a supervisor's, whose pair is the
+user's own selection, or one admitted by an exception. A resume transmits the recorded settings
+and may apply them to a thread the host has to load first, which could restore a value the user
+has since changed, so such a pair is never transmitted. The transport resumes that recipient with
+nothing requested instead, loaded or not, which loads it under its own state when the host had
+unloaded it, and compares what the host reports with the record before any turn: a difference
+refuses as `settings_differ_after_load` with nothing started, and the workspace roots, which a
+load does not restore, may come back narrower than recorded and never wider. `doctor` reports the policy digest this process resolved; the bridge's own is
 reported by `get_capabilities` through its MCP surface and is not readable from here.
 
 `--settings` takes a JSON object inline or `@path` to a file. Every field is required, because a

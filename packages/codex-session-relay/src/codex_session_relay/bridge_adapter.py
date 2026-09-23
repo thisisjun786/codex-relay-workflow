@@ -24,6 +24,7 @@ import stat
 from pathlib import Path
 
 from .hostadapter import HostUnavailable, ThreadFacts, TokenScan, TurnInfo
+from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
 
 UNARCHIVED_CWD = "unarchived_cwd"
 UNARCHIVED_ALL = "unarchived_all"
@@ -1038,35 +1039,55 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings, *
                 "code": "thread_busy",
                 "message": "Thread is active; message withheld. Wait for completion.",
             })
-        if status == "notLoaded" and getattr(settings, "refuse_when_unloaded", False):
-            # Decided HERE, on this read, rather than on the one the caller took before it
-            # listed turns and claimed the delivery. A recipient that unloaded in between
-            # would otherwise be resumed under the pair that decision meant never to
-            # transmit, and on a host that applies a resume's settings while materializing a
-            # thread that restores a value the user may have changed.
-            raise _Refusal("thread/read", {
-                "code": "unverified_pair_for_unloaded_thread",
-                "message": "Thread is not loaded and the pair this send would transmit was "
-                           "not derived from a declared role pair; message withheld and no "
-                           "turn was started.",
-            })
+        if getattr(settings, "settings_free_resume", False):
+            # A pair no policy derived - a supervisor's, or one an exception admitted - is never
+            # transmitted, whatever this read said: a resume can apply what it transmits while
+            # the host materializes a thread, which would restore a value the user may have
+            # changed, and a recipient can unload between this read and the resume. So the
+            # resume requests nothing. An unloaded thread loads under its own persisted state, a
+            # loaded one reports it, and the response is compared with the record before any
+            # turn: the same detector, with nothing sent that could make it agree.
+            resumed = await rpc.call("thread/resume",
+                                     settings.settings_free_resume_params(thread_id))
+            receipt["resumed"] = resumed
+            receipt["settingsFreeResume"] = True
+            ledger.save(receipt)
+            findings = settings.mismatches(resumed, transmitted=False)
+            if findings:
+                first = findings[0]
+                receipt["settingsFindings"] = findings
+                # Only a DIFFERENCE is renamed. An absent answer, an unknown environment
+                # selection, an unexpected permission profile and an interactive approval
+                # policy keep their own codes, because each already says something more
+                # specific than "differs" and the approval one decides the inbox route.
+                code = (SETTINGS_DIFFER_AFTER_LOAD if first["code"] == SETTINGS_NOT_PRESERVED
+                        else first["code"])
+                raise _Refusal("thread/resume", {
+                    "code": code,
+                    "message": f"{code}: {first['field']} is {first.get('returned')!r} on the"
+                               f" loaded thread and {first.get('expected')!r} in the record;"
+                               " nothing was transmitted and no turn was started",
+                })
+        else:
+            # Resume carries the authorized settings. It is the DETECTOR: its response reports
+            # the full derived policy, the effort and the environments, so a host that ignores
+            # overrides is caught here, before anything has started. A pair policy derived
+            # reaches this branch, so a host that applies it while loading the thread lands the
+            # thread where policy says it belongs; so does a task bound to no role, which the
+            # role policy does not govern at all.
+            resumed = await rpc.call("thread/resume", settings.resume_params(thread_id))
+            receipt["resumed"] = resumed
+            ledger.save(receipt)
 
-        # Resume carries the authorized settings. It is the DETECTOR: its response reports the
-        # full derived policy, the effort and the environments, so a host that ignores overrides
-        # is caught here, before anything has started.
-        resumed = await rpc.call("thread/resume", settings.resume_params(thread_id))
-        receipt["resumed"] = resumed
-        ledger.save(receipt)
-
-        findings = settings.mismatches(resumed)
-        if findings:
-            first = findings[0]
-            receipt["settingsFindings"] = findings
-            raise _Refusal("thread/resume", {
-                "code": first["code"],
-                "message": f"{first['code']}: {first['field']} returned"
-                           f" {first.get('returned')!r}; message withheld",
-            })
+            findings = settings.mismatches(resumed)
+            if findings:
+                first = findings[0]
+                receipt["settingsFindings"] = findings
+                raise _Refusal("thread/resume", {
+                    "code": first["code"],
+                    "message": f"{first['code']}: {first['field']} returned"
+                               f" {first.get('returned')!r}; message withheld",
+                })
 
         if before_start is not None:
             # After the verified resume and before any turn. A pause that appears during the

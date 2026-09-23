@@ -49,6 +49,7 @@ REAL_TIME_MODULES = (
     "test_reporting_cli.py",
     "test_service.py",
     "test_stop_adapter.py",
+    "test_supervisor_live_findings.py",
     "test_worker_policy.py",
     "test_wp1_regressions.py",
 )
@@ -304,6 +305,9 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    # Whether a thread loaded with nothing transmitted keeps the recorded environment selection:
+    # false on every path that finds another environment, another cwd or a root outside it.
+    ("settings.py", None, "_environments_within", "function"),
     # Whether a message held because nobody could be addressed with it is addressed again:
     # false on every path that finds the hierarchy still naming nobody, or somebody else.
     ("supervisorchannel.py", None, "_reopen_if_addressed", "function"),
@@ -330,6 +334,8 @@ FOLD_FREE_BOOLEANS = (
     ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
+    # Every reported root is a recorded one: the one comparison a settings-free load relaxes.
+    ("settings.py", None, "_roots_within", "function"),
     ("store.py", None, "in_transaction", "function"),
 )
 
@@ -403,6 +409,11 @@ SUMMARY_SITES = (
      "self.assertTrue(facts.retry_safe)",
      "a shared helper rather than a case: it asserts the classification beside the absence of a"
      " transport call, and its callers name the refusal each is about"),
+    ("test_supervisor_live_findings.py", "assert_withheld_before_any_turn", "retry_safe", True,
+     "self.assertTrue(facts.retry_safe)",
+     "a shared helper like the seam's own _assert_no_start: it asserts the classification beside"
+     " the absence of a turn/start and the refusal code, and each caller names the difference"
+     " that refusal is about"),
     ("test_bridge_adapter.py",
      "test_a_non_never_approval_policy_is_inbox_only_not_a_settings_mismatch", "retry_safe",
      False, "self.assertFalse(facts.retry_safe, 'a closed push channel is not a retry loop')",

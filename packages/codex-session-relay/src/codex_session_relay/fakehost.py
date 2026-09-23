@@ -19,15 +19,35 @@ class ProcessDied(Exception):
 
 class FakeThread:
     def __init__(self, thread_id, *, status="idle", approval_policy="never", archived=False,
-                 goal_status=None, can_accept_input=True):
+                 goal_status=None, can_accept_input=True, loaded_settings=None):
         self.thread_id = thread_id
         self.status = status
         self.approval_policy = approval_policy
         self.archived = archived
         self.goal_status = goal_status
         self.can_accept_input = can_accept_input
+        # What a resume requesting nothing reports for this thread: a resume response. None
+        # means the thread's own state is what its record says, as it is on a host that
+        # persists every field a record holds.
+        self.loaded_settings = loaded_settings
         self.turns = []
         self.items = []
+
+
+def _loaded_as_recorded(thread, settings) -> dict:
+    """The resume response of a thread whose own state is exactly its record."""
+    data = settings.data
+    return {
+        "approvalPolicy": thread.approval_policy,
+        "sandbox": data["sandbox"],
+        "cwd": data["cwd"],
+        "runtimeWorkspaceRoots": list(data["runtimeWorkspaceRoots"]),
+        "model": data["model"],
+        "reasoningEffort": data["reasoningEffort"],
+        "activePermissionProfile": data.get("expectedPermissionProfile"),
+        "thread": {"id": thread.thread_id,
+                   "environments": [dict(one) for one in data["environments"]]},
+    }
 
 
 class FakeHostAdapter:
@@ -38,6 +58,9 @@ class FakeHostAdapter:
         self._script = []
         self.sends = []
         self.settings_seen = []
+        # (request id, thread id) of every resume that requested nothing: the route a pair no
+        # policy derived takes, so a test can say that nothing was transmitted to that thread.
+        self.settings_free_resumes = []
         self.read_failures = set()
         self.scan_limit = None
         self.connected = True
@@ -156,6 +179,33 @@ class FakeHostAdapter:
         self.sends.append((request_id, thread_id, message, outcome))
         thread = self.threads[thread_id]
         resumed = {"approvalPolicy": thread.approval_policy}
+
+        if getattr(settings, "settings_free_resume", False) and outcome in (
+                "accepted", "steer_existing"):
+            # The real transport's route for a pair no policy derived: resume with nothing
+            # requested, compare what the thread reports with the record through the same
+            # TaskSettings.mismatches, and start nothing on a difference. An unloaded thread is
+            # loaded by that resume.
+            from .settings import SETTINGS_DIFFER_AFTER_LOAD, SETTINGS_NOT_PRESERVED
+
+            self.settings_free_resumes.append((request_id, thread_id))
+            resumed = (thread.loaded_settings if thread.loaded_settings is not None
+                       else _loaded_as_recorded(thread, settings))
+            findings = settings.mismatches(resumed, transmitted=False)
+            if findings:
+                first = findings[0]
+                code = (SETTINGS_DIFFER_AFTER_LOAD if first["code"] == SETTINGS_NOT_PRESERVED
+                        else first["code"])
+                receipt.update(
+                    status="failed", resumed=resumed, settingsFreeResume=True,
+                    settingsFindings=findings,
+                    error=f"thread/resume: {code}: {first['field']} differs; message withheld",
+                    rpcError={"code": code, "message": f"{first['field']} differs"},
+                )
+                self.ledger[request_id] = receipt
+                return dict(receipt)
+            if thread.status == "notLoaded":
+                thread.status = "idle"
 
         if outcome == "in_progress":
             return dict(receipt)
