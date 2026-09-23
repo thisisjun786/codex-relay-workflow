@@ -24,16 +24,19 @@ relay records it in `scope_bindings` and the role ids here are the same three st
 | --- | --- | --- | --- |
 | `supervisor` | Astra | as selected | Jun, directly |
 | `parent` | `devin/swe-2` | `max` | this policy |
-| `child` | `anthropic/claude-opus-5` | `xhigh` | this policy |
+| `child` | `anthropic/claude-opus-5-5` | `xhigh` | this policy |
 
 **This table is a record of the product decision, not a default the code applies.** The decision
-itself is Linear CRW-127; the values that are actually enforced are the ones in the host's policy
-file. If the two disagree, the file is what runs and the disagreement is the bug.
+itself is Linear CRW-127, and the child row's move to Opus 5.5 is CRW-217; the values that are
+actually enforced are the ones in the host's policy file. If the two disagree, the file is what
+runs and the disagreement is the bug.
 
 That separation is what a change of pair costs, and the parent row has now paid it twice in a
 day. It ran on `devin/swe-2` at `max`, moved to `xai/grok-4.6` at `xhigh` on 2026-09-21, and was
-restored to `devin/swe-2` at `max` later that same day. Each move was an edit to the policy file
-and a restart, with no line of code changed, because no pair is written in code to go stale. A
+restored to `devin/swe-2` at `max` later that same day. The child row has paid it once: it ran on
+`anthropic/claude-opus-5` at `xhigh` until 2026-09-23, when it moved to
+`anthropic/claude-opus-5-5` and kept `xhigh`. Each move was an edit to the policy file and a
+restart, with no line of code changed, because no pair is written in code to go stale. A
 superseded pair is not a second valid answer: once the file declares the current one, every other
 pair is refused for that role like any other wrong pair, and a superseded pair is kept as a
 regression fixture proving exactly that rather than as an alternative the checks still accept.
@@ -51,11 +54,15 @@ offer the same thing. Nothing maps one onto another: there is no alias table, no
 step, and every comparison in both packages is exact string equality.
 
 The clearest case is the parent row itself. The host's catalog reports SWE-2 at medium, high, max
-and ultra, and the parent's requested value under that model is exactly `max`, while Opus 5 runs
+and ultra, and the parent's requested value under that model is exactly `max`, while Opus 5.5 runs
 the child at `xhigh`. A request stating `xhigh` for that parent is refused, and so is one stating
 `max` for a child. The interim grok pair made the two names coincide at `xhigh` under different
 models, which changed nothing about the rule; the restored pair makes them differ again, which is
 why a pair whose two effort names differ is the case the regression fixture is built on.
+
+The child's move is the opposite case. It kept `xhigh`, so the pair it left differs from the
+current one by model alone, and that superseded pair is the fixture proving a check cannot pass a
+record by comparing efforts only.
 
 This is worth stating because the failure it prevents already happened in prose rather than in
 code: a coordinator retrying a withheld send changed the model and kept the old effort, and the
@@ -75,7 +82,7 @@ show the shape. Do not copy it as a default.
       "roles": {
         "supervisor": {"expectation": "record"},
         "parent": {"model": "devin/swe-2", "reasoningEffort": "max"},
-        "child":  {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}
+        "child":  {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
       }
     }
 

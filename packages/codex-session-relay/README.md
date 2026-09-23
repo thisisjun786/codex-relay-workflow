@@ -147,7 +147,7 @@ partial record cannot say what it is preserving:
       "approvalPolicy": "never",
       "cwd": "/abs/path",
       "runtimeWorkspaceRoots": ["/abs/path"],
-      "model": "anthropic/claude-opus-5",
+      "model": "anthropic/claude-opus-5-5",
       "reasoningEffort": "xhigh",
       "environments": [{"environmentId": "local", "cwd": "/abs/path",
                         "runtimeWorkspaceRoots": ["/abs/path"]}]
@@ -292,7 +292,7 @@ The role pairs below are examples; read your host's declared
   "child": {
     "hostId": "observed-local-host", "title": "EXAMPLE-42 · Implement the assigned change",
     "settings": {
-      "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh",
+      "model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh",
       "approvalPolicy": "never",
       "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
       "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],

@@ -12,8 +12,9 @@ from codex_thread_bridge.ledger import Ledger
 from codex_thread_bridge.rpc import AppServer
 
 # The pair the suite uses wherever the guard is not what is being tested. It is also what a
-# configured allowlist in these tests approves, so one constant covers both modes.
-MODEL = "anthropic/claude-opus-5"
+# configured allowlist in these tests approves, so one constant covers both modes. It is the
+# issue child's pair, which moved from anthropic/claude-opus-5 on 2026-09-23 at the same effort.
+MODEL = "anthropic/claude-opus-5-5"
 EFFORT = "xhigh"
 EXECUTION = {"model": MODEL, "reasoning_effort": EFFORT}
 

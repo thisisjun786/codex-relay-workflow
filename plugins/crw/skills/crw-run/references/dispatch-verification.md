@@ -149,7 +149,7 @@ a case whose owner has moved or been reworded before relying on it.
 | S6 | A busy task or an uncertain send is reconciled rather than duplicated | [Independent implementation tasks](../SKILL.md#independent-implementation-tasks) and [Bridge launch and recovery](bridge.md) | Recovery | unchanged |
 | S7 | Permission for an unrelated earlier task does not travel to this scope | The paragraph following that table | Preserved limits | unchanged |
 | S8 | Explicit current-task, read-only, status-only and no-create limits win | Same paragraph, with precedence in [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) | Preserved limits | unchanged |
-| S9 | With no explicit choice the child runs `anthropic/claude-opus-5` at `xhigh` with CXC Loop | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) | Default settings | unchanged |
+| S9 | With no explicit choice the child runs `anthropic/claude-opus-5-5` at `xhigh` with CXC Loop | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) | Default settings | unchanged |
 | S10 | A named-model correction steers this dispatch and does not change global or role configuration | [Keep a project run moving](../SKILL.md#keep-a-project-run-moving) and the packet's permissions line | Default settings | unchanged |
 | S11 | A standing Loop choice yields to a later read-only limit | Precedence list, with the packet's non-Loop branch | Preserved limits | unchanged |
 | S12 | A later instruction supersedes only the same constraint, so an unrelated limit survives | Same section, precedence sentence | Preserved limits | unchanged |
