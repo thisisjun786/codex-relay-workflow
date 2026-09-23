@@ -327,6 +327,31 @@ def _policy_now(wanted):
     return [] if reference is None else policy_file_complaints(reference)
 
 
+def _remove_if_still(path, written):
+    """Remove the record at path only while it is the file this run wrote: (removed, why).
+
+    Compare-and-remove, the rule hostrecord.update follows for what a run introduced: the file is
+    judged by the (device, inode) atomic_write read from its own descriptor, so a record that
+    replaced it, even one holding the same bytes, is left where it is. Called under the lock that
+    wrote it, which excludes every run of these commands. A writer that ignores the lock can still
+    land between this look and the unlink; that is the limit hostrecord.Locked states for every
+    write here, the write this undoes included.
+    """
+    try:
+        found = os.lstat(str(path))
+    except OSError as error:
+        return False, ("it could not be looked at (" + type(error).__name__ + ": " + str(error)
+                       + ")")
+    if (found.st_dev, found.st_ino) != tuple(written):
+        return False, "the file there is no longer the one this run wrote, so it was left in place"
+    try:
+        os.unlink(str(path))
+    except OSError as error:
+        return False, ("it could not be removed (" + type(error).__name__ + ": " + str(error)
+                       + ")")
+    return True, None
+
+
 def outcome_for(wanted, found):
     if not found.usable:
         return found.state
@@ -357,12 +382,11 @@ def write(path, wanted, *, apply=False):
     refuses. So the file is asked twice more under the lock. Immediately before the write: a
     mismatch writes nothing, which keeps the path as it was found (absent, the only state a
     write starts from), and answers POLICY_CHANGED. After the write, with the written record read
-    back: a mismatch in that last interval answers POLICY_CHANGED too, and the record stays
-    where it is with the repair named. It is not removed. The lock does not exclude a writer
-    that ignores it, and no removal by path can prove the file it deletes is still the one this
-    run wrote, so this follows the rule a record that cannot be read back already follows:
-    reported, never deleted. An already-installed record whose policy no longer matches is
-    answered the same way and left as it is.
+    back: a mismatch in that last interval answers POLICY_CHANGED too, and the record this run
+    wrote is removed by compare-and-remove (_remove_if_still), which restores the absence. A
+    record that is no longer this run's file is left, and the answer says so. An
+    already-installed record whose policy no longer matches is answered the same way and left
+    as it is: it is not this run's.
     """
     path = Path(path)
     unusable = complaints(wanted)
@@ -417,19 +441,28 @@ def write(path, wanted, *, apply=False):
                                 " so nothing was written")
             answer["repair"] = "run register-mcp again against the file as it now stands"
             return answer
-        hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
+        written = hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True)
+                                          + "\n")
         back = read_json_without_blocking(path, "the bridge MCP record")
         stale = _policy_now(wanted) if back.usable and back.value == wanted else []
+        if stale:
+            removed, why = _remove_if_still(path, written)
+            after = read_json_without_blocking(path, "the bridge MCP record")
     if stale:
         answer["outcome"] = POLICY_CHANGED
-        answer["applied"] = True
         answer["wrote"] = True
+        answer["rolledBack"] = removed
+        answer["applied"] = not removed
         answer["detail"] = ("the execution policy changed while this record was being written: "
-                            + "; ".join(stale) + ". The record is in place and the launcher will"
-                            " refuse to start the bridge from it. It was not removed, because"
-                            " this command never deletes a record it cannot prove is still the"
-                            " one it wrote")
-        answer["repair"] = _POLICY_REPAIR.format(path=path)
+                            + "; ".join(stale) + ". The launcher would refuse to start the bridge"
+                            " from it, so "
+                            + ("the record this run wrote was removed"
+                               + (" and nothing is installed" if after.state == reading.ABSENT
+                                  else ", and " + str(path) + " now holds another writer's file")
+                               if removed else
+                               "this run did not remove the record it wrote: " + why))
+        answer["repair"] = ("run register-mcp again against the file as it now stands"
+                            if removed else _POLICY_REPAIR.format(path=path))
         return answer
     answer["outcome"] = CREATED
     answer["applied"] = True

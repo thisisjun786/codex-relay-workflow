@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
-from crw_runtime import bridgerecord, completion, hooks, reading
+from crw_runtime import bridgerecord, completion, hooks, hostrecord, reading
 
 import plugin
 
@@ -957,20 +957,66 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertIn("now hashes to", emitted.get("detail") or "", output)
         self.assertFalse(self.record.exists(), "nothing is written over a changed policy: "
                          + output)
+        # And the output claims nothing it did not do: no record written, no new thread served.
+        self.assertIs(emitted.get("wrote"), False, output)
+        self.assertNotIn("activation", emitted, output)
+        self.assertTrue((emitted.get("note") or "").startswith("Refused"), output)
 
     def test_a_policy_edited_while_the_record_is_written_is_not_reported_installed(self):
-        """The edit that lands after the last look before the write is caught by the read-back.
-
-        The record is then in place and is reported with its repair rather than removed: no
-        removal by path can prove the file it deletes is still the one this run wrote.
-        """
+        """The edit that lands after the last look before the write is caught by the read-back,
+        and the record this run wrote is removed again, which restores the absence it found."""
         status, emitted, output = self.register_while_the_policy_is_edited("write")
         self.assertNotEqual(status, 0, output)
         self.assertEqual(emitted.get("outcome"), "record_policy_changed", output)
         self.assertIn("now hashes to", emitted.get("detail") or "", output)
-        self.assertTrue(emitted.get("wrote"), output)
-        self.assertIn("aside", emitted.get("repair") or "", output)
-        self.assertTrue(self.record.exists(), output)
+        self.assertIs(emitted.get("rolledBack"), True, output)
+        self.assertFalse(self.record.exists(), "the record this run wrote goes with the run: "
+                         + output)
+        self.assertNotIn("activation", emitted, output)
+
+    def _write_with_a_replacement_after(self, replacement_bytes):
+        """bridgerecord.write, with another writer replacing the record right after the write
+        and the policy found changed at the look after it. Returns the answer."""
+        wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
+                                       owner=bridgerecord.OWNER_PLUGIN,
+                                       execution_policy={"path": str(self.policy),
+                                                         "digest": self.digest})
+        real_write, real_check = hostrecord.atomic_write, bridgerecord.policy_file_complaints
+        asked = []
+
+        def written_then_replaced(path, text):
+            identity = real_write(path, text)
+            staged = Path(path).with_name("theirs.tmp")
+            staged.write_bytes(replacement_bytes(text))
+            os.replace(staged, path)
+            return identity
+
+        def stale_after_the_write(reference):
+            asked.append(reference)
+            if len(asked) == 1:
+                return real_check(reference)  # the look before the write
+            return ["the execution policy " + reference["path"] + " now hashes to another digest"]
+
+        hostrecord.atomic_write = written_then_replaced
+        bridgerecord.policy_file_complaints = stale_after_the_write
+        try:
+            return bridgerecord.write(self.record, wanted, apply=True)
+        finally:
+            hostrecord.atomic_write = real_write
+            bridgerecord.policy_file_complaints = real_check
+
+    def test_a_byte_identical_replacement_is_not_taken_for_this_runs_record(self):
+        """Review of 8f019c24: identity sampled after the write took another writer's file.
+
+        The identity comes from atomic_write's own descriptor, so a record that replaced it with
+        the same bytes under another inode is left where it is.
+        """
+        answer = self._write_with_a_replacement_after(lambda text: text.encode("utf-8"))
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertIs(answer.get("rolledBack"), False, answer)
+        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
+        self.assertTrue(self.record.exists(), "another writer's record was deleted: "
+                        + json.dumps(answer))
 
     def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
         """The path that writes nothing is settled against the file as it stands too."""
@@ -989,9 +1035,8 @@ class BridgeRecordPolicyTest(unittest.TestCase):
     def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
         """Review of 28f11c04 and 8f019c24: a removal by path took whatever was there by then.
 
-        The lock around the write does not exclude a writer that ignores it, or one that
-        reclaimed it as stale. Here that writer replaces the record after the write and before
-        the last look at the policy; its record has to survive, and the answer must say so.
+        Here another writer replaces the record after the read-back and before the last look at
+        the policy; its record has to survive, and the answer must not claim a rollback.
         """
         wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
                                        owner=bridgerecord.OWNER_PLUGIN,
@@ -1019,7 +1064,8 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         finally:
             bridgerecord.policy_file_complaints = real
         self.assertEqual(answer["outcome"], "record_policy_changed", answer)
-        self.assertIn("not removed", answer["detail"], answer)
+        self.assertIs(answer.get("rolledBack"), False, answer)
+        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
         self.assertTrue(self.record.exists(), "another writer's record was deleted: "
                         + json.dumps(answer))
         self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)

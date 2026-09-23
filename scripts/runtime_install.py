@@ -5381,24 +5381,36 @@ def _register_mcp_owned(args, codex_home):
                   "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
                   "otherTablesPreserved": True})
             return EXIT_REFUSED
+        # What the output claims follows what happened. A refusal says nothing about new threads
+        # running the bridge, and only a record that is in place is described as written.
+        answered = written["outcome"]
         emit({"command": "register-mcp", "owner": owner, "path": str(path),
-              "record": str(record_path), "outcome": written["outcome"],
+              "record": str(record_path), "outcome": answered,
               "detail": written.get("detail"), "applied": written["applied"],
               "wrote": written["wrote"], "otherTablesPreserved": True,
               **({"differingFields": written["differingFields"]}
                  if "differingFields" in written else {}),
               **({"repair": written["repair"]} if "repair" in written else {}),
+              **({"rolledBack": written["rolledBack"]} if "rolledBack" in written else {}),
               "preservedHow": "the Codex configuration was read and not written",
               "executionPolicy": policy,
-              "activation": (
+              **({"activation": (
                   "Codex starts this server for each thread it loads (observed on Codex Desktop"
                   " 0.154.0), so a thread started after this record is written runs the bridge"
                   " under it and a thread already running keeps the bridge it spawned. Read"
-                  " get_capabilities in a new thread to observe it."),
-              "note": "The record was written and no MCP server was registered. The plugin"
-                      " package declares the server, so install that package to register it."
-                      " Written, registered and a tool actually called stay three claims."})
-        return EXIT_OK if written["outcome"] in bridgerecord.SETTLED else EXIT_REFUSED
+                  " get_capabilities in a new thread to observe it.")}
+                 if answered in bridgerecord.SETTLED else {}),
+              "note": (
+                  "The record was written and no MCP server was registered. The plugin package"
+                  " declares the server, so install that package to register it. Written,"
+                  " registered and a tool actually called stay three claims."
+                  if answered in (bridgerecord.CREATED, bridgerecord.UNCHANGED) else
+                  "Nothing was written: this was a dry run. With --apply the record would be"
+                  " written and no MCP server registered."
+                  if answered == bridgerecord.WOULD_CREATE else
+                  "Refused. This run installed no record a new thread can start the bridge from;"
+                  " detail says what is at the record path now and repair says what to do.")})
+        return EXIT_OK if answered in bridgerecord.SETTLED else EXIT_REFUSED
     try:
         with reading.region(path, "the Codex configuration"):
             new_text, outcome, detail = codexconfig.register(
