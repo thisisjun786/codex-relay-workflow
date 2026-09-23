@@ -351,6 +351,7 @@ SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
 SCAN_TIMED_OUT = "scan_timed_out"
 TRANSCRIPT_TAIL_INCOMPLETE = "transcript_tail_incomplete"
 TRANSCRIPT_LINE_UNREADABLE = "transcript_line_unreadable"
+TURN_START_NOT_FOUND = "turn_start_not_found"
 NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
 ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
 ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
@@ -363,8 +364,6 @@ SESSION_MISMATCH = "session_mismatch"
 HOOK_PROMPT = "HookPrompt"
 USER_MESSAGE = "UserMessage"
 INPUT_ITEMS = (HOOK_PROMPT, USER_MESSAGE)
-# Every line the scan can act on names the turn and one of these, so the rest are never parsed.
-SCAN_TOKENS = (b"AgentMessage", b"HookPrompt", b"UserMessage", b"task_started")
 
 # The answers a configuration write gives about the file it found. The same shape hooks.install
 # uses, in this module's own words rather than its words, so an answer about these settings can
@@ -1172,9 +1171,11 @@ def _turn_items(handle, turn, identity, started):
     late delivery of that earlier Stop. Lines are assembled from pieces, so a line longer than a
     chunk costs its own length once rather than once per chunk.
 
-    Nothing that could be this turn's newest item is read past. A last line without its newline is
-    one the host is still writing, and a line naming this turn that does not parse could be an
+    Nothing that could be one of this turn's items is read past. A last line without its newline is
+    one the host is still writing, and any line naming this turn that does not parse could be an
     input; either leaves the identity unestablished rather than falling back to an older answer.
+    Only lines carrying the turn id are parsed, and those are the host's small event records: on
+    the host this was built on, every such line of a 62 MB turn parsed in about 10 ms.
     """
     token = turn.encode("utf-8", "surrogatepass")
     size = os.fstat(handle).st_size
@@ -1222,7 +1223,7 @@ def _turn_items(handle, turn, identity, started):
                 if unfinished:
                     return None, TRANSCRIPT_TAIL_INCOMPLETE
                 continue
-            if token not in line or not any(mark in line for mark in SCAN_TOKENS):
+            if token not in line:
                 continue
             try:
                 found = _classify(json.loads(line.decode("utf-8")), turn)
@@ -1233,20 +1234,21 @@ def _turn_items(handle, turn, identity, started):
             if found[0] == "start":
                 return items, None
             items.append(found)
-    return items, None
+    # The file began without this turn's start. Whatever came before it is not here, so an earlier
+    # Stop of the turn may be missing too, and an unseen Stop is what a late delivery hides behind.
+    return None, TURN_START_NOT_FOUND
 
 
 def event_identity(stop, started=None):
     """Which Stop event this invocation answers, as (key, identity).
 
     The key is None when the identity could not be established, and identity["reason"] says why.
-    An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
-    answer the host recorded for the turn, provided no newer input for the turn follows it, its
-    thread is the delivered session, its text is the one the payload reports, and no earlier Stop
-    of the same turn -- one with the same stop_hook_active -- reported that same text. That last
-    condition is what a late delivery of an earlier Stop needs to be told apart from this one; when
-    it fails, the two cannot be told apart and nothing is claimed. The key is a SHA-256 over the
-    four values, so no host value becomes a path and nothing is minted here.
+    An established event is (session_id, turn_id, stop_hook_active, answer item id), where the
+    answer is the one Stop of this turn the transcript shows reporting the payload's text under the
+    payload's stop_hook_active: the newest answer for the live Stop, an earlier Stop's own answer
+    for a late delivery of it. It is established only when the latest sampling's answer is
+    recorded, exactly one Stop matches, and that answer's recorded thread is the session. The key
+    is a SHA-256 over the four values, so no host value becomes a path and nothing is minted here.
     """
     started = time.monotonic() if started is None else started
     identity = {"established": False, "reason": None, "answerItem": None,
@@ -1294,9 +1296,35 @@ def event_identity(stop, started=None):
         identity["reason"] = NO_ANSWER_ITEM_FOR_TURN
         return None, identity
     if items[0][0] != "answer":
+        # The latest sampling's answer is not recorded. This may be its own Stop, whose answer the
+        # transcript does not show yet, or a late delivery of an earlier one; nothing tells them
+        # apart, so nothing is claimed.
         identity["reason"] = ANSWER_PRECEDES_LATEST_INPUT
         return None, identity
-    _kind, item_id, text, thread = items[0]
+    # The Stops of this turn, as the transcript shows them: the last answer before each later input,
+    # and the newest answer, which is the latest sampling's. A Stop's stop_hook_active is true once
+    # a hook continuation has happened in the turn, so each one's flag is whether a continuation
+    # prompt precedes it. The live Stop reports the newest answer; a late delivery reports its own.
+    # The event is the one Stop whose text and flag are what this payload reports. Two such Stops
+    # cannot be told apart, and none means the payload is not about anything recorded here.
+    chronological = list(reversed(items))
+    matching = []
+    for index, entry in enumerate(chronological):
+        if entry[0] != "answer":
+            continue
+        if index + 1 < len(chronological) and chronological[index + 1][0] != "input":
+            continue
+        flag = any(prior[0] == "input" and prior[1] == HOOK_PROMPT
+                   for prior in chronological[:index])
+        if entry[2] == said and flag == active:
+            matching.append(entry)
+    if not matching:
+        identity["reason"] = ANSWER_TEXT_MISMATCH
+        return None, identity
+    if len(matching) > 1:
+        identity["reason"] = ANSWER_TEXT_AMBIGUOUS
+        return None, identity
+    _kind, item_id, _text, thread = matching[0]
     if not isinstance(item_id, str) or not item_id:
         identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
         return None, identity
@@ -1304,21 +1332,6 @@ def event_identity(stop, started=None):
     if thread != session:
         identity["reason"] = SESSION_MISMATCH
         return None, identity
-    if text != said:
-        identity["reason"] = ANSWER_TEXT_MISMATCH
-        return None, identity
-    # Earlier Stops of this turn: the last answer before each input that came after it. A Stop's
-    # stop_hook_active is true once a hook continuation has happened in the turn, so an earlier
-    # answer's flag is whether any continuation prompt precedes it.
-    chronological = list(reversed(items))
-    for index, entry in enumerate(chronological[:-1]):
-        if entry[0] != "answer" or chronological[index + 1][0] != "input":
-            continue
-        earlier_active = any(prior[0] == "input" and prior[1] == HOOK_PROMPT
-                             for prior in chronological[:index])
-        if entry[2] == said and earlier_active == active:
-            identity["reason"] = ANSWER_TEXT_AMBIGUOUS
-            return None, identity
     identity["established"] = True
     key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
                                     separators=(",", ":")).encode("ascii")).hexdigest()
@@ -1602,6 +1615,56 @@ def _read_json(path):
         return None, False
 
 
+def _ledger_shape(body, key, outcome):
+    """Whether an accepted record carries every field its kind is written with, and names its key."""
+    if (not isinstance(body, dict) or body.get("eventKey") != key
+            or body.get("ledgerVersion") != LEDGER_VERSION):
+        return False
+    for field in ("sessionId", "turnId"):
+        if not isinstance(body.get(field), str) or not body.get(field):
+            return False
+    if outcome:
+        return (isinstance(body.get("at"), str) and isinstance(body.get("adapterOutcome"), str)
+                and body.get("journalPolicy") in JOURNAL_POLICIES
+                and isinstance(body.get("held"), bool)
+                and (body.get("attemptRow") is None or isinstance(body.get("attemptRow"), str)))
+    claimed_by = body.get("claimedBy")
+    return (isinstance(body.get("claimedAt"), str) and isinstance(body.get("stopHookActive"), bool)
+            and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
+            and isinstance(claimed_by, dict) and isinstance(claimed_by.get("attemptRow"), str))
+
+
+def _row_shape(row):
+    """Whether a version-2 row has the fields its acceptance is written with.
+
+    Checked before any window is applied. A row that names an event needs its session, turn and
+    key; one that could not be identified needs its reason (its session and turn may be the very
+    fields that were missing); one that never reached an event carries none of them.
+    """
+    if not isinstance(row.get("at"), str) or not row.get("at"):
+        return False
+    acceptance, key, identity = row.get("acceptance"), row.get("eventKey"), row.get("eventIdentity")
+    keyed = isinstance(key, str) and LEDGER_NAME.match(key + ".json") is not None
+    named = all(isinstance(row.get(field), str) and row.get(field)
+                for field in ("sessionId", "turnId"))
+    if acceptance in (ACCEPTED, DUPLICATE, UNCLAIMABLE, CLAIM_FAILED):
+        return keyed and named and isinstance(identity, dict) and identity.get("established") is True
+    if acceptance == UNESTABLISHED:
+        return (key is None and isinstance(identity, dict)
+                and identity.get("established") is False
+                and isinstance(identity.get("reason"), str))
+    return acceptance is None and key is None and identity is None
+
+
+def _read_row(root, named):
+    """The row an outcome names, read only from the shape a row takes under its own root."""
+    parts = named.split("/") if isinstance(named, str) else []
+    if len(parts) != 2 or not JOURNAL_DAY.match(parts[0]) or not JOURNAL_NAME.match(parts[1]):
+        return None
+    body, readable = _read_json(Path(root) / parts[0] / parts[1])
+    return body if readable and isinstance(body, dict) else None
+
+
 def stop_events(roots, since=None, until=None, session=None, turn=None):
     """Whether every Stop event recorded under these journal roots was accepted exactly once.
 
@@ -1612,10 +1675,13 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
     happened outside the ledger), or a duplicate row that asked the guard anyway. On one working
     root a replay never reads FALSE: the claim is create-once.
 
-    UNREADABLE when the reading cannot vouch for what it read -- a listing that failed, a row or
-    an accepted record that does not parse or does not have the shape its kind requires, an
-    outcome with no claim in its own root, a claim with no outcome in its own root (its owner died
-    before answering), a ledger written under journalPolicy no_journal (no rows exist, so an
+    UNREADABLE when the reading cannot vouch for what it read -- a listing that failed (including
+    an accepted/ path that is not a directory), a row or an accepted record that does not parse or
+    does not have the shape its kind requires, a row version this reader does not know, an
+    outcome with no claim in its own root or naming another session or turn than its claim, a
+    claim with no outcome in its own root (its owner died before answering), an outcome whose
+    accepted row is missing or is not that event's accepted row (including none under
+    every_invocation), a ledger written under journalPolicy no_journal (no rows exist, so an
     invocation answered without an identity cannot be seen at all), or nothing to judge.
 
     The window (since/until/session/turn) selects claims by claimedAt, sessionId and turnId,
@@ -1632,7 +1698,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
               "unjudgedInvocations": {}, "legacyRows": 0, "acceptedWithoutOutcome": [],
               "outcomesWithoutClaim": [], "acceptedRowsWithoutLedger": [],
               "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": [],
-              "foreignLedgerEntries": [], "invocationsUnrecorded": [],
+              "foreignLedgerEntries": [], "invocationsUnrecorded": [], "acceptedRowsMissing": [],
               "turnsWithMoreThanOneEvent": 0,
               "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
                                     "pairsWithMoreThanOneRow": 0}}
@@ -1668,8 +1734,14 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
         try:
             days = sorted(e.name for e in os.scandir(str(root))
                           if e.is_dir() and JOURNAL_DAY.match(e.name))
-            ledger = (sorted(e.name for e in os.scandir(str(root / LEDGER_DIRECTORY)))
-                      if (root / LEDGER_DIRECTORY).is_dir() else [])
+            if (root / LEDGER_DIRECTORY).is_dir():
+                ledger = sorted(e.name for e in os.scandir(str(root / LEDGER_DIRECTORY)))
+            elif os.path.lexists(str(root / LEDGER_DIRECTORY)):
+                # Something is there that is not a directory: the accepted records cannot be
+                # read, which is not the same answer as "none were written".
+                raise NotADirectoryError(str(root / LEDGER_DIRECTORY) + " is not a directory")
+            else:
+                ledger = []
         except OSError as error:
             entry["state"], entry["detail"] = "unreadable", str(error)
             listing_failed = True
@@ -1690,9 +1762,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                 answer["foreignLedgerEntries"].append(str(path))
                 continue
             body, readable = _read_json(path)
-            if (not readable or not isinstance(body, dict) or body.get("eventKey") != key
-                    or not isinstance(body.get("sessionId"), str) or not body.get("sessionId")
-                    or not isinstance(body.get("turnId"), str) or not body.get("turnId")):
+            if not readable or not _ledger_shape(body, key, table is outcomes):
                 answer["ledgerUnreadable"].append(str(path))
                 continue
             table[key] = body
@@ -1707,10 +1777,23 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
         for key, body in outcomes.items():
             if not in_window(body.get("at"), body["sessionId"], body["turnId"]):
                 continue
-            if key not in claims:
+            claim = claims.get(key)
+            if claim is None:
                 answer["outcomesWithoutClaim"].append(key)
-            if body.get("journalPolicy") == NO_JOURNAL:
+            elif (claim["sessionId"], claim["turnId"]) != (body["sessionId"], body["turnId"]):
+                answer["ledgerUnreadable"].append(str(root / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)))
+            if body["journalPolicy"] == NO_JOURNAL:
                 answer["invocationsUnrecorded"].append(key)
+            row = body["attemptRow"]
+            if row is None and body["journalPolicy"] == EVERY_INVOCATION:
+                # Every invocation was to leave a row, so the accepted one's is missing: its write
+                # failed, and what the event was answered with rests on the outcome alone.
+                answer["acceptedRowsMissing"].append(key)
+            elif row is not None:
+                named = _read_row(root, row)
+                if (named is None or named.get("recordVersion") != RECORD_VERSION
+                        or named.get("acceptance") != ACCEPTED or named.get("eventKey") != key):
+                    answer["acceptedRowsMissing"].append(key)
         for day in days:
             try:
                 names = sorted(e.name for e in os.scandir(str(root / day))
@@ -1722,7 +1805,12 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
             for name in names:
                 where = str(root / day / name)
                 row, readable = _read_json(root / day / name)
-                if not readable or not isinstance(row, dict):
+                # The shape is judged before the window, because a row missing the fields the
+                # window reads would otherwise fall outside every window and never be judged.
+                if (not readable or not isinstance(row, dict)
+                        or row.get("recordVersion") not in (1, RECORD_VERSION)
+                        or (row.get("recordVersion") == RECORD_VERSION
+                            and not _row_shape(row))):
                     answer["rowsUnreadable"].append(where)
                     continue
                 if not in_window(row.get("at"), row.get("sessionId"), row.get("turnId")):
@@ -1730,7 +1818,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                 if row.get("sessionId") and row.get("turnId"):
                     pair = (row["sessionId"], row["turnId"])
                     pairs[pair] = pairs.get(pair, 0) + 1
-                if row.get("recordVersion") != RECORD_VERSION:
+                if row.get("recordVersion") == 1:
                     answer["legacyRows"] += 1
                     continue
                 acceptance, key = row.get("acceptance"), row.get("eventKey")
@@ -1770,14 +1858,16 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
     answer["supersededPerTurn"]["pairsWithMoreThanOneRow"] = sum(1 for n in pairs.values()
                                                                 if n > 1)
     for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
-                  "outcomesWithoutClaim", "invocationsUnrecorded"):
+                  "outcomesWithoutClaim", "invocationsUnrecorded", "acceptedRowsMissing",
+                  "ledgerUnreadable"):
         answer[field] = sorted(set(answer[field]))
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
         answer["verdict"] = FALSE
     elif (listing_failed or answer["ledgerUnreadable"] or answer["rowsUnreadable"]
           or answer["outcomesWithoutClaim"] or answer["acceptedWithoutOutcome"]
-          or answer["invocationsUnrecorded"] or not claims_in_window):
+          or answer["invocationsUnrecorded"] or answer["acceptedRowsMissing"]
+          or not claims_in_window):
         answer["verdict"] = UNREADABLE_VERDICT
     else:
         answer["verdict"] = TRUE

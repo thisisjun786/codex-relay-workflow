@@ -181,6 +181,7 @@ SCAN_BOUND_EXCEEDED = "scan_bound_exceeded"
 SCAN_TIMED_OUT = "scan_timed_out"
 TRANSCRIPT_TAIL_INCOMPLETE = "transcript_tail_incomplete"
 TRANSCRIPT_LINE_UNREADABLE = "transcript_line_unreadable"
+TURN_START_NOT_FOUND = "turn_start_not_found"
 NO_ANSWER_ITEM_FOR_TURN = "no_answer_item_for_turn"
 ANSWER_ITEM_UNIDENTIFIED = "answer_item_unidentified"
 ANSWER_PRECEDES_LATEST_INPUT = "answer_precedes_latest_input"
@@ -193,8 +194,6 @@ SESSION_MISMATCH = "session_mismatch"
 HOOK_PROMPT = "HookPrompt"
 USER_MESSAGE = "UserMessage"
 INPUT_ITEMS = (HOOK_PROMPT, USER_MESSAGE)
-# Every line the scan can act on names the turn and one of these, so the rest are never parsed.
-SCAN_TOKENS = (b"AgentMessage", b"HookPrompt", b"UserMessage", b"task_started")
 
 
 def now():
@@ -675,9 +674,11 @@ def _turn_items(handle, turn, identity, started):
     late delivery of that earlier Stop. Lines are assembled from pieces, so a line longer than a
     chunk costs its own length once rather than once per chunk.
 
-    Nothing that could be this turn's newest item is read past. A last line without its newline is
-    one the host is still writing, and a line naming this turn that does not parse could be an
+    Nothing that could be one of this turn's items is read past. A last line without its newline is
+    one the host is still writing, and any line naming this turn that does not parse could be an
     input; either leaves the identity unestablished rather than falling back to an older answer.
+    Only lines carrying the turn id are parsed, and those are the host's small event records: on
+    the host this was built on, every such line of a 62 MB turn parsed in about 10 ms.
     """
     token = turn.encode("utf-8", "surrogatepass")
     size = os.fstat(handle).st_size
@@ -725,7 +726,7 @@ def _turn_items(handle, turn, identity, started):
                 if unfinished:
                     return None, TRANSCRIPT_TAIL_INCOMPLETE
                 continue
-            if token not in line or not any(mark in line for mark in SCAN_TOKENS):
+            if token not in line:
                 continue
             try:
                 found = _classify(json.loads(line.decode("utf-8")), turn)
@@ -736,20 +737,21 @@ def _turn_items(handle, turn, identity, started):
             if found[0] == "start":
                 return items, None
             items.append(found)
-    return items, None
+    # The file began without this turn's start. Whatever came before it is not here, so an earlier
+    # Stop of the turn may be missing too, and an unseen Stop is what a late delivery hides behind.
+    return None, TURN_START_NOT_FOUND
 
 
 def event_identity(stop, started=None):
     """Which Stop event this invocation answers, as (key, identity).
 
     The key is None when the identity could not be established, and identity["reason"] says why.
-    An established event is (session_id, turn_id, stop_hook_active, answer item id): the newest
-    answer the host recorded for the turn, provided no newer input for the turn follows it, its
-    thread is the delivered session, its text is the one the payload reports, and no earlier Stop
-    of the same turn -- one with the same stop_hook_active -- reported that same text. That last
-    condition is what a late delivery of an earlier Stop needs to be told apart from this one; when
-    it fails, the two cannot be told apart and nothing is claimed. The key is a SHA-256 over the
-    four values, so no host value becomes a path and nothing is minted here.
+    An established event is (session_id, turn_id, stop_hook_active, answer item id), where the
+    answer is the one Stop of this turn the transcript shows reporting the payload's text under the
+    payload's stop_hook_active: the newest answer for the live Stop, an earlier Stop's own answer
+    for a late delivery of it. It is established only when the latest sampling's answer is
+    recorded, exactly one Stop matches, and that answer's recorded thread is the session. The key
+    is a SHA-256 over the four values, so no host value becomes a path and nothing is minted here.
     """
     started = time.monotonic() if started is None else started
     identity = {"established": False, "reason": None, "answerItem": None,
@@ -797,9 +799,35 @@ def event_identity(stop, started=None):
         identity["reason"] = NO_ANSWER_ITEM_FOR_TURN
         return None, identity
     if items[0][0] != "answer":
+        # The latest sampling's answer is not recorded. This may be its own Stop, whose answer the
+        # transcript does not show yet, or a late delivery of an earlier one; nothing tells them
+        # apart, so nothing is claimed.
         identity["reason"] = ANSWER_PRECEDES_LATEST_INPUT
         return None, identity
-    _kind, item_id, text, thread = items[0]
+    # The Stops of this turn, as the transcript shows them: the last answer before each later input,
+    # and the newest answer, which is the latest sampling's. A Stop's stop_hook_active is true once
+    # a hook continuation has happened in the turn, so each one's flag is whether a continuation
+    # prompt precedes it. The live Stop reports the newest answer; a late delivery reports its own.
+    # The event is the one Stop whose text and flag are what this payload reports. Two such Stops
+    # cannot be told apart, and none means the payload is not about anything recorded here.
+    chronological = list(reversed(items))
+    matching = []
+    for index, entry in enumerate(chronological):
+        if entry[0] != "answer":
+            continue
+        if index + 1 < len(chronological) and chronological[index + 1][0] != "input":
+            continue
+        flag = any(prior[0] == "input" and prior[1] == HOOK_PROMPT
+                   for prior in chronological[:index])
+        if entry[2] == said and flag == active:
+            matching.append(entry)
+    if not matching:
+        identity["reason"] = ANSWER_TEXT_MISMATCH
+        return None, identity
+    if len(matching) > 1:
+        identity["reason"] = ANSWER_TEXT_AMBIGUOUS
+        return None, identity
+    _kind, item_id, _text, thread = matching[0]
     if not isinstance(item_id, str) or not item_id:
         identity["reason"] = ANSWER_ITEM_UNIDENTIFIED
         return None, identity
@@ -807,21 +835,6 @@ def event_identity(stop, started=None):
     if thread != session:
         identity["reason"] = SESSION_MISMATCH
         return None, identity
-    if text != said:
-        identity["reason"] = ANSWER_TEXT_MISMATCH
-        return None, identity
-    # Earlier Stops of this turn: the last answer before each input that came after it. A Stop's
-    # stop_hook_active is true once a hook continuation has happened in the turn, so an earlier
-    # answer's flag is whether any continuation prompt precedes it.
-    chronological = list(reversed(items))
-    for index, entry in enumerate(chronological[:-1]):
-        if entry[0] != "answer" or chronological[index + 1][0] != "input":
-            continue
-        earlier_active = any(prior[0] == "input" and prior[1] == HOOK_PROMPT
-                             for prior in chronological[:index])
-        if entry[2] == said and earlier_active == active:
-            identity["reason"] = ANSWER_TEXT_AMBIGUOUS
-            return None, identity
     identity["established"] = True
     key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
                                     separators=(",", ":")).encode("ascii")).hexdigest()

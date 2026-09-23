@@ -719,6 +719,21 @@ class EventAcceptanceAgrees(unittest.TestCase):
         self.assertEqual(self.acceptances(answer), ["accepted"] * 3)
         self.assertEqual(len([r for r in answer["returned"] if r]), 3)
 
+    def test_a_late_retry_of_an_earlier_stop_is_that_stops_duplicate_in_both(self):
+        """Stops of distinct texts, then Stop 2 delivered again after Stop 3's answer: it can only
+        be Stop 2, so both copies call it Stop 2's duplicate and ask nothing."""
+        document = distinct_third_answer(r1())
+
+        def steps(home):
+            played = [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                       document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                      for i in (0, 2, 4)]
+            return played + [(stop_bytes(document["stops"][2], home / "rollout.jsonl"), None)]
+
+        answer = self.assert_agrees(steps)
+        self.assertEqual(answer["calls"], 3)
+        self.assertEqual(self.acceptances(answer), ["accepted"] * 3 + ["duplicate"])
+
     def test_a_stop_that_repeats_an_earlier_stops_text_is_unestablished_in_both(self):
         """The fixture's Stop 3 reported what Stop 2 reported, under the same stop_hook_active; a
         late delivery of Stop 2 would be indistinguishable from it, so neither claims."""
@@ -795,6 +810,9 @@ class EventAcceptanceAgrees(unittest.TestCase):
                 write_raw(h, "".join(line + "\n" for line in prefix) + prompt[:len(prompt) // 2])),
             "transcript_line_unreadable": lambda h: (
                 stop_bytes(first, h / "rollout.jsonl"), prefix + [garbled]),
+            "turn_start_not_found": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"),
+                [line for line in prefix if "task_started" not in line]),
         }
         self.assertIn("AgentMessage", json.dumps(answer_line))
         saved = (completion.SCAN_MAX_BYTES, PACKAGED.SCAN_MAX_BYTES)

@@ -376,7 +376,9 @@ class VerifierTests(unittest.TestCase):
         key = "f" * 64
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(
             json.dumps({"ledgerVersion": 1, "eventKey": key, "sessionId": "s", "turnId": "t",
-                        "at": "2026-09-23T00:00:00Z"}), encoding="utf-8")
+                        "at": "2026-09-23T00:00:00Z", "adapterOutcome": "guard_answered",
+                        "journalPolicy": "faults_only", "held": False, "attemptRow": None}),
+            encoding="utf-8")
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["outcomesWithoutClaim"], [key])
@@ -471,11 +473,13 @@ class ReviewRoundOneControls(unittest.TestCase):
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(json.dumps(
             {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
              "turnId": stop["turn_id"], "at": "2026-09-23T00:00:00Z", "attemptRow": None,
-             "adapterOutcome": "guard_answered"}), encoding="utf-8")
+             "adapterOutcome": "guard_answered", "journalPolicy": "faults_only", "held": False}),
+            encoding="utf-8")
         for window in ({}, {"turn": stop["turn_id"]}, {"since": "2000-01-01T00:00:00Z"}):
             with self.subTest(window=window):
                 code, answer = verify(host.journal, **window)
                 self.assertNotEqual(code, 0, "a filtered reading vouched for an orphaned outcome")
+                self.assertEqual(answer["outcomesWithoutClaim"], [key])
 
     def test_an_outcome_in_another_root_does_not_complete_a_claim(self):
         first, second = self.fresh("claim-root"), self.fresh("outcome-root")
@@ -522,3 +526,137 @@ class ReviewRoundOneControls(unittest.TestCase):
         run_one(host.checkout(), loose)
         code, answer = verify(host.journal)
         self.assertNotEqual(code, 0, "no rows were kept, so unidentified invocations are unseen")
+
+
+class ReviewRoundTwoControls(unittest.TestCase):
+    """Red-first controls for the second independent review of #144."""
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = distinct_third_answer(fixture())
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def accepted_turn(self, host):
+        for index in (0, 2, 4):
+            run_one(host.checkout(), at_stop(host, self.document, index))
+        return host.calls_made()
+
+    def test_a_late_retry_that_names_an_earlier_stop_is_that_stops_duplicate(self):
+        """Stop 2 reported "DONE" and Stop 3 "DONE.". A retry of Stop 2 after Stop 3's answer is
+        recorded can only be Stop 2, so it is Stop 2's duplicate and asks nothing."""
+        host = self.fresh("late-distinct")
+        before = self.accepted_turn(host)
+        stop_two = dict(self.document["stops"][2]["payload"],
+                        transcript_path=str(host.transcript), cwd=str(host.root))
+        run_one(host.checkout(), json.dumps(stop_two).encode())
+        self.assertEqual(host.calls_made(), before, "a retry of an accepted Stop asked again")
+
+    def test_a_broken_line_naming_the_turn_is_not_read_past(self):
+        host = self.fresh("broken")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.checkout(), payload)
+        turn = self.document["stops"][0]["payload"]["turn_id"]
+        with host.transcript.open("a", encoding="utf-8") as handle:
+            handle.write('{"type":"event_msg","payload":{"turn_id":"' + turn + '","x":\n')
+        run_one(host.checkout(), payload)
+        self.assertEqual(host.calls_made(), 2, "a Stop behind a broken line was swallowed")
+
+    def outcome_path(self, host):
+        return host.journal / "accepted" / host.ledger()[1][0]
+
+    def test_an_outcome_that_disagrees_with_its_claim_is_not_vouched_for(self):
+        host = self.fresh("disagrees")
+        self.accepted_turn(host)
+        path = self.outcome_path(host)
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["sessionId"] = "another-session"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        self.assertNotEqual(verify(host.journal)[0], 0)
+
+    def test_an_outcome_without_its_time_is_not_vouched_for(self):
+        host = self.fresh("no-at")
+        self.accepted_turn(host)
+        path = self.outcome_path(host)
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body.pop("at")
+        path.write_text(json.dumps(body), encoding="utf-8")
+        self.assertNotEqual(verify(host.journal)[0], 0)
+
+    def test_an_accepted_row_that_is_gone_under_every_invocation_is_not_vouched_for(self):
+        host = self.fresh("row-gone")
+        self.accepted_turn(host)
+        body = json.loads(self.outcome_path(host).read_text(encoding="utf-8"))
+        (host.journal / body["attemptRow"]).unlink()
+        self.assertNotEqual(verify(host.journal)[0], 0)
+
+    def test_a_ledger_path_that_is_not_a_directory_is_not_an_empty_ledger(self):
+        good, broken = self.fresh("good"), self.fresh("broken-ledger")
+        self.accepted_turn(good)
+        broken.journal.mkdir(parents=True)
+        (broken.journal / "accepted").write_text("not a directory", encoding="utf-8")
+        self.assertNotEqual(verify(good.journal, broken.journal)[0], 0)
+
+    def test_a_row_version_this_reader_does_not_know_is_not_legacy(self):
+        host = self.fresh("version")
+        self.accepted_turn(host)
+        day = next(p for p in host.journal.iterdir() if p.name.isdigit())
+        row = next(day.iterdir())
+        body = json.loads(row.read_text(encoding="utf-8"))
+        body["recordVersion"] = 3
+        row.write_text(json.dumps(body), encoding="utf-8")
+        self.assertNotEqual(verify(host.journal)[0], 0)
+
+
+class DevinRoundTwoControls(unittest.TestCase):
+    """Red-first controls for Devin's second round on #144."""
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def test_a_transcript_that_does_not_reach_the_turns_start_establishes_nothing(self):
+        """Without the turn's task_started the scan cannot know it saw every earlier Stop, and an
+        unseen Stop with the same text is exactly what lets a late delivery take this event."""
+        host = self.fresh("truncated")
+        stop = self.document["stops"][2]
+        lines = [line for line in self.document["transcriptLines"][:stop["linesAtStop"]]
+                 if "task_started" not in line]
+        lines = lines[lines.index(next(l for l in lines if "HookPrompt" in l)):]
+        host.transcript.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        payload = dict(stop["payload"], transcript_path=str(host.transcript), cwd=str(host.root))
+        run_one(host.checkout(), json.dumps(payload).encode())
+        run_one(host.checkout(), json.dumps(payload).encode())
+        self.assertEqual(host.calls_made(), 2, "a Stop on a truncated transcript was deduplicated")
+
+    def test_a_ledger_record_of_another_version_is_not_vouched_for(self):
+        host = self.fresh("ledger-version")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        claim = host.journal / "accepted" / host.ledger()[0][0]
+        body = json.loads(claim.read_text(encoding="utf-8"))
+        body["ledgerVersion"] = 9
+        claim.write_text(json.dumps(body), encoding="utf-8")
+        self.assertNotEqual(verify(host.journal)[0], 0)
+
+    def test_a_window_does_not_hide_a_malformed_row(self):
+        host = self.fresh("row-window")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        day = next(p for p in host.journal.iterdir() if p.name.isdigit())
+        (day / ("d" * 32 + ".json")).write_text(json.dumps(
+            {"recordVersion": 2, "acceptance": "accepted"}), encoding="utf-8")
+        for window in ({}, {"since": "2000-01-01T00:00:00Z"},
+                       {"session": self.document["stops"][0]["payload"]["session_id"]}):
+            with self.subTest(window=window):
+                self.assertNotEqual(verify(host.journal, **window)[0], 0)

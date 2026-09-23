@@ -1660,30 +1660,33 @@ and an item id of its own. So an event is
 
     (session_id, turn_id, stop_hook_active, answer item id)
 
-where the answer item is the newest `AgentMessage` recorded for that turn when the hook runs. It
-counts only when
+where the answer item is the one Stop of the turn, as the transcript shows it, that reported the
+payload's text under the payload's `stop_hook_active`. The Stops of a turn are the last answer
+before each later continuation or user message, and the newest answer, which is the latest
+sampling's; a Stop's `stop_hook_active` is true once a hook continuation has happened in the turn.
+The live Stop reports the newest answer, and a late delivery of an earlier Stop reports that
+Stop's own answer, so the rule names the right event for both. It is established only when
 
-- no newer continuation or user message for the turn is recorded after it: an input with no
-  answer yet means the transcript does not show this Stop's answer, and borrowing the previous
-  one would merge two events;
-- its thread is the delivered session, recorded on the item rather than assumed;
-- its text equals `last_assistant_message`;
-- no earlier Stop of the same turn, with the same `stop_hook_active`, reported the same text.
-  A late delivery of that earlier Stop would carry exactly this payload and see exactly this
-  transcript, so the two cannot be told apart; claiming would let the late delivery take this
-  event and answer the real one as a duplicate. The isolated run above is such a turn: its third
-  Stop is left unestablished.
+- the latest sampling's answer is recorded: when the newest item for the turn is a continuation
+  or user message, the invocation may be that sampling's own Stop, whose answer the transcript
+  does not show yet, or a late delivery of an earlier one, and nothing tells them apart;
+- exactly one Stop of the turn matches. Two Stops that reported the same text under the same
+  `stop_hook_active` cannot be told apart, and claiming would let a late delivery of one take the
+  other's event and answer the real one as a duplicate. The isolated run above is such a turn:
+  its third Stop is left unestablished;
+- the matching answer's thread, recorded on the item, is the delivered session.
 
 The key is a SHA-256 over the four values, so no host value becomes a path component and nothing
 is minted per invocation.
 
-The transcript is read backwards from its end to the turn's `task_started`, because the last
-condition needs every earlier answer of the turn. The read is bounded at 64 MiB and 0.75 seconds,
+The transcript is read backwards from its end to the turn's `task_started`, because the rule needs
+every Stop of the turn. The read is bounded at 64 MiB and 0.75 seconds,
 inside the margin the launcher keeps over the guard budget; the largest turn on the host this was
 built on was 62 MB, and reading that far took about a third of a second. Nothing that could be
-the turn's newest item is read past: a last line without its newline is one the host is still
-writing, and a line naming the turn that does not parse could be an input. A path that is
-missing, relative, not a regular file or unreadable, a scan that hits either bound, an unfinished
+one of the turn's items is read past: a last line without its newline is one the host is still writing,
+and any line naming the turn that does not parse could be an input. A path that is
+missing, relative, not a regular file or unreadable, a scan that hits either bound, a transcript
+that begins without the turn's start (its earlier Stops are not there to compare), an unfinished
 last line, an unreadable line about the turn, and any failed condition above leave the identity
 unestablished, with the reason on the row. An unestablished invocation is asked about exactly as
 before and is never deduplicated: the adapter does not know which event it is, so it cannot know
@@ -1724,9 +1727,11 @@ first is indistinguishable from success on disk.
 one verdict. `FALSE` (exit 1) means an event was accepted more than once: claims for one key in
 two roots, two accepted rows for one key, an accepted row whose claim is missing, or a duplicate
 that asked the guard. `UNREADABLE` (exit 3) means the reading cannot vouch for what it read: a
-listing that failed, a row or record that does not parse or lacks the fields its kind requires,
-an outcome without its claim or a claim without its outcome in the same root, a ledger written
-under `no_journal`, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations whose identity was
+listing that failed (including an `accepted` path that is not a directory), a row or record that
+does not parse or lacks the fields its kind requires, a row version it does not know, an outcome
+without its claim, naming another session or turn than its claim, or without the accepted row it
+names (or with none under `every_invocation`), a claim without its outcome in the same root, a
+ledger written under `no_journal`, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations whose identity was
 not established, and rows written by a runtime older than event identity, are counted beside the
 verdict and never judged. The superseded count of rows per (session, turn) is printed too,
 labelled as superseded, so the two readings can be compared. `--since`, `--until`, `--session`
@@ -1741,7 +1746,10 @@ The guarantee holds within one journal root. Every registration the installer ca
 host reads one settings file and so one root; two registrations pointed at different roots would
 each accept the same event, and only a reading that is given both roots can see it. That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
-with every record in the live journal, but it is not a documented host contract. A sampling that
+with every record in the live journal, but it is not a documented host contract; a host that ran a
+Stop before recording both that sampling's continuation and its answer would show the previous
+Stop as the newest, and a Stop reporting the same text as an earlier one of the same kind would be
+taken for it. A sampling that
 ends with no answer at all was not observed. A turn whose Stops repeat the same text trades
 deduplication for safety: those Stops are asked about by every registration.
 
