@@ -147,17 +147,28 @@ class WhatWasNotSaid(unittest.TestCase):
 
 
 class TheFiveStages(unittest.TestCase):
-    def test_the_supervisor_direction_has_no_mechanism_rather_than_no_evidence(self):
+    def test_the_upward_direction_separates_what_is_unanswered_from_what_cannot_answer(self):
         """not_applicable and unmeasured are different news for whoever is waiting.
 
-        Unmeasured says go and look. not_applicable says there is nothing to look at, which
-        for this direction is the whole point: the relay carries no supervisor channel, so a
-        caller waiting for a supervisor acknowledgement waits forever.
+        Unmeasured says go and look. not_applicable says there is nothing to look at, and the
+        upward direction is now both at once: a report is staged, sent and read back, so the
+        first two stages have records and start unanswered; a supervisor agreeing, applying
+        or verifying is still not a fact this store holds, so those three stay impossible and
+        a caller waiting for one waits forever.
         """
         ladder = envelope.unreached(envelope.PARENT_TO_SUPERVISOR)
-        for name in envelope.STAGES:
+        for name in (envelope.TRANSPORT_ACCEPTED, envelope.RECEIVED):
+            self.assertEqual(ladder[name]["state"], envelope.UNMEASURED)
+        for name in (envelope.AGREED, envelope.APPLIED, envelope.VERIFIED):
             self.assertEqual(ladder[name]["state"], envelope.IMPOSSIBLE)
-            self.assertIn("no supervisor message channel", ladder[name]["detail"])
+            self.assertIn("agreed, applied or verified", ladder[name]["detail"])
+
+    def test_the_directive_direction_still_records_rather_than_sends(self):
+        ladder = envelope.unreached(envelope.SUPERVISOR_TO_PARENT)
+        self.assertEqual(ladder[envelope.TRANSPORT_ACCEPTED]["state"], envelope.IMPOSSIBLE)
+        self.assertIn("recorded rather than sent",
+                      ladder[envelope.TRANSPORT_ACCEPTED]["detail"])
+        self.assertEqual(ladder[envelope.RECEIVED]["state"], envelope.UNMEASURED)
 
     def test_the_correction_direction_has_a_transport_but_no_acknowledgement(self):
         ladder = envelope.unreached(envelope.PARENT_TO_CHILD)
@@ -217,7 +228,15 @@ class TheFiveStages(unittest.TestCase):
                 direction=envelope.PARENT_TO_SUPERVISOR, purpose="completion",
                 relation_id=LINK, sender="01parent", recipient="01supervisor",
                 subject=DIGEST, observed_at="2026-09-22T00:00:00Z", reach=ladder)
-        self.assertIn("no supervisor message channel", str(caught.exception))
+        # The stage has a record of its own now, so the refusal names WHICH record answers it
+        # rather than saying there is none. A parent-child acknowledgement is still not one.
+        self.assertIn("supervisor_readbacks", str(caught.exception))
+        ladder[envelope.RECEIVED] = envelope.stage(
+            envelope.YES, source="supervisor_readbacks")
+        ladder[envelope.AGREED] = envelope.stage(envelope.YES, source="supervisor_readbacks")
+        with self.assertRaises(envelope.EnvelopeRefused) as agreed:
+            envelope.check_reach(envelope.PARENT_TO_SUPERVISOR, ladder)
+        self.assertIn("agreed, applied or verified", str(agreed.exception))
 
     def test_a_stage_may_not_be_answered_by_a_record_its_direction_does_not_read(self):
         ladder = envelope.unreached(envelope.CHILD_TO_PARENT)

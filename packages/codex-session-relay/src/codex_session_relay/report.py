@@ -877,7 +877,41 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
 
     Takes the transaction handle rather than the store, so this cannot be satisfied by a
     read that was already stale by the time the row was written.
+
+    And once a supervisor message composed from this report may have put its bytes anywhere,
+    the report does not change at all. That packet named this report's artifact and decision,
+    and its evidence pointer reads this event's report, so a correction - in place or as a new
+    submission - would leave bytes that went upward naming one pull request while their
+    evidence reads another.
     """
+    # Any message about this event, and only once one of its attempts reached the transport -
+    # including one staged before any report existed: its bytes went up saying there was none,
+    # and its evidence pointer reads this event, so even a FIRST report would change what that
+    # pointer returns under bytes that never said it. Before that the staged row is a proposal (I-247): the claim and the write
+    # that stamps the transport start re-derive it from the report that stands, so a correction
+    # made before the send is the one the send carries. The stamp is the line: it is committed
+    # in the write that lets the transport start, so this write and that one serialize - a
+    # correction committing first is restated and sent, and one committing after is refused. An
+    # attempt the transport refused before sending, retry-safe, put nothing anywhere.
+    frozen = db.execute(
+        "SELECT m.message_id, m.submission_no FROM supervisor_messages m"
+        " WHERE m.event_id = ?"
+        "   AND EXISTS (SELECT 1 FROM supervisor_attempts a"
+        "                WHERE a.message_id = m.message_id"
+        "                  AND a.transport_started_at IS NOT NULL"
+        "                  AND NOT (a.send_attempted = 'no' AND a.retry_safe = 1))"
+        " ORDER BY m.staged_at LIMIT 1",
+        (event_id,),
+    ).fetchone()
+    if frozen is not None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a supervisor report about this event was sent (message {frozen['message_id']},"
+            f" composed from submission {frozen['submission_no']}), and its evidence points at"
+            " this event; a changed report would leave those bytes saying one thing while"
+            " their evidence says another, so this report no longer changes. A correction the"
+            " level above needs is a new fact, reported as one",
+        )
     attempted = db.execute(
         "SELECT a.record, a.state, s.submission_no"
         "  FROM attempts a"

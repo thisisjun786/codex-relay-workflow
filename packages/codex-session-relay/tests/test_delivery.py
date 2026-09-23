@@ -997,3 +997,39 @@ class CompletionCriteriaCarryNoCorrection(DeliveryTestCase):
         message = self.delivery.preview_message(event_id)
         self.assertIn("  c1: verified", message)
         self.assertNotIn("[restoration block]", message)
+
+
+class ARefusalOnTheSharedGapDefers(DeliveryTestCase):
+    """A claim refused on the recipient's shared send budget defers; it never fails or holds.
+
+    Reached through attempt() with the preflight blinded, which is exactly what a caller sees
+    when another sender - the supervisor channel shares this budget - commits a send to the
+    same recipient after this caller's preflight read. The preflight passed, so the claim is
+    the first thing that can see that send.
+    """
+
+    def test_a_delivery_refused_inside_its_claim_is_rescheduled_by_the_gap(self):
+        _relationship, event_id = self.queued_event()
+        now = self.clock.now()
+        self.store.db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,1,?)", (PARENT, int(now // 3600) * 3600, now))
+        self.store.db.commit()
+        failures = len(self.store.all("SELECT * FROM failed_operations"))
+        self.delivery._rate_limited = lambda recipient, at: False
+
+        self.assertIsNone(self.attempt(event_id, now=now + 1))
+        row = self.delivery_row(event_id)
+        self.assertEqual(row["state"], QUEUED)
+        self.assertIsNone(row["hold_reason"])
+        self.assertEqual(row["attempt_count"], 0, "the claim rolled back")
+        self.assertEqual(row["next_eligible_at"],
+                         now + 1 + self.delivery.policy.min_send_interval_seconds,
+                         "deferred by the gap, the way the preflight defers it")
+        self.assertEqual(len(self.store.all("SELECT * FROM failed_operations")), failures,
+                         "a paced claim is not a failure")
+        self.assertEqual(self.adapter.sends, [])
+
+        del self.delivery._rate_limited
+        record = self.attempt(event_id, now=row["next_eligible_at"])
+        self.assertEqual(record["deliveryState"], DISPATCHED)
