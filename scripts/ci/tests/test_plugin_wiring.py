@@ -974,36 +974,52 @@ class BridgeRecordPolicyTest(unittest.TestCase):
                          + output)
         self.assertNotIn("activation", emitted, output)
 
-    def _write_with_a_replacement_after(self, replacement_bytes):
-        """bridgerecord.write, with another writer replacing the record right after the write
-        and the policy found changed at the look after it. Returns the answer."""
+    def _write_with_a_replacement(self, replacement, when):
+        """bridgerecord.write with the policy edited inside the write and another writer
+        replacing the record either right after the write ("after write") or at the next look at
+        the policy ("after read-back"). Returns the answer.
+
+        The edit lands inside the write, after any look before it, so every revision of write()
+        that asks the policy after writing finds it changed and goes on to its removal -- which
+        is what these tests are about -- however many times it asks.
+        """
         wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
                                        owner=bridgerecord.OWNER_PLUGIN,
                                        execution_policy={"path": str(self.policy),
                                                          "digest": self.digest})
         real_write, real_check = hostrecord.atomic_write, bridgerecord.policy_file_complaints
-        asked = []
+        state = {"written": False, "replaced": False}
 
-        def written_then_replaced(path, text):
+        def replace():
+            staged = self.record.with_name("theirs.tmp")
+            staged.write_bytes(replacement)
+            os.replace(staged, self.record)
+            state["replaced"] = True
+
+        def edited_written_then_replaced(path, text):
+            write_policy(self.policy, {"roles": {"child": {"model": "a/b",
+                                                           "reasoningEffort": "low"}}})
             identity = real_write(path, text)
-            staged = Path(path).with_name("theirs.tmp")
-            staged.write_bytes(replacement_bytes(text))
-            os.replace(staged, path)
+            state["written"] = True
+            if when == "after write":
+                replace()
             return identity
 
-        def stale_after_the_write(reference):
-            asked.append(reference)
-            if len(asked) == 1:
-                return real_check(reference)  # the look before the write
-            return ["the execution policy " + reference["path"] + " now hashes to another digest"]
+        def replaced_at_the_next_look(reference):
+            if when == "after read-back" and state["written"] and not state["replaced"]:
+                replace()
+            return real_check(reference)
 
-        hostrecord.atomic_write = written_then_replaced
-        bridgerecord.policy_file_complaints = stale_after_the_write
+        hostrecord.atomic_write = edited_written_then_replaced
+        bridgerecord.policy_file_complaints = replaced_at_the_next_look
         try:
-            return bridgerecord.write(self.record, wanted, apply=True)
+            answer = bridgerecord.write(self.record, wanted, apply=True)
         finally:
             hostrecord.atomic_write = real_write
             bridgerecord.policy_file_complaints = real_check
+        self.assertTrue(state["replaced"], "the other writer has to have acted: "
+                        + json.dumps(answer))
+        return answer
 
     def test_a_byte_identical_replacement_is_not_taken_for_this_runs_record(self):
         """Review of 8f019c24: identity sampled after the write took another writer's file.
@@ -1011,12 +1027,36 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         The identity comes from atomic_write's own descriptor, so a record that replaced it with
         the same bytes under another inode is left where it is.
         """
-        answer = self._write_with_a_replacement_after(lambda text: text.encode("utf-8"))
+        wanted_text = json.dumps(bridgerecord.document(
+            command=str(self.bridge), name="codex-thread-bridge", owner=bridgerecord.OWNER_PLUGIN,
+            execution_policy={"path": str(self.policy), "digest": self.digest}),
+            indent=2, sort_keys=True) + "\n"
+        answer = self._write_with_a_replacement(wanted_text.encode("utf-8"), "after write")
         self.assertEqual(answer["outcome"], "record_policy_changed", answer)
         self.assertIs(answer.get("rolledBack"), False, answer)
-        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
         self.assertTrue(self.record.exists(), "another writer's record was deleted: "
                         + json.dumps(answer))
+        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
+
+    def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
+        """Review of 28f11c04: a removal by path took whatever was there by then.
+
+        Here another writer replaces the record after the read-back and before the last look at
+        the policy; its record has to survive, and the answer must not claim a rollback.
+        """
+        theirs = json.dumps(bridgerecord.document(command=str(self.bridge),
+                                                  name="codex-thread-bridge",
+                                                  owner=bridgerecord.OWNER_PLUGIN),
+                            indent=2) + "\n"
+        answer = self._write_with_a_replacement(theirs.encode("utf-8"), "after read-back")
+        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
+        self.assertIs(answer.get("rolledBack"), False, answer)
+        self.assertTrue(self.record.exists(), "another writer's record was deleted: "
+                        + json.dumps(answer))
+        self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
+        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
+        self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
+                         [], "nothing is moved aside")
 
     def test_an_installed_record_whose_policy_changed_is_not_answered_unchanged(self):
         """The path that writes nothing is settled against the file as it stands too."""
@@ -1031,46 +1071,6 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertNotIn(answer["outcome"], bridgerecord.SETTLED)
         self.assertIn("now hashes to", answer["detail"])
         self.assertEqual(self.record.read_bytes(), before, "not this run's record to remove")
-
-    def test_a_record_another_writer_put_there_is_never_the_one_removed(self):
-        """Review of 28f11c04 and 8f019c24: a removal by path took whatever was there by then.
-
-        Here another writer replaces the record after the read-back and before the last look at
-        the policy; its record has to survive, and the answer must not claim a rollback.
-        """
-        wanted = bridgerecord.document(command=str(self.bridge), name="codex-thread-bridge",
-                                       owner=bridgerecord.OWNER_PLUGIN,
-                                       execution_policy={"path": str(self.policy),
-                                                         "digest": self.digest})
-        theirs = json.dumps(bridgerecord.document(command=str(self.bridge),
-                                                  name="codex-thread-bridge",
-                                                  owner=bridgerecord.OWNER_PLUGIN),
-                            indent=2) + "\n"
-        real = bridgerecord.policy_file_complaints
-        asked = []
-
-        def replaced_then_stale(reference):
-            asked.append(reference)
-            if len(asked) == 1:
-                return real(reference)  # the look before the write
-            staged = self.record.with_name("theirs.tmp")
-            staged.write_text(theirs, encoding="utf-8")
-            os.replace(staged, self.record)
-            return ["the execution policy " + reference["path"] + " now hashes to another digest"]
-
-        bridgerecord.policy_file_complaints = replaced_then_stale
-        try:
-            answer = bridgerecord.write(self.record, wanted, apply=True)
-        finally:
-            bridgerecord.policy_file_complaints = real
-        self.assertEqual(answer["outcome"], "record_policy_changed", answer)
-        self.assertIs(answer.get("rolledBack"), False, answer)
-        self.assertIn("no longer the one this run wrote", answer["detail"], answer)
-        self.assertTrue(self.record.exists(), "another writer's record was deleted: "
-                        + json.dumps(answer))
-        self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
-        self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
-                         [], "nothing is moved aside")
 
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
