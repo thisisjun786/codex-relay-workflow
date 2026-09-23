@@ -399,3 +399,23 @@ contract; every row here is implemented and carries a test in `tests/test_faults
 | I-352 | Every reader of attempt state waits for the attempt to settle. A row is written in_flight with a provisional held_uncertain state before the transport call returns, so reading it counted healthy sends as failures; a reconciled uncertain outcome is settled and stays eligible | `faultsweep.retry_faults`, `delivery_faults` and both branches of `still_present` requiring `internal_state = 'settled'` | implemented |
 | I-353 | The fault listing is a bounded page continued by rowid, which is stable when faults are recorded between pages, and every nested list is capped per fault | `FaultLedger.snapshot(limit, after)` returning `next`; `remediations(limit)`; `fault-show --limit --after` on both branches | implemented |
 | I-354 | The sweep and each public adapter validate their limit before it reaches SQL | `faultsweep.sweep`, `delivery_faults`, `retry_faults`, `sync_faults`, `observation_faults`, `recovered` through `faults.bounded` | implemented |
+
+## Product routing
+
+Where a product's incident belongs, decided from readings. See
+[product-routing.md](product-routing.md) for the contract. The rows below cover the pure functions
+on this branch and carry tests in `tests/test_product_routing_decisions.py`; the guarantees that
+depend on the fault ledger (records, targets, applied labels, pending records, projects) are added
+here when their ledger-backed paths exist.
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-400 | Every routing input has a closed key set: a registry record, a binding, a policy, an incident or a completion reading carrying a key the contract does not define is refused, never stored | `products.read_registry`, `read_binding`, `read_policy`, `read_incident`, `completion.read_reading`; `Validation` | implemented |
+| I-401 | A binding marked test must sit on its product's registered test target, team and project, so a simulated incident can never adopt a real issue | `products.read_binding(record, registry)` through `ProductRouter.bind`; `RegistryStore` | implemented |
+| I-402 | A shared component never makes two defects one: an existing issue owns an incident only for the same component AND symptom, and several candidate owners or projects are held with the reason rather than one chosen | `placement.decide`; `Decide` | implemented |
+| I-403 | A current issue receives failure evidence only when the relay's own record says the run belongs to it: `placement.decide` attaches only when handed a run issue equal to the claimed current issue, and `ProductRouter.run_issue` reads that from `relationships.issue_key`. A user report or real-use event never attaches | `placement.decide`, `placement._current`, `ProductRouter.run_issue`; `Decide`, `RegistryStore` | implemented; the intake wiring that passes the run issue is added with the ledger-backed paths |
+| I-404 | An incident whose product is unregistered, or whose repository no single product claims, resolves to no product | `placement.resolve_product`; `ResolveProduct` | implemented |
+| I-405 | `placement.workspace_for` computes the product's registry workspace, refuses an incident declaring another, and gives an unresolved incident its declared workspace or the `unassigned` sentinel | `placement.workspace_for`; `Workspace` | implemented |
+| I-406 | `placement.issue_labels` computes only the repository label of the incident's own repository and never the product-family label, which belongs on projects | `placement.issue_labels`; `Labels` | implemented |
+| I-407 | A completion verdict never proposes a state change; unobservable and unknown are unverified, not absent; a requirement dropped after a mismatch keeps it open; a follow-up counts only for the check it took over of that subject, and only while open | `completion.evaluate`, `completion._exception`; `Completion` | implemented |
+| I-408 | Routing modules reach the fault ledger only through `ledger_port`, and every port capability refuses by name until CRW-205's corrected contract is bound | `ledger_port.LedgerPort`; `LedgerPortBeforeBinding` | implemented |
