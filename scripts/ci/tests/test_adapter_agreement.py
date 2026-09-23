@@ -28,6 +28,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -50,7 +51,9 @@ DAY = re.compile(r"^[0-9]{8}$")
 #   at             a wall-clock second that can tick between the two runs
 #   elapsedMs      how long each run took
 #   guardElapsedMs the same, for the guard call
-NOT_COMPARED = ("configuration", "journalledAs", "at", "elapsedMs", "guardElapsedMs")
+#   identityScanMs how long reading the transcript took
+NOT_COMPARED = ("configuration", "journalledAs", "at", "elapsedMs", "guardElapsedMs",
+                "identityScanMs")
 
 
 def load_packaged():
@@ -68,6 +71,8 @@ PACKAGED = load_packaged()
 STUB = """#!/usr/bin/env python3
 import json, os, sys
 sys.stdin.buffer.read()
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "calls"), "a") as log:
+    log.write("1\\n")
 behaviour = {behaviour!r}
 if behaviour == "verdict_block":
     sys.stdout.write(json.dumps({{"decision": "block", "state": "declared_not_verified",
@@ -126,15 +131,21 @@ def settings_document(*, relay, marker, journal, timeout=5, mode="observe", poli
 
 
 def journal_records(root):
-    """Every record under a journal root, with the day directory that held it."""
+    """Every row under a journal root, with the day directory that held it.
+
+    Only the shapes a row takes: a day directory and a 32-hex name. The accepted records live
+    beside them under accepted/ and are read by ledger_records, never as rows.
+    """
     found = []
     base = Path(root)
     if not base.is_dir():
         return found
     for day in sorted(base.iterdir()):
-        if not day.is_dir():
+        if not day.is_dir() or not DAY.match(day.name):
             continue
         for entry in sorted(day.iterdir()):
+            if not JOURNAL_NAME.match(entry.name):
+                continue
             found.append({"day": day.name, "name": entry.name,
                           "record": json.loads(entry.read_text(encoding="utf-8"))})
     return found
@@ -157,7 +168,7 @@ def drive(adapter, home, payload, *, document=None, settings_name="settings.json
         filled = dict(document)
         filled["journalRoot"] = str(journal)
         settings.write_text(json.dumps(filled, indent=2, sort_keys=True), encoding="utf-8")
-    returned = adapter.run(payload, settings=str(settings))
+    returned = adapter.run(payload, codex_home=str(root), settings=str(settings))
     return {"returned": returned, "written": journal_records(journal)}
 
 
@@ -344,10 +355,14 @@ class AgreementTests(unittest.TestCase):
                 answer = self.assert_agrees(behaviour="verdict_release", payload=payload)
                 self.assertEqual(answer["written"][0]["record"]["adapterOutcome"], expected)
 
-    def test_a_faults_only_policy_records_nothing_for_an_answer_in_both(self):
+    def test_a_faults_only_policy_still_records_an_answer_given_without_an_identity_in_both(self):
+        """faults_only leaves out answers to events this hook identified (see EventAcceptanceAgrees).
+        This payload names no transcript, so the answer was given without an identity, and that is
+        reported under every policy that keeps rows: no accepted record covers it."""
         left, right = self.run_case(behaviour="verdict_release", policy=completion.FAULTS_ONLY)
         self.assertEqual(differences(left, right), [])
-        self.assertEqual(left["written"], [])
+        self.assertEqual([entry["record"]["acceptance"] for entry in left["written"]],
+                         [completion.UNESTABLISHED])
 
     def test_a_no_journal_policy_records_nothing_at_all_in_both(self):
         left, right = self.run_case(behaviour="garbage", policy=completion.NO_JOURNAL)
@@ -459,7 +474,7 @@ class MutationNoticedTests(unittest.TestCase):
                         found)
 
     def test_a_journal_that_stops_being_written_is_noticed(self):
-        found = self.assert_noticed(self.mutated(journal=lambda config, record: None),
+        found = self.assert_noticed(self.mutated(journal=lambda config, record, *slot: None),
                                     behaviour="verdict_release")
         self.assertTrue(any("record count" in line for line in found), found)
 
@@ -477,9 +492,9 @@ class MutationNoticedTests(unittest.TestCase):
         def without_session(payload, **keywords):
             keep = copy.journal
 
-            def stripped(config, record):
+            def stripped(config, record, *slot):
                 record.pop("stopHookActive", None)
-                return keep(config, record)
+                return keep(config, record, *slot)
 
             copy.journal = stripped
             try:
@@ -511,6 +526,512 @@ class MutationNoticedTests(unittest.TestCase):
             path.mkdir()
             self.assertNotEqual(reading_differences(path, copy), [],
                                "a reader that stopped refusing a directory went unnoticed")
+
+
+# ----------------------------------------------------------------- one accepted record per Stop event
+#
+# CRW-212. The copies must agree on which Stop event an invocation answers, on whether it may
+# claim that event, and on what they write about it. Each case below drives both copies through
+# the same sequence of invocations against the same transcript, each copy into its own journal
+# root, and compares the answers, the rows, the accepted records and how often the stub guard was
+# asked. Rows are compared in a stable order because their names are random.
+
+FIXTURE = (ROOT / "packages" / "codex-session-relay" / "tests" / "fixtures"
+           / "stop_event_r1.json")
+LEDGER_NAME = re.compile(r"^[0-9a-f]{64}\.json$")
+OUTCOME_NAME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
+# Wall-clock and process values in the accepted records. The attempt row each one names is checked
+# by relation instead: it must be the position of a row that copy actually wrote.
+LEDGER_NOT_COMPARED = ("claimedAt", "at", "claimedBy", "attemptRow")
+
+
+def r1():
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def distinct_third_answer(document):
+    """A copy of the fixture whose third Stop reported "DONE." rather than "DONE"."""
+    changed = json.loads(json.dumps(document))
+    last = changed["stops"][4]["linesAtStop"] - 1
+    line = json.loads(changed["transcriptLines"][last])
+    line["payload"]["item"]["content"][0]["text"] = "DONE."
+    changed["transcriptLines"][last] = json.dumps(line)
+    for index in (4, 5):
+        changed["stops"][index]["payload"]["last_assistant_message"] = "DONE."
+    return changed
+
+
+def stop_bytes(stop, transcript, **changes):
+    payload = dict(stop["payload"])
+    payload["transcript_path"] = str(transcript)
+    payload["cwd"] = str(transcript.parent)
+    payload.update(changes)
+    return json.dumps(payload).encode("utf-8")
+
+
+def ledger_records(root):
+    directory = Path(root) / "accepted"
+    found = []
+    if directory.exists() and directory.is_dir():
+        for entry in sorted(directory.iterdir()):
+            try:
+                body = json.loads(entry.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                body = None
+            found.append({"name": entry.name, "body": body})
+    return found
+
+
+def calls_made(home):
+    try:
+        return len((home / "calls").read_text(encoding="utf-8").splitlines())
+    except FileNotFoundError:
+        return 0
+
+
+def drive_steps(adapter, home, steps, document, *, journal=True, prepare=None):
+    """Run one copy over a sequence of (payload, transcript lines) against its own journal root."""
+    root = home / adapter_label(adapter)
+    root.mkdir(parents=True, exist_ok=True)
+    journal_root = root / "journal"
+    settings = root / "settings.json"
+    filled = dict(document)
+    if journal:
+        filled["journalRoot"] = str(journal_root)
+    else:
+        filled.pop("journalRoot", None)
+    settings.write_text(json.dumps(filled, indent=2, sort_keys=True), encoding="utf-8")
+    if prepare:
+        prepare(journal_root)
+    before = calls_made(home)
+    returned = []
+    for payload, lines in steps:
+        if lines is not None:
+            (home / "rollout.jsonl").write_text("".join(line + "\n" for line in lines),
+                                                encoding="utf-8")
+        returned.append(adapter.run(payload, codex_home=str(root), settings=str(settings)))
+    return {"returned": returned, "written": journal_records(journal_root),
+            "ledger": ledger_records(journal_root), "calls": calls_made(home) - before}
+
+
+def row_order(entry):
+    record = entry["record"]
+    return (str(record.get("eventKey")), str(record.get("acceptance")),
+            str(record.get("adapterOutcome")), json.dumps(record.get("eventIdentity"),
+                                                         sort_keys=True))
+
+
+def ledger_relations(answer):
+    """Every accepted record names a row this copy wrote, or names none because none was written."""
+    rows = {entry["day"] + "/" + entry["name"] for entry in answer["written"]}
+    broken = []
+    for entry in answer["ledger"]:
+        body = entry["body"] or {}
+        if OUTCOME_NAME.match(entry["name"]):
+            row = body.get("attemptRow")
+            if row is not None and row not in rows:
+                broken.append(entry["name"] + " names a row that is not there: " + repr(row))
+        elif LEDGER_NAME.match(entry["name"]):
+            if body.get("eventKey") + ".json" != entry["name"]:
+                broken.append(entry["name"] + " carries another key")
+        else:
+            broken.append("a foreign file in accepted/: " + entry["name"])
+    return broken
+
+
+def event_differences(left, right):
+    found = []
+    if left["returned"] != right["returned"]:
+        found.append("returned: checkout " + repr(left["returned"]) + " vs packaged "
+                     + repr(right["returned"]))
+    if left["calls"] != right["calls"]:
+        found.append("guard calls: checkout " + str(left["calls"]) + " vs packaged "
+                     + str(right["calls"]))
+    found += differences({"returned": None, "written": sorted(left["written"], key=row_order)},
+                         {"returned": None, "written": sorted(right["written"], key=row_order)})
+    if [e["name"] for e in left["ledger"]] != [e["name"] for e in right["ledger"]]:
+        found.append("accepted records: checkout " + repr([e["name"] for e in left["ledger"]])
+                     + " vs packaged " + repr([e["name"] for e in right["ledger"]]))
+    else:
+        for one, two in zip(left["ledger"], right["ledger"]):
+            first = {k: v for k, v in (one["body"] or {}).items() if k not in LEDGER_NOT_COMPARED}
+            second = {k: v for k, v in (two["body"] or {}).items() if k not in LEDGER_NOT_COMPARED}
+            if first != second:
+                found.append(one["name"] + ": checkout " + repr(first) + " vs packaged "
+                             + repr(second))
+    found += ["checkout: " + line for line in ledger_relations(left)]
+    found += ["packaged: " + line for line in ledger_relations(right)]
+    return found
+
+
+class EventAcceptanceAgrees(unittest.TestCase):
+    """Each acceptance value and each identity reason, produced and recorded alike by both."""
+
+    def run_steps(self, steps_for, *, behaviour="verdict_release", packaged=PACKAGED, policy=None,
+                  journal=True, prepare=None):
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            stub = write_stub(home / "relay.py", behaviour, 0)
+            document = settings_document(relay=stub, marker=home / "marker",
+                                         journal=home / "unused", policy=policy)
+            steps = steps_for(home)
+            left = drive_steps(completion, home, steps, document, journal=journal,
+                               prepare=prepare)
+            right = drive_steps(packaged, home, steps, document, journal=journal,
+                                prepare=prepare)
+            return left, right
+
+    def assert_agrees(self, steps_for, **kwargs):
+        left, right = self.run_steps(steps_for, **kwargs)
+        found = event_differences(left, right)
+        self.assertEqual(found, [], "the two adapters answered differently: " + repr(found))
+        return left
+
+    def replay(self, index=0, **changes):
+        document = r1()
+        stop = document["stops"][index]
+        lines = document["transcriptLines"][:stop["linesAtStop"]]
+        return lambda home: [(stop_bytes(stop, home / "rollout.jsonl", **changes), lines)] * 2
+
+    def acceptances(self, answer):
+        return sorted(str(entry["record"].get("acceptance")) for entry in answer["written"])
+
+    def accepted_elsewhere_on_the_host(self):
+        """Stop 1, with the host's record of it already made, as another registration of this
+        host keeping another journal root would have left it before either copy runs."""
+        document = r1()
+        stop = document["stops"][0]
+        lines = document["transcriptLines"][:stop["linesAtStop"]]
+
+        def steps(home):
+            return [(stop_bytes(stop, home / "rollout.jsonl"), lines)]
+
+        def prepare(journal_root):
+            root = journal_root.parent
+            rollout = root.parent / "rollout.jsonl"
+            rollout.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+            key, _identity = completion.event_identity(json.loads(stop_bytes(stop, rollout)))
+            marker = root / "crw-completion-hook" / "stop-events" / (key + ".json")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"eventKey": key}), encoding="utf-8")
+
+        return steps, prepare
+
+    def test_a_stop_another_registration_of_the_host_accepted_is_a_duplicate_in_both(self):
+        steps, prepare = self.accepted_elsewhere_on_the_host()
+        answer = self.assert_agrees(steps, prepare=prepare)
+        self.assertEqual(answer["calls"], 0, "a Stop the host had accepted was asked about again")
+        self.assertEqual(self.acceptances(answer), ["duplicate"])
+        self.assertEqual(answer["ledger"], [], "a duplicate made an accepted record of its own")
+
+    def test_a_replayed_event_is_accepted_once_in_both(self):
+        answer = self.assert_agrees(self.replay())
+        self.assertEqual(self.acceptances(answer), ["accepted", "duplicate"])
+        self.assertEqual(answer["calls"], 1)
+        self.assertEqual(len(answer["ledger"]), 2)
+        duplicate = [e["record"] for e in answer["written"]
+                     if e["record"]["acceptance"] == "duplicate"][0]
+        self.assertEqual(duplicate["adapterOutcome"], completion.DUPLICATE_INVOCATION)
+        self.assertFalse(duplicate["guardInvoked"])
+        self.assertIsNone(duplicate["guardDecision"])
+
+    def test_three_stops_of_one_turn_are_three_events_in_both(self):
+        document = distinct_third_answer(r1())
+
+        def steps(home):
+            return [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                     document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                    for i in (0, 2, 4)]
+
+        answer = self.assert_agrees(steps, behaviour="verdict_block")
+        self.assertEqual(answer["calls"], 3)
+        self.assertEqual(self.acceptances(answer), ["accepted"] * 3)
+        self.assertEqual(len([r for r in answer["returned"] if r]), 3)
+
+    def test_a_late_retry_of_an_earlier_stop_is_that_stops_duplicate_in_both(self):
+        """Stops of distinct texts, then Stop 2 delivered again after Stop 3's answer: it can only
+        be Stop 2, so both copies call it Stop 2's duplicate and ask nothing."""
+        document = distinct_third_answer(r1())
+
+        def steps(home):
+            played = [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                       document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                      for i in (0, 2, 4)]
+            return played + [(stop_bytes(document["stops"][2], home / "rollout.jsonl"), None)]
+
+        answer = self.assert_agrees(steps)
+        self.assertEqual(answer["calls"], 3)
+        self.assertEqual(self.acceptances(answer), ["accepted"] * 3 + ["duplicate"])
+
+    def test_a_stop_that_repeats_an_earlier_stops_text_is_unestablished_in_both(self):
+        """The fixture's Stop 3 reported what Stop 2 reported, under the same stop_hook_active; a
+        late delivery of Stop 2 would be indistinguishable from it, so neither claims."""
+        document = r1()
+
+        def steps(home):
+            return [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                     document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                    for i in (0, 2, 4)]
+
+        answer = self.assert_agrees(steps, behaviour="verdict_block")
+        self.assertEqual(self.acceptances(answer), ["accepted", "accepted", "unestablished"])
+        self.assertEqual({e["record"]["eventIdentity"]["reason"] for e in answer["written"]
+                          if e["record"]["acceptance"] == "unestablished"},
+                         {"answer_text_ambiguous"})
+        self.assertEqual(len([r for r in answer["returned"] if r]), 3)
+
+    def test_every_reason_an_identity_is_unestablished_is_the_same_in_both(self):
+        document = r1()
+        first = document["stops"][0]
+        prefix = document["transcriptLines"][:first["linesAtStop"]]
+        answer_line = json.loads(prefix[-1])
+        started = [line for line in prefix if "task_started" in line]
+        unnamed = json.loads(prefix[-1])
+        unnamed["payload"]["item"].pop("id")
+
+        def filler():
+            return prefix + ['{"type":"response_item","payload":{"filler":"' + "x" * 1000 + '"}}'
+                             ] * 200
+
+        threadless = json.loads(prefix[-1])
+        threadless["payload"].pop("thread_id")
+        prompt = document["transcriptLines"][first["linesAtStop"]]
+        turn = first["payload"]["turn_id"]
+        garbled = ('{"type":"event_msg","payload":{"type":"item_completed","turn_id":"' + turn
+                   + '","item":{"type":"UserMessage",')
+
+        def write_raw(home, text):
+            (home / "rollout.jsonl").write_text(text, encoding="utf-8")
+            return None
+
+        cases = {
+            "identity_fields_incomplete": lambda h: (
+                json.dumps({"session_id": "s", "turn_id": "t"}).encode(), None),
+            "transcript_path_missing": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", transcript_path=None), None),
+            "transcript_path_relative": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", transcript_path="rollout.jsonl"), None),
+            "transcript_absent": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", transcript_path=str(h / "gone.jsonl")),
+                None),
+            "transcript_unreachable": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl",
+                           transcript_path=str(h / "relay.py" / "rollout.jsonl")), None),
+            "transcript_not_regular": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", transcript_path=str(h)), None),
+            "no_answer_item_for_turn": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), started),
+            "answer_item_unidentified": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), prefix[:-1] + [json.dumps(unnamed)]),
+            "answer_precedes_latest_input": lambda h: (
+                stop_bytes(document["stops"][2], h / "rollout.jsonl"),
+                document["transcriptLines"][:document["stops"][2]["linesAtStop"] - 1]),
+            "answer_text_mismatch": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", last_assistant_message="something else"),
+                prefix),
+            "session_mismatch": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl", session_id="another-session"), prefix),
+            "scan_bound_exceeded": lambda h: (stop_bytes(first, h / "rollout.jsonl"), filler()),
+            "session_mismatch (no thread recorded)": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), prefix[:-1] + [json.dumps(threadless)]),
+            "transcript_tail_incomplete": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"),
+                write_raw(h, "".join(line + "\n" for line in prefix) + prompt[:len(prompt) // 2])),
+            "transcript_line_unreadable": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"), prefix + [garbled]),
+            "turn_start_not_found": lambda h: (
+                stop_bytes(first, h / "rollout.jsonl"),
+                [line for line in prefix if "task_started" not in line]),
+        }
+        self.assertIn("AgentMessage", json.dumps(answer_line))
+        saved = (completion.SCAN_MAX_BYTES, PACKAGED.SCAN_MAX_BYTES)
+        for reason, step in cases.items():
+            with self.subTest(reason=reason):
+                if reason == "scan_bound_exceeded":
+                    # Scaled down with the bound so the case needs a small transcript.
+                    completion.SCAN_MAX_BYTES = PACKAGED.SCAN_MAX_BYTES = 1 << 16
+                try:
+                    answer = self.assert_agrees(lambda home, step=step: [step(home)] * 2)
+                finally:
+                    completion.SCAN_MAX_BYTES, PACKAGED.SCAN_MAX_BYTES = saved
+                self.assertEqual(self.acceptances(answer), ["unestablished"] * 2)
+                self.assertEqual({e["record"]["eventIdentity"]["reason"]
+                                  for e in answer["written"]}, {reason.split(" ")[0]})
+                self.assertEqual(answer["calls"], 2, "an unestablished identity is asked every time")
+                self.assertEqual(answer["ledger"], [])
+
+    def test_a_scan_out_of_time_is_unestablished_in_both(self):
+        saved = (completion.SCAN_MAX_SECONDS, PACKAGED.SCAN_MAX_SECONDS)
+        completion.SCAN_MAX_SECONDS = PACKAGED.SCAN_MAX_SECONDS = -1
+        try:
+            answer = self.assert_agrees(self.replay())
+        finally:
+            completion.SCAN_MAX_SECONDS, PACKAGED.SCAN_MAX_SECONDS = saved
+        self.assertEqual({e["record"]["eventIdentity"]["reason"] for e in answer["written"]},
+                         {"scan_timed_out"})
+        self.assertEqual(answer["calls"], 2)
+
+    def test_settings_without_a_journal_root_cannot_claim_in_both(self):
+        """No root holds a record and no row is written, but the host's file still has one owner:
+        the replay is a duplicate and the event is asked about once."""
+        answer = self.assert_agrees(self.replay(), journal=False)
+        self.assertEqual(answer["written"], [])
+        self.assertEqual(answer["ledger"], [])
+        self.assertEqual(answer["calls"], 1)
+
+    def test_a_ledger_that_cannot_be_created_fails_the_claim_in_both(self):
+        """A journal root that cannot hold the claim fails it, and that invocation asks the guard
+        as before. The host's record of the event was made first and stays, so the replay is a
+        duplicate and the event is still asked about once."""
+        def occupied(journal_root):
+            journal_root.mkdir(parents=True, exist_ok=True)
+            (journal_root / "accepted").write_text("not a directory", encoding="utf-8")
+
+        answer = self.assert_agrees(self.replay(), prepare=occupied)
+        self.assertEqual(self.acceptances(answer), ["claim_failed", "duplicate"])
+        self.assertEqual(answer["calls"], 1)
+
+    def test_a_host_file_that_cannot_be_made_releases_without_asking_in_both(self):
+        """Nobody can own the Stop, so nobody asks: the invocation is recorded and released."""
+        def blocked(journal_root):
+            ledger = journal_root.parent / "crw-completion-hook"
+            ledger.mkdir(parents=True, exist_ok=True)
+            (ledger / "stop-events").write_text("not a directory", encoding="utf-8")
+
+        answer = self.assert_agrees(self.replay(), prepare=blocked)
+        self.assertEqual(answer["calls"], 0, "a Stop nobody could own was asked about")
+        self.assertEqual(self.acceptances(answer), ["unarbitrated"] * 2)
+        self.assertEqual({e["record"]["adapterOutcome"] for e in answer["written"]},
+                         {"arbitration_failed"})
+        self.assertEqual(answer["ledger"], [])
+
+    def test_no_journal_still_claims_and_records_the_outcome_in_both(self):
+        answer = self.assert_agrees(self.replay(), policy=completion.NO_JOURNAL)
+        self.assertEqual(answer["written"], [])
+        self.assertEqual(answer["calls"], 1)
+        outcome = [e["body"] for e in answer["ledger"] if OUTCOME_NAME.match(e["name"])][0]
+        self.assertIsNone(outcome["attemptRow"])
+
+    def test_faults_only_leaves_the_duplicate_out_of_the_journal_in_both(self):
+        answer = self.assert_agrees(self.replay(), policy=completion.FAULTS_ONLY)
+        self.assertEqual(answer["written"], [])
+        self.assertEqual(answer["calls"], 1)
+        self.assertEqual(len(answer["ledger"]), 2)
+
+    def test_an_owner_that_faults_after_claiming_records_the_fault_as_the_outcome_in_both(self):
+        def boom(config, payload):
+            raise RuntimeError("the guard call itself failed")
+
+        saved = (completion.invoke_guard, PACKAGED.invoke_guard)
+        completion.invoke_guard = PACKAGED.invoke_guard = boom
+        try:
+            answer = self.assert_agrees(self.replay())
+        finally:
+            completion.invoke_guard, PACKAGED.invoke_guard = saved
+        outcome = [e["body"] for e in answer["ledger"] if OUTCOME_NAME.match(e["name"])][0]
+        self.assertEqual(outcome["adapterOutcome"], completion.ADAPTER_FAULTED)
+        self.assertEqual(self.acceptances(answer), ["accepted", "duplicate"])
+        faulted = [e["record"] for e in answer["written"]
+                   if e["record"]["acceptance"] == "accepted"][0]
+        self.assertEqual(faulted["adapterOutcome"], completion.ADAPTER_FAULTED)
+        self.assertEqual(answer["calls"], 0)
+
+
+class EventMutationNoticed(unittest.TestCase):
+    """Each way a copy could stop keeping one accepted record per event, proved noticed."""
+
+    def noticed(self, copy, steps_for, **kwargs):
+        runner = EventAcceptanceAgrees("test_a_replayed_event_is_accepted_once_in_both")
+        left, right = runner.run_steps(steps_for, packaged=copy, **kwargs)
+        found = event_differences(left, right)
+        self.assertNotEqual(found, [], "a mutation in the packaged adapter went unnoticed")
+        return found
+
+    def three_stops(self):
+        document = r1()
+        return lambda home: [(stop_bytes(document["stops"][i], home / "rollout.jsonl"),
+                              document["transcriptLines"][:document["stops"][i]["linesAtStop"]])
+                             for i in (0, 2, 4)]
+
+    def test_a_key_built_from_session_and_turn_is_noticed(self):
+        copy = load_packaged()
+        original = copy.event_identity
+
+        def per_turn(stop, started=None):
+            key, identity = original(stop, started)
+            if key is None:
+                return key, identity
+            return copy.hashlib.sha256((stop["session_id"] + stop["turn_id"]).encode()
+                                       ).hexdigest(), identity
+
+        copy.event_identity = per_turn
+        found = self.noticed(copy, self.three_stops())
+        self.assertTrue(any("guard calls" in line or "accepted records" in line
+                            for line in found), found)
+
+    def test_an_identity_minted_per_invocation_is_noticed(self):
+        copy = load_packaged()
+        original = copy.event_identity
+
+        def minted(stop, started=None):
+            key, identity = original(stop, started)
+            return (copy.uuid.uuid4().hex * 2 if key else key), identity
+
+        copy.event_identity = minted
+        found = self.noticed(copy, EventAcceptanceAgrees("run").replay())
+        self.assertTrue(any("guard calls" in line for line in found), found)
+
+    def test_a_copy_that_stops_claiming_is_noticed(self):
+        copy = load_packaged()
+        copy.claim_event = lambda config, key, identity, stop, slot, host=None: (copy.ACCEPTED,
+                                                                                None)
+        found = self.noticed(copy, EventAcceptanceAgrees("run").replay())
+        self.assertTrue(any("guard calls" in line for line in found), found)
+
+    def test_a_copy_that_arbitrates_only_within_its_journal_root_is_noticed(self):
+        copy = load_packaged()
+        original = copy.claim_event
+
+        def rooted(config, key, identity, stop, slot, host=None):
+            return original(config, key, identity, stop, slot)
+
+        copy.claim_event = rooted
+        steps, prepare = EventAcceptanceAgrees("run").accepted_elsewhere_on_the_host()
+        found = self.noticed(copy, steps, prepare=prepare)
+        self.assertTrue(any("guard calls" in line for line in found), found)
+
+    def test_a_copy_that_asks_the_guard_about_a_duplicate_is_noticed(self):
+        copy = load_packaged()
+        original = copy.claim_event
+
+        def leaky(config, key, identity, stop, slot, host=None):
+            acceptance, where = original(config, key, identity, stop, slot, host)
+            return (copy.CLAIM_FAILED if acceptance == copy.DUPLICATE else acceptance), where
+
+        copy.claim_event = leaky
+        found = self.noticed(copy, EventAcceptanceAgrees("run").replay())
+        self.assertTrue(any("guard calls" in line for line in found), found)
+
+
+class FaultRecoveryKeepsTheRow(unittest.TestCase):
+    """A fault after an invocation's row is written must not erase that row (CRW-212, Devin round 6).
+
+    The recovery path writes its record into the slot run() chose at the start; when the row is
+    already there the write fails, and what failed to be created is not this call's to remove."""
+
+    def test_an_outcome_that_raises_after_the_row_leaves_the_row_in_both(self):
+        def raising(*_args, **_kwargs):
+            raise OSError("the outcome's final close failed")
+
+        copy = load_packaged()
+        copy.record_outcome = raising
+        runner = EventAcceptanceAgrees("run")
+        with mock.patch.object(completion, "record_outcome", raising):
+            left, right = runner.run_steps(runner.replay(), packaged=copy)
+        for label, answer in (("checkout", left), ("packaged", right)):
+            self.assertEqual(runner.acceptances(answer), ["accepted", "duplicate"],
+                             label + ": the accepted invocation's row was erased by its own recovery")
+            self.assertEqual(answer["calls"], 1)
 
 
 class TheGuardCommandAgrees(unittest.TestCase):

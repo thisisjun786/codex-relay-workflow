@@ -98,9 +98,12 @@ def settings(directory, **overrides):
 
 
 def journalled(directory):
+    """Every row under the journal: day directories and 32-hex names only, the shapes a row takes.
+    The accepted records beside them under accepted/ are not rows."""
     root = Path(directory) / "journal"
     return [json.loads(entry.read_text(encoding="utf-8"))
-            for day in sorted(root.glob("*")) for entry in sorted(day.glob("*.json"))]
+            for day in sorted(root.glob("*")) if completion.JOURNAL_DAY.match(day.name)
+            for entry in sorted(day.glob("*.json")) if completion.JOURNAL_NAME.match(entry.name)]
 
 
 def register(directory, **overrides):
@@ -1864,17 +1867,23 @@ class TheJournalPolicyReadsItsOwnField(unittest.TestCase):
     """faults_only was reading a key no record carries, so it recorded everything."""
 
     def test_faults_only_keeps_the_failures_and_drops_the_answers(self):
+        """An answer to an event this hook identified is not a fault and leaves no row (see the
+        agreement test's faults_only case). STOP names a transcript that does not exist, so its
+        answer was given WITHOUT an identity: no accepted record covers it, and faults_only keeps
+        that row so the invocation is not invisible (CRW-212)."""
         with tempfile.TemporaryDirectory() as temporary:
             fake_relay(temporary, stdout=json.dumps(RELEASED))
             settings(temporary, journalPolicy=completion.FAULTS_ONLY)
             completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
-            self.assertEqual(journalled(temporary), [],
-                             "a guard that answered is not a fault")
+            answered = journalled(temporary)
+            self.assertEqual([(r["adapterOutcome"], r["acceptance"]) for r in answered],
+                             [(completion.GUARD_ANSWERED, completion.UNESTABLISHED)],
+                             "an answer given without an identity is the one kept")
             os.remove(Path(temporary) / "codex-session-relay")
             completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
             records = journalled(temporary)
-        self.assertEqual([r["adapterOutcome"] for r in records],
-                         [completion.GUARD_UNREACHABLE])
+        self.assertEqual(sorted(r["adapterOutcome"] for r in records),
+                         sorted([completion.GUARD_ANSWERED, completion.GUARD_UNREACHABLE]))
 
     def test_every_invocation_keeps_both(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -916,8 +916,13 @@ class WitnessTests(unittest.TestCase):
     # pass. Closing that needs a witness at the process boundary, which is not built here.
 
     def records(self, arm):
+        """Rows only. An arm that fired also holds accepted records under journal/accepted/ when
+        its Stop identity was established; those say which event was accepted, not that a hook
+        ran, and counting them would count one firing twice."""
         found = []
         for path in sorted((run_root() / arm / "journal").rglob("*.json")):
+            if path.parent.name == "accepted":
+                continue
             found.append(json.loads(path.read_text(encoding="utf-8")))
         return found
 
