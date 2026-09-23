@@ -45,6 +45,9 @@ ISSUE_STATES = ("open", "in_progress", "done", "canceled")
 PROJECT_STATES = ("active", "completed")
 ISSUE_REF = re.compile(r"^[A-Z][A-Z0-9]*-[0-9]+$")
 KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+# A product is a plain identifier: the ledger ends a product where a target key's first
+# separator begins, so ':', '@', '|' and '/' can never be part of one.
+PRODUCT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAX_TEXT = 600
 
 # Fault classes this module defines. They are registered with the ledger through ledger_port,
@@ -159,6 +162,14 @@ def _key(value, name, *, optional=False):
     return value
 
 
+def _product(value, name, *, optional=False):
+    if value is None and optional:
+        return None
+    if not isinstance(value, str) or not PRODUCT.match(value):
+        malformed(f"{name} is a plain product identifier ({PRODUCT.pattern}), not {value!r}")
+    return value
+
+
 def _keys(values, name):
     if values is None:
         return []
@@ -206,7 +217,7 @@ REGISTRY_KEYS = ("schema", "product", "workspace", "team", "familyLabel", "repos
 def read_registry(record) -> dict:
     """One product as routing knows it. Every surface it does not list reads unobserved."""
     _object(record, REGISTRY_SCHEMA, REGISTRY_KEYS, "a registry record")
-    product = _key(record.get("product"), "product")
+    product = _product(record.get("product"), "product")
     if product == UNCLASSIFIED:
         malformed(f"{UNCLASSIFIED!r} is the pending-classification bucket, not a product")
     surfaces = record.get("surfaces") or {}
@@ -261,7 +272,7 @@ def read_binding(record, registry=None) -> dict:
     kind = _choice(record.get("kind"), ("project", "issue"), "kind")
     test = _flag(record.get("test"), "test", default=False)
     answer = {
-        "schema": BINDING_SCHEMA, "product": _key(record.get("product"), "product"),
+        "schema": BINDING_SCHEMA, "product": _product(record.get("product"), "product"),
         "kind": kind, "title": _text(record.get("title"), "title"),
         "components": _keys(record.get("components"), "components"), "test": test,
         "observedAt": _text(record.get("observedAt"), "observedAt", optional=True),
@@ -375,7 +386,7 @@ def read_incident(record) -> dict:
         signature = cause.get("signature")
         if signature is not None and (not isinstance(signature, dict) or not signature):
             malformed("cause.signature is a non-empty object")
-        cause = {"product": _key(cause.get("product"), "cause.product"),
+        cause = {"product": _product(cause.get("product"), "cause.product"),
                  "faultId": _text(cause.get("faultId"), "cause.faultId", optional=True),
                  "signature": dict(signature) if signature else None}
     goal = record.get("goal")
@@ -390,7 +401,7 @@ def read_incident(record) -> dict:
         malformed("evidence is a list")
     return {
         "schema": INCIDENT_SCHEMA,
-        "product": _key(record.get("product"), "product", optional=True),
+        "product": _product(record.get("product"), "product", optional=True),
         "repository": _key(record.get("repository"), "repository", optional=True),
         "workspace": _key(record.get("workspace"), "workspace", optional=True),
         "surface": _choice(record.get("surface"), SURFACES, "surface"),

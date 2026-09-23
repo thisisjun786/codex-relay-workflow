@@ -72,6 +72,11 @@ class Validation(unittest.TestCase):
         with self.assertRaises(products.RouteRefused):
             incident(conversation="the whole chat")
 
+    def test_a_product_is_a_plain_identifier(self):
+        for bad in ("alpha/notes", "alpha:notes", "alpha@notes", "alpha|notes"):
+            with self.subTest(product=bad), self.assertRaises(products.RouteRefused):
+                products.read_registry(dict(ALPHA, product=bad))
+
     def test_the_pending_bucket_cannot_be_registered_as_a_product(self):
         with self.assertRaises(products.RouteRefused):
             products.read_registry(dict(ALPHA, product=products.UNCLASSIFIED))
@@ -485,15 +490,77 @@ class Completion(unittest.TestCase):
 
 
 class LedgerPortBeforeBinding(RelayTestCase):
-    def test_every_ledger_capability_refuses_by_name_until_the_contract_is_bound(self):
+    """The port binds only to CRW-205's corrected contract, and on this checkout it is absent."""
+
+    @staticmethod
+    def call_shape(method):
+        """Arguments of the right shape for a method, so a refusal is the gate and not a
+        TypeError raised before the method body ran."""
+        import inspect
+
+        args, kwargs = [], {}
+        for parameter in inspect.signature(method).parameters.values():
+            if parameter.default is not inspect.Parameter.empty:
+                continue
+            if parameter.kind in (inspect.Parameter.VAR_POSITIONAL,
+                                  inspect.Parameter.VAR_KEYWORD):
+                continue
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+                kwargs[parameter.name] = "x"
+            else:
+                args.append("x")
+        return args, kwargs
+
+    def test_every_port_method_refuses_by_name_while_the_contract_is_absent(self):
         port = ledger_port.LedgerPort(self.store, self.clock)
+        self.assertIn("FaultLedger.adopt", port.missing)
         for name in ledger_port.CAPABILITIES:
+            method = getattr(port, name)
+            args, kwargs = self.call_shape(method)
             with self.subTest(capability=name), self.assertRaises(products.RouteRefused) as caught:
-                getattr(port, name)("anything")
+                method(*args, **kwargs)
             self.assertEqual(RefusalReason.ROUTE_LEDGER_PENDING, caught.exception.reason)
             self.assertIn(name, str(caught.exception))
-        before = self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"]
-        self.assertEqual(0, before)
+        self.assertEqual(0, self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"])
+
+    def test_a_kind_is_not_registered_while_the_contract_is_absent(self):
+        self.assertIn("faults.register_kind", ledger_port.register_kind("project_create",
+                                                                         creates=True))
+
+    def test_the_gate_names_what_this_checkout_lacks(self):
+        gaps = ledger_port.missing()
+        self.assertIn("FaultLedger.adopt", gaps)
+        self.assertIn("FaultLedger.record(adopt=)", gaps)
+        self.assertIn("faults.UNASSIGNED", gaps)
+
+    def test_the_gate_opens_only_for_every_name_and_keyword(self):
+        complete = synthetic_contract()
+        self.assertEqual([], ledger_port.missing(complete))
+        for method, keyword in (("set_target", "project_ref"), ("record", "adopt"),
+                                ("reconcile", "prior_ended")):
+            with self.subTest(method=method, keyword=keyword):
+                partial = synthetic_contract(drop={(method, keyword)})
+                self.assertIn(f"FaultLedger.{method}({keyword}=)",
+                              ledger_port.missing(partial))
+        self.assertIn("FaultLedger.queue", ledger_port.missing(synthetic_contract(
+            absent={"queue"})))
+        self.assertIn("faults.UNASSIGNED == 'unassigned'", ledger_port.missing(
+            synthetic_contract(unassigned="nobody")))
+
+    def test_a_positional_only_parameter_is_a_gap_even_beside_a_catch_all(self):
+        def positional(workspace, /, **kwargs):
+            return workspace
+
+        def keyword(*, workspace):
+            return workspace
+
+        def catch_all(**kwargs):
+            return kwargs
+
+        gaps = ledger_port._signature_gaps
+        self.assertEqual(["f(workspace=)"], gaps(positional, "f", ("workspace",)))
+        self.assertEqual([], gaps(keyword, "f", ("workspace",)))
+        self.assertEqual([], gaps(catch_all, "f", ("workspace",)))
 
     def test_routing_modules_reach_the_ledger_only_through_the_port(self):
         import ast
@@ -509,6 +576,33 @@ class LedgerPortBeforeBinding(RelayTestCase):
             with self.subTest(module=name):
                 self.assertNotIn("faults", imported)
                 self.assertNotIn("faultsweep", imported)
+
+
+def synthetic_contract(*, drop=frozenset(), absent=frozenset(), unassigned="unassigned"):
+    """A stand-in MODULE with exactly the signatures the gate asks for - used only to test the
+    gate's own logic, never to route anything. Signatures are declared, not executed."""
+    import inspect
+    import types
+
+    def function(name, keywords):
+        parameters = [inspect.Parameter("subject", inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                        default=None)]
+        parameters += [inspect.Parameter(k, inspect.Parameter.KEYWORD_ONLY, default=None)
+                       for k in keywords if (name, k) not in drop]
+
+        def stub(*args, **kwargs):
+            return None
+
+        stub.__signature__ = inspect.Signature(parameters)
+        return stub
+
+    ledger = type("FaultLedger", (), {
+        name: staticmethod(function(name, keywords))
+        for name, keywords in ledger_port.LEDGER_METHODS.items() if name not in absent})
+    return types.SimpleNamespace(
+        UNASSIGNED=unassigned, FaultLedger=ledger,
+        **{name: function(name, keywords)
+           for name, keywords in ledger_port.MODULE_FUNCTIONS.items()})
 
 
 class CommandLine(RelayTestCase):

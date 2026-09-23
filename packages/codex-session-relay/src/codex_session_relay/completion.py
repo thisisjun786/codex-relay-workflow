@@ -73,7 +73,7 @@ def read_reading(record) -> dict:
         products.malformed("exceptions is a list")
     reading = {
         "schema": READING_SCHEMA,
-        "product": products._key(record.get("product"), "product"),
+        "product": products._product(record.get("product"), "product"),
         "subject": products._issue(record.get("subject"), "subject"),
         "claims": {claim: products._flag(claims.get(claim), f"claims.{claim}", default=False)
                    for claim in CLAIMS},
