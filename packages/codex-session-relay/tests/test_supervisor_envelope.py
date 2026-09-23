@@ -387,11 +387,13 @@ class TheRenderedMessage(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id, **a_report(**overrides))
         return event_id
 
-    def test_the_completion_says_what_it_is_and_which_message_it_is(self):
+    def test_a_candidate_for_review_says_what_it_is_and_which_message_it_is(self):
+        """A ready_for_review receipt is delivered as review_ready, not as a completion."""
         event_id = self.recorded()
         message = self.delivery.render_message(event_id)
         self.assertIn("message: request", message)
-        self.assertIn("child_to_parent/completion", message)
+        self.assertIn("child_to_parent/review_ready", message)
+        self.assertNotIn("child_to_parent/completion", message)
         self.assertIn("envelope: " + envelope.VERSION, message)
         self.assertIn("an answer is owed by the recipient", message)
 
@@ -400,7 +402,7 @@ class TheRenderedMessage(DeliveryTestCase):
         row = self.delivery.get(event_id)
         expected = envelope.message_id(
             direction=envelope.CHILD_TO_PARENT, relation_id=row["relationship_id"],
-            purpose="completion", subject=event_id)
+            purpose="review_ready", subject=event_id)
         self.assertIn(f"messageId: {expected}", self.delivery.render_message(event_id))
 
     def test_the_sender_and_the_scope_are_read_rather_than_asserted(self):

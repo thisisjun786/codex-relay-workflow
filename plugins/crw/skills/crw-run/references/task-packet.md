@@ -194,6 +194,12 @@ Execution:
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
+- [Only when a relay holds this assignment:] before acting on the assignment, correction or
+  resume packet you received, run the store-backed `packet-check` described in
+  [the typed form these fields travel in](#the-typed-form-these-fields-travel-in) with your
+  own task id and reception ledger, act only on an accepted answer whose `act` is true, and
+  once you have acted, record it with the same command and `--applied` (refused unless the
+  a check of that packet said `act`).
 - [Only when a relay holds this assignment:] emit your completion receipt for this
   generation over the actual deliverable paths, from inside your own turn, against
   the shared state directory. Offline that receipt is STAGED until an independent
@@ -363,19 +369,57 @@ sandbox and approval travel as settings a receipt reads back and the workflow ha
 transport field at all - so a resume that omits it has dropped it, not deferred it. The relay
 refuses a restore section that states anything else and not that.
 
-**What a receiver does with one.** It compares the packet against the record it read for
-itself and gets one of three answers. Accepted, where every field the record could answer
-agreed. Refused, naming the field and both values: another parent, another child, another
-relationship, a superseded link revision, a stale generation, an old criteria digest, a head
-that moved, or a model and effort pair the record holds as refused for this role. Or
-unavailable, where the record could not answer at all - which is neither of the other two,
-because a receiver that could not check something has not checked it, and treating that as
-acceptance is how an unverifiable instruction becomes an applied one.
+Three shapes carry more than a word. A correction's body has five sections - violated
+criterion, what changed, fix scope, preserve, reverify and return - and the correction carries
+the evidence it rests on, so a correction that says nothing about what it corrects is refused
+by name. The callback is an object of the task to answer and the model and effort that task
+is authorized to run now, because that pair is what goes stale when the user changes a
+parent's model. The policy states the execution mode (`loop`, `non_loop` or
+`coordination`) beside the workflow. And a first assignment, written before the child
+exists, names the dispatch request it is sent under as its relation and states its recipient
+as an absence; registration is what binds both.
 
-A correction arriving twice is answered once. The key is the message id together with a
-digest of what the packet actually asks for, so a repeat gets the disposition it already got,
-while one id asking for something different is raised as a collision rather than given the
-earlier answer.
+**What a receiver does with one.** Before acting on an assignment, a correction, a resume or
+a result, the receiver runs the store-backed check against the shared state directory, naming
+its own task id and its own reception ledger:
+
+```bash
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
+
+# After acting on it, and only then:
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
+```
+
+It gets one of three answers. Accepted, where every field its own store reading could answer
+agreed. Refused, naming the field and both values: another parent, another child, another
+relationship, a superseded or ended relationship, a stale generation, an old criteria digest,
+a head that moved, another callback or a callback pair that has changed, a policy (model,
+effort, sandbox or approval) or mode the receiver's reading contradicts, or a model and effort
+pair the record holds as refused for this role. Or unavailable, where its reading could not
+answer at all - which is neither of the
+other two, because a receiver that could not check something has not checked it, and
+treating that as acceptance is how an unverifiable instruction becomes an applied one. Act
+only where the answer is accepted and `act` is true; report a refusal by its field, and
+resolve an unavailable one by reading what was missing rather than proceeding. The pull
+request head is never a store fact, so it comes only from an observation file naming where
+it was read. On a paused relationship the answer is accepted with `act` false and
+`actHeld`: wait for `relationship-resume` and check the same packet again then.
+
+A correction arriving twice is applied once. The ledger keeps each answered message id beside
+the content it asked for and whether you recorded acting on it, so a repeat is answered from
+today's reading with the earlier disposition beside it, while one id asking for something
+different is refused as a collision. An accepted answer is not an applied one: `act` stays
+true on a repeat until you record the application with `--applied`, so a check you made just
+before a restart does not lose the instruction. If you stopped after acting but before
+recording it, read your own work first; where the instruction is already in it, record it
+applied instead of acting again. The ledger also keeps the mode the accepted assignment gave,
+which is how a later resume or report is checked against it.
+
+This step is the reception boundary because no relay code carries these packets: they arrive
+inside prompts. The same fact is its limit. A receiver that skips the step has checked
+nothing, and nothing in the relay runs the check on its behalf.
 
 **Seven states, kept apart.** A message read, a send the transport accepted, a relay
 acknowledgement, a criteria verdict, the parent's acceptance, the merge landing and the
@@ -383,13 +427,16 @@ Linear record reaching Done are seven facts with seven different records behind 
 `read` has no record at all - nothing in the relay says a recipient read anything. A model
 writing that it has reported is prose and promotes nothing. The packet document holds which
 record answers each, and a state standing above one that is not held is reported as the
-promotion it is.
+promotion it is. Linear Done is the issue's own status, which the relay's store never holds:
+its outbox confirming a coordination summary is a different fact.
 
 **Activation is three fields.** The invocation being in the assignment, the child having
 armed it, and a host goal being active are separate facts produced by separate parties, and
 the packet carries them separately so a mode with no evidence reads unverified rather than
 failed. A coordination parent and an authorized non-Loop assignment answer not applicable for
-the loop field by design, and neither is a finding.
+the loop field by design, and neither is a finding. The reading carries the mode it was read
+under, and that mode has to agree with the policy and with the mode the receiver already
+holds.
 
 ## Non-PR packet
 

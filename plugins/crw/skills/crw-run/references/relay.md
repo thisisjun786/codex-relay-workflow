@@ -580,6 +580,18 @@ conclude from a Stop event, are decided in
 
 ## The parent verifies
 
+When the child's report came with a `relay-packet/1` packet, check it first against your own
+store reading, exactly as a child checks what it receives
+([the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in)):
+
+    codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+      --receiver <own task id> --ledger <own reception ledger> --observation <forge reading>
+
+The observation is where you read the pull request's repository, number and head, with its
+source; the store never holds a head. Go on only where the answer is accepted and `act` is
+true, and once the steps below have run, record that you acted on it with the same
+`packet-check` and `--applied`, so a report arriving again is not acted on twice. Then:
+
     codex-session-relay --state "$RELAY_STATE" claim     --event <id> --turn <own turn>
     codex-session-relay --state "$RELAY_STATE" ack-proof --event <id> --turn <own turn>
     codex-session-relay --state "$RELAY_STATE" [--socket "$SOCK"] ack --event <id> --ack-turn <own turn> \
@@ -991,20 +1003,43 @@ instruction is refused with the contest retained, and one digest cannot carry tw
 The packet a parent and a child exchange sits on that same envelope and adds what the
 occasion requires: `relay-packet/1`, in the package's own `docs/packets.md`, with the
 workflow rule in [the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in).
-One command reads it.
+One command reads it, and the receiver runs it against its own store reading.
 
 ```bash
-# Does this packet carry what its purpose requires, and does it agree with what you read?
-# A read: it opens no store, reaches no host and decides nothing about delivery.
+# Does this packet carry what its purpose requires, and does it agree with what YOUR store says?
+# Opens the store read-only, reaches no host, writes only your own reception ledger.
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> [--observation <file>]
+
+# Offline, against a reading you supply yourself. The answer says recordSource: supplied.
 codex-session-relay packet-check --packet <file> --record <file>
+
+# After you acted on an accepted packet: record it applied in your ledger. Reads no store.
+codex-session-relay --state "$RELAY_STATE" packet-check --packet <file> \
+  --receiver <your task id> --ledger <your reception ledger> --applied
 ```
 
-`--record` is the reading the receiver did for ITSELF - the relationship, the current
-generation, the registered criteria digest, the head its own forge reading reports. The answer
-says `recordSource: supplied`, and that qualifier is the honest part: this command has no
-store, so it cannot be the thing that established any of those, and handing it an agreeing
-record proves only that two files agree. What it closes is the case where nobody compared
-them at all.
+With `--receiver` the record is built from the store: the receiver's own relationship row
+(its relation, the other task, the issue, whether it is still live, the current generation and
+the dispatch that opened it), the project link's revision while that link is live and still
+joins the relationship's two tasks, the registered criteria digest, the recorded settings of
+the child (its model, effort, sandbox and approval) and of the parent being answered, the role
+policy's verdict on them (the policy this store's service declares, which its daemon reads when
+it launches, so the check does not depend on your shell's environment; two different policy
+files refuse the check, and a daemon still running on an earlier policy shows it in
+`service status` as `launchPolicy.runningDigest`), and the execution mode from the
+receiver's own ledger. `--applied` reads neither the store nor the policy. The answer says
+`recordSource: store` and gives each field's `provenance`. The pull request head is a forge
+reading the store does not hold; it comes only from `--observation`, a JSON file with its own
+`source`, and without one the head is a gap. The ledger is how a repeat is applied once: `act`
+is true while today's answer is accepted and the ledger holds no application for that packet,
+and the relationship is not paused (then `actHeld` says it waits for `relationship-resume`);
+`--applied` records one after the receiver acted, and without a ledger `act` is always false.
+
+`--record` is the offline form: the reading the receiver did for ITSELF, supplied as a file.
+The answer says `recordSource: supplied`, and that qualifier is the honest part: handing it an
+agreeing record proves only that two files agree. A key the file leaves out is unread; null
+for `relationRevision` is the one definite answer and says the relationship is unscoped.
 
 Three dispositions come back and the middle one is the one to read. `accepted` means every
 field the record could answer agreed with it. `refused` names the field and both values.
@@ -1015,3 +1050,10 @@ record makes less pass rather than more.
 
 A non-PR audit is a first-class shape here. Its artifact is a locator and a digest, it is
 never compared against a head, and it is never asked for a pull request to fill the field.
+
+The answer also carries the seven handover states as the store answers them for the packet's
+subject event, the states the packet claims that the store does not back (`unbackedClaims`)
+or cannot answer (`unmeasurableClaims`), and `coordinationSync` for the Linear summary block,
+which is not the issue reaching Done. This check runs where the receiver runs it: no relay
+code path carries a parent-child packet, so a receiver that skips the step has checked
+nothing.

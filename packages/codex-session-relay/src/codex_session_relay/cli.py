@@ -23,7 +23,7 @@ from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import envelope, guard, intent, marker, packets, restoration, rolepolicy
+from . import envelope, guard, intent, marker, packets, receiver, restoration, rolepolicy
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -111,8 +111,10 @@ OFFLINE_COMMANDS = (
     # Staging writes the message and the journal entry for it and reaches no host, and
     # showing one reads the rows back. Sending and reading back are in the host list above.
     "supervisor-stage", "supervisor-show",
-    # Compares a packet against a reading the caller supplies. It opens no store, reaches no
-    # host and decides nothing about delivery, so it runs wherever the two files are.
+    # Compares a packet against the receiver's own reading. With --receiver it reads the
+    # store read-only (never creating one) and writes only the receiver's own ledger file; with
+    # --record it reads a supplied file. Neither reaches a host or decides anything about
+    # delivery.
     "packet-check",
     # Reaches a forge and never the App Server, and constructs no Store at all.
     "merge-evidence",
@@ -981,13 +983,26 @@ def _require_host(services, command, why) -> None:
 def cmd_packet_check(services, args) -> dict:
     """Whether a packet agrees with the record its receiver read. It decides nothing else.
 
-    The reading is SUPPLIED rather than fetched, and the answer says so. That is the honest
-    shape for an offline check: this command has no store, so it cannot be the thing that
-    established the relationship, the generation or the head, and a caller that handed it an
-    agreeing record has proved only that the two files agree. What it does close is the case
-    where nobody compared them at all.
+    With --receiver the record is the receiver's own store reading (receiver.py): read-only,
+    every field with what answered it, the head only from an observation, the mode from the
+    receiver's ledger. That is the receive step, because no relay code path carries a
+    parent-child packet: it arrives in a prompt, and this is what the receiver runs on it.
+
+    With --record the reading is SUPPLIED, and the answer says so. A caller that handed it an
+    agreeing record has proved only that the two files agree; what it closes is the case where
+    nobody compared them at all.
+
+    With --receiver, --ledger and --applied it checks nothing: it records in the receiver's
+    ledger that the receiver has acted on a packet the ledger answered accepted, which is what
+    turns act off for that packet's replays.
     """
     one = _json_document(args.packet, "relay-packet/1 message")
+    if args.receiver is not None:
+        return _packet_check_store(services, args, one)
+    if args.observation or args.ledger or args.applied:
+        raise SystemExit2(
+            "--observation, --ledger and --applied belong to the store reading (--receiver); a"
+            " supplied record answers for itself", EXIT_USAGE)
     record = _json_document(args.record, "receiver's own reading")
     answer = packets.reception(one, record)
     answer["recordSource"] = "supplied"
@@ -1001,6 +1016,54 @@ def cmd_packet_check(services, args) -> dict:
     return answer
 
 
+def _packet_check_store(services, args, one) -> dict:
+    """The receive step: the packet against the receiver's own store reading."""
+    if args.applied:
+        return _packet_applied(args, one)
+    observed = None
+    if args.observation:
+        observed = receiver.observation(_json_document(args.observation, "observation"))
+    connection = intent.read_only_connection(services.selection.db_path)
+    try:
+        if not args.ledger:
+            return receiver.check(connection, one, receiver=args.receiver,
+                                  observation=observed)
+        with receiver.ledger_lock(args.ledger):
+            try:
+                ledger = receiver.load_ledger(args.ledger, args.receiver)
+            except receiver.LedgerUnusable as refused:
+                raise SystemExit2(str(refused), EXIT_USAGE) from refused
+            answer = receiver.check(connection, one, receiver=args.receiver,
+                                    observation=observed, ledger=ledger)
+            if receiver.record_answer(ledger, one, answer):
+                receiver.save_ledger(args.ledger, ledger)
+        answer["ledger"] = args.ledger
+        return answer
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _packet_applied(args, one) -> dict:
+    """After acting: record in the receiver's own ledger that this accepted packet was applied."""
+    if not args.ledger:
+        raise SystemExit2("--applied records what you did in your own reception ledger; name it"
+                          " with --ledger", EXIT_USAGE)
+    if args.observation:
+        raise SystemExit2("--applied reads nothing; an observation belongs to the check that"
+                          " came before it", EXIT_USAGE)
+    with receiver.ledger_lock(args.ledger):
+        try:
+            ledger = receiver.load_ledger(args.ledger, args.receiver)
+            recorded = receiver.record_applied(ledger, one)
+        except (receiver.LedgerUnusable, receiver.NotApplicable) as refused:
+            raise SystemExit2(str(refused), EXIT_USAGE) from refused
+        if not recorded["alreadyApplied"]:
+            receiver.save_ledger(args.ledger, ledger)
+    recorded.update(receiver=args.receiver, ledger=args.ledger)
+    return recorded
+
+
 def _json_document(path, what) -> dict:
     """One JSON file from disk, named by what it was supposed to be.
 
@@ -1011,7 +1074,9 @@ def _json_document(path, what) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             return json.load(handle)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
+        # RecursionError: JSON nested deeper than the reader can descend is input it cannot
+        # read, the same answer as JSON it cannot parse, and not a failure of this host.
         raise SystemExit2(
             f"the {what} at {path!r} could not be read: {type(error).__name__}: {error}",
             EXIT_USAGE,
@@ -3123,6 +3188,30 @@ def _apply_launch_policy(service, environ) -> dict | None:
     return None
 
 
+def _receives_against_the_store(args) -> bool:
+    """packet-check reading the receiver's own store, which judges pairs by the role policy.
+
+    Not with --applied: that records in the receiver's own ledger that it acted, and reads no
+    store and judges no pair. Held to the policy, a declaration changed after the work was done
+    refused the record, and every replay then asked for the work again.
+    """
+    return (getattr(args, "handler", None) is cmd_packet_check
+            and bool(getattr(args, "receiver", None))
+            and not getattr(args, "applied", False))
+
+
+def _declaring_service(services):
+    """This store's service, for its launch declaration, built without the status probe.
+
+    The probe measures the store's identity by writing a probe file beside it. Resolving the
+    declaration needs only the declaration and the policy file it names, and the receive step
+    writes nothing but the receiver's own ledger.
+    """
+    from .service import RelayService
+
+    return RelayService(services.selection, socket_path=services.socket_path)
+
+
 def _supervise(services, service, args) -> dict:
     """The supervisor: it holds the locks and replaces bounded workers."""
     from .service import ServiceRefused
@@ -4054,14 +4143,33 @@ def build_parser() -> argparse.ArgumentParser:
     packet = subparsers.add_parser(
         "packet-check",
         help="whether a relay-packet/1 message carries what its purpose requires and agrees"
-             " with the record its receiver read. A read: it opens no store and sends nothing")
+             " with the record its receiver read. It sends nothing; with --receiver it reads"
+             " the store read-only")
     packet.add_argument("--packet", required=True,
                         help="the packet, as relay-packet/1 JSON")
-    packet.add_argument("--record", required=True,
-                        help="what the receiver read for ITSELF: the relationship, the current"
-                             " generation, the registered criteria digest and the head its own"
-                             " forge reading reports. A field this record omits comes back"
-                             " unavailable rather than accepted")
+    reading = packet.add_mutually_exclusive_group(required=True)
+    reading.add_argument("--receiver",
+                         help="your own task id: the record is built from the relay store you"
+                              " select with --state, read-only, and the answer says"
+                              " recordSource: store with each field's provenance")
+    reading.add_argument("--record",
+                         help="offline: what the receiver read for ITSELF, as a JSON file. A"
+                              " field this record omits comes back unavailable rather than"
+                              " accepted; relationRevision null states an unscoped"
+                              " relationship. The answer says recordSource: supplied")
+    packet.add_argument("--observation",
+                        help="with --receiver: a JSON forge or file reading with its own"
+                             " source - repository, prNumber, headSha, artifactPath,"
+                             " artifactDigest. The store never holds a head")
+    packet.add_argument("--ledger",
+                        help="with --receiver: your own reception ledger, created if absent."
+                             " It tells a repeat from a first arrival and holds the mode your"
+                             " accepted assignment gave; without it act is always false")
+    packet.add_argument("--applied", action="store_true",
+                        help="with --receiver and --ledger, after you acted on an accepted"
+                             " packet: record it applied in your ledger, so its replays say"
+                             " act false. Until then a replay of it says act true. Reads no"
+                             " store")
     packet.set_defaults(handler=cmd_packet_check)
 
     settle = subparsers.add_parser("linkage-settle")
@@ -5222,6 +5330,10 @@ def _reads_no_selected_store(args) -> bool:
         # It confirms the relationship against a store, so it is only marker-only when the caller
         # named which store rather than letting discovery guess one.
         return bool(getattr(args, "db_path", None))
+    if handler is cmd_packet_check:
+        # With --record it reads a supplied file and with --applied only the receiver's own
+        # ledger. Only the store-backed check opens the store a selection would choose.
+        return not _receives_against_the_store(args)
     return handler in MARKER_COMMANDS
 
 
@@ -5356,11 +5468,20 @@ def main(argv=None) -> int:
         # A supervisor launched BY that service already carries its decision in this
         # environment, and says so. Re-reading the declaration here would let one written in
         # the meantime refuse a launch whose predecessor has already been stopped.
+        #
+        # The store-backed receive step reads the same declaration. It judges recorded pairs
+        # against the role policy, and it runs in whatever shell the receiver has: read from
+        # that environment alone, a shell without the variable made every role-bound packet
+        # unavailable, and one naming another file judged pairs by a policy the relay does not
+        # enforce. Nothing is written; a conflict or an unreadable declaration is refused.
+        refused = None
         if (getattr(args, "service_command", None) == "run"
                 and _launch_already_settled(args, os.environ) is None):
             refused = _apply_launch_policy(_service_for(services), os.environ)
-            if refused is not None:
-                raise PayloadExit(refused, EXIT_REFUSED)
+        elif _receives_against_the_store(args):
+            refused = _apply_launch_policy(_declaring_service(services), os.environ)
+        if refused is not None:
+            raise PayloadExit(refused, EXIT_REFUSED)
         # Taken here, before any role question and before the handler, for the same reason the
         # bridge builds its policy in its own main(): the snapshot is supposed to be this
         # PROCESS's, and a lazy first read made it the snapshot of whenever a role question
