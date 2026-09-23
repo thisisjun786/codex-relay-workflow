@@ -644,8 +644,8 @@ decide suppression.
 `observedAt` is the observer's own clock and is kept as displayed evidence ONLY. Nothing this
 module decides is decided by comparing it; [the lifecycle](#the-lifecycle) says why.
 
-A second product registers its classes with `register_class` and feeds `FaultLedger.record` the
-same shape. Nothing in the ledger, the suppression rules or the publication path knows what
+A second product registers its classes with `register_class` - a class name is a plain identifier,
+because every notice about its faults carries it - and feeds `FaultLedger.record` the same shape. Nothing in the ledger, the suppression rules or the publication path knows what
 `crw` means.
 
 ## Identity: what makes two observations the same fault
@@ -940,7 +940,8 @@ deliverer is the seam between them and owns no rule. Each tick it:
   observation delivery itself records) and keeping on a notification why it waits, only when
   that changes;
 - when something can go, reserves - at most what the reports left of the pass's per-tick send
-  cap, `max_supervisor_sends_per_tick` - (`reserve_notifications` with its `deliverable` predicate),
+  cap, `max_supervisor_sends_per_tick`, where a report attempt that raised after its transport
+  started counts as sent - (`reserve_notifications` with its `deliverable` predicate),
   stages each reserved notification as one supervisor message keyed by its `deliveryKey`,
   attempts it and settles it: `ack_notification` on the channel's recorded dispatch,
   `fail_notification` only when the channel proves nothing was sent (the message is then parked
@@ -1033,7 +1034,7 @@ This is the surface CRW-206 and any other product builds on. Everything below ta
 each call promises; this is the list.
 
 ```
-faults.register_class(name, *, component, clears, threshold=None, window=None)
+faults.register_class(name, *, component, clears, threshold=None, window=None)   # name: a plain identifier
 faults.register_kind(name, *, creates, requires_issue, target, evidence, confirm,
                      validate=None, pre_issue=None)
 faults.observation(*, product, fault_class, severity, signature, occurrence_key,

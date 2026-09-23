@@ -1600,6 +1600,12 @@ class SupervisorChannel:
                 "the " + unfit + " the linkage names for fault " + repr(notice["faultId"])
                 + "'s notice is not a plain identifier, so no notice carries it; nothing was"
                 " composed")
+        unfit = faults.unfit_notice(notice)
+        if unfit is not None:
+            raise DeliveryRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                "the fault's " + unfit + " is not a value the ledger writes, so no notice"
+                " carries it; nothing was composed")
         decision = None
         if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
             decision = ("fault " + str(notice["faultClass"]) + " (" + str(notice["product"])

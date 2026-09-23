@@ -108,6 +108,11 @@ class NoticeDeliverer:
         if faults.issue_reference(anchor["issue_key"]) is None:
             return ("the issue relationship " + relation + " names is not an issue identifier"
                     " (TEAM-123 or a UUID), so no notice can name it; fault-show has the fault")
+        unfit = faults.unfit_notice(faults.notice_facts(self.store.db,
+                                                        notification["notificationId"]))
+        if unfit is not None:
+            return ("the fault's " + unfit + " is not a value the ledger writes, so no notice"
+                    " can carry it; fault-show has the fault")
         try:
             resolution = self.channel.resolve(relation)
         except DeliveryRefused as refusal:

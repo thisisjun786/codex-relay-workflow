@@ -215,8 +215,11 @@ def register_class(fault_class, *, component, clears, threshold=None, window=Non
     threshold=None means the severity table decides, which is the ordinary case. A class
     supplies one only when its own recurrence means something the general rule does not.
     """
-    if not _named(fault_class):
-        raise ValueError("a fault class is a non-blank string")
+    if not (isinstance(fault_class, str) and PRODUCT_NAME.match(fault_class)
+            and len(fault_class) <= 128):
+        # A plain identifier, like a product: a class name is carried upward in every notice
+        # about its faults, so it may hold no free text (I-448).
+        raise ValueError("a fault class is a plain identifier (letters, digits, '.', '_', '-')")
     if not _named(component):
         raise ValueError(f"{fault_class!r} declares no component")
     if not _named(clears):
@@ -3351,6 +3354,31 @@ def unfit_hierarchy(resolution):
     for field in NOTICE_HIERARCHY:
         value = (resolution or {}).get(field)
         if not (isinstance(value, str) and HIERARCHY_IDENTIFIER.fullmatch(value)):
+            return field
+    return None
+
+
+NOTICE_KINDS = (BLOCKING, DECISION, RESOLVED_NOTICE)
+_HEX_ID = re.compile(r"[0-9a-f]{1,64}")
+
+
+def unfit_notice(notice):
+    """The first of a notice's own values that is not what the ledger writes, by name, or None:
+    class and product as plain identifiers, severity, state and kind from their enums, the fault
+    id as hex. A class registered before class names had to be identifiers, or a row a hand
+    edit changed, is not carried; the notice waits (I-448). The value itself is never echoed."""
+    checks = (
+        ("faultClass", lambda v: isinstance(v, str) and len(v) <= 128
+         and PRODUCT_NAME.match(v) is not None),
+        ("product", lambda v: isinstance(v, str) and len(v) <= 128
+         and PRODUCT_NAME.match(v) is not None),
+        ("severity", lambda v: v in SEVERITIES),
+        ("faultState", lambda v: v in STATES),
+        ("kind", lambda v: v in NOTICE_KINDS),
+        ("faultId", lambda v: isinstance(v, str) and _HEX_ID.fullmatch(v) is not None),
+    )
+    for field, fits in checks:
+        if not fits((notice or {}).get(field)):
             return field
     return None
 

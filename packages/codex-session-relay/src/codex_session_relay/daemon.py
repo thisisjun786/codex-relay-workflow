@@ -1091,9 +1091,16 @@ class RelayDaemon:
                 report.skipped += 1
                 continue
             try:
+                started = self._transports_started(row["message_id"])
                 record = channel.attempt(row["message_id"], self.adapter, now=now,
                                          owner=DAEMON_OWNER)
             except Exception as error:  # noqa: BLE001 - a refusal is an answer, not a crash
+                # An attempt whose transport started before it raised may have sent: it spends
+                # the tick's allowance like any attempt that reached the transport (I-250). One
+                # whose count cannot be read is taken to have.
+                after = self._transports_started(row["message_id"])
+                if started is None or after is None or after != started:
+                    attempted += 1
                 report.notes.append(
                     f"supervisor report {row['message_id']} not sent: {error}")
                 struggling.add(recipient)
@@ -1123,6 +1130,16 @@ class RelayDaemon:
         return attempted
 
     # ----------------------------------------------------------------- state
+
+    def _transports_started(self, message_id):
+        """How many attempts at this supervisor message stamped their transport start - the
+        write committed before a transport is called - or None when that cannot be read."""
+        try:
+            return self.store.one(
+                "SELECT COUNT(*) AS n FROM supervisor_attempts WHERE message_id = ?"
+                "   AND transport_started_at IS NOT NULL", (message_id,))["n"]
+        except Exception:  # noqa: BLE001 - unreadable is answered by the caller, conservatively
+            return None
 
     def _active_relationships(self) -> list:
         rows = self.store.all(

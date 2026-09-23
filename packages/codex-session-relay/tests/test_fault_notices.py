@@ -570,3 +570,57 @@ class WhatTheFourthAuditFound(NoticeCase):
         self.tick(advance=1)
         self.assertEqual(len(self.upward()), 2)
         self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
+
+
+class WhatTheFifthAuditFound(NoticeCase):
+    """Plan audit, round five: a class name is a value the ledger writes like any other, and an
+    attempt that raised after its transport started spends the tick's send cap."""
+
+    def test_a_class_name_is_a_plain_identifier(self):
+        with self.assertRaises(ValueError):
+            faults.register_class("delivery_stalled token=" + SECRET, component="delivery",
+                                  clears="a synthetic clear")
+
+    def test_a_fault_of_a_class_no_notice_may_name_waits_without_echoing_it(self):
+        name = "stalled token=" + SECRET
+        policy = dict(faults.CLASS_POLICY["delivery_stalled"])
+        with mock.patch.dict(faults.CLASS_POLICY, {name: policy}):
+            answer = self.ledger.record(faults.observation(
+                product=PRODUCT, fault_class=name, severity=faults.BROKEN,
+                signature={"relationship": self.rid, "cause": "class"},
+                occurrence_key="test:class",
+                scope={"projectKey": PROJECT, "issueKey": ISSUE}, detail="x"))
+            self.tick()
+            notification = self.notification(answer["faultId"])
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertIn("faultClass", notification["lastError"] or "")
+        self.assertNotIn(SECRET, notification["lastError"] or "")
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.budget_used(), 0)
+
+    def test_an_attempt_that_raised_after_its_transport_spends_the_tick_cap(self):
+        import dataclasses
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_sends_per_tick=1)
+        self.channel.policy = dataclasses.replace(self.channel.policy,
+                                                  min_send_interval_seconds=0.0)
+        self.completed()
+        fault = self.broken()
+        read = self.channel.get
+        raised = []
+
+        def read_fails_once_after_the_send(message_id):
+            row = read(message_id)
+            if (row["state"] == DISPATCHED and row["obligation_kind"] == "completion"
+                    and not raised):
+                raised.append(message_id)
+                raise RuntimeError("a read failed after the transport answered")
+            return row
+        with mock.patch.object(self.channel, "get", side_effect=read_fails_once_after_the_send):
+            self.tick()
+        self.assertEqual(raised and len(raised), 1)
+        self.assertEqual(len(self.upward()), 1, "the send that raised spent the cap of one")
+        self.tick(advance=1)
+        self.assertEqual(len(self.upward()), 2)
+        self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
