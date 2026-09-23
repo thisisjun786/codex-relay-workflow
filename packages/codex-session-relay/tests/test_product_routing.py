@@ -707,6 +707,36 @@ class Projects(ProductRoutingCase):
         self.holder.run()
         self.assertEqual(["GMK", "GMK"], [p["team"] for p in self.linear.projects.values()])
 
+    def test_a_proposal_queued_between_digest_pages_defers_the_holds_after_it(self):
+        from unittest import mock
+        from codex_session_relay import digest as digest_module
+
+        # No policy, so nothing proposes a project: both defects are held, and the first page
+        # reports its hold. Another process then proposes a project for their goal, and the
+        # second page defers its defect to that proposal as a fresh lookup would.
+        first = self.gamma("cache", "stale", "g1")
+        second = self.gamma("queue", "lost", "g2")
+        listing, calls = routes.listing, []
+
+        def page(store, **fields):
+            calls.append(fields)
+            if len(calls) == 2:
+                with self.store.transaction() as db:
+                    routes.upsert(db, self.clock, fault_id="f" * 32, product="gamma-kit",
+                                  workspace="example-ws", disposition=products.PROJECT_PROPOSAL,
+                                  stage=products.STAGE_FILED, target=routes.plain_target(
+                                      team="GMK"), origin=products.OBSERVED,
+                                  claimed_severity="notice", goal="offline_sync")
+            return listing(store, **fields)
+
+        with mock.patch.object(digest_module, "PAGE", 1), \
+                mock.patch.object(routes, "listing", side_effect=page):
+            answer = self.router.digest(limit=2)
+        self.assertEqual([(first["faultId"], "held_no_project")],
+                         [(d["faultId"], d["decision"]) for d in answer["decisions"]])
+        self.assertNotIn(second["faultId"], [d["faultId"] for d in answer["decisions"]])
+        self.assertEqual(1, answer["proposalsUnreached"])
+
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
         self.router.bind(binding("gamma-kit", "project", "proj-gmk-cache",

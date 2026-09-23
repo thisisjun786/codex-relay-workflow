@@ -64,15 +64,16 @@ def digest(router, *, limit=500, after=None) -> dict:
     port = router.port
     port.ready("route-digest")
     bound, reached = _bind_created_projects(router, limit)
-    # One answer per product goal for the whole digest, as the reached set is fixed for it:
-    # held defects that share a goal ask once.
-    unreached = {}
     linked = []
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
     while read < limit:
         page = routes.listing(router.store, limit=min(PAGE, limit - read), after=cursor)
         with router.store.composing() as db:
+            # One answer per product goal for each page, read inside the page's transaction:
+            # held defects on a page that share a goal ask once, and a proposal queued between
+            # pages is seen by the page after it.
+            unreached = {}
             for route in page["routes"]:
                 read += 1
                 if route["stage"] == products.STAGE_SUPERSEDED:
