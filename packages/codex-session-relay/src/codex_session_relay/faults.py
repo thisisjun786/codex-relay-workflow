@@ -1837,8 +1837,36 @@ class FaultLedger:
         with self.store.transaction() as db:
             fault = self._fault(db, identifier)
             if op == "set_project":
-                return self._relink(db, fault["fault_id"], value, now, force=True)
+                return self._request_relink(db, fault, value, now)
             return self._queue_update(db, fault["fault_id"], op, value, now)
+
+    def _request_relink(self, db, fault, value, now):
+        """set_project on request: the same converging relink a target change runs, never a
+        forced one. An issue already read back in the project, or waiting on a write to another
+        project that may still land, gets nothing new - forcing a revision there issued a second
+        project write beside the outstanding one and reported a linked issue unlinked. Only the
+        project the scope targets is accepted: operation() cancels a set_project to any other.
+        """
+        target, why = self._owned_target(db, fault["product"], fault["scope_key"])
+        wanted = target["projectRef"] if target else None
+        if value != wanted:
+            raise FaultRefused(
+                RefusalReason.FAULT_STATE_CONFLICT,
+                f"set_project puts the owned issue in the project its scope targets"
+                f" ({wanted!r}{'' if target else ': ' + str(why)}), never another;"
+                f" set_target() or move() changes where it belongs")
+        queued = self._relink(db, fault["fault_id"], value, now)
+        if queued is not None:
+            return queued
+        link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
+                          (fault["fault_id"],)).fetchone()
+        return {"publicationId": None, "kind": UPDATE_RECORD, "trigger": None, "queued": False,
+                "linkState": (NO_LINK if not fault["external_ref"] else
+                              UNLINKED if link is None else self._link_state(db, fault, link)),
+                "reason": ("this fault owns no issue" if not fault["external_ref"] else
+                           "nothing new was queued: the issue already reads back in that project,"
+                           " or a write to another project may still land and its readback"
+                           " decides")}
 
     def _queue_update(self, db, identifier, op, value, now, *, trigger_key=None):
         fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
@@ -1876,7 +1904,7 @@ class FaultLedger:
                    + _SET_PROJECT.format(pp="sp") + ")"),
             params=(UPDATE_RECORD,))
 
-    def _relink(self, db, identifier, project_ref, now, *, force=False):
+    def _relink(self, db, identifier, project_ref, now):
         """Invariant 11: queue the write that puts the owned issue in project_ref.
 
         Each relink increments the link's revision, which is part of the write's identity, and
@@ -1899,14 +1927,14 @@ class FaultLedger:
                 (identifier, fault["external_ref"], project_ref, None, UNLINKED, now))
             link = db.execute("SELECT * FROM fault_links WHERE fault_id = ?",
                               (identifier,)).fetchone()
-        if link["observed_project_ref"] == project_ref and not force:
+        if link["observed_project_ref"] == project_ref:
             moving = self._moving_elsewhere(db, identifier, project_ref)
             self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
             db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
                        " WHERE fault_id = ?",
                        (project_ref, UNLINKED if moving else LINKED, now, identifier))
             return None
-        if link["project_ref"] == project_ref and link["state"] == UNLINKED and not force:
+        if link["project_ref"] == project_ref and link["state"] == UNLINKED:
             live = db.execute(
                 "SELECT p.publication_id FROM fault_publications p"
                 "  JOIN fault_publication_payloads pp ON pp.publication_id = p.publication_id"

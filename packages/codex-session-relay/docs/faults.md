@@ -34,7 +34,8 @@ a path that reaches the outcome without passing through that function is a defec
    request frees it. Enforced by `operation()` and `reconcile()`.
 3. **Transitions belong to the claim.** Operation, completion and failure of a claimed or issued
    write need the current claim token; the first claimant is the writer and another needs a
-   recorded takeover. Enforced by `_claimed()`. An uncertain write has no live claim and so no
+   recorded takeover. Enforced by `_claimed()` for `operation()` and by the same current-token
+   check inside `complete()` and `fail()`. An uncertain write has no live claim and so no
    token: it leaves uncertain only on a readback that finds its block - `complete()` without a
    token, or `reconcile()` - or on an attested end of its request (invariant 2).
 4. **Only unissued writes are cancelled, and cancelling spends nothing earlier.** Pending, failed
@@ -339,7 +340,10 @@ Built-in kinds:
 - `append_comment` (requires the owned issue, block); confirmed only against that issue.
 - `update_record` (requires the owned issue, fields). `request_update(fault_id, *, op,
   value)` queues one idempotent update per operation, value and cycle (`set_project` per link
-  revision instead, above): `set_project` (project id), `reopen` (null), `add_relation` (`{type, issue}`), `add_label` (label name). A cause
+  revision instead, above). `set_project` on request runs the same converging relink a target
+  change does: it accepts only the project the scope targets (another is refused with
+  `fault_state_conflict`), and queues nothing - answering `queued: false` with the link state -
+  when the issue already reads back there or a write to another project may still land: `set_project` (project id), `reopen` (null), `add_relation` (`{type, issue}`), `add_label` (label name). A cause
   that comes back after resolution queues `reopen` beside its comment.
 - Comments and updates need only the owned issue; targets decide creates.
 

@@ -1245,6 +1245,10 @@ class CommandLine(RelayTestCase):
     def test_budget_and_policy_listings_page_and_refuse_paging_beside_a_change(self):
         from codex_session_relay import cli
 
+        code, queue = self.invoke("fault-next")
+        self.assertEqual(0, code)
+        self.assertIs(False, queue.get("budgetsTruncated"),
+                      "fault-next says whether its budgets are all of them")
         code, first = self.invoke("fault-limit", "--product", "crw", "--limit", "1")
         self.assertEqual(0, code)
         self.assertEqual(1, len(first["limits"]))

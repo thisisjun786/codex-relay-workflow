@@ -1813,6 +1813,50 @@ class ListingsArePaged(ContractCase):
         self.assertIs(False, self.ledger.queue_state().get("budgetsTruncated"))
 
 
+class AProjectRequestConverges(ContractCase):
+    """Final review round eight (invariant 11, the project-linkage correction).
+
+    set_project on request runs the same converging relink a target change does: nothing new
+    for an issue already in the project or waiting on a write that may still land elsewhere, and
+    no project but the one the scope targets.
+    """
+
+    def updates(self, identifier, *states):
+        return [entry for entry in capability(self, self.ledger, "publications")(
+            identifier, kind="update_record") if entry["state"] in states]
+
+    def request(self, identifier, value):
+        return capability(self, self.ledger, "request_update")(identifier, op="set_project",
+                                                               value=value)
+
+    def test_a_request_for_the_project_an_issue_is_in_changes_nothing(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.assertFalse(self.request(identifier, PROJECT)["queued"])
+        self.assertEqual(faults.LINKED,
+                         capability(self, self.ledger, "get")(identifier)["linkState"])
+        self.assertEqual([], self.updates(identifier, faults.PENDING))
+        self.assertEqual(0, capability(self, self.ledger, "attention")()["unlinked"])
+
+    def test_no_second_project_write_is_issued_beside_an_outstanding_one(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        self.created(self.updates(identifier, faults.PENDING)[0]["publication_id"])
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref=PROJECT)
+        self.assertFalse(self.request(identifier, PROJECT)["queued"],
+                         "a write to P2 may still land; its readback decides")
+        self.assertEqual([], self.updates(identifier, faults.PENDING, faults.CLAIMED))
+        self.assertEqual(faults.UNLINKED,
+                         capability(self, self.ledger, "get")(identifier)["linkState"])
+
+    def test_a_project_the_scope_does_not_target_is_refused(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        with self.assertRaises(faults.FaultRefused):
+            self.request(identifier, "P9")
+
+
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
 

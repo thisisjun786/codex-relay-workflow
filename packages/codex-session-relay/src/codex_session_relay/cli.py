@@ -1765,7 +1765,7 @@ def cmd_fault_next(services, args) -> dict:
     services.faults.expire_leases()
     state = services.faults.queue_state(limit=_positive(args.limit, "--limit"))
     return {"publications": state["ready"], "held": state["held"],
-            "budgets": state["budgets"]}
+            "budgets": state["budgets"], "budgetsTruncated": state["budgetsTruncated"]}
 
 
 def cmd_fault_claim(services, args) -> dict:
