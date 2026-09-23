@@ -772,3 +772,42 @@ class TheContractIsBound(unittest.TestCase):
         self.assertIn(projects.KIND, faults.KINDS)
         self.assertIn(products.MISMATCH, faults.CLASS_POLICY)
 
+
+
+class FinalReviewScenarios(ProductRoutingCase):
+    """Behaviour the fresh-context review of 8eb2c5b8 required, against the real ledger."""
+
+    def test_a_shared_cause_occurrence_never_outlives_a_filing_that_failed(self):
+        from unittest import mock
+
+        from codex_session_relay import intake
+
+        cause, signature = SharedCause.crw_fault(self)
+        before = self.router.port.get(cause)["occurrence_count"]
+        with mock.patch.object(intake, "file", side_effect=RuntimeError("filing failed")):
+            with self.assertRaises(RuntimeError):
+                self.route(cause={"product": "crw", "faultId": cause, "signature": signature})
+        self.assertEqual(before, self.router.port.get(cause)["occurrence_count"])
+        self.assertEqual(0, self.store.one("SELECT COUNT(*) AS n FROM incident_routes")["n"])
+
+    def test_the_current_issue_takes_its_runs_failure_and_links_the_symptoms_owner(self):
+        self.register(issue_key="ALN-3")
+        run = self.store.one("SELECT relationship_id FROM relationships WHERE issue_key = ?",
+                             ("ALN-3",))["relationship_id"]
+        self.router.bind(binding("alpha-notes", "issue", "ALN-12", components=["editor"],
+                                 symptoms=["cursor_jump"], project="proj-aln-editor"))
+        attached = self.route(context={"currentIssue": "ALN-3", "run": run})
+        self.assertEqual(("attach_current", "ALN-3"), (attached["disposition"],
+                                                       attached["owner"]))
+        elsewhere = self.route(surface="user_report", occurrenceKey="report-1")
+        self.assertEqual(("accumulate", "ALN-12"), (elsewhere["disposition"],
+                                                    elsewhere["owner"]))
+        self.assertNotEqual(attached["faultId"], elsewhere["faultId"])
+        self.holder.run()
+        self.router.reconcile()
+        self.holder.run()
+        self.assertEqual({}, {r: i for r, i in self.linear.issues.items()
+                              if r not in ("ALN-3", "ALN-12")})
+        self.assertIn("ALN-3", [c["issue"] for c in self.linear.comments])
+        self.assertIn({"type": "related", "issue": "ALN-12"},
+                      self.linear.issues["ALN-3"]["relations"])

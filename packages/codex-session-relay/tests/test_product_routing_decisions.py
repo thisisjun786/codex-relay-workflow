@@ -1079,5 +1079,71 @@ class ProposalRotation(RouteRows):
         self.assertEqual({"sync_a", "sync_c"}, {r["goal"] for r in reached})
         self.assertEqual(set(), unreached)
 
+
+class FinalReviewFindings(unittest.TestCase):
+    """The fresh-context review of 8eb2c5b8, held as behaviour the pure functions must keep."""
+
+    def setUp(self):
+        self.registry = products.read_registry(ALPHA)
+        self.bindings = [products.read_binding(b, self.registry) for b in ALPHA_BINDINGS]
+
+    def test_the_current_issue_comes_first_and_is_linked_to_a_same_symptom_owner(self):
+        other = products.read_binding(binding(
+            "alpha-notes", "issue", "ALN-12", components=["editor"], symptoms=["cursor_jump"],
+            project="proj-aln-editor"), self.registry)
+        answer = placement.decide(
+            incident(context={"currentIssue": "ALN-3", "run": "rel-1"}), self.registry,
+            self.bindings + [other], "ALN-3")
+        self.assertEqual((products.ATTACH_CURRENT, "ALN-3", ["ALN-12"]),
+                         (answer["disposition"], answer["owner"], answer["relate"]))
+        # Without the run's own record the same incident goes to the issue owning the symptom.
+        unowned = placement.decide(
+            incident(context={"currentIssue": "ALN-3", "run": "rel-1"}), self.registry,
+            self.bindings + [other], None)
+        self.assertEqual((products.ACCUMULATE, "ALN-12"),
+                         (unowned["disposition"], unowned["owner"]))
+
+    def test_attached_evidence_is_the_current_issues_own_record(self):
+        plain = placement.defect_signature(incident())
+        attached = placement.defect_signature(incident(), attached="ALN-3")
+        self.assertEqual(dict(plain, issue="ALN-3"), attached)
+
+    def test_a_declared_product_whose_repository_another_product_claims_waits(self):
+        registries = {r["product"]: r for r in (self.registry, products.read_registry(BETA))}
+        product, why = placement.resolve_product(registries, incident(
+            product="alpha-notes", repository="example-org/beta-meter"))
+        self.assertIsNone(product)
+        self.assertIn("beta-meter", why)
+        agreeing, _ = placement.resolve_product(registries, incident(
+            product="alpha-notes", repository="example-org/alpha-notes"))
+        self.assertEqual("alpha-notes", agreeing)
+
+    def test_several_covering_projects_are_held_even_with_a_triage_project(self):
+        beta = products.read_registry(BETA)
+        covering = [products.read_binding(binding("beta-meter", "project", ref,
+                                                  components=["billing"]), beta)
+                    for ref in ("proj-btm-a", "proj-btm-b")]
+        answer = placement.decide(incident(product="beta-meter", surface="real_use",
+                                           component="billing"), beta, covering)
+        self.assertEqual((products.HELD, products.AMBIGUOUS_PROJECT),
+                         (answer["disposition"], answer["hold"]))
+
+    def test_evidence_is_references_bounded_in_count_shape_and_size(self):
+        kept = incident(evidence=[{"kind": "event", "ref": "forwarded:7f3a",
+                                   "observed": {"count": 2, "status": "failed"}}])
+        self.assertEqual([{"kind": "event", "ref": "forwarded:7f3a",
+                           "observed": {"count": 2, "status": "failed"}}], kept["evidence"])
+        for evidence in (
+                [{"kind": "transcript", "ref": "x" * 100_000}],
+                [{"kind": "event", "ref": "e", "observed": {"messages": ["hi", "there"]}}],
+                [{"kind": "event", "ref": "e", "body": "the whole conversation"}],
+                [{"kind": "event", "ref": f"e{n}"} for n in range(17)],
+                [{"kind": "event", "ref": "r" * 250, "observed": {f"k{n}": "v" * 250
+                                                                 for n in range(16)}}]):
+            with self.subTest(size=len(json.dumps(evidence))), \
+                    self.assertRaises(products.RouteRefused) as caught:
+                incident(evidence=evidence)
+            self.assertEqual(RefusalReason.ROUTE_INPUT_MALFORMED, caught.exception.reason)
+
 if __name__ == "__main__":
     unittest.main()

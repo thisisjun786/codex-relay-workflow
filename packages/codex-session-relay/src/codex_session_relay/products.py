@@ -49,6 +49,12 @@ KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 # separator begins, so ':', '@', '|' and '/' can never be part of one.
 PRODUCT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAX_TEXT = 600
+# Evidence is a few references, never a transcript. An incident carrying more than this is
+# refused rather than stored: the bound is what keeps an intake from becoming a copy of whatever
+# conversation, file or personal data a source happened to hold.
+MAX_EVIDENCE_ENTRIES = 16
+MAX_EVIDENCE_BYTES = 4096
+EVIDENCE_KEYS = ("kind", "ref", "source", "observed")
 
 # Fault classes this module defines. They are registered with the ledger through ledger_port,
 # which is the only module allowed to reach it; each names what clears it, because a class
@@ -400,9 +406,6 @@ def read_incident(record) -> dict:
                 "criteria": _text(goal.get("criteria"), "goal.criteria", optional=True)}
     detail = record.get("detail") or {}
     _closed(detail, DETAIL_KEYS, "detail")
-    evidence = record.get("evidence") or []
-    if not isinstance(evidence, list):
-        malformed("evidence is a list")
     return {
         "schema": INCIDENT_SCHEMA,
         "product": _product(record.get("product"), "product", optional=True),
@@ -430,8 +433,46 @@ def read_incident(record) -> dict:
         "goal": goal,
         "detail": {key: _text(detail.get(key), f"detail.{key}", optional=True)
                    for key in DETAIL_KEYS},
-        "evidence": evidence,
+        "evidence": read_evidence(record.get("evidence")),
     }
+
+
+def read_evidence(values) -> list:
+    """References to what was observed, bounded in count, shape and size.
+
+    Each entry names its kind and a reference, optionally where it came from and a flat object
+    of scalar readings. Nested structure, long text and anything past the byte bound are
+    refused: evidence says where to look, it does not carry the thing looked at.
+    """
+    values = values or []
+    if not isinstance(values, list):
+        malformed("evidence is a list")
+    if len(values) > MAX_EVIDENCE_ENTRIES:
+        malformed(f"evidence has {len(values)} entries; at most {MAX_EVIDENCE_ENTRIES}")
+    entries = []
+    for index, value in enumerate(values):
+        name = f"evidence[{index}]"
+        _closed(value, EVIDENCE_KEYS, name)
+        entry = {"kind": _key(value.get("kind"), f"{name}.kind"),
+                 "ref": _text(value.get("ref"), f"{name}.ref", limit=256)}
+        if value.get("source") is not None:
+            entry["source"] = _text(value.get("source"), f"{name}.source", limit=128)
+        observed = value.get("observed")
+        if observed is not None:
+            if not isinstance(observed, dict) or len(observed) > 16:
+                malformed(f"{name}.observed is an object of at most 16 readings")
+            for key, reading in observed.items():
+                _key(key, f"{name}.observed key")
+                if isinstance(reading, str):
+                    _text(reading, f"{name}.observed.{key}", limit=256)
+                elif reading is not None and not isinstance(reading, (bool, int, float)):
+                    malformed(f"{name}.observed.{key} is a scalar reading")
+            entry["observed"] = dict(observed)
+        entries.append(entry)
+    if len(canonical(entries).encode("utf-8")) > MAX_EVIDENCE_BYTES:
+        malformed(f"evidence is larger than {MAX_EVIDENCE_BYTES} bytes; it names where to look,"
+                  f" not the thing looked at")
+    return entries
 
 
 def canonical(value) -> str:

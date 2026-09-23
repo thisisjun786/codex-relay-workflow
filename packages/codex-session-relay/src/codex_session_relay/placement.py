@@ -31,17 +31,26 @@ RUN_SURFACES = ("dev_run", "verification")
 
 
 def resolve_product(registries, incident):
-    """(product, reason). Declared wins; else a repository only one product claims; else None.
+    """(product, reason). Declared wins unless its repository belongs to another product; else a
+    repository only one product claims; else None.
 
     None is not a failure. It is the pending-classification path, which holds one record and
     assigns nothing.
     """
     declared = incident["product"]
-    if declared:
-        if declared in registries:
-            return declared, f"{declared} was declared by the source"
-        return None, f"{declared} is not a registered product"
     repository = incident["repository"]
+    if declared:
+        if declared not in registries:
+            return None, f"{declared} is not a registered product"
+        if repository:
+            owners = sorted(key for key, registry in registries.items()
+                            if repository in registry["repositories"])
+            if owners and declared not in owners:
+                # Two readings name two owners. Filing under either would be a guess about
+                # whose team gets the issue, so it waits for somebody to classify it.
+                return None, (f"{declared} was declared, but repository {repository} is"
+                              f" registered to {owners}")
+        return declared, f"{declared} was declared by the source"
     if repository:
         owners = sorted(key for key, registry in registries.items()
                         if repository in registry["repositories"])
@@ -70,9 +79,16 @@ def workspace_for(incident, registry=None) -> str:
     return registry["workspace"]
 
 
-def defect_signature(incident) -> dict:
-    """The failure domain: component and symptom keys, never prose, never the time."""
+def defect_signature(incident, attached=None) -> dict:
+    """The failure domain: component and symptom keys, never prose, never the time.
+
+    Failure evidence attached to a current issue is that issue's own record: the same symptom
+    tracked by another issue is a different record the two are linked through, so attaching
+    never takes a fault another issue already owns.
+    """
     signature = {"component": incident["component"], "symptom": incident["symptom"]}
+    if attached:
+        signature["issue"] = attached
     if incident["origin"] == products.SIMULATED:
         # Part of identity, so a simulated event never converges with a real observation.
         signature["simulated"] = True
@@ -99,7 +115,7 @@ def _decision(disposition, *, project=None, owner=None, hold=None, relate=(), re
             "hold": hold, "relate": list(relate), "reopen": reopen, "reason": reason}
 
 
-def _owned(disposition, binding, registry, incident, reason, *, reopen=False):
+def _owned(disposition, binding, registry, incident, reason, *, reopen=False, relate=()):
     """An owner is scoped by its own project so its comment can be handed out; without one the
     triage project stands in, and without either the route is held and says why."""
     if incident["origin"] == products.SIMULATED:
@@ -112,7 +128,7 @@ def _owned(disposition, binding, registry, incident, reason, *, reopen=False):
                          reason=f"{binding['ref']} owns this but belongs to no project and"
                                 f" {registry['product']} has no triage project")
     return _decision(disposition, project=project, owner=binding["ref"], reopen=reopen,
-                     reason=reason)
+                     relate=relate, reason=reason)
 
 
 def decide(incident, registry, bindings, run_issue=None) -> dict:
@@ -132,6 +148,17 @@ def decide(incident, registry, bindings, run_issue=None) -> dict:
                                 f" operator and never filed")
     same = [b for ref, b in sorted(issues.items())
             if component in b["components"] and symptom in b["symptoms"]]
+    notes = []
+    # The current issue first: a failure in the current issue's own managed run, inside its
+    # scope, is that issue's failure evidence and rework. Another issue owning the same symptom
+    # is linked to it, never merged into it and never preferred over it.
+    attached = _current(incident, issues, run_issue, notes)
+    if attached is not None:
+        others = [b["ref"] for b in same if b["ref"] != attached["ref"]]
+        return _owned(products.ATTACH_CURRENT, attached, registry, incident,
+                      f"failure evidence for the current issue {attached['ref']}, from its own"
+                      f" managed run" + (f"; linked to {others}, which own the same symptom"
+                                         if others else ""), relate=others)
     open_ = [b for b in same if b["state"] in products.OPEN_STATES]
     if len(open_) == 1:
         return _owned(products.ACCUMULATE, open_[0], registry, incident,
@@ -149,12 +176,6 @@ def decide(incident, registry, bindings, run_issue=None) -> dict:
         return _decision(products.HELD, hold=products.AMBIGUOUS_OWNER,
                          reason=f"several completed issues claim this symptom:"
                                 f" {[b['ref'] for b in done]}")
-    notes = []
-    attached = _current(incident, issues, run_issue, notes)
-    if attached is not None:
-        return _owned(products.ATTACH_CURRENT, attached, registry, incident,
-                      f"failure evidence for the current issue {attached['ref']}, from its own"
-                      f" managed run")
     relate, disposition = [], products.NEW_ISSUE
     regression = incident["context"]["regressionOf"]
     if regression:
@@ -212,17 +233,18 @@ def _project(incident, registry, bindings):
     if len(covering) == 1:
         return covering[0]["ref"], None, f"{covering[0]['ref']} covers {component}"
     goal = (incident["goal"] or {}).get("key")
-    if len(covering) > 1 and goal:
-        chosen = [b for b in covering if b["goal"] == goal]
+    if len(covering) > 1:
+        chosen = [b for b in covering if goal and b["goal"] == goal]
         if len(chosen) == 1:
             return chosen[0]["ref"], None, f"{chosen[0]['ref']} covers {component} and {goal}"
-    triage = registry["triageProject"]
-    if triage:
-        why = "several projects cover it" if covering else "no project covers it"
-        return triage, None, f"{why}; the triage project holds it until a project owns it"
-    if covering:
+        # Several projects claim it and no goal chooses: a decision, never the triage project,
+        # which is for work no project covers.
         return None, products.AMBIGUOUS_PROJECT, (f"several projects cover {component}:"
                                                   f" {[b['ref'] for b in covering]}")
+    triage = registry["triageProject"]
+    if triage:
+        return triage, None, ("no project covers it; the triage project holds it until a"
+                              " project owns it")
     return None, products.NO_PROJECT, (f"no project covers {component} and"
                                        f" {registry['product']} has no triage project")
 

@@ -40,6 +40,11 @@ an intake that kept whatever it was handed would be exactly the indiscriminate c
 feature must not do. `component` and `symptom` are keys, not prose: they decide identity, and
 two products describing a failure in similar words stay two failures.
 
+Evidence is a few references, never a transcript. Each entry has a `kind`, a `ref`, optionally
+a `source` and a flat `observed` object of scalar readings; at most sixteen entries and 4096
+bytes in all. Nested structure, long text or anything past the bound is refused, so an intake
+cannot become a copy of the conversation, file or personal data a source happened to hold.
+
 `surface` is one of `dev_run`, `verification`, `user_report` and `real_use`. Each product's
 registry record says which of them are watched and how they are collected. An incident from a
 surface the product does not watch is refused before anything is written, and `product-show`
@@ -61,17 +66,21 @@ follow up). From those readings alone it decides, in this order:
 | Order | Condition | Disposition |
 | --- | --- | --- |
 | 1 | an expected state: cancelled, awaiting approval, recorded as unsupported | **observe**: recorded for an operator, never filed |
-| 2 | exactly one open issue covers the component AND the symptom | **accumulate** on that issue |
-| 3 | exactly one completed issue covers them | **reopen** that issue and comment the recurrence |
-| 4 | the incident comes from the current issue's own managed run and its component is in that issue's scope | **attach** as failure evidence to the current issue |
+| 2 | the incident comes from the current issue's own managed run and its component is in that issue's scope | **attach** as failure evidence and rework to the current issue, linked to any other issue owning the same symptom |
+| 3 | exactly one open issue covers the component AND the symptom | **accumulate** on that issue |
+| 4 | exactly one completed issue covers them | **reopen** that issue and comment the recurrence |
 | 5 | `regressionOf` names the fix of exactly one completed issue | **follow-up**: a new issue linked to it |
 | 6 | otherwise | **new issue** in the one active project covering the component, else the triage project |
 
 A component alone never makes two defects one: a shared component is two defects that happen to
 live near each other. Several open issues claiming one symptom, several projects covering one
-component with no goal to choose between them, or an owner issue that belongs to no project and a
-product with no triage project are **held** with the reason, and surfaced as decisions. Routing
-never picks the candidate that sorts first.
+component with no goal to choose between them (the triage project is only for work no project
+covers), or an owner issue that belongs to no project and a product with no triage project are
+**held** with the reason, and surfaced as decisions. Routing never picks the candidate that sorts
+first.
+
+Failure evidence attached to a current issue is that issue's own record. The same symptom tracked
+by another issue stays that issue's record; the two are linked, never merged.
 
 "The current issue's own managed run" is checked against this store. `context.run` must be a
 relationship the relay registered, and its `issue_key` must equal `context.currentIssue`. A user
@@ -79,7 +88,9 @@ report or a real-use event never attaches to a current issue, however its compon
 
 A defect is filed under the product it belongs to, not the product that saw it. A tool failure in
 a CRW-managed run of another repository goes to that repository's product and team. CRW is one
-registered product among others, and nothing defaults to it.
+registered product among others, and nothing defaults to it. A declared product whose repository
+is registered to another product is two readings naming two owners, so the incident waits for
+classification instead of being filed under either.
 
 ### No issue without its project
 
@@ -97,8 +108,8 @@ issue routing adopts belongs to someone else, and routing adds no label to it.
 ## Unclear ownership
 
 An incident whose product cannot be resolved is kept as ONE pending-classification record. That
-happens when it names an unregistered product, or a repository registered to no product or to
-several. The record lives under the ledger product `unclassified` at notice severity, so it can
+happens when it names an unregistered product, a repository registered to no product or to
+several, or a product whose declared repository another product claims. The record lives under the ledger product `unclassified` at notice severity, so it can
 never be filed, and it keeps the incident's own severity beside it. A severe incident waiting for
 an owner is a decision for Jun, never a Linear issue in an arbitrary team.
 
@@ -118,8 +129,9 @@ When an incident names a cause in another product, typically a CRW fault that br
 run, the cause is verified first. The fault must exist, belong to the named product, and match
 the signature the incident gives for it. An unverified cause is held and merges nothing.
 
-A verified cause produces two records, linked once both own issues. The cause fault gains an
-occurrence at its own current severity, with evidence naming the affected product. The affected
+A verified cause produces two records in one transaction, linked once both own issues. The cause
+fault gains an occurrence at its own current severity, with evidence naming the affected product;
+a filing that fails takes that occurrence back with it. The affected
 product's own defect is routed as above at its own severity. A severe impact in one product
 therefore reaches that product's team, and does not escalate a CRW record that its own observers
 judged minor. A cause that was resolved and comes back is reopened by its new occurrence, which

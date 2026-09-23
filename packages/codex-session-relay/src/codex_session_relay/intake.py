@@ -124,9 +124,9 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
     if not verified:
         return file(router, incident, registry, workspace, hold=products.CAUSE_UNVERIFIED)
     placed = _stored(row.get("scope"))
-    # Two writes, deliberately not one transaction: the cause occurrence is evidence on another
-    # product's record and stands on its own; the affected product's filing below composes its
-    # own ledger and routing writes.
+    # One transaction: the cause's occurrence says a product was affected, and it stands only
+    # together with that product's own filing. A filing that fails takes the occurrence back
+    # with it, so no cause ever counts an effect that routing never recorded.
     with router.store.composing():
         port.record(port.observation(
             product=row["product"], workspace=placed.get("workspace"),
@@ -136,7 +136,7 @@ def _shared_cause(router, incident, registry, workspace) -> dict:
             project=placed.get("projectKey"), observed_at=incident["observedAt"],
             detail=f"{registry['product']} was affected by this fault",
             evidence=incident["evidence"]))
-    return file(router, incident, registry, workspace, cause_fault=cause["faultId"])
+        return file(router, incident, registry, workspace, cause_fault=cause["faultId"])
 
 
 def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) -> dict:
@@ -151,7 +151,9 @@ def file(router, incident, registry, workspace, *, hold=None, cause_fault=None) 
                     "reason": f"{hold}; " + decision["reason"]}
     observe = decision["disposition"] == products.OBSERVE
     fault_class = products.EXPECTED_STATE if observe else products.DEFECT
-    signature = placement.defect_signature(incident)
+    signature = placement.defect_signature(
+        incident, attached=decision["owner"]
+        if decision["disposition"] == products.ATTACH_CURRENT else None)
     fault_id = port.fault_id(product, workspace, fault_class, signature)
     existing = routes.get(router.store, fault_id)
     if existing is not None and existing["stage"] == products.STAGE_FILED:
@@ -347,6 +349,10 @@ def _again(router, route, registry, bindings):
     incident = stored[-1]
     decision = placement.decide(incident, registry, bindings,
                                 router.run_issue(incident["context"]["run"]))
+    if decision["disposition"] == products.ATTACH_CURRENT:
+        # Attaching makes the incident its current issue's own record, a different fault from
+        # this one; that is decided when the incident arrives, never by moving a record later.
+        return None
     current = route["target"]
     if (decision["project"], decision["owner"], decision["hold"]) == (
             current["project"], current["owner"], current["hold"]):
