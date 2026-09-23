@@ -804,3 +804,114 @@ class ReviewRoundThreeControls(unittest.TestCase):
         code, answer = verify(host.journal)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
         self.assertEqual(answer["foreignLedgerEntries"], [str(stray)])
+
+
+def host_ledger_of(host):
+    return host.codex_home / "crw-completion-hook" / "stop-events"
+
+
+class ReviewRoundFourControls(unittest.TestCase):
+    """Red-first controls for the fourth review round (CRW-212, PR #144).
+
+    Only the invocation that made the host's file for an event may ask the guard about it, so a host
+    whose file cannot be made asks nobody. And the reading judges an event as a unit: every record
+    of an event the window reaches is checked whatever its own time, every host file must be
+    accounted for by a claim, and every claim by its host file.
+    """
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def rows_of(self, *journals):
+        return [json.loads(entry.read_text(encoding="utf-8")) for journal in journals
+                if journal.is_dir() for day in sorted(journal.iterdir())
+                if day.is_dir() and DAY.match(day.name)
+                for entry in sorted(day.iterdir()) if ROW.match(entry.name)]
+
+    def test_a_host_file_that_cannot_be_made_asks_the_guard_about_nothing(self):
+        for round_number in range(5):
+            with self.subTest(round=round_number):
+                host = self.fresh("blocked-%d" % round_number, decision="block")
+                other, command = host.registration_with_its_own_root("other-journal")
+                blocked = host_ledger_of(host)
+                blocked.parent.mkdir(parents=True)
+                blocked.write_text("not a directory", encoding="utf-8")
+                answers = run_together([host.declared(), command], at_stop(host, self.document, 0))
+                self.assertEqual([out for _code, out, _err in answers], [b"", b""],
+                                 "a registration that owns nothing answered the host")
+                self.assertEqual(host.calls_made(), 0,
+                                 "a Stop nobody could own was asked about")
+                self.assertEqual(sorted(str(row.get("acceptance"))
+                                        for row in self.rows_of(host.journal, other)),
+                                 ["unarbitrated", "unarbitrated"])
+                code, answer = verify(host.journal, other)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+
+    def test_settings_without_a_journal_root_still_meet_at_the_host_file(self):
+        host = self.fresh("no-root")
+        document = json.loads(host.settings.read_text(encoding="utf-8"))
+        document.pop("journalRoot")
+        host.settings.write_text(json.dumps(document), encoding="utf-8")
+        run_together([host.declared(), host.checkout()], at_stop(host, self.document, 0))
+        self.assertEqual(host.calls_made(), 1, "two registrations of one host both asked")
+
+    def test_an_owner_that_died_between_the_host_file_and_its_claim_is_not_vouched_for(self):
+        """The host's file for the fixture's second Stop, as an owner killed right after making it
+        leaves it: no claim, no row. Beside a complete first event the reading must not say TRUE."""
+        host = self.fresh("died-between")
+        document = distinct_third_answer(self.document)
+        run_one(host.checkout(), at_stop(host, document, 0))
+        stop = json.loads(at_stop(host, document, 2))
+        key, identity = completion.event_identity(stop)
+        self.assertIsNotNone(key)
+        marker = host_ledger_of(host) / (key + ".json")
+        marker.write_text(json.dumps(
+            {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
+             "turnId": stop["turn_id"], "stopHookActive": stop["stop_hook_active"],
+             "answerItem": identity["answerItem"], "claimedAt": "2026-09-23T00:00:00Z",
+             "claimedBy": {"pid": 1, "journalRoot": str(host.journal),
+                           "attemptRow": "20260923/" + "0" * 32 + ".json"}}), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(len(answer["hostFilesWithoutClaim"]), 1)
+
+    def test_an_outcome_outside_the_window_is_still_checked_against_its_claim(self):
+        host = self.fresh("split")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        outcome = host.journal / "accepted" / host.ledger()[1][0]
+        body = json.loads(outcome.read_text(encoding="utf-8"))
+        body["at"] = "2000-01-01T00:00:00Z"
+        body["sessionId"] = "wrong-session"
+        outcome.write_text(json.dumps(body), encoding="utf-8")
+        code, answer = verify(host.journal, since="2020-01-01T00:00:00Z")
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["ledgerUnreadable"], [str(outcome)])
+
+    def test_a_claim_whose_host_file_is_gone_is_not_vouched_for(self):
+        host = self.fresh("host-file-gone")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        [marker] = sorted(host_ledger_of(host).iterdir())
+        marker.unlink()
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(len(answer["claimsWithoutHostFile"]), 1)
+
+    def test_an_accepted_row_without_its_invocation_fields_is_not_vouched_for(self):
+        host = self.fresh("thin-row")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        [path] = host.row_paths()
+        row = json.loads(path.read_text(encoding="utf-8"))
+        for field in ("guardInvoked", "adapterOutcome", "acceptedAs"):
+            row.pop(field)
+        path.write_text(json.dumps(row), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["rowsUnreadable"], [str(path)])

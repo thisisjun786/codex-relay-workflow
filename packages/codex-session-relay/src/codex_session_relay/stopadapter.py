@@ -168,9 +168,13 @@ DUPLICATE = "duplicate"
 UNESTABLISHED = "unestablished"
 UNCLAIMABLE = "unclaimable"
 CLAIM_FAILED = "claim_failed"
-ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED)
+# The host's file for the event could be neither made nor found, so no invocation can own the event
+# and this one released it without asking the guard.
+UNARBITRATED = "unarbitrated"
+ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED, UNARBITRATED)
 
 DUPLICATE_INVOCATION = "duplicate_invocation"
+ARBITRATION_FAILED = "arbitration_failed"
 # What faults_only leaves out of the journal. Only journal() reads this: the guard fields and the
 # hook output still follow ANSWERED, so a duplicate never carries a verdict nobody asked for.
 QUIET = (GUARD_ANSWERED, DUPLICATE_INVOCATION)
@@ -879,23 +883,25 @@ def host_ledger(codex_home=None, environ=None):
     """
     environ = os.environ if environ is None else environ
     home = codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")
-    return Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS)
+    # Absolute, because the claim names it and a reading may run from any directory.
+    return Path(os.path.abspath(str(Path(home).expanduser()))).joinpath(*HOST_LEDGER_PARTS)
 
 
 def _arbitrate(host, key, identity, stop, slot, root):
     """The host-wide half of a claim: one create-once file per event under the Codex home.
 
     Returns (None, None) when this invocation is the first on this host to reach the event,
-    (DUPLICATE, the file) when another already has, and (CLAIM_FAILED, None) when the file can be
+    (DUPLICATE, the file) when another already has, and (UNARBITRATED, None) when the file can be
     neither created nor found. A claim in a journal root alone lets two registrations with two
-    roots each accept the same Stop; this file is the one they both meet. Like the claim, it is
+    roots each accept the same Stop; this file is the one they both meet, and only the invocation
+    that made it may ask the guard. When nobody can make it, nobody asks. Like the claim, it is
     never rewritten and a short write leaves it in place.
     """
     directory = Path(host)
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError):
-        return CLAIM_FAILED, None
+        return UNARBITRATED, None
     marker = directory / (key + ".json")
     try:
         handle = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -903,14 +909,15 @@ def _arbitrate(host, key, identity, stop, slot, root):
         # Named relative to the Codex home, as the accepted record is relative to its root.
         return DUPLICATE, "/".join(HOST_LEDGER_PARTS + (key + ".json",))
     except (OSError, ValueError):
-        return CLAIM_FAILED, None
+        return UNARBITRATED, None
     try:
         _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
                               "sessionId": stop.get("session_id"),
                               "turnId": stop.get("turn_id"),
                               "stopHookActive": stop.get("stop_hook_active"),
                               "answerItem": identity.get("answerItem"), "claimedAt": now(),
-                              "claimedBy": {"pid": os.getpid(), "journalRoot": str(root),
+                              "claimedBy": {"pid": os.getpid(),
+                                            "journalRoot": str(root) if root else None,
                                             "attemptRow": slot_name(slot)}})
     except (OSError, ValueError):
         pass
@@ -924,19 +931,22 @@ def claim_event(config, key, identity, stop, slot, host=None):
 
     Returns (acceptance, acceptedAs). Creating a file that must not exist is the whole mechanism:
     two registrations firing in the same instant get one owner. The host's file (host, from
-    host_ledger) is created first, so registrations whose settings name different journal roots
-    still get one owner; the owner then creates the accepted record in its own root, where the
-    reading of the journal finds it beside the rows. Neither is ever rewritten, and a short write
-    leaves it where it is, because removing it would open the event to a second acceptance.
-    Written under every journalPolicy: this is state, not a record of an invocation.
+    host_ledger) is created first, whatever the settings say, so registrations whose settings name
+    different journal roots, or none, still get one owner; the owner then creates the accepted
+    record in its own root, where the reading of the journal finds it beside the rows, and names
+    the host's ledger in it so the reading can find that too. Only the owner of the host's file
+    goes on to ask the guard (UNCLAIMABLE and CLAIM_FAILED are owners whose root could not hold the
+    record). Neither file is ever rewritten, and a short write leaves it where it is, because
+    removing it would open the event to a second acceptance. Written under every journalPolicy:
+    this is state, not a record of an invocation.
     """
     root = config.get("journalRoot")
-    if not root:
-        return UNCLAIMABLE, None
     if host is not None:
         arbitrated, where = _arbitrate(host, key, identity, stop, slot, root)
         if arbitrated is not None:
             return arbitrated, where
+    if not root:
+        return UNCLAIMABLE, None
     directory = Path(root).expanduser() / LEDGER_DIRECTORY
     named = LEDGER_DIRECTORY + "/" + key + ".json"
     try:
@@ -958,7 +968,9 @@ def claim_event(config, key, identity, stop, slot, host=None):
                               "turnId": stop.get("turn_id"),
                               "stopHookActive": stop.get("stop_hook_active"),
                               "answerItem": identity.get("answerItem"), "claimedAt": now(),
-                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot)}})
+                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot),
+                                            "hostLedger": str(host) if host is not None
+                                            else None}})
     except (OSError, ValueError):
         pass
     finally:
@@ -1107,6 +1119,11 @@ def run(payload, codex_home=None, environ=None, settings=None):
                 return _release(config, record, DUPLICATE_INVOCATION,
                                 "this Stop event already has its accepted record, so the guard"
                                 " was not asked again", started, slot)
+            if acceptance == UNARBITRATED:
+                return _release(config, record, ARBITRATION_FAILED,
+                                "the host's record of this Stop event could be neither made nor"
+                                " found, so no invocation can own it and the guard was not asked",
+                                started, slot)
             if acceptance == ACCEPTED:
                 claimed = key
         record["guardInvoked"] = True

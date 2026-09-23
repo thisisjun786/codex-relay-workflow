@@ -338,9 +338,13 @@ DUPLICATE = "duplicate"
 UNESTABLISHED = "unestablished"
 UNCLAIMABLE = "unclaimable"
 CLAIM_FAILED = "claim_failed"
-ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED)
+# The host's file for the event could be neither made nor found, so no invocation can own the event
+# and this one released it without asking the guard.
+UNARBITRATED = "unarbitrated"
+ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED, UNARBITRATED)
 
 DUPLICATE_INVOCATION = "duplicate_invocation"
+ARBITRATION_FAILED = "arbitration_failed"
 # What faults_only leaves out of the journal. Only journal() reads this: the guard fields and the
 # hook output still follow ANSWERED, so a duplicate never carries a verdict nobody asked for.
 QUIET = (GUARD_ANSWERED, DUPLICATE_INVOCATION)
@@ -1376,23 +1380,25 @@ def host_ledger(codex_home=None, environ=None):
     """
     environ = os.environ if environ is None else environ
     home = codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")
-    return Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS)
+    # Absolute, because the claim names it and a reading may run from any directory.
+    return Path(os.path.abspath(str(Path(home).expanduser()))).joinpath(*HOST_LEDGER_PARTS)
 
 
 def _arbitrate(host, key, identity, stop, slot, root):
     """The host-wide half of a claim: one create-once file per event under the Codex home.
 
     Returns (None, None) when this invocation is the first on this host to reach the event,
-    (DUPLICATE, the file) when another already has, and (CLAIM_FAILED, None) when the file can be
+    (DUPLICATE, the file) when another already has, and (UNARBITRATED, None) when the file can be
     neither created nor found. A claim in a journal root alone lets two registrations with two
-    roots each accept the same Stop; this file is the one they both meet. Like the claim, it is
+    roots each accept the same Stop; this file is the one they both meet, and only the invocation
+    that made it may ask the guard. When nobody can make it, nobody asks. Like the claim, it is
     never rewritten and a short write leaves it in place.
     """
     directory = Path(host)
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError):
-        return CLAIM_FAILED, None
+        return UNARBITRATED, None
     marker = directory / (key + ".json")
     try:
         handle = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -1400,14 +1406,15 @@ def _arbitrate(host, key, identity, stop, slot, root):
         # Named relative to the Codex home, as the accepted record is relative to its root.
         return DUPLICATE, "/".join(HOST_LEDGER_PARTS + (key + ".json",))
     except (OSError, ValueError):
-        return CLAIM_FAILED, None
+        return UNARBITRATED, None
     try:
         _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
                               "sessionId": stop.get("session_id"),
                               "turnId": stop.get("turn_id"),
                               "stopHookActive": stop.get("stop_hook_active"),
                               "answerItem": identity.get("answerItem"), "claimedAt": now(),
-                              "claimedBy": {"pid": os.getpid(), "journalRoot": str(root),
+                              "claimedBy": {"pid": os.getpid(),
+                                            "journalRoot": str(root) if root else None,
                                             "attemptRow": slot_name(slot)}})
     except (OSError, ValueError):
         pass
@@ -1421,19 +1428,22 @@ def claim_event(config, key, identity, stop, slot, host=None):
 
     Returns (acceptance, acceptedAs). Creating a file that must not exist is the whole mechanism:
     two registrations firing in the same instant get one owner. The host's file (host, from
-    host_ledger) is created first, so registrations whose settings name different journal roots
-    still get one owner; the owner then creates the accepted record in its own root, where the
-    reading of the journal finds it beside the rows. Neither is ever rewritten, and a short write
-    leaves it where it is, because removing it would open the event to a second acceptance.
-    Written under every journalPolicy: this is state, not a record of an invocation.
+    host_ledger) is created first, whatever the settings say, so registrations whose settings name
+    different journal roots, or none, still get one owner; the owner then creates the accepted
+    record in its own root, where the reading of the journal finds it beside the rows, and names
+    the host's ledger in it so the reading can find that too. Only the owner of the host's file
+    goes on to ask the guard (UNCLAIMABLE and CLAIM_FAILED are owners whose root could not hold the
+    record). Neither file is ever rewritten, and a short write leaves it where it is, because
+    removing it would open the event to a second acceptance. Written under every journalPolicy:
+    this is state, not a record of an invocation.
     """
     root = config.get("journalRoot")
-    if not root:
-        return UNCLAIMABLE, None
     if host is not None:
         arbitrated, where = _arbitrate(host, key, identity, stop, slot, root)
         if arbitrated is not None:
             return arbitrated, where
+    if not root:
+        return UNCLAIMABLE, None
     directory = Path(root).expanduser() / LEDGER_DIRECTORY
     named = LEDGER_DIRECTORY + "/" + key + ".json"
     try:
@@ -1455,7 +1465,9 @@ def claim_event(config, key, identity, stop, slot, host=None):
                               "turnId": stop.get("turn_id"),
                               "stopHookActive": stop.get("stop_hook_active"),
                               "answerItem": identity.get("answerItem"), "claimedAt": now(),
-                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot)}})
+                              "claimedBy": {"pid": os.getpid(), "attemptRow": slot_name(slot),
+                                            "hostLedger": str(host) if host is not None
+                                            else None}})
     except (OSError, ValueError):
         pass
     finally:
@@ -1605,6 +1617,11 @@ def run(payload, codex_home=None, environ=None, settings=None):
                 return _release(config, record, DUPLICATE_INVOCATION,
                                 "this Stop event already has its accepted record, so the guard"
                                 " was not asked again", started, slot)
+            if acceptance == UNARBITRATED:
+                return _release(config, record, ARBITRATION_FAILED,
+                                "the host's record of this Stop event could be neither made nor"
+                                " found, so no invocation can own it and the guard was not asked",
+                                started, slot)
             if acceptance == ACCEPTED:
                 claimed = key
         record["guardInvoked"] = True
@@ -1702,6 +1719,7 @@ def _ledger_shape(body, key, outcome):
     return (isinstance(body.get("claimedAt"), str) and isinstance(body.get("stopHookActive"), bool)
             and isinstance(body.get("answerItem"), str) and bool(body.get("answerItem"))
             and isinstance(claimed_by, dict) and isinstance(claimed_by.get("attemptRow"), str)
+            and isinstance(claimed_by.get("hostLedger"), str) and bool(claimed_by.get("hostLedger"))
             # A claim is filed under the key of the event it names, recomputed here, so a claim
             # whose session, turn, flag or answer was not that event's is not read as its record.
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
@@ -1721,20 +1739,62 @@ def _row_shape(row):
     keyed = isinstance(key, str) and LEDGER_NAME.match(key + ".json") is not None
     named = all(isinstance(row.get(field), str) and row.get(field)
                 for field in ("sessionId", "turnId"))
-    if acceptance in (ACCEPTED, DUPLICATE, UNCLAIMABLE, CLAIM_FAILED):
+    if acceptance in (ACCEPTED, DUPLICATE, UNCLAIMABLE, CLAIM_FAILED, UNARBITRATED):
         # The key is recomputed from the row's own session, turn, flag and answer, so a row about
         # another session or turn than its key's is not counted as a record of that event.
-        return (keyed and named and isinstance(identity, dict)
+        if not (keyed and named and isinstance(identity, dict)
                 and identity.get("established") is True
                 and isinstance(row.get("stopHookActive"), bool)
                 and isinstance(identity.get("answerItem"), str) and bool(identity.get("answerItem"))
                 and key == event_key(row["sessionId"], row["turnId"], row["stopHookActive"],
-                                     identity["answerItem"]))
+                                     identity["answerItem"])):
+            return False
+        # And each kind carries what it is written with, so a row stripped of the invocation it
+        # records is not counted as that invocation.
+        outcome, asked, where = (row.get("adapterOutcome"), row.get("guardInvoked"),
+                                 row.get("acceptedAs"))
+        if not isinstance(outcome, str) or not isinstance(asked, bool):
+            return False
+        if acceptance == ACCEPTED:
+            return asked is True and where == LEDGER_DIRECTORY + "/" + key + ".json"
+        if acceptance == DUPLICATE:
+            return (outcome == DUPLICATE_INVOCATION
+                    and where in (LEDGER_DIRECTORY + "/" + key + ".json",
+                                  "/".join(HOST_LEDGER_PARTS + (key + ".json",))))
+        if acceptance == UNARBITRATED:
+            return outcome == ARBITRATION_FAILED and asked is False and where is None
+        return where is None
     if acceptance == UNESTABLISHED:
         return (key is None and isinstance(identity, dict)
                 and identity.get("established") is False
                 and isinstance(identity.get("reason"), str))
     return acceptance is None and key is None and identity is None
+
+
+def _host_shape(body, key):
+    """Whether a host file carries every field it is written with, and is filed under its own key."""
+    if (not isinstance(body, dict) or body.get("eventKey") != key
+            or body.get("ledgerVersion") != LEDGER_VERSION):
+        return False
+    for field in ("sessionId", "turnId", "answerItem", "claimedAt"):
+        if not isinstance(body.get(field), str) or not body.get(field):
+            return False
+    claimed_by = body.get("claimedBy")
+    return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
+            and isinstance(claimed_by.get("attemptRow"), str)
+            and (claimed_by.get("journalRoot") is None
+                 or isinstance(claimed_by.get("journalRoot"), str))
+            and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
+                                 body["answerItem"]))
+
+
+def _identity_of(spelled):
+    """The (device, inode) a path reaches, or None when it reaches nothing that can be stated."""
+    try:
+        found = os.stat(os.path.abspath(str(Path(spelled).expanduser())))
+    except (OSError, ValueError):
+        return None
+    return found.st_dev, found.st_ino
 
 
 def _read_row(root, named):
@@ -1746,50 +1806,49 @@ def _read_row(root, named):
     return body if readable and isinstance(body, dict) else None
 
 
-def stop_events(roots, since=None, until=None, session=None, turn=None):
+def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=None):
     """Whether every Stop event recorded under these journal roots was accepted exactly once.
 
-    Read-only. One verdict, ordered FALSE > UNREADABLE > TRUE:
+    Read-only. It reads the journal roots, the host ledgers their claims name
+    (<CODEX_HOME>/crw-completion-hook/stop-events), and the host ledgers of any Codex homes given
+    in hosts. An event is judged as a unit: the window (since/until/session/turn) chooses the
+    events it reaches -- every event one of whose records (host file, claim, outcome or row) falls
+    in it -- and every record of a chosen event is then checked, whatever its own time. Rows that
+    name no event are chosen one by one. One verdict, ordered FALSE > UNREADABLE > TRUE:
 
     FALSE when an event was accepted more than once -- claims for one key in two distinct roots,
-    several accepted rows for one key, an accepted row whose claim is not there (acceptance that
-    happened outside the ledger), or a duplicate row that asked the guard anyway. On one working
-    root a replay never reads FALSE: the claim is create-once.
+    several accepted rows for one key, an accepted row whose claim is not in its root (acceptance
+    that happened outside the ledger), or a duplicate row that asked the guard anyway.
 
     UNREADABLE when the reading cannot vouch for what it read -- a listing that failed (including
-    an accepted/ path that is not a directory), a row or an accepted record that does not parse or
-    does not have the shape its kind requires (including a claim or row whose own session, turn,
-    stop_hook_active and answer item do not hash to the key it names), a row version this reader
-    does not know, an entry under accepted/ that is neither a claim nor an outcome, an outcome
-    with no claim in its own root or naming another session or turn than its claim, a claim with
-    no outcome in its own root (its owner died before answering), an outcome whose accepted row is
-    missing or is not that event's accepted row (including none under every_invocation), a
-    duplicate row whose event has no claim in any root read (it was accepted in a root this
-    reading was not given, or its owner died between the host's record and its own), a ledger
-    written under journalPolicy no_journal (no rows exist, so an invocation answered without an
-    identity cannot be seen at all), any invocation in the window it cannot judge -- one whose
-    identity was not established, that could not claim, or that never reached an event, and any
-    row written before event identity existed -- or nothing to judge. An invocation it cannot judge
-    was answered without deduplication, so whether its Stop was answered once is not known.
+    an accepted/ or host ledger path that is not a directory); a row, claim, outcome or host file
+    that does not parse or lacks what its kind is written with, including one whose own session,
+    turn, stop_hook_active and answer item do not hash to its key; a row version this reader does
+    not know; an entry in a ledger that is not one of its records; an outcome with no claim in its
+    root, or naming another session or turn than its claim; a claim with no outcome in its root
+    (its owner died before answering); an outcome whose accepted row is missing or is not that
+    event's accepted row (including none under every_invocation); a host file whose event has no
+    claim in the root it names, or names a root this reading was not given (its owner died between
+    the two files, its root could not hold the claim, or the root was left out); a claim whose host
+    file is not in the ledger it names; a duplicate whose event has no claim in any root read; a
+    ledger written under journalPolicy no_journal; any invocation it cannot judge -- identity not
+    established, no owner, no root for the claim, no event reached, or a row from before event
+    identity; or nothing to judge. An invocation it cannot judge was answered without
+    deduplication, or not answered, so whether its Stop was answered once is not known;
+    unjudgedInvocations and legacyRows count them by reason.
 
-    The window (since/until/session/turn) selects claims by claimedAt, sessionId and turnId,
-    outcomes by at, sessionId and turnId, and rows by at, sessionId and turnId; a claim and its
-    outcome are matched within the same root whichever side of the window the other falls on.
-    The invocations it cannot judge are counted by reason in unjudgedInvocations, and rows
-    written before event identity existed (recordVersion 1) in legacyRows; either keeps the
-    window from TRUE, and a narrower window can leave them out. The old per-(session, turn)
-    reading is reported too, labelled as superseded. Roots are deduplicated by the (device,
-    inode) they reach.
+    The old per-(session, turn) reading is reported too, labelled as superseded. Roots and host
+    ledgers are deduplicated by the (device, inode) they reach.
     """
-    answer = {"predicate": PER_EVENT_PREDICATE, "verdict": None, "roots": [],
+    answer = {"predicate": PER_EVENT_PREDICATE, "verdict": None, "roots": [], "hostLedgers": [],
               "window": {"since": since, "until": until, "session": session, "turn": turn},
               "events": 0, "eventsWithMoreThanOneAcceptance": [], "duplicateInvocations": 0,
               "unjudgedInvocations": {}, "legacyRows": 0, "acceptedWithoutOutcome": [],
               "outcomesWithoutClaim": [], "acceptedRowsWithoutLedger": [],
               "guardAskedOnDuplicate": [], "ledgerUnreadable": [], "rowsUnreadable": [],
               "foreignLedgerEntries": [], "invocationsUnrecorded": [], "acceptedRowsMissing": [],
-              "duplicatesWithoutClaim": [],
-              "turnsWithMoreThanOneEvent": 0,
+              "duplicatesWithoutClaim": [], "hostFilesWithoutClaim": [],
+              "claimsWithoutHostFile": [], "turnsWithMoreThanOneEvent": 0,
               "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
                                     "pairsWithMoreThanOneRow": 0}}
 
@@ -1798,13 +1857,12 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                 and (session is None or owner == session)
                 and (turn is None or of_turn == turn))
 
+    # Everything is read before any window is applied: a window chooses which events are judged,
+    # never which of an event's records are looked at.
     listing_failed = False
-    reached = set()
-    claims_in_window = {}
-    # Every claim file in every root read, and every duplicate row in the window: a duplicate is
-    # one only of an event accepted somewhere, and registrations of one host may keep two roots.
-    every_claim, duplicate_rows = set(), []
-    accepted_rows, pairs, events_per_turn = {}, {}, {}
+    reached = {}
+    read = []
+    rows = []
     for spelled in roots:
         root = Path(os.path.abspath(str(Path(spelled).expanduser())))
         entry = {"root": str(root), "state": None}
@@ -1822,7 +1880,7 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
         if identity in reached:
             entry["state"] = "same_root_as_another_spelling"
             continue
-        reached.add(identity)
+        reached[identity] = root
         entry["state"] = "read"
         try:
             days = sorted(e.name for e in os.scandir(str(root))
@@ -1839,13 +1897,10 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
             entry["state"], entry["detail"] = "unreadable", str(error)
             listing_failed = True
             continue
-        # The ledger first, whole and unwindowed, because a claim and its outcome are matched in
-        # their own root whichever side of the window the other one falls on.
         claims, outcomes = {}, {}
         # Every claim file present, readable or not: a torn claim is still a claim, so an accepted
         # row naming it is unreadable evidence rather than acceptance outside the ledger.
         claim_files = {name[:-len(".json")] for name in ledger if LEDGER_NAME.match(name)}
-        every_claim |= claim_files
         for name in ledger:
             path = root / LEDGER_DIRECTORY / name
             if OUTCOME_NAME.match(name):
@@ -1860,34 +1915,6 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                 answer["ledgerUnreadable"].append(str(path))
                 continue
             table[key] = body
-        for key, body in claims.items():
-            if not in_window(body.get("claimedAt"), body["sessionId"], body["turnId"]):
-                continue
-            claims_in_window.setdefault(key, []).append(str(root))
-            if key not in outcomes:
-                answer["acceptedWithoutOutcome"].append(key)
-            pair = (body["sessionId"], body["turnId"])
-            events_per_turn.setdefault(pair, set()).add(key)
-        for key, body in outcomes.items():
-            if not in_window(body.get("at"), body["sessionId"], body["turnId"]):
-                continue
-            claim = claims.get(key)
-            if claim is None:
-                answer["outcomesWithoutClaim"].append(key)
-            elif (claim["sessionId"], claim["turnId"]) != (body["sessionId"], body["turnId"]):
-                answer["ledgerUnreadable"].append(str(root / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)))
-            if body["journalPolicy"] == NO_JOURNAL:
-                answer["invocationsUnrecorded"].append(key)
-            row = body["attemptRow"]
-            if row is None and body["journalPolicy"] == EVERY_INVOCATION:
-                # Every invocation was to leave a row, so the accepted one's is missing: its write
-                # failed, and what the event was answered with rests on the outcome alone.
-                answer["acceptedRowsMissing"].append(key)
-            elif row is not None:
-                named = _read_row(root, row)
-                if (named is None or named.get("recordVersion") != RECORD_VERSION
-                        or named.get("acceptance") != ACCEPTED or named.get("eventKey") != key):
-                    answer["acceptedRowsMissing"].append(key)
         for day in days:
             try:
                 names = sorted(e.name for e in os.scandir(str(root / day))
@@ -1899,57 +1926,169 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
             for name in names:
                 where = str(root / day / name)
                 row, readable = _read_json(root / day / name)
-                # The shape is judged before the window, because a row missing the fields the
-                # window reads would otherwise fall outside every window and never be judged.
                 if (not readable or not isinstance(row, dict)
                         or row.get("recordVersion") not in (1, RECORD_VERSION)
                         or (row.get("recordVersion") == RECORD_VERSION
                             and not _row_shape(row))):
                     answer["rowsUnreadable"].append(where)
                     continue
-                if not in_window(row.get("at"), row.get("sessionId"), row.get("turnId")):
-                    continue
-                if row.get("sessionId") and row.get("turnId"):
-                    pair = (row["sessionId"], row["turnId"])
-                    pairs[pair] = pairs.get(pair, 0) + 1
-                if row.get("recordVersion") == 1:
-                    answer["legacyRows"] += 1
-                    continue
-                acceptance, key = row.get("acceptance"), row.get("eventKey")
-                keyed = isinstance(key, str) and LEDGER_NAME.match(key + ".json") is not None
-                reason = (row.get("eventIdentity") or {}).get("reason") \
-                    if isinstance(row.get("eventIdentity"), dict) else None
-                counts = answer["unjudgedInvocations"]
-                if acceptance == ACCEPTED and keyed:
-                    accepted_rows.setdefault(key, []).append(where)
-                    if key not in claim_files:
-                        answer["acceptedRowsWithoutLedger"].append(where)
-                elif acceptance == DUPLICATE and keyed:
-                    answer["duplicateInvocations"] += 1
-                    duplicate_rows.append((key, where))
-                    if row.get("guardInvoked") is not False:
-                        answer["guardAskedOnDuplicate"].append(where)
-                elif acceptance == UNESTABLISHED and key is None and isinstance(reason, str):
-                    label = UNESTABLISHED + ":" + reason
-                    counts[label] = counts.get(label, 0) + 1
-                elif acceptance in (UNCLAIMABLE, CLAIM_FAILED) and keyed:
-                    counts[acceptance] = counts.get(acceptance, 0) + 1
-                elif acceptance is None and key is None and row.get("eventIdentity") is None:
-                    # The settings or the payload failed before any event was reached.
-                    label = "no_event:" + str(row.get("adapterOutcome"))
-                    counts[label] = counts.get(label, 0) + 1
-                else:
-                    answer["rowsUnreadable"].append(where)
+                rows.append((str(root), where, row))
+        read.append((str(root), claims, outcomes, claim_files))
+    files_of = {root: files for root, _claims, _outcomes, files in read}
+    every_claim = set()
+    for files in files_of.values():
+        every_claim |= files
+
+    # The host ledgers: every one a claim names, and those of the Codex homes given.
+    wanted = [Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS) for home in (hosts or [])]
+    for _root, claims, _outcomes, _files in read:
+        wanted.extend(Path(body["claimedBy"]["hostLedger"]) for body in claims.values())
+    host_files, ledger_identity, ledgers_reached = {}, {}, set()
+    for spelled in wanted:
+        ledger = os.path.abspath(str(spelled))
+        if ledger in ledger_identity:
+            continue
+        ledger_identity[ledger] = None
+        entry = {"ledger": ledger, "state": None}
+        answer["hostLedgers"].append(entry)
+        try:
+            found = os.stat(ledger)
+        except FileNotFoundError:
+            entry["state"] = "absent"
+            continue
+        except (OSError, ValueError) as error:
+            entry["state"], entry["detail"] = "unreadable", str(error)
+            listing_failed = True
+            continue
+        identity = (found.st_dev, found.st_ino)
+        ledger_identity[ledger] = identity
+        if identity in ledgers_reached:
+            entry["state"] = "same_ledger_as_another_spelling"
+            continue
+        try:
+            if not stat.S_ISDIR(found.st_mode):
+                raise NotADirectoryError(ledger + " is not a directory")
+            names = sorted(e.name for e in os.scandir(ledger))
+        except OSError as error:
+            entry["state"], entry["detail"] = "unreadable", str(error)
+            listing_failed = True
+            continue
+        ledgers_reached.add(identity)
+        entry["state"] = "read"
+        for name in names:
+            path = os.path.join(ledger, name)
+            if not LEDGER_NAME.match(name):
+                answer["foreignLedgerEntries"].append(path)
+                continue
+            key = name[:-len(".json")]
+            body, readable = _read_json(Path(path))
+            if not readable or not _host_shape(body, key):
+                answer["ledgerUnreadable"].append(path)
+                continue
+            host_files.setdefault(key, []).append((identity, path, body))
+
+    # The events the window reaches: any of their records in it.
+    selected = set()
+    for _root, claims, outcomes, _files in read:
+        for key, body in claims.items():
+            if in_window(body["claimedAt"], body["sessionId"], body["turnId"]):
+                selected.add(key)
+        for key, body in outcomes.items():
+            if in_window(body["at"], body["sessionId"], body["turnId"]):
+                selected.add(key)
+    for key, entries in host_files.items():
+        for _identity, _path, body in entries:
+            if in_window(body["claimedAt"], body["sessionId"], body["turnId"]):
+                selected.add(key)
+    for _root, _where, row in rows:
+        if (row.get("recordVersion") == RECORD_VERSION and row.get("eventKey") is not None
+                and in_window(row["at"], row["sessionId"], row["turnId"])):
+            selected.add(row["eventKey"])
+
+    counts = answer["unjudgedInvocations"]
+    pairs, accepted_rows, duplicate_rows = {}, {}, []
+    for root, where, row in rows:
+        chosen = in_window(row.get("at"), row.get("sessionId"), row.get("turnId"))
+        if chosen and row.get("sessionId") and row.get("turnId"):
+            pair = (row["sessionId"], row["turnId"])
+            pairs[pair] = pairs.get(pair, 0) + 1
+        if row.get("recordVersion") == 1:
+            if chosen:
+                answer["legacyRows"] += 1
+            continue
+        acceptance, key = row.get("acceptance"), row.get("eventKey")
+        if key is None:
+            if not chosen:
+                continue
+            if acceptance == UNESTABLISHED:
+                label = UNESTABLISHED + ":" + row["eventIdentity"]["reason"]
+            else:
+                # The settings or the payload failed before any event was reached.
+                label = "no_event:" + str(row.get("adapterOutcome"))
+            counts[label] = counts.get(label, 0) + 1
+            continue
+        if key not in selected:
+            continue
+        if acceptance == ACCEPTED:
+            accepted_rows.setdefault(key, []).append(where)
+            if key not in files_of[root]:
+                answer["acceptedRowsWithoutLedger"].append(where)
+        elif acceptance == DUPLICATE:
+            answer["duplicateInvocations"] += 1
+            duplicate_rows.append((key, where))
+            if row.get("guardInvoked") is not False:
+                answer["guardAskedOnDuplicate"].append(where)
+        else:
+            counts[acceptance] = counts.get(acceptance, 0) + 1
+
+    events, events_per_turn = set(), {}
+    for key in sorted(selected):
+        holding = [root for root, files in files_of.items() if key in files]
+        if len(holding) > 1 or len(accepted_rows.get(key, [])) > 1:
+            answer["eventsWithMoreThanOneAcceptance"].append(key)
+        if holding:
+            events.add(key)
+        for root, claims, outcomes, files in read:
+            claim, outcome = claims.get(key), outcomes.get(key)
+            if outcome is not None and key not in files:
+                answer["outcomesWithoutClaim"].append(key)
+            if claim is None:
+                continue
+            events_per_turn.setdefault((claim["sessionId"], claim["turnId"]), set()).add(key)
+            named = claim["claimedBy"]["hostLedger"]
+            identity = ledger_identity.get(os.path.abspath(named))
+            if identity is None or not any(entry[0] == identity
+                                           for entry in host_files.get(key, [])):
+                answer["claimsWithoutHostFile"].append(
+                    str(Path(root) / LEDGER_DIRECTORY / (key + ".json")))
+            if outcome is None:
+                answer["acceptedWithoutOutcome"].append(key)
+                continue
+            if (claim["sessionId"], claim["turnId"]) != (outcome["sessionId"], outcome["turnId"]):
+                answer["ledgerUnreadable"].append(
+                    str(Path(root) / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)))
+            if outcome["journalPolicy"] == NO_JOURNAL:
+                answer["invocationsUnrecorded"].append(key)
+            row = outcome["attemptRow"]
+            if row is None and outcome["journalPolicy"] == EVERY_INVOCATION:
+                # Every invocation was to leave a row, so the accepted one's is missing: its write
+                # failed, and what the event was answered with rests on the outcome alone.
+                answer["acceptedRowsMissing"].append(key)
+            elif row is not None:
+                named_row = _read_row(root, row)
+                if (named_row is None or named_row.get("recordVersion") != RECORD_VERSION
+                        or named_row.get("acceptance") != ACCEPTED
+                        or named_row.get("eventKey") != key):
+                    answer["acceptedRowsMissing"].append(key)
+        for _identity, path, body in host_files.get(key, []):
+            owner = body["claimedBy"]["journalRoot"]
+            owned_by = reached.get(_identity_of(owner)) if owner else None
+            if owned_by is None or key not in files_of.get(str(owned_by), ()):
+                answer["hostFilesWithoutClaim"].append(path)
     for key, where in duplicate_rows:
         if key not in every_claim:
             answer["duplicatesWithoutClaim"].append(where)
-    for key, held in claims_in_window.items():
-        if len(held) > 1 or len(accepted_rows.get(key, [])) > 1:
-            answer["eventsWithMoreThanOneAcceptance"].append(key)
-    for key, rows in accepted_rows.items():
-        if key not in claims_in_window and len(rows) > 1:
-            answer["eventsWithMoreThanOneAcceptance"].append(key)
-    answer["events"] = len(claims_in_window)
+    answer["events"] = len(events)
     answer["turnsWithMoreThanOneEvent"] = sum(1 for keys in events_per_turn.values()
                                               if len(keys) > 1)
     answer["supersededPerTurn"]["pairs"] = len(pairs)
@@ -1957,7 +2096,8 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
                                                                 if n > 1)
     for field in ("eventsWithMoreThanOneAcceptance", "acceptedWithoutOutcome",
                   "outcomesWithoutClaim", "invocationsUnrecorded", "acceptedRowsMissing",
-                  "ledgerUnreadable", "duplicatesWithoutClaim", "foreignLedgerEntries"):
+                  "ledgerUnreadable", "duplicatesWithoutClaim", "foreignLedgerEntries",
+                  "hostFilesWithoutClaim", "claimsWithoutHostFile"):
         answer[field] = sorted(set(answer[field]))
     if (answer["eventsWithMoreThanOneAcceptance"] or answer["acceptedRowsWithoutLedger"]
             or answer["guardAskedOnDuplicate"]):
@@ -1966,8 +2106,8 @@ def stop_events(roots, since=None, until=None, session=None, turn=None):
           or answer["outcomesWithoutClaim"] or answer["acceptedWithoutOutcome"]
           or answer["invocationsUnrecorded"] or answer["acceptedRowsMissing"]
           or answer["foreignLedgerEntries"] or answer["duplicatesWithoutClaim"]
-          or answer["unjudgedInvocations"] or answer["legacyRows"]
-          or not claims_in_window):
+          or answer["hostFilesWithoutClaim"] or answer["claimsWithoutHostFile"]
+          or answer["unjudgedInvocations"] or answer["legacyRows"] or not events):
         answer["verdict"] = UNREADABLE_VERDICT
     else:
         answer["verdict"] = TRUE

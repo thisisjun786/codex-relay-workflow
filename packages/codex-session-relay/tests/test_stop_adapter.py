@@ -330,6 +330,20 @@ class StopEventAcceptanceTests(unittest.TestCase):
         claims = ledger(self.home)[0] + ledger(other)[0]
         self.assertEqual(len(claims), 1, "one Stop was accepted in two journal roots")
 
+    def test_a_host_file_that_cannot_be_made_asks_the_guard_about_nothing(self):
+        """No invocation can own a Stop when the host's file can be neither made nor found, so
+        none of them asks the guard: two registrations never both answer it."""
+        payload = self.at_stop(0)
+        relay = counting_guard(self.home, decision="block")
+        other = self.home / "other"
+        other.mkdir()
+        (self.home / "crw-completion-hook").mkdir()
+        (self.home / "crw-completion-hook" / "stop-events").write_text("not a directory")
+        answers = fire_together(None, payload, each=[settings(self.home, relay),
+                                                     settings(other, relay)], home=self.home)
+        self.assertEqual([(code, out) for code, out, _e in answers], [(0, b""), (0, b"")])
+        self.assertEqual(guard_calls(self.home), [], "a Stop nobody could own was asked about")
+
     def test_distinct_stops_of_one_turn_are_each_accepted_and_answered(self):
         """The positive control. The guard holds on every call, so each event's hold must reach
         the host: a continuation is never suppressed. Stops 1 and 2 of the fixture are two events,

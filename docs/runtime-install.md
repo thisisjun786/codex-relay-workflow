@@ -1699,63 +1699,76 @@ A claim is two create-once files. The first is the host's,
 `<CODEX_HOME>/crw-completion-hook/stop-events/<key>.json`, under the Codex home of the process the
 Stop fired in: every registration the host starts for one Stop inherits that environment, while
 the settings each one reads, and so its journal root, may differ, so this is the file two
-registrations of one host always meet. The second is the accepted
-record, `<journalRoot>/accepted/<key>.json`, beside the rows. Whichever invocation creates the
-host's file creates the accepted record in its own root and owns the event; it asks the guard,
-writes its row, and then writes `accepted/<key>.outcome.json` naming the session, the turn, the
+registrations of one host always meet. Only the invocation that creates it owns the event, and
+only the owner asks the guard. The owner creates the accepted record,
+`<journalRoot>/accepted/<key>.json`, beside the rows and naming the host's ledger; asks the guard;
+writes its row; and then writes `accepted/<key>.outcome.json` naming the session, the turn, the
 outcome, the row and the `journalPolicy`. An invocation that finds either file already there asks
 nothing, prints nothing and writes a row whose `adapterOutcome` is `duplicate_invocation`, with
 `acceptedAs` naming the file it found (the host's relative to the Codex home, the accepted record
 relative to the root). Creating a file that must not exist is atomic on a local filesystem, so two
 registrations firing in the same instant produce one owner and one duplicate, whichever roots
-their settings name. A claim that cannot be made (`claim_failed`) asks the guard as before; when
-the host's file was made and the root's was not, the host's file stays, so a later delivery of that
-event is a duplicate and it is still asked about once. The claim files are state rather than
-invocation records: they are written under every `journalPolicy`, and a settings document with no
-`journalRoot` cannot claim (`unclaimable`) and asks the guard as before.
+their settings name.
+
+When the host's file can be neither created nor found, nobody can own the event, so nobody asks:
+the invocation writes an `unarbitrated` row (`adapterOutcome` `arbitration_failed`) and releases
+the Stop, the adapter's ordinary failure direction. An owner whose root cannot hold the accepted
+record (`claim_failed`), or whose settings name no `journalRoot` (`unclaimable`), still asks the
+guard once: the host's file stays, so a later delivery of the event is a duplicate. The claim files
+are state rather than invocation records, and are written under every `journalPolicy`.
 
 Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
 existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
 (whether it was established, and why not), `identityScanMs`, `acceptance` (`accepted`,
-`duplicate`, `unestablished`, `unclaimable` or `claim_failed`), `acceptedAs` and `guardInvoked`.
-`faults_only` leaves out the rows of answered and duplicate invocations of identified events, and
-keeps every invocation answered without an identity: no accepted record covers those, so the row
-is the only trace. `no_journal` keeps no rows at all, so those invocations leave nothing, and a
-reading of such a ledger says it cannot vouch for them.
+`duplicate`, `unestablished`, `unclaimable`, `claim_failed` or `unarbitrated`), `acceptedAs` and
+`guardInvoked`. `faults_only` leaves out the rows of answered and duplicate invocations of
+identified events, and keeps every invocation answered without an identity or an owner: no
+accepted record covers those, so the row is the only trace. `no_journal` keeps no rows at all, so
+those invocations leave nothing, and a reading of such a ledger says it cannot vouch for them.
 
 The outcome record says what the adapter answered, not what the host received: it is written
 before the answer is printed, exactly as the row is. A claimant killed after its outcome and
 before printing a hold leaves a complete record of a hold the host never saw; one killed after
-claiming and before its outcome leaves a claim with no outcome. In both the event stays accepted
-once, a later delivery of it is a duplicate and is not answered again, and the Stop was released
--- the adapter's ordinary failure direction. A reading of the journal names the second case; the
-first is indistinguishable from success on disk.
+claiming and before its outcome leaves a claim with no outcome; one killed between the host's file
+and its claim leaves only the host's file. In each the event has its owner, a later delivery of it
+is a duplicate and is not answered again, and the Stop was released -- the adapter's ordinary
+failure direction. A reading of the journal names the last two cases; the first is
+indistinguishable from success on disk.
 
 ### Reading it back
 
-`scripts/stop_events.py --journal-root <root>` reads the rows and the accepted records and answers
-one verdict. `FALSE` (exit 1) means an event was accepted more than once: claims for one key in
-two roots, two accepted rows for one key, an accepted row whose claim is missing, or a duplicate
-that asked the guard. `UNREADABLE` (exit 3) means the reading cannot vouch for what it read: a
-listing that failed (including an `accepted` path that is not a directory), a row or record that
-does not parse or lacks the fields its kind requires, a claim or row whose own session, turn,
-`stop_hook_active` and answer item do not hash to the key it names, a row version it does not
-know, an entry under `accepted` that is neither a claim nor an outcome, an outcome without its
-claim, naming another session or turn than its claim, or without the accepted row it names (or
-with none under `every_invocation`), a claim without its outcome in the same root, a duplicate
-whose event has no claim in any root read, a ledger written under `no_journal`, any invocation
-in the window it cannot judge, or nothing to judge. `TRUE` (exit 0) otherwise. The invocations it
-cannot judge are those whose identity was not established, that could not claim or that never
-reached an event, and rows written by a runtime older than event identity: each was answered
-without deduplication, so whether its Stop was answered once is not known. They are counted by
-reason (`unjudgedInvocations`, `legacyRows`), and a window that leaves them out can still read
-`TRUE`. The superseded count of rows per (session, turn) is printed too,
-labelled as superseded, so the two readings can be compared. `--since`, `--until`, `--session`
-and `--turn` narrow the window over claims, outcomes and rows alike, and a claim and its outcome
-are matched in their own root whichever side of the window the other falls on. `--journal-root`
-repeats for every root the host's registrations write to; a duplicate whose accepted record is in
-a root the reading was not given reads `UNREADABLE`. The same reading is
-`completion.stop_events()`.
+`scripts/stop_events.py --journal-root <root>` reads the rows, the accepted records and the host
+ledgers the claims name, and answers one verdict. It judges an event as a unit: `--since`,
+`--until`, `--session` and `--turn` choose the events the window reaches, which are the events
+with any record (host file, claim, outcome or row) in it, and every record of a chosen event is
+then checked whatever its own time; rows that name no event are chosen one by one. `FALSE` (exit 1)
+means an event was accepted more than once: claims for one key in two roots, two accepted rows for
+one key, an accepted row whose claim is missing, or a duplicate that asked the guard. `UNREADABLE`
+(exit 3) means the reading cannot vouch for what it read:
+
+- a listing that failed, including an `accepted` or host ledger path that is not a directory;
+- a row, claim, outcome or host file that does not parse or lacks what its kind is written with:
+  an accepted row that did not ask the guard or names another record, a duplicate row that is not a
+  `duplicate_invocation`, or any record whose own session, turn, `stop_hook_active` and answer
+  item do not hash to its key;
+- a row version it does not know, or an entry in a ledger that is not one of its records;
+- an outcome without its claim, naming another session or turn than its claim, or without the
+  accepted row it names (or with none under `every_invocation`), and a claim without its outcome
+  in the same root;
+- a host file whose event has no claim in the root it names, or that names a root the reading was
+  not given, and a claim whose host file is missing;
+- a duplicate whose event has no claim in any root read, or a ledger written under `no_journal`;
+- any invocation in the window it cannot judge, or nothing to judge.
+
+`TRUE` (exit 0) otherwise. The invocations it cannot judge are those whose identity was not
+established, that had no owner, whose owner's root could not hold the claim or that never reached
+an event, and rows written by a runtime older than event identity: for each, the journal does not
+show that its Stop was answered exactly once. They are counted by reason (`unjudgedInvocations`,
+`legacyRows`), and a window that leaves them out can still read `TRUE`. The superseded count of
+rows per (session, turn) is printed too, labelled as superseded, so the two readings can be
+compared. `--journal-root` repeats for every root the host's registrations write to, and
+`--codex-home` adds a host whose ledger no claim names yet (a host whose only event lost its owner
+before the claim). The same reading is `completion.stop_events()`.
 
 ### Limits
 

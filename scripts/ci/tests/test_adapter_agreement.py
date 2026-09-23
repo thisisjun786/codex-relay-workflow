@@ -871,10 +871,12 @@ class EventAcceptanceAgrees(unittest.TestCase):
         self.assertEqual(answer["calls"], 2)
 
     def test_settings_without_a_journal_root_cannot_claim_in_both(self):
+        """No root holds a record and no row is written, but the host's file still has one owner:
+        the replay is a duplicate and the event is asked about once."""
         answer = self.assert_agrees(self.replay(), journal=False)
         self.assertEqual(answer["written"], [])
         self.assertEqual(answer["ledger"], [])
-        self.assertEqual(answer["calls"], 2)
+        self.assertEqual(answer["calls"], 1)
 
     def test_a_ledger_that_cannot_be_created_fails_the_claim_in_both(self):
         """A journal root that cannot hold the claim fails it, and that invocation asks the guard
@@ -887,6 +889,20 @@ class EventAcceptanceAgrees(unittest.TestCase):
         answer = self.assert_agrees(self.replay(), prepare=occupied)
         self.assertEqual(self.acceptances(answer), ["claim_failed", "duplicate"])
         self.assertEqual(answer["calls"], 1)
+
+    def test_a_host_file_that_cannot_be_made_releases_without_asking_in_both(self):
+        """Nobody can own the Stop, so nobody asks: the invocation is recorded and released."""
+        def blocked(journal_root):
+            ledger = journal_root.parent / "crw-completion-hook"
+            ledger.mkdir(parents=True, exist_ok=True)
+            (ledger / "stop-events").write_text("not a directory", encoding="utf-8")
+
+        answer = self.assert_agrees(self.replay(), prepare=blocked)
+        self.assertEqual(answer["calls"], 0, "a Stop nobody could own was asked about")
+        self.assertEqual(self.acceptances(answer), ["unarbitrated"] * 2)
+        self.assertEqual({e["record"]["adapterOutcome"] for e in answer["written"]},
+                         {"arbitration_failed"})
+        self.assertEqual(answer["ledger"], [])
 
     def test_no_journal_still_claims_and_records_the_outcome_in_both(self):
         answer = self.assert_agrees(self.replay(), policy=completion.NO_JOURNAL)
