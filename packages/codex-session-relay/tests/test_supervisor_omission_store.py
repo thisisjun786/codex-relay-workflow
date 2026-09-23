@@ -661,3 +661,35 @@ class ADeclarationRacingTheDaemon(StoreOmissionCase):
         self.tick(advance=60)
         self.assertEqual(self.omissions(), [])
         self.assertEqual(self.upward(), [])
+
+class ARepairedAdmissionIsOrderedByWhenItWasAdmitted(StoreOmissionCase):
+    """Devin PRRT_kwDOUcYZMM6lJm4c: a legacy row admitted again keeps its old rowid.
+
+    admission._record_bound repairs a legacy generation_turns row in place, so ordering the
+    generation's admissions by rowid put the turn admitted LAST behind one admitted before it,
+    and the earlier turn's omission was reported after the work had gone on.
+    """
+
+    def test_a_legacy_turn_admitted_after_an_omitted_one_clears_it(self):
+        self.claim_through_cli()
+        self.store.db.execute(
+            "INSERT INTO generation_turns (relationship_id, execution_generation, turn_id,"
+            " evidence, actor, detail, admitted_at) VALUES (?,?,?,?,?,?,?)",
+            (self.rid, 1, "turn-legacy", "explicit_admission", "a legacy writer", "",
+             self.clock.iso()))
+        self.clock.advance(1)
+        admit_explicitly(self.store, self.clock, self.rid, 1, "turn-omitted",
+                         actor="the child")
+        self.the_turn_ends("turn-omitted")
+        self.clock.advance(1)
+        admit_explicitly(self.store, self.clock, self.rid, 1, "turn-legacy",
+                         actor="the parent steered the child")
+        self.tick(advance=self.grace + 1)
+        self.tick(advance=3600)
+        self.assertEqual(self.omissions(), [])
+        self.assertEqual(self.upward(), [])
+        derived = omitted.derive(self.store, self.rid,
+                                 state_directory=self.channel.state_directory,
+                                 now=self.clock.iso(), grace=0, turn="turn-omitted")
+        self.assertEqual((derived["owed"], derived["owedReason"]),
+                         (False, omitted.LATER_TURN_ADMITTED))

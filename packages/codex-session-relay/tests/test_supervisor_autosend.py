@@ -278,12 +278,8 @@ class AReportWithNoAddresseeDoesNotHoldTheQueue(DaemonChannelCase):
         self.assertEqual(self.channel.get(stale)["state"], DISPATCHED)
         self.assertEqual(len(self.upward()), 1)
 
-class TwoSupervisorsOneStuck(DaemonChannelCase):
-    """Devin on 460d3bae: one recipient's backlog must not keep every other report unread.
-
-    A second project under a second supervisor. The first supervisor is archived and has more
-    staged reports than one tick reads; each is withheld and eligible again at every recheck.
-    """
+class TwoSupervisors(DaemonChannelCase):
+    """A second project under a second supervisor, with its own parent and child."""
 
     SECOND = "01second-supervisor"
     SECOND_PARENT = "01second-parent"
@@ -328,6 +324,10 @@ class TwoSupervisorsOneStuck(DaemonChannelCase):
             repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.DONE,
             cxc_reason="every recorded criterion was proved", summary="the other work is done",
             next_action="merge", evidence=["pytest passed"])
+
+
+class TwoSupervisorsOneStuck(TwoSupervisors):
+    """One recipient's backlog or faults must not keep another supervisor's report unread."""
 
     def test_a_stuck_recipients_backlog_does_not_starve_another_supervisor(self):
         self.adapter.threads[SUPERVISOR].archived = True
@@ -380,3 +380,57 @@ class TwoSupervisorsOneStuck(DaemonChannelCase):
         to_second = [one for one in self.adapter.sends if one[1] == self.SECOND]
         self.assertEqual(len(to_second), 1, "the healthy supervisor's report went up")
         self.assertEqual(self.upward(), [])
+
+class TheSupervisorPassReadsAndReportsWhatItDid(TwoSupervisors):
+    """Devin PRRT_kwDOUcYZMM6lKWYC, PRRT_kwDOUcYZMM6lKLHF, PRRT_kwDOUcYZMM6lKWaj."""
+
+    def test_projects_are_read_a_page_at_a_time_and_rotate(self):
+        import dataclasses
+        from unittest import mock
+
+        self.daemon.policy = dataclasses.replace(self.daemon.policy,
+                                                 max_supervisor_projects_per_tick=1)
+        served = []
+        stage = self.channel.stage_unsent
+
+        def recording(project):
+            served.append(project)
+            return stage(project)
+
+        listed = []
+        read = self.store.all
+
+        def reading(sql, params=()):
+            if "DISTINCT project_key" in sql:
+                listed.append((sql, params))
+            return read(sql, params)
+
+        with mock.patch.object(self.channel, "stage_unsent", recording), \
+                mock.patch.object(self.store, "all", reading):
+            for _ in range(3):
+                self.tick(advance=60)
+        self.assertEqual(served, [PROJECT, "PRJ-2", PROJECT])
+        self.assertTrue(listed and all("LIMIT" in sql for sql, _params in listed),
+                        "every project listing is bounded by the cap")
+
+    def test_a_tick_that_holds_or_defers_a_report_is_not_quiet(self):
+        from unittest import mock
+
+        self.channel.stage(self.obligation(self.completed()))
+        settings = self.channel._settings_for
+
+        def faulting(task, runtime=None):
+            if task == SUPERVISOR:
+                raise TypeError("unhashable type: 'dict'")
+            return settings(task, runtime)
+
+        with mock.patch.object(self.channel, "_settings_for", faulting):
+            faulted = self.tick(advance=1)
+        # The counter quiet is folded from, measured directly: a tick that deferred a faulting
+        # attempt counts it, so it cannot report itself quiet.
+        self.assertGreaterEqual(faulted.deferred, 1, "the tick deferred a faulting attempt")
+
+        self.registry.set_status(self.rid, "archived", actor="the parent archived it")
+        held = self.tick(advance=self.channel.policy.lifecycle_recheck_seconds + 1)
+        self.assertGreaterEqual(held.deferred, 1,
+                                "the tick held a report nobody can be addressed with")

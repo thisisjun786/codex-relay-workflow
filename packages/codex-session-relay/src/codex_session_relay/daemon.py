@@ -136,9 +136,9 @@ class RelayDaemon:
         # Optional too, and absent means the supervisor pass does not run. Given one, a parent
         # that never stages or sends still has its reports go up (CRW-215).
         self.supervisor_channel = supervisor_channel
-        # Where the supervisor pass's project rotation resumes. In memory on purpose: see
-        # _report_upward.
-        self._supervisor_rotation = 0
+        # The last project key the supervisor pass served, where its rotation resumes. In memory
+        # on purpose: see _report_upward.
+        self._supervisor_after = None
         self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
@@ -916,30 +916,44 @@ class RelayDaemon:
         without recording that it writes declarations here is a legacy admission and nothing is
         derived for it.
 
-        Bounded like every pass here: max_supervisor_projects_per_tick projects are staged and
-        max_supervisor_sends_per_tick messages attempted per tick, and a project whose messages
-        have all gone out costs reads and no write.
+        Bounded in projects and sends like every pass here: max_supervisor_projects_per_tick
+        project keys are read and staged and max_supervisor_sends_per_tick messages attempted per
+        tick, and a project whose messages have all gone out costs reads and no write. Within a
+        project, staging reads the project's whole history - the read supervisor-standing makes -
+        so one project's length is not bounded here.
         """
         channel = self.supervisor_channel
         if channel is None:
             return
-        try:
-            projects = [row["project_key"] for row in self.store.all(
-                "SELECT DISTINCT project_key FROM relationship_scope"
-                " WHERE project_key IS NOT NULL ORDER BY project_key")]
-        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
-            report.notes.append(f"supervisor pass could not list projects: {error}")
-            return
         cap = self.policy.max_supervisor_projects_per_tick
-        window = projects
-        if len(projects) > cap:
-            # Rotated only when there is more than one tick's worth, and in this process's
-            # memory rather than in discovery_cursors: a durable cursor was a write on every
-            # tick, owed or not, so a quiet tick was never one that wrote nothing. Losing the
-            # position on a restart costs nothing but where the next rotation starts.
-            start = self._supervisor_rotation % len(projects)
-            window = [projects[(start + at) % len(projects)] for at in range(cap)]
-            self._supervisor_rotation = (start + cap) % len(projects)
+        if cap <= 0:
+            window = []
+        else:
+            # A page of project keys after the last one served, wrapping to the start: the cap
+            # bounds what is READ, not only what is staged, so a store with many projects costs
+            # one bounded query per tick. The position is kept in this process's memory rather
+            # than in discovery_cursors, because a durable cursor was a write on every tick,
+            # owed or not; losing it on a restart changes only where the next rotation starts.
+            listed = ("SELECT DISTINCT project_key FROM relationship_scope"
+                      " WHERE project_key IS NOT NULL")
+            try:
+                if self._supervisor_after is None:
+                    window = [row["project_key"] for row in self.store.all(
+                        listed + " ORDER BY project_key LIMIT ?", (cap,))]
+                else:
+                    window = [row["project_key"] for row in self.store.all(
+                        listed + " AND project_key > ? ORDER BY project_key LIMIT ?",
+                        (self._supervisor_after, cap))]
+                    if len(window) < cap:
+                        window += [row["project_key"] for row in self.store.all(
+                            listed + " AND project_key <= ? ORDER BY project_key LIMIT ?",
+                            (self._supervisor_after, cap - len(window)))
+                            if row["project_key"] not in window]
+            except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+                report.notes.append(f"supervisor pass could not list projects: {error}")
+                return
+            if window:
+                self._supervisor_after = window[-1]
         for project in window:
             try:
                 answer = channel.stage_unsent(project)
@@ -994,6 +1008,9 @@ class RelayDaemon:
                 report.notes.append(
                     f"supervisor report {row['message_id']} not sent: {error}")
                 struggling.add(recipient)
+                # Not quiet: the attempt may have held the message (hierarchy_unresolved) on
+                # its way out, and the deferral below writes. Counted where nothing was sent.
+                report.deferred += 1
                 # Out of the head of the queue for a recheck, so a message that faults on every
                 # attempt cannot spend every tick's budget ahead of the reports behind it.
                 try:

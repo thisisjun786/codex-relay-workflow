@@ -76,10 +76,13 @@ SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_
           AND t.execution_generation=g.execution_generation
           AND """ + BOUND_ADMISSION_SQL + """
           AND t.turn_id<>?
-          AND t.rowid>COALESCE((SELECT a.rowid FROM generation_turns a
-                                WHERE a.relationship_id=r.relationship_id
-                                  AND a.execution_generation=g.execution_generation
-                                  AND a.turn_id=?), 0)) AS later_admitted
+          AND NOT EXISTS (SELECT 1 FROM generation_turns a
+                          WHERE a.relationship_id=r.relationship_id
+                            AND a.execution_generation=g.execution_generation
+                            AND a.turn_id=?
+                            AND (julianday(a.admitted_at)>julianday(t.admitted_at)
+                                 OR (julianday(a.admitted_at)=julianday(t.admitted_at)
+                                     AND a.rowid>=t.rowid)))) AS later_admitted
 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.relationship_id=? AND g.dispatch_request_id=?
 """
@@ -496,11 +499,17 @@ WHERE r.relationship_id=?
 # The newest turn admitted to a generation by an explicit bound record, in admission order.
 # Every other admitted turn of the generation has a later one, so it is the only turn whose
 # omission can still be owed; the anchor is that turn when nothing was admitted after it.
+#
+# Admission order is the bound admission's time, rowid breaking ties. The rowid alone is
+# insertion order, and a legacy row repaired by a fresh admission keeps the rowid it was first
+# inserted with (admission._record_bound upserts), so ordering by it put a turn admitted last
+# behind one admitted before it and reported the earlier turn's omission after work went on.
+# later_admitted in CONTEXT asks the same order.
 LATEST_ADMITTED = """
 SELECT t.turn_id FROM generation_turns t JOIN generations g
   ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation
 WHERE t.relationship_id=? AND t.execution_generation=? AND """ + BOUND_ADMISSION_SQL + """
-ORDER BY t.rowid DESC LIMIT 1
+ORDER BY julianday(t.admitted_at) DESC, t.rowid DESC LIMIT 1
 """
 
 

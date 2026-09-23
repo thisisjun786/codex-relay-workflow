@@ -219,7 +219,7 @@ reader classifies anything itself, and neither classifies a turn the other would
 fact set through both and compares the facts and the answer. The diagnosis is CRW-180's,
 unchanged. Beside it the predicate answers whether a report is still OWED: not when the turn's
 own final receipt exists (it goes upward as its own fact), not when a later turn was admitted
-(the work went on), and not inside `omission_grace_seconds` after the settlement (300 by
+(the work went on; admissions are ordered by when the bound admission was made), and not inside `omission_grace_seconds` after the settlement (300 by
 default), which gives the parent, or the child it steers, the chance to answer first. A
 reading that owes nothing raises no obligation and is not a gap.
 
@@ -723,8 +723,10 @@ the transport starts (I-247), the recipient's budget is shared with parent-child
 spent only at the transport start, a paused, archived or unreachable supervisor is withheld
 rather than woken and keeps the obligation, and a message another caller has claimed is left
 alone. It is bounded like the daemon's other passes, by `max_supervisor_projects_per_tick` and
-`max_supervisor_sends_per_tick`, and a project whose messages have all gone out costs reads and
-no write.
+`max_supervisor_sends_per_tick`, project keys are read a page at a time, and a project whose
+messages have all gone out costs reads and no write. Within a project it reads the project's
+whole history, the read `supervisor-standing` makes, so it is bounded in projects and sends per
+tick and not in the length of one project's history.
 
 The commands stay valid and are what a parent runs when it wants an answer now:
 `supervisor-stage`, `supervisor-send`, `supervisor-read` and `supervisor-show`, beside the
