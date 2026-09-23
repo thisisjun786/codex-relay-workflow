@@ -235,6 +235,11 @@ SUMMARIES = {
     ("envelope.py", None, "is_absent", "function"): ((False,), (), ()),
     ("marker.py", None, "named", "function"): ((False,), (), ()),
     ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
+    # A first assignment is a parent-to-child assignment whose recipient is a stated absence,
+    # so the false side is reachable from any one of the three inputs alone: another direction,
+    # another purpose, or a named recipient. reception reads it to choose which comparisons
+    # apply, and test_reception_findings.py varies each by building the packets themselves.
+    ("packets.py", None, "_first_assignment", "function"): ((False,), (), ()),
     ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
     ("scope.py", None, "is_within", "function"):
         ((True,), (("return: path.startswith('/')", 1),), ()),
@@ -276,6 +281,9 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("manifest.py", None, "_is_access_failure", "function"),
     ("marker.py", None, "valid_assignment", "function"),
     ("marker.py", None, "valid_segment", "function"),
+    # Whether the reception ledger changed: a first answer, an upgrade of a non-accepted one,
+    # or an accepted assignment's mode written once, folded through the answer's state.
+    ("receiver.py", None, "record_answer", "function"),
     ("reconcile.py", None, "_is_current", "function"),
     ("report.py", None, "_may_have_reached", "function"),
     ("scope.py", None, "acquire", "function"),

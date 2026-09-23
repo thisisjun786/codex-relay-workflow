@@ -141,22 +141,22 @@ def read(connection, *, receiver, packet, observation=None, ledger=None) -> dict
         notes.append("the store could not be opened read-only, so nothing but the receiver's own"
                      " id was read")
         return {"record": record, "provenance": provenance, "notes": notes}
-    found, answered = {}, {}
+    fields, sources = {}, {}
     try:
         with _snapshot(connection):
-            _read_store(connection, found, answered, notes, receiver=receiver, role=role,
+            _read_store(connection, fields, sources, notes, receiver=receiver, role=role,
                         sender_role=sender_role, region=region, ledger=ledger)
     except sqlite3.Error as fault:
         # A partial reading is not a reading: nothing the store answered before it failed is
         # kept, so no field can agree on the strength of half a snapshot.
         notes.append("the store could not be read: " + type(fault).__name__ + ": " + str(fault))
         return {"record": record, "provenance": provenance, "notes": notes}
-    record.update(found)
-    provenance.update(answered)
+    record.update(fields)
+    provenance.update(sources)
     return {"record": record, "provenance": provenance, "notes": notes}
 
 
-def _read_store(connection, found, answered, notes, *, receiver, role, sender_role, region,
+def _read_store(connection, fields, sources, notes, *, receiver, role, sender_role, region,
                 ledger):
     rows = _Rows(connection)
     column = ROLE_COLUMN.get(role)
@@ -180,8 +180,8 @@ def _read_store(connection, found, answered, notes, *, receiver, role, sender_ro
     rid = row["relationship_id"]
 
     def answer(key, value, source):
-        found[key] = value
-        answered[key] = source
+        fields[key] = value
+        sources[key] = source
 
     answer("relationId", rid, "relationships (" + how + ")")
     for key, key_column in KEY_COLUMN.items():
