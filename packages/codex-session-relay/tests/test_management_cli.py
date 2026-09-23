@@ -440,6 +440,7 @@ class GuardStoreSelection(MarkerCli):
         self.assertTrue(refused["recover"])
         # The cost of the refusal, said in the payload rather than left to be inferred.
         self.assertIn("stopNotJudged", refused)
+        self.assert_stop_recovery(refused)
         self.assertFalse(
             self.observations(assignment).exists(),
             "a refused Stop published an observation, so the refusal was not the whole answer",
@@ -501,6 +502,149 @@ class GuardStoreSelection(MarkerCli):
         verdict = self.run_adapter_command(argv, state=pinned)
         self.assertEqual(verdict["observation"], "receipt_missing")
         self.assertTrue(verdict["recordedAs"])
+        self.assertTrue(self.observations(assignment).exists())
+
+    # --------------------------------------------------- a selection made for one run
+
+    def assert_stop_recovery(self, refused, *, overridden_by=None):
+        """The closing lines are the ones true for a Stop, and none of them writes anything.
+
+        Every other command's refusal ends by telling the operator to pass --state, which is
+        exactly what a Stop refuses; and which candidate holds the assignment is a fact the
+        refusal cannot see, so it must not prescribe adopting one.
+        """
+        recover = refused["recover"]
+        self.assertTrue(
+            any("this Stop was released without being judged" in line for line in recover),
+            recover,
+        )
+        self.assertFalse(
+            any("EVERY participant" in line for line in recover),
+            "a Stop hook's refusal told the operator to pass --state, which it then refuses",
+        )
+        self.assertFalse(any("store-identity" in line for line in recover), recover)
+        if overridden_by is not None:
+            self.assertTrue(
+                any("this run's directory came from " + overridden_by in line
+                    for line in recover),
+                recover,
+            )
+
+    def claiming_candidate(self):
+        """One of the two stores that claim this socket, the kind an operator might pin."""
+        return os.path.join(self.two_stores_claiming_one_socket(), "aaaa888888888888")
+
+    def test_a_one_run_state_does_not_settle_an_ambiguous_discovery(self):
+        """Discovery refuses this Stop; naming one of its candidates for a single run must too.
+
+        resolve_state_dir returns a --state before discovery runs, so the selection carries no
+        candidates, and the guard used to judge the named store: receipt_missing, recorded. The
+        store exists and opens, so this is a wrong answer rather than a missing one.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        candidate = self.claiming_candidate()
+        refused = self.guard_cli("--state", candidate, "--socket", self.socket, expect=2)
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        self.assertEqual(len(refused["candidates"]), 2)
+        self.assertEqual(refused["overriddenBy"], "--state " + candidate)
+        self.assertEqual(refused["selectedDirectory"], candidate)
+        self.assertNotIn("wouldHaveCreated", refused, "the override names a store that exists")
+        self.assertIn("stopNotJudged", refused)
+        self.assert_stop_recovery(refused, overridden_by="--state " + candidate)
+        self.assertFalse(self.observations(assignment).exists())
+
+    def test_nor_does_it_hold_a_finished_child_in_hold_mode(self):
+        """The case that made it a defect: the same selection in hold mode blocked the turn."""
+        assignment = self.declared_turn(record_db_path=False)
+        candidate = self.claiming_candidate()
+        refused = self.guard_cli(
+            "--state", candidate, "--socket", self.socket, extra=("--mode", "hold"), expect=2
+        )
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        self.assertNotIn("decision", refused)
+        self.assertFalse(self.observations(assignment).exists())
+
+    def test_an_inherited_state_directory_does_not_settle_it_either(self):
+        """The installed path: the adapter never passes --state, but the hook inherits the variable.
+
+        The recovery's first line is then pasted by somebody in that same environment, so it has to
+        drop the variable to list the candidates at all - doctor under a pinned directory does not
+        look for siblings. It is run here, as printed.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        candidate = self.claiming_candidate()
+        argv = self.adapter_command(socketPath=self.socket)
+        refused = self.run_adapter_command(argv, state=candidate, expect=2)
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        pin = "CODEX_SESSION_RELAY_STATE=" + candidate
+        self.assertEqual(refused["overriddenBy"], pin)
+        self.assert_stop_recovery(refused, overridden_by=pin)
+        self.assertFalse(self.observations(assignment).exists())
+
+        first = refused["recover"][0]
+        self.assertTrue(first.startswith("env -u CODEX_SESSION_RELAY_STATE "), first)
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=self.home,
+                           CODEX_SESSION_RELAY_STATE=candidate)
+        environment.pop("XDG_STATE_HOME", None)
+        listed = subprocess.run(["/bin/sh", "-c", first], capture_output=True, text=True,
+                                env=environment, timeout=60)
+        self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+        siblings = json.loads(listed.stdout)["siblingStores"]
+        self.assertTrue(siblings["checked"], siblings)
+        self.assertEqual(sorted(siblings["claimingThisSocket"]), sorted(refused["candidates"]))
+
+    def test_a_one_run_state_beside_a_store_without_provenance_is_refused(self):
+        """The unidentified half, reached through an override.
+
+        The pinned store records this socket, but it lives outside the discovery root, and inside
+        it a store records no socket at all. Discovery would have refused that as unidentified, so
+        the override does not settle it either.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        assignment = self.declared_turn(record_db_path=False)
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        unlabelled = os.path.join(root, "0123456789abcdef")
+        os.makedirs(unlabelled)
+        Store(Path(unlabelled) / "relay.sqlite3").close()
+        pinned = self.store_recording_another_socket()
+        refused = self.guard_cli("--state", pinned, "--socket", self.socket, expect=2)
+        self.assertEqual(refused["reason"], "unidentified_state_directory")
+        self.assertEqual(refused["candidates"], [unlabelled])
+        self.assertEqual(refused["overriddenBy"], "--state " + pinned)
+        self.assert_stop_recovery(refused, overridden_by="--state " + pinned)
+        self.assertFalse(self.observations(assignment).exists())
+
+    def test_a_one_run_state_naming_the_only_claiming_store_is_judged(self):
+        """No ambiguity, nothing to refuse: the same answer a sole discovered store gets."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        assignment = self.declared_turn(record_db_path=False)
+        only = os.path.join(self.home, ".local", "state", "codex-session-relay",
+                            "aaaa888888888888")
+        os.makedirs(only)
+        Store(Path(only) / "relay.sqlite3", socket_path=self.socket).close()
+        verdict = self.guard_cli("--state", only, "--socket", self.socket)
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertTrue(verdict["recordedAs"])
+        self.assertTrue(self.observations(assignment).exists())
+
+    def test_once_discovery_names_one_store_a_later_stop_is_judged(self):
+        """The condition the refusal states, driven: retire a claimant and the next Stop is judged.
+
+        guard_cli clears CODEX_SESSION_RELAY_STATE, so this is discovery converging and nothing else.
+        """
+        assignment = self.declared_turn(record_db_path=False)
+        root = self.two_stores_claiming_one_socket()
+        refused = self.guard_cli("--socket", self.socket, expect=2)
+        self.assert_stop_recovery(refused)
+        shutil.move(os.path.join(root, "bbbb888888888888"), os.path.join(self.tmp, "retired"))
+        verdict = self.guard_cli("--socket", self.socket)
+        self.assertEqual(verdict["observation"], "receipt_missing")
         self.assertTrue(self.observations(assignment).exists())
 
     # ------------------------------------------------- selections somebody did make
