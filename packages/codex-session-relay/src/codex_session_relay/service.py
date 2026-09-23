@@ -456,7 +456,9 @@ class LaunchPolicy:
                     "unreadable": f"the launch declaration could not be read: {error}"}
         try:
             data = json.loads(raw)
-        except ValueError as error:
+        except (ValueError, RecursionError) as error:
+            # RecursionError: nested deeper than the decoder descends, which leaves the
+            # declaration unreadable in the same way invalid JSON does.
             return {"path": None, "declaredAt": None, "declaredBy": None,
                     "unreadable": f"the launch declaration is not readable JSON: {error}"}
         declared = data.get("path") if isinstance(data, dict) else None

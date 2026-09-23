@@ -181,6 +181,14 @@ def _resolve(environ) -> "Declared | Unresolved":
         policy = ExecutionPolicy.from_file(configured)
     except ExecutionPolicyError as error:
         return Unresolved(str(error), public_detail="configured execution policy is unreadable or invalid")
+    except RecursionError:
+        # JSON nested deeper than the parser descends is a file it cannot read, the same answer
+        # as invalid JSON. Every command takes this snapshot before its handler, and one that
+        # raised here ended a command that reads no policy at all - recording applied work
+        # among them - as a host failure.
+        return Unresolved(f"{configured} is nested deeper than the execution policy parser can"
+                          " read", public_detail="configured execution policy is unreadable or"
+                          " invalid")
     if not policy.declares_roles:
         return Unresolved("this host's execution policy declares no roles",
                           public_detail="execution policy declares no roles")
