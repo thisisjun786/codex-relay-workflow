@@ -401,6 +401,71 @@ class F2EveryShapeTheComparisonReads(_Seam):
                         receipt, calls,
                         "settings_differ_after_load" if flagged else "settings_not_preserved")
 
+    def test_every_declared_sandbox_field_is_its_declared_type_on_both_sides(self):
+        """Fresh-context review 3 of c4e7692e: Python equality is not a type check.
+
+        A record holding networkAccess 0 agreed with a host answering false, because 0 == False,
+        and a record and an answer that both held networkAccess [1] agreed too, so a turn started
+        on a sandbox the record cannot prove. Every field the declared defaults name holds its
+        default's type on either side, and the record and the answer are compared as JSON
+        values, where 0 and false differ.
+        """
+        wrong = [("networkAccess", 0), ("networkAccess", 1), ("networkAccess", [1]),
+                 ("networkAccess", "false"), ("networkAccess", None),
+                 ("excludeTmpdirEnvVar", 0), ("excludeSlashTmp", 1),
+                 ("writableRoots", "/tmp"), ("writableRoots", [7])]
+        for field, value in wrong:
+            with self.subTest("the recorder", field=field, value=value):
+                view = TaskSettings(dict(seam.AUTHORIZED.data,
+                                         sandbox=dict(seam.AUTHORIZED_POLICY, **{field: value})))
+                try:
+                    view.require_usable()
+                except DeliveryRefused as refused:
+                    self.assertEqual(refused.reason, RefusalReason.UNSUPPORTED_SANDBOX_TYPE)
+                else:
+                    self.fail(f"a sandbox holding {field} {value!r} was accepted")
+        zero = dict(seam.AUTHORIZED_POLICY, networkAccess=0)
+        listed = dict(seam.AUTHORIZED_POLICY, networkAccess=[1])
+        cases = {
+            "record 0, answer false": (dict(seam.AUTHORIZED.data, sandbox=zero),
+                                       self._answer()),
+            "record false, answer 0": (dict(seam.AUTHORIZED.data), self._answer(sandbox=zero)),
+            "record and answer both [1]": (dict(seam.AUTHORIZED.data, sandbox=listed),
+                                           self._answer(sandbox=listed)),
+        }
+        for number, (label, (record, answer)) in enumerate(cases.items(), start=1):
+            for flagged in (True, False):
+                with self.subTest(label, settings_free=flagged):
+                    settings = record_based(record) if flagged else TaskSettings(record)
+                    adapter, calls = self._adapter(resume=answer, status="notLoaded")
+                    receipt = adapter.send_message(
+                        f"sup-7{int(flagged)}{number:010d}-a1", "thread-1", "hi", settings)
+                    self.assert_withheld_before_any_turn(
+                        receipt, calls,
+                        "settings_differ_after_load" if flagged else "settings_not_preserved")
+
+    def test_a_permission_profile_agrees_only_as_the_same_json_value(self):
+        """The one other field compared with equality whose value is not always text."""
+        with self.subTest("the recorder"):
+            view = TaskSettings(dict(seam.AUTHORIZED.data, expectedPermissionProfile=0))
+            try:
+                view.require_usable()
+            except DeliveryRefused as refused:
+                self.assertEqual(refused.reason, RefusalReason.SETTINGS_MISTYPED)
+                self.assertIn("expectedPermissionProfile", refused.detail)
+            else:
+                self.fail("an expectedPermissionProfile that is not text was accepted")
+        record = dict(seam.AUTHORIZED.data, expectedPermissionProfile=0)
+        for number, flagged in enumerate((True, False), start=1):
+            with self.subTest("record 0, answer false", settings_free=flagged):
+                settings = record_based(record) if flagged else TaskSettings(record)
+                adapter, calls = self._adapter(
+                    resume=self._answer(activePermissionProfile=False), status="notLoaded")
+                receipt = adapter.send_message(
+                    f"sup-80000000000{number}-a1", "thread-1", "hi", settings)
+                self.assert_withheld_before_any_turn(receipt, calls,
+                                                     "unverifiable_permission_profile")
+
     def test_the_fake_host_refuses_an_answer_it_cannot_read(self):
         host = FakeHostAdapter(clock=None)
         host.add_thread("thread-1", status="notLoaded",

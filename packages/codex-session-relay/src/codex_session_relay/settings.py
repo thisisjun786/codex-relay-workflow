@@ -21,6 +21,8 @@ TurnStartParams says a model override persists into subsequent turns: sending on
 quietly rewriting the thread for every later turn.
 """
 
+import json
+
 from .errors import DeliveryRefused, RefusalReason
 
 # ThreadResumeParams.sandbox is a SandboxMode enum; TurnStartParams.sandboxPolicy is the object.
@@ -105,14 +107,29 @@ def normalise_policy(policy):
     # Not just a missing type: an unhashable one would raise on the defaults lookup below.
     if not isinstance(kind, str):
         return None
-    merged = dict(POLICY_DEFAULTS.get(kind, {}))
+    declared = POLICY_DEFAULTS.get(kind, {})
+    merged = dict(declared)
     merged.update({key: value for key, value in policy.items() if key != "type"})
     merged["type"] = kind
+    # Every field the declared defaults name holds its default's type, exactly: a flag is a
+    # boolean and nothing Python compares equal to one (0, 1), a roots list is a list of text.
+    # Without this a record holding networkAccess 0 agreed with a host answering false, and a
+    # record and an answer that both held [1] or [123] agreed with each other, so a turn
+    # started on a sandbox nobody can read (the CRW-215 live-findings reviews). A field the
+    # pinned policy does not declare has no type to hold it to; it is compared exactly, as a
+    # JSON value (see _canonical), and nothing else is claimed for it.
+    for key, default in declared.items():
+        value = merged[key]
+        if isinstance(default, bool):
+            readable = type(value) is bool
+        elif isinstance(default, list):
+            readable = _text_list(value)
+        else:
+            readable = type(value) is type(default)
+        if not readable:
+            return None
     if "writableRoots" in merged:
         roots = merged["writableRoots"]
-        # A list of text, like every roots list a comparison here reads (_text_list). A list
-        # holding anything else used to pass, and a record and an answer that both held
-        # [123] compared equal, so a turn started on a sandbox nobody can read.
         if not _text_list(roots):
             return None
         merged["writableRoots"] = list(roots)
@@ -215,6 +232,11 @@ class TaskSettings:
             wrong.append("runtimeWorkspaceRoots")
         if environments_problem(self.data["environments"]) is not None:
             wrong.append("environments")
+        # Optional, and text where given: the managed admission path types it so, and the
+        # comparison below reads it against the host's answer.
+        profile = self.data.get("expectedPermissionProfile")
+        if profile is not None and not isinstance(profile, str):
+            wrong.append("expectedPermissionProfile")
         return wrong
 
     def _mistyped_detail(self, field) -> str:
@@ -437,7 +459,8 @@ class TaskSettings:
         else:
             expected_environments = normalise_environments(self.data["environments"])
             if not (_environments_within(got_environments, expected_environments)
-                    if not transmitted else got_environments == expected_environments):
+                    if not transmitted
+                    else _canonical(got_environments) == _canonical(expected_environments)):
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": "environments",
                               "expected": expected_environments,
                               "returned": got_environments})
@@ -479,12 +502,14 @@ class TaskSettings:
                 returned = list(returned)
                 if not transmitted and roots_readable and _roots_within(returned, expected):
                     continue
-            if expected != returned:
+            # As JSON values, not by Python equality, under which 0 == False and 1 == True.
+            if _canonical(expected) != _canonical(returned):
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": field,
                               "expected": expected, "returned": returned})
 
         profile = response.get("activePermissionProfile")
-        if profile is not None and profile != self.data.get("expectedPermissionProfile"):
+        if profile is not None and (_canonical(profile)
+                                    != _canonical(self.data.get("expectedPermissionProfile"))):
             # A profile we did not anticipate is a permission source we cannot interpret.
             found.append({"code": UNVERIFIABLE_PERMISSION_PROFILE,
                           "field": "activePermissionProfile",
@@ -501,6 +526,16 @@ def _shape(value) -> str:
                 return "a list holding " + ("None" if one is None else type(one).__name__)
         return "a list of str"
     return "absent" if value is None else type(value).__name__
+
+
+def _canonical(value) -> str:
+    """A value as the JSON it is, so two values agree only where their JSON does.
+
+    Every comparison between a record and a host's answer is made on this. Python's == says
+    0 == False, 1 == True and 1 == 1.0, and each of those once let an answer the record does not
+    hold read as agreement. Keys are sorted, so an object's key order never differs.
+    """
+    return json.dumps(value, sort_keys=True, default=repr)
 
 
 def _text_list(value) -> bool:

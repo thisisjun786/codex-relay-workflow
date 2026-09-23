@@ -644,17 +644,21 @@ transmitted that could have caused it, the remedy is to re-record the supervisor
 the user stands behind. The workspace roots are the one relaxation: a load restores only what the
 host persists, and on the live host it brought the supervisor back with its roots reduced to its
 cwd while every other field held (CRW-215 live finding F2), so after such a resume the roots - at
-the top level and in each environment - may be narrower than recorded, never wider. "Narrower"
-is a question about lists of paths, so both sides must be lists: the recorder refuses roots that
-are not a list of text, and environments that are not a list of objects with a text id, a text
-cwd and roots that are a list of text, as `settings_mistyped`, and a sandbox whose
-`writableRoots` hold anything but text as `unsupported_sandbox_type` (a record holding the text
-"/a/bc" used to pass and was compared as its characters, so a host root "/" read as one it
-names); and a host answer of any other shape refuses as `setting_unobservable`, retry-safe and
-before any turn, on both resume routes, where it used to raise and be recorded as an unknown
-outcome. A parent's or a child's pair, which policy derived, is resumed exactly as before,
-carrying its settings. The
-bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
+the top level and in each environment - may be narrower than recorded, never wider.
+"Narrower" is a question about lists of paths and agreement is a question about values, so both
+sides are held to the shapes the comparison reads. The recorder refuses as `settings_mistyped`
+roots that are not a list of text, environments that are not a list of objects with a text id,
+a text cwd and roots that are a list of text, and an `expectedPermissionProfile` that is not
+text; and it refuses as `unsupported_sandbox_type` a sandbox any of whose declared fields does
+not hold its declared default's type - a flag that is not a boolean, `writableRoots` that are
+not a list of text. A record holding its roots as the text "/a/bc" used to pass and was compared
+as its characters, so a host root "/" read as one it names. A host answer of any other shape is a
+refusal before any turn on both resume routes (`setting_unobservable`, or a difference for an
+unreadable sandbox), where it used to raise and be recorded as an unknown outcome. Every
+comparison between the record and the answer is made on JSON values, where 0 and false differ;
+Python's equality said they agreed. A field the pinned policy does not declare has no type to
+hold it to and is compared exactly. A parent's or a child's pair, which policy derived, is
+resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
 load a thread without transmitting, so an operator message to an unloaded supervisor through it
 still waits for the host to load that thread.
 
