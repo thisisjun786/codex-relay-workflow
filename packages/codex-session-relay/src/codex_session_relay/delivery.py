@@ -992,15 +992,12 @@ class DeliveryService:
                     (request_id, event_id, report["submissionNo"], self.clock.iso()),
                 )
             # Capacity is reserved in the SAME transaction as the claim. Counting after the
-            # send let two interleaved callers both pass a cap of one.
-            self._count_send(db, recipient, now)
-            window = int(now // 3600) * 3600
-            used = db.execute(
-                "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
-                (recipient, window),
-            ).fetchone()
-            if used and used["sends"] > self.policy.max_sends_per_recipient_per_hour:
-                raise _NotClaimable()
+            # send let two interleaved callers both pass a cap of one. The gap between sends
+            # is decided here too, by the one predicate the supervisor channel's claim also
+            # calls: the two share this recipient's budget, and a bound only one of its
+            # writers re-checks inside its write is a bound the other one does not obey.
+            if reserve_send(db, self.policy, recipient, now) is not None:
+                raise _Paced()
         return attempt_no, request_id, message
 
     # -------------------------------------------------------------- attempt
@@ -1086,6 +1083,16 @@ class DeliveryService:
             attempt_no, request_id, message = self._claim(
                 event_id, now=now, owner=owner, recipient=recipient
             )
+        except _Paced:
+            # Refused on the shared budget INSIDE the claim: another sender woke this recipient
+            # after the preflight read. The claim rolled back, so this is the preflight's answer
+            # arriving late, and it gets the preflight's treatment - deferred by the same gap,
+            # never recorded as a failure and never held.
+            self._reschedule(
+                event_id, row["state"], now + self.policy.min_send_interval_seconds,
+                attempts=row["attempt_count"],
+            )
+            return None
         except _NotClaimable:
             return None
         except _LateSupersession as late:
@@ -1152,63 +1159,14 @@ class DeliveryService:
     # --------------------------------------------------------------- states
 
     def _settings_for(self, task_id: str, runtime_status=None):
-        """The recorded settings, validated. Absence, incompleteness, a non-string cwd, model or
-        reasoningEffort, and an approvalPolicy this transport cannot carry all refuse -- the last
-        one on the record rather than on what a host later reports back, because a row asking for
-        an interactive policy settles the send whatever the host would have answered."""
-        from .registry import load_settings
+        """This send's gate, which is the module's rather than this class's.
 
-        settings = load_settings(self.store, task_id)
-        if settings is None:
-            raise DeliveryRefused(
-                RefusalReason.SETTINGS_UNAVAILABLE,
-                f"no authorized settings recorded for {task_id!r}; register them from the"
-                " creation result before a send can preserve them",
-            )
-        settings.require_usable()
-        # ------------------------------------------------------------------ role policy
-        # The record is still the thing a send verifies against; this only asks whether it has
-        # fallen behind the policy for the role this task actually holds. A task bound to no
-        # scope is outside the policy and nothing about it changes.
-        role = rolepolicy.bound_role(self.store, task_id)
-        if role is None:
-            return settings
-        if isinstance(role, rolepolicy.Contested):
-            raise rolepolicy.refuse_contested(role, task_id)
-        policy = rolepolicy.declared()
-        if not policy:
-            raise rolepolicy.refuse_unresolved(policy, role, task_id)
-        finding = rolepolicy.check_record(settings, role, policy)
-        if finding is not None:
-            # Dispatched on the code the finding carries rather than on the assumption that a
-            # finding which is not the undeclared one must be a stale record. That assumption
-            # read `recorded` and `expected` off a citation finding which has neither and raised
-            # a KeyError out of the gate, leaving the delivery queued instead of withheld --
-            # a revalidation path failing open on exactly the legacy records it exists to catch.
-            raise DeliveryRefused(
-                RefusalReason(finding["code"]),
-                f"{task_id!r} is bound as {role!r}: "
-                + rolepolicy.describe(finding)
-                + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
-                + finding.get("recovery", rolepolicy.RECOVERY),
-            )
-        # The bridge applies this rule on its own tool path, and a relay delivery does not take
-        # that path: it resumes through its own transport. Applied here too, or a send reaches a
-        # thread the tool surface would have refused.
-        unloaded = rolepolicy.check_unloaded_transmission(
-            settings, role, policy, runtime_status
-        )
-        if unloaded is not None:
-            raise unloaded
-        # The status above is the one observed before this delivery listed turns and claimed
-        # itself, so it can be stale by the time the transport resumes. The transport takes its
-        # own read immediately before that resume; this is what tells it to apply the same rule
-        # there, on the state that actually holds.
-        settings.refuse_when_unloaded = (
-            rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded")
-            is not None
-        )
-        return settings
+        Delegated so a second sender cannot grow a second gate. The supervisor channel resumes
+        a task too, and the bridge refuses a send with no settings precisely so nothing
+        inherits a host default; two implementations of that rule would eventually disagree
+        about which task may be woken under what.
+        """
+        return authorized_settings(self.store, task_id, runtime_status)
 
     def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
                            row=None) -> None:
@@ -1276,28 +1234,12 @@ class DeliveryService:
         return {"findings": json.loads(row["findings"]), "observedAt": row["observed_at"]}
 
     def _rate_limited(self, recipient: str, now: float) -> bool:
-        window = int(now // 3600) * 3600
-        row = self.store.one(
-            "SELECT sends, last_send_at FROM recipient_rate WHERE recipient_task_id = ?"
-            " AND window_start = ?",
-            (recipient, window),
-        )
-        if row is None:
-            return False
-        if row["sends"] >= self.policy.max_sends_per_recipient_per_hour:
-            return True
-        last = row["last_send_at"]
-        return last is not None and (now - last) < self.policy.min_send_interval_seconds
+        """The preflight: the claim's own predicate, read before the host is.
 
-    def _count_send(self, db, recipient: str, now: float) -> None:
-        window = int(now // 3600) * 3600
-        db.execute(
-            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
-            " VALUES (?,?,1,?)"
-            " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
-            " sends = sends + 1, last_send_at = excluded.last_send_at",
-            (recipient, window, now),
-        )
+        An optimisation and nothing more. Two callers can both pass it, so what actually
+        bounds the recipient is reserve_send inside _claim.
+        """
+        return send_refusal(self.store.db, self.policy, recipient, now) is not None
 
     def _reschedule(self, event_id: str, state: str, when: float, *, attempts: int) -> None:
         # Guarded on the state and attempt count we observed. Another caller may have
@@ -1967,6 +1909,132 @@ class DeliveryService:
         return {"deliveries": items, "pendingIntents": intents}
 
 
+def send_refusal(db, policy, recipient: str, now: float):
+    """Why ``recipient`` may not be woken at ``now``, or None when it may.
+
+    ONE predicate for every sender that resumes a task. Deliveries and supervisor reports
+    share one recipient_rate budget on purpose, because the bound limits how often a TASK is
+    woken, and each sender reads this both as a preflight before the host and inside the claim
+    that spends the budget. A copy that only one claim re-checked was a bound only one sender
+    obeyed: a delivery claimed after a supervisor report never re-read last_send_at, and the
+    two woke one task inside the gap.
+
+    The gap is read across windows. last_send_at lives on the hour's row, so a read of the
+    current hour alone let two sends a second apart straddle the boundary.
+    Only the windows the gap can reach are read, never a later one: a row dated ahead of this
+    clock, left by a clock that ran fast, would otherwise stall the recipient for as long as
+    that clock was wrong rather than for at most the hour a single window already allowed.
+
+    An hour with no row yet has spent nothing, and is compared as zero rather than skipped: a
+    configured cap of zero refuses the first send too, which is what the count checked after
+    its increment always did.
+    """
+    window = int(now // 3600) * 3600
+    reach = 3600 * (1 + int(policy.min_send_interval_seconds // 3600))
+    last = db.execute(
+        "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?"
+        "   AND window_start BETWEEN ? AND ?",
+        (recipient, window - reach, window),
+    ).fetchone()
+    if (last is not None and last["last"] is not None
+            and (now - last["last"]) < policy.min_send_interval_seconds):
+        return "min_send_interval"
+    used = db.execute(
+        "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
+        (recipient, window),
+    ).fetchone()
+    if (used["sends"] if used is not None else 0) >= policy.max_sends_per_recipient_per_hour:
+        return "hourly_cap"
+    return None
+
+
+def reserve_send(db, policy, recipient: str, now: float):
+    """Spend one send of ``recipient``'s budget inside the caller's claim, or say why not.
+
+    The delivery claim and the supervisor channel's transport-start write call this inside
+    their own BEGIN IMMEDIATE, so the read and the write are one serialised step and the second
+    of two racing senders reads the first one's send. A refusal returns before anything is
+    written, and the caller decides what its write does instead.
+    """
+    refused = send_refusal(db, policy, recipient, now)
+    if refused is not None:
+        return refused
+    window = int(now // 3600) * 3600
+    db.execute(
+        "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+        " VALUES (?,?,1,?)"
+        " ON CONFLICT(recipient_task_id, window_start) DO UPDATE SET"
+        " sends = sends + 1, last_send_at = excluded.last_send_at",
+        (recipient, window, now),
+    )
+    return None
+
+
+def authorized_settings(store, task_id: str, runtime_status=None):
+    """The recorded settings, validated, for any sender that resumes a task.
+
+    Absence, incompleteness, a non-string cwd, model or reasoningEffort, and an approvalPolicy
+    this transport cannot carry all refuse -- the last one on the record rather than on what a
+    host later reports back, because a row asking for an interactive policy settles the send
+    whatever the host would have answered.
+
+    A module function rather than a method, because this class is no longer the only thing that
+    sends. The bridge refuses a send carrying no settings precisely so that nothing inherits a
+    host default, and one rule about which task may be woken under what is worth more than two
+    copies that agree today.
+    """
+    from .registry import load_settings
+
+    settings = load_settings(store, task_id)
+    if settings is None:
+        raise DeliveryRefused(
+            RefusalReason.SETTINGS_UNAVAILABLE,
+            f"no authorized settings recorded for {task_id!r}; register them from the"
+            " creation result before a send can preserve them",
+        )
+    settings.require_usable()
+    # ---------------------------------------------------------------------- role policy
+    # The record is still the thing a send verifies against; this only asks whether it has
+    # fallen behind the policy for the role this task actually holds. A task bound to no scope
+    # is outside the policy and nothing about it changes.
+    role = rolepolicy.bound_role(store, task_id)
+    if role is None:
+        return settings
+    if isinstance(role, rolepolicy.Contested):
+        raise rolepolicy.refuse_contested(role, task_id)
+    policy = rolepolicy.declared()
+    if not policy:
+        raise rolepolicy.refuse_unresolved(policy, role, task_id)
+    finding = rolepolicy.check_record(settings, role, policy)
+    if finding is not None:
+        # Dispatched on the code the finding carries rather than on the assumption that a
+        # finding which is not the undeclared one must be a stale record. That assumption read
+        # `recorded` and `expected` off a citation finding which has neither and raised a
+        # KeyError out of the gate, leaving the delivery queued instead of withheld -- a
+        # revalidation path failing open on exactly the legacy records it exists to catch.
+        raise DeliveryRefused(
+            RefusalReason(finding["code"]),
+            f"{task_id!r} is bound as {role!r}: "
+            + rolepolicy.describe(finding)
+            + f" (policy {finding['digest']}). Nothing was sent and no turn was started. "
+            + finding.get("recovery", rolepolicy.RECOVERY),
+        )
+    # The bridge applies this rule on its own tool path, and a relay send does not take that
+    # path: it resumes through its own transport. Applied here too, or a send reaches a thread
+    # the tool surface would have refused.
+    unloaded = rolepolicy.check_unloaded_transmission(settings, role, policy, runtime_status)
+    if unloaded is not None:
+        raise unloaded
+    # The status above is the one observed before this send listed turns and claimed itself, so
+    # it can be stale by the time the transport resumes. The transport takes its own read
+    # immediately before that resume; this is what tells it to apply the same rule there, on
+    # the state that actually holds.
+    settings.refuse_when_unloaded = (
+        rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded") is not None
+    )
+    return settings
+
+
 def _message_status(row, record) -> str:
     """How far the persisted bytes actually got.
 
@@ -2097,6 +2165,14 @@ def supersession_reason(db, event_id: str):
 
 class _NotClaimable(Exception):
     pass
+
+
+class _Paced(_NotClaimable):
+    """A claim refused on the recipient's shared send budget, and on nothing else.
+
+    Its own class so attempt() can defer the delivery the way the preflight would have. As a
+    plain refusal it left the row eligible at once, for a retry the same budget refuses again.
+    """
 
 
 def _render_findings(findings):
