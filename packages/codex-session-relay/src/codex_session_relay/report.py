@@ -790,7 +790,26 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
 
     Takes the transaction handle rather than the store, so this cannot be satisfied by a
     read that was already stale by the time the row was written.
+
+    And once a report has been staged UPWARD it does not change at all. The supervisor packet
+    froze this report's artifact and decision, and its evidence pointer reads this event's
+    report, so a correction - in place or as a new submission - would leave a packet naming
+    one pull request while its evidence reads another.
     """
+    frozen = db.execute(
+        "SELECT message_id, submission_no FROM supervisor_messages WHERE event_id = ?"
+        " ORDER BY staged_at LIMIT 1",
+        (event_id,),
+    ).fetchone()
+    if frozen is not None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a supervisor report was staged from submission {frozen['submission_no']} of"
+            f" this report (message {frozen['message_id']}), and its evidence points at this"
+            " event; a changed report would leave that message saying one thing while its"
+            " evidence says another, so this report no longer changes. A correction the"
+            " level above needs is a new fact, reported as one",
+        )
     attempted = db.execute(
         "SELECT a.record, a.state, s.submission_no"
         "  FROM attempts a"

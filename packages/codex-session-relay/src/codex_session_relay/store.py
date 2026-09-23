@@ -1008,7 +1008,12 @@ CREATE TABLE IF NOT EXISTS supervisor_messages (
     lease_owner       TEXT,
     lease_until       REAL,
     staged_at         TEXT NOT NULL,
-    updated_at        TEXT NOT NULL
+    updated_at        TEXT NOT NULL,
+    -- The event and the work-report submission the packet was composed from, NULL for an
+    -- omission, which has neither. report.record refuses to change a report once a message
+    -- names its event, so the packet and the evidence it points at stay one fact.
+    event_id          TEXT,
+    submission_no     INTEGER
 );
 
 -- One transport attempt at one of those messages, with the bytes that attempt froze. The bytes
@@ -1053,6 +1058,7 @@ CREATE INDEX IF NOT EXISTS supervisor_messages_eligible ON supervisor_messages
     (state, next_eligible_at);
 CREATE INDEX IF NOT EXISTS supervisor_messages_recipient ON supervisor_messages
     (recipient_task_id, staged_at);
+CREATE INDEX IF NOT EXISTS supervisor_messages_event ON supervisor_messages (event_id);
 
 -- Operational faults: the machinery failing to do its job, as opposed to a child failing at
 -- its task. One row per distinct BREAKAGE and never one per incident, which is what makes

@@ -1856,3 +1856,120 @@ class WhatTheThirdIndependentReviewFound(ChannelTestCase):
         self.assertEqual(answer["turnOrigin"], channel_module.RECIPIENT_OPENED)
         self.assertEqual(answer["verified"], channel_module.NO_HOST)
         self.assertEqual(self.channel.get(message_id)["state"], DISPATCHED)
+
+
+class WhatTheEighthReviewRoundFound(ChannelTestCase):
+    """A staged packet and the evidence it points at are one fact, bound at staging and
+    immutable after it; and a claim is for the endpoint its caller will send to."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+    committed_before_the_lock = WhatTheSixthReviewRoundFound.committed_before_the_lock
+
+    def report_naming(self, event_id, number, *, submission_no=1):
+        from .test_report_contract import a_handoff
+
+        head = "a1b2c3d4e5f60718293a4b5c6d7e8f90123456" + str(number).zfill(2)
+        return report_module.record(
+            self.store, self.clock, event_id=event_id,
+            repository="thisisjun786/codex-relay-workflow", pr_number=number,
+            pr_url="https://github.com/thisisjun786/codex-relay-workflow/pull/" + str(number),
+            pr_state="ready", base_ref="dev",
+            base_sha="c56576d5be412b5bc352dd93b9eb37ab279a12f6",
+            head_sha=head, handoff=a_handoff(head),
+            cxc_status="DONE", cxc_reason="every recorded criterion was proved",
+            summary="the work is done", next_action="merge",
+            evidence=["pytest tests/test_supervisor_channel.py passed"],
+            submission_no=submission_no)
+
+    def completion_naming(self, number):
+        path = self.artifact("out.txt", "the deliverable of pull request " + str(number))
+        payload = self.ready_payload(self.relationship, [path])
+        self.accept(payload)
+        self.report_naming(payload["eventId"], number)
+        return payload["eventId"]
+
+    def packet_pr(self, message_id):
+        return json.loads(self.channel.get(message_id)["packet"])[packets.ARTIFACT]["number"]
+
+    # ------------------------------------------------------- a corrected work report
+
+    def test_a_report_staged_upward_can_no_longer_be_corrected(self):
+        """Staged naming #10; neither an in-place correction nor a new submission to #11 lands."""
+        from codex_session_relay.errors import ReceiptRefused
+
+        event_id = self.completion_naming(10)
+        message_id = self.channel.stage(self.obligation(event_id))["messageId"]
+        self.assertEqual(self.packet_pr(message_id), 10)
+        row = self.channel.get(message_id)
+        self.assertEqual((row["event_id"], row["submission_no"]), (event_id, 1))
+        for submission in (1, 2):
+            with self.subTest(submission=submission):
+                with self.assertRaises(ReceiptRefused) as caught:
+                    self.report_naming(event_id, 11, submission_no=submission)
+                self.assertIn("staged from submission 1", caught.exception.detail)
+        self.assertEqual(report_module.read(self.store, event_id)["prNumber"], 10)
+        self.assertEqual(self.packet_pr(message_id), 10)
+
+    def test_a_correction_landing_before_the_staging_lock_refuses_the_stale_packet(self):
+        """The packet was composed from #10 and #11 committed first: nothing staged naming #10."""
+        event_id = self.completion_naming(10)
+        one = self.obligation(event_id)
+        with self.committed_before_the_lock(
+                lambda: self.report_naming(event_id, 11, submission_no=2)):
+            refusal = self.assertRefused(
+                RefusalReason.SUPERSEDED_REVISION, self.channel.stage, one)
+        self.assertIn("changed while this was being staged", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        staged = self.channel.stage(self.obligation(event_id))
+        self.assertEqual(self.packet_pr(staged["messageId"]), 11)
+        self.assertEqual(self.channel.get(staged["messageId"])["submission_no"], 2)
+
+    # ------------------------------------------------------------ omission evidence
+
+    def test_an_omission_is_refused_with_a_reading_that_is_not_its_own(self):
+        base = WhatTheThirdReviewRoundFound.observation(self)
+        one = supervision.from_observation(base)
+        wrong = {
+            "schema": dict(base, schema="reporting-observation/0"),
+            "state": dict(base, reportingState="reported"),
+            "relationship": dict(base, relationshipId="rel-someone-else"),
+            "turn": dict(base, selectors=dict(base["selectors"], turn="turn-another")),
+        }
+        for name, reading in wrong.items():
+            with self.subTest(mismatch=name):
+                refusal = self.assertRefused(
+                    RefusalReason.CONTRADICTORY_OBSERVATION, self.channel.stage, one,
+                    reading=reading)
+                self.assertIn("contradicts it", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        self.assertEqual(self.store.all(
+            "SELECT seq FROM journal WHERE kind = ?", (supervision.JOURNAL_KIND,)), [])
+        self.assertTrue(self.channel.stage(one, reading=base)["staged"])
+
+    # --------------------------------------------------- the claim and its send target
+
+    def test_a_readdress_between_the_reads_and_the_claim_sends_to_nobody_stale(self):
+        """Observed S1, re-addressed to S2 before the claim: no claim, and the next try goes to S2."""
+        one, message_id = self.staged()
+        settings = self.channel._settings_for
+
+        def settings_then_a_handover(task_id, runtime_status=None):
+            answer = settings(task_id, runtime_status)
+            if not self.adapter.threads.get(SUCCESSOR):
+                self.hand_over()
+                self.channel.stage(one)
+            return answer
+
+        with mock.patch.object(self.channel, "_settings_for", settings_then_a_handover):
+            self.assertIsNone(self.channel.attempt(message_id, self.adapter))
+        self.assertEqual(self.adapter.sends, [])
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUCCESSOR)
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["recipientTaskId"], SUCCESSOR)
+        self.assertEqual([thread for _r, thread, _m, _o in self.adapter.sends], [SUCCESSOR])
+        self.assertIn("--as " + SUCCESSOR, self.bytes_of(message_id))
+
+    def test_the_full_record_shows_when_each_transport_started(self):
+        _one, message_id, _record = self.delivered()
+        shown = self.channel.show(message_id)["attempts"][0]
+        self.assertIsNotNone(shown["transportStartedAt"])

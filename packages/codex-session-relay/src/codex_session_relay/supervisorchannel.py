@@ -180,6 +180,37 @@ def _nothing_owed(obligation, decided):
     )
 
 
+# compose() reads the work report itself unless the caller hands it the one it already read.
+_UNREAD = object()
+
+
+def _reading_disagrees(obligation, reading):
+    """What in an omission's reading contradicts the obligation it is staged with, or None.
+
+    Complete selectors are not enough: a reading for another relationship or another turn has
+    all of them, and staging with it put one relationship's evidence pointer inside another's
+    report. Checked before anything is composed or recorded.
+    """
+    if reading.get("schema") != supervision.OBSERVATION_SCHEMA:
+        return ("its schema is " + repr(reading.get("schema")) + ", not "
+                + repr(supervision.OBSERVATION_SCHEMA))
+    if reading.get("reportingState") != supervision.OBSERVED_OMISSION:
+        return ("it reports " + repr(reading.get("reportingState")) + ", not "
+                + repr(supervision.OBSERVED_OMISSION))
+    if reading.get("relationshipId") != obligation["relationId"]:
+        return ("it names relationship " + repr(reading.get("relationshipId"))
+                + " and the obligation is for " + repr(obligation["relationId"]))
+    turn = (reading.get("selectors") or {}).get("turn")
+    if turn != obligation["subject"]:
+        return ("its selectors name turn " + repr(turn) + " and the obligation is about turn "
+                + repr(obligation["subject"]))
+    return None
+
+
+def _submission_of(report):
+    return report["submissionNo"] if report else None
+
+
 def _same_hierarchy(first, second):
     """Whether two resolutions name the same sender, recipient and project."""
     return all(first[key] == second[key] for key in ("sender", "recipient", "projectKey"))
@@ -376,6 +407,15 @@ class SupervisorChannel:
                 " session. Without them the report would carry an evidence line nobody can"
                 " follow",
             )
+        if obligation["kind"] == supervision.UNREPORTED:
+            disagrees = _reading_disagrees(obligation, reading)
+            if disagrees is not None:
+                raise DeliveryRefused(
+                    RefusalReason.CONTRADICTORY_OBSERVATION,
+                    "the reading staged with this omission contradicts it: " + disagrees
+                    + ". Its selectors would become the evidence pointer of a report about"
+                    " something else, so nothing was composed or recorded",
+                )
         resolution = self.resolve(obligation["relationId"])
         if expect_recipient is not None and expect_recipient != resolution["recipient"]:
             raise DeliveryRefused(
@@ -385,8 +425,14 @@ class SupervisorChannel:
                 + repr(resolution["recipient"]) + "; a disagreement about who the level above"
                 " is is the finding, not something to resolve by picking one",
             )
+        from .report import read as read_work_report
+
+        # Read once, composed from, and read again under the lock below: the packet freezes
+        # this report's artifact and decision, and its evidence reads this event's report.
+        event_id = (obligation.get("basis") or {}).get("eventId")
+        report = read_work_report(self.store, event_id) if event_id else None
         packet = self.compose(obligation, resolution=resolution, reading=reading,
-                              observed_at=self.clock.iso())
+                              observed_at=self.clock.iso(), report=report)
         message_id = packet["envelope"]["messageId"]
         at = self.clock.iso()
         staged = False
@@ -404,6 +450,23 @@ class SupervisorChannel:
             live = self.resolve(obligation["relationId"])
             if not _same_hierarchy(live, resolution):
                 raise _hierarchy_moved(resolution, live)
+            # And the work report is still the one the packet was composed from, and still
+            # raises this obligation. A correction committing between the read above and this
+            # lock left a packet naming the old artifact while its evidence read the new one;
+            # once this commits, report.record refuses to change the report at all.
+            if event_id:
+                current = read_work_report(self.store, event_id)
+                fresh = supervision.from_event(self.store, event_id, current)
+                if (_submission_of(current) != _submission_of(report) or fresh is None
+                        or fresh["obligationId"] != obligation["obligationId"]
+                        or fresh.get("detail") != obligation.get("detail")):
+                    raise DeliveryRefused(
+                        RefusalReason.SUPERSEDED_REVISION,
+                        "the work report for event " + repr(event_id) + " changed while this"
+                        " was being staged (submission " + repr(_submission_of(report))
+                        + " was read, " + repr(_submission_of(current)) + " stands now), so"
+                        " the packet would describe a report its evidence no longer shows."
+                        " Nothing was written; stage it again from the report that stands")
             existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
                                   (message_id,)).fetchone()
             if existing is None:
@@ -414,13 +477,14 @@ class SupervisorChannel:
                     "INSERT OR IGNORE INTO supervisor_messages (message_id, obligation_id,"
                     " obligation_kind, relationship_id, project_key, purpose, kind,"
                     " sender_task_id, recipient_task_id, subject, packet, state,"
-                    " attempt_count, next_eligible_at, staged_at, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?)",
+                    " attempt_count, next_eligible_at, staged_at, updated_at, event_id,"
+                    " submission_no) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?,?)",
                     (message_id, obligation["obligationId"], obligation["kind"],
                      obligation["relationId"], resolution["projectKey"],
                      packet["envelope"]["purpose"], packet["envelope"]["kind"],
                      resolution["sender"], resolution["recipient"], obligation["subject"],
-                     json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at),
+                     json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at,
+                     event_id, _submission_of(report)),
                 )
                 staged = cursor.rowcount == 1
                 if staged:
@@ -563,12 +627,13 @@ class SupervisorChannel:
         return {"schema": VERSION, "projectKey": project_key, "staged": staged,
                 "refused": refused, "gaps": standing["gaps"],
                 "limits": "staging is not sending and sending is not reading. Each message"
-                          " here has to be sent and read back before anything above says a"
-                          " supervisor saw it"}
+                          " here has to be sent and read back before anything says it arrived,"
+                          " and a readback shows arrival rather than that a supervisor read it"}
 
     # ------------------------------------------------------------------ what it carries
 
-    def compose(self, obligation, *, resolution, reading=None, observed_at=None) -> dict:
+    def compose(self, obligation, *, resolution, reading=None, observed_at=None,
+                report=_UNREAD) -> dict:
         """The relay-packet/1 this obligation travels as.
 
         Composed through packets.compose rather than assembled here, so the occasion is checked
@@ -580,7 +645,8 @@ class SupervisorChannel:
         purpose = supervision.PURPOSE[obligation["kind"]]
         issue = obligation.get("issueKey") or self._issue_of(obligation["relationId"])
         event_id = (obligation.get("basis") or {}).get("eventId")
-        report = read_work_report(self.store, event_id) if event_id else None
+        if report is _UNREAD:
+            report = read_work_report(self.store, event_id) if event_id else None
         decision = None
         if envelope.kind_of(envelope.PARENT_TO_SUPERVISOR, purpose) == envelope.DECISION:
             decision = self._decision(obligation)
@@ -776,13 +842,14 @@ class SupervisorChannel:
         try:
             attempt_no, request_id, message = self._claim(
                 message_id, now=now, owner=owner, recipient=recipient,
-                resolution=resolution)
+                resolution=resolution, sender=row["sender_task_id"])
         except _Paced:
             self._reschedule(row, now + self.policy.min_send_interval_seconds)
             return None
         except _NotClaimable:
             return None
-        refused = self._start_transport(message_id, attempt_no, request_id, owner, resolution)
+        refused = self._start_transport(message_id, attempt_no, request_id, owner, resolution,
+                                        recipient)
         if refused is not None:
             kind, detail = refused
             if kind == "moved":
@@ -811,7 +878,8 @@ class SupervisorChannel:
         self._settle(row, request_id, facts, record, now)
         return record
 
-    def _start_transport(self, message_id, attempt_no, request_id, owner, resolution):
+    def _start_transport(self, message_id, attempt_no, request_id, owner, resolution,
+                         recipient):
         """Stamp the instant the transport starts, under the lock that decides it may.
 
         A report goes to whoever supervises at its transport instant, and this write IS that
@@ -832,8 +900,8 @@ class SupervisorChannel:
         with self.store.transaction() as db:
             ours = db.execute(
                 "SELECT 1 FROM supervisor_messages WHERE message_id = ? AND state = ?"
-                "   AND attempt_count = ? AND lease_owner IS ?",
-                (message_id, SENDING, attempt_no, owner)).fetchone()
+                "   AND attempt_count = ? AND lease_owner IS ? AND recipient_task_id = ?",
+                (message_id, SENDING, attempt_no, owner, recipient)).fetchone()
             if ours is None:
                 return ("lapsed", "this send's claim no longer holds the message, so its"
                                   " transport was not started")
@@ -956,7 +1024,7 @@ class SupervisorChannel:
             return self._settings(task_id, runtime_status)
         return authorized_settings(self.store, task_id, runtime_status)
 
-    def _claim(self, message_id, *, now, owner, recipient, resolution):
+    def _claim(self, message_id, *, now, owner, recipient, resolution, sender=None):
         """Eligibility, the attempt number and the bytes, in one transaction.
 
         The bytes are rendered HERE, against the number this transaction just allocated, for
@@ -980,6 +1048,12 @@ class SupervisorChannel:
                 "   AND state IN (?,?,?)"
                 "   AND hold_reason IS NULL"
                 "   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"
+                # And the row still names the task this caller observed and will hand the
+                # transport. A re-address committing between attempt()'s reads and this claim
+                # left the row, and the bytes rendered from it, naming the successor while the
+                # send went to the task observed before - so a claim for another endpoint is
+                # no claim at all, and the next attempt reads the row as it now stands.
+                "   AND recipient_task_id = ? AND (? IS NULL OR sender_task_id = ?)"
                 # And nothing older to this recipient can go right now. Checked here as well
                 # as before the host reads, because between those two a second caller can
                 # stage or release an earlier message, and an ordering that two interleaved
@@ -1004,6 +1078,7 @@ class SupervisorChannel:
                 + _LIVE_HIERARCHY,
                 (SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                  message_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
+                 recipient, sender, sender,
                  QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, SENDING, now,
                  resolution["projectKey"], resolution["projectKey"],
                  resolution["projectKey"], resolution["initiativeKey"],
@@ -1569,7 +1644,8 @@ class SupervisorChannel:
             {"requestId": one["request_id"], "attemptNo": one["attempt_no"],
              "state": one["state"], "sendAttempted": one["send_attempted"],
              "retrySafe": bool(one["retry_safe"]), "turnId": one["turn_id"],
-             "sentAt": one["sent_at"], "observedAt": one["observed_at"],
+             "sentAt": one["sent_at"], "transportStartedAt": one["transport_started_at"],
+             "observedAt": one["observed_at"],
              "message": one["message"]}
             for one in self.store.all(
                 "SELECT * FROM supervisor_attempts WHERE message_id = ? ORDER BY attempt_no",

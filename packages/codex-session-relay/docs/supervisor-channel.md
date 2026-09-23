@@ -110,6 +110,18 @@ which is what makes the next reading of that fact converge instead of waking the
 again - and what keeps a report that exists from being invisible to the thing that decides
 whether to produce one.
 
+The packet and the evidence it points at are ONE fact, bound at staging and immutable after
+it. A completion's packet freezes its work report's pull request and decision, and its evidence
+pointer reads that event's report, so the message records the event and the report submission
+it was composed from. The report is read again under the staging lock and the obligation
+re-derived from it, and staging refuses as `superseded_revision` if either moved; once the
+message commits, `report.record` refuses to change that report at all, in place or as a new
+submission, because the packet would otherwise name one pull request while its evidence reads
+another. An omission's reading is checked against its obligation before anything is composed:
+the schema is `reporting-observation/1`, the state is `unreported`, and the relationship and
+the turn in its selectors are the obligation's, or staging refuses as
+`contradictory_observation`.
+
 ### When the hierarchy moves under a staged report
 
 The message id is the fact's and the endpoints are the hierarchy's, so a handover moves the
@@ -129,7 +141,10 @@ bounds about that task, and the busy count restarts from the re-address.
 
 A report goes to whoever supervises at its TRANSPORT INSTANT, and the write that stamps that
 instant is where the question is asked last. It checks, under the lock, that the send's claim
-still holds the row and that the hierarchy the message names is still the live one. A handover
+still holds the row, that the row still names the task the caller is about to send to, and that
+the hierarchy the message names is still the live one. The claim itself refuses a row whose
+endpoints are not the ones its caller observed, so a re-address landing between the reads and
+the claim sends nothing, and the next attempt reads the row as it stands. A handover
 that committed after the claim and before that write finds nothing sent: the attempt is
 recorded as one that sent nothing, the send refuses as `relation_owner_drift`, and staging
 again re-addresses the report to the successor. A handover that commits after the stamp finds a

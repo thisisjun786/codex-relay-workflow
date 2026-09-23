@@ -920,6 +920,10 @@ A send whose response never came back is held as `held_uncertain` and is never r
 supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
 that attempt's request id; `supervisor-show` then records how it was settled.
 
+Once a completion is staged upward, its work report no longer changes: the relay refuses a
+correction to it, in place or as a new submission, because the staged message froze that
+report's pull request and points at it for evidence. Stage after the report is final.
+
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.
 codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
