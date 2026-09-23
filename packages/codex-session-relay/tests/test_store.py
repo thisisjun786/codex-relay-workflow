@@ -1158,9 +1158,10 @@ class DescriptorIdentity(unittest.TestCase):
     because a replacement reverted inside it leaves both observations reporting the original
     inode while the rows came out of another file entirely.
 
-    What is closed is every relocation that has already happened when the read asks. SQLite
-    resolves the descriptor and opens the name it finds, so a rename timed inside that call is
-    not closed and is recorded as a limit rather than asserted away here.
+    What is closed is every relocation still in place when one of the read's checks asks.
+    SQLite resolves the descriptor and opens the name it finds, so a rename timed inside that
+    call, or a move and a return between two checks, is not closed and is recorded as a limit
+    rather than asserted away here.
     """
 
     def setUp(self):
@@ -1282,10 +1283,10 @@ class DescriptorIdentity(unittest.TestCase):
         behaves as it does unpatched.
 
         Every statement the leg runs on that connection is also recorded. Whether a statement
-        leaves a file depends on the SQLite build: on 3.38.5 and older even `PRAGMA
-        database_list` reads the schema and creates the moved name's log, while newer builds
-        answer it without touching the file. "Ran nothing" is the form of "left nothing behind"
-        that holds on every build, including the one this suite happens to run on.
+        leaves a file depends on the SQLite build: on the builds measured up to 3.38.5 (3.34.1,
+        3.37.2, 3.38.5) even `PRAGMA database_list` reads the schema and creates the moved name's
+        log, while newer builds answer it without touching the file. "Ran nothing" is the form of
+        "left nothing behind" that holds on every build, including the one this suite runs on.
         """
         from codex_session_relay import store as store_module
 
@@ -1453,8 +1454,8 @@ class DescriptorIdentity(unittest.TestCase):
         The read connection and the write probe go through one descriptor, so a rename between
         them puts the write probe on a relocated name - the same failed read and the same stray
         log as above. That second question is also the CLOSING one for the read that just
-        happened: a store that moved during it leaves behind an identity a caller reads as "the
-        store at this path", so what the read published is withdrawn rather than reported.
+        happened: a store still moved when it asks leaves behind an identity a caller reads as
+        "the store at this path", so what the read published is withdrawn rather than reported.
         """
         from codex_session_relay import store as store_module
 
@@ -1490,8 +1491,9 @@ class DescriptorIdentity(unittest.TestCase):
         The move lands after the probe's second `_relocation` and before the write connection, so
         SQLite opens the moved name. A transaction there creates `moved.sqlite3-wal` beside it,
         and that file outlives both the refused probe and the restored pathname: a write from a
-        command that promises none. Asking the connection which file it opened creates nothing,
-        so it has to come first, and a mismatch ends the probe before BEGIN IMMEDIATE.
+        command that promises none. Asking the descriptor again with a readlink creates nothing on
+        any build, so it comes first, and a store still moved at that point ends the probe before
+        any statement, BEGIN IMMEDIATE included.
         """
         state = self.move_between_the_check_and_the_connect(2)
         report = probe(resolve_state_dir(self.a))
@@ -1706,12 +1708,12 @@ class DescriptorIdentity(unittest.TestCase):
         )
 
     def test_a_store_that_moves_during_the_read_withdraws_the_answer(self):
-        """The closing question, which is what makes the answer about a whole read.
+        """The closing question, which carries the answer past the start of the read.
 
         The pre-connect check says the file was this store when the read started. Without a
-        closing one, a rename during the read still returns rows and an identity a caller reads
-        as "the store at this path". Together the two say the file was the one at this pathname
-        for the whole read, or there is no answer.
+        closing one, a rename during the read that is still in place returns rows and an
+        identity a caller reads as "the store at this path". Together the checks say the file
+        was the one at this pathname whenever one of them asked, or there is no answer.
 
         The seam renames right after the connect returns, so since every connection asks the
         descriptor again before running anything, this move is refused by that ask rather than
