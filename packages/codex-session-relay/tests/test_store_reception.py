@@ -1023,11 +1023,10 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                                         source="creation_result")
 
     def test_settings_nested_too_deep_to_read_leave_their_field_unread(self):
-        # JSON nested deeper than the reader can descend - or deeper than any record the relay
-        # writes - is settings the store cannot answer, like a value of the wrong shape. The
-        # policy or the callback read from them is a gap: never a host failure, never
-        # agreement, and the rest of the reading still stands. Where the recursion limit
-        # falls differs by interpreter; the answer must not.
+        # Settings the reader cannot parse - JSON nested deeper than the decoder descends - or
+        # whose model is not the text every writer records answer nothing for it. The policy
+        # or the callback read from them is a gap: never a host failure, never agreement, and
+        # the rest of the reading still stands, at every depth and on every interpreter.
         relationship = self.registered()
         packet = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
         _code, before = self.packet_check(packet, receiver_id=CHILD)
@@ -1043,25 +1042,89 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
                 placements = {
                     "whole": deep,
                     "model": json.dumps(dict(data, model="deep-value-marker")),
-                    "sandbox": json.dumps(dict(data, sandbox=dict(
-                        data["sandbox"], extra="deep-value-marker"))),
                 }
                 for placement, text in placements.items():
                     with self.subTest(task=task, depth=depth, placement=placement):
-                        self.store.db.execute(
-                            "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
-                            (text.replace(marker, deep), task))
-                        try:
-                            code, answer = self.packet_check(packet, receiver_id=CHILD)
-                        finally:
-                            self.store.db.execute(
-                                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
-                                (original, task))
+                        code, answer = self.checked_under(task, text.replace(marker, deep),
+                                                          packet)
                         self.assertNotEqual(code, cli.EXIT_HOST, answer)
                         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
-                        self.assertIn(field, self.gap_fields(answer))
+                        self.assertTrue(any(gap == field or gap.startswith(field + ".")
+                                            for gap in self.gap_fields(answer)), answer)
                         self.assertEqual(answer["record"].get("relationId"),
                                          relationship["relationshipId"], answer)
+
+    def test_deep_values_a_writer_records_are_read_wherever_they_parse(self):
+        # The writer bounds what a reading answers with - the model, effort and approval are
+        # text, the sandbox a policy object it can read - and nothing else. A value nested deep
+        # where it bounds nothing is a record it accepts, so the reading accepts it as well: a
+        # bound of its own turned a legal first assignment unavailable. Where the decoder
+        # stops descending, the settings are unread, and at that edge the answer is still an
+        # answer - compared and printed - never a host failure.
+        self.registered()
+        packet = self.first_assignment(dispatch="dispatch-1", issue=ISSUE)
+        deep = "x"
+        for _ in range(40):
+            deep = [deep]
+        for task, cwd, model, effort in ((CHILD, self.root, CHILD_MODEL, CHILD_EFFORT),
+                                         (PARENT, "/parent", PARENT_MODEL, PARENT_EFFORT)):
+            (original,) = self.store.db.execute(
+                "SELECT settings FROM authorized_settings WHERE task_id = ?",
+                (task,)).fetchone()
+            legal = task_settings(cwd, model=model, reasoningEffort=effort)
+            for placement, settings in (
+                    ("creationMetadata", dict(legal, creationMetadata=deep)),
+                    ("sandbox", dict(legal, sandbox=dict(legal["sandbox"], extra=deep)))):
+                with self.subTest(task=task, placement=placement):
+                    record_settings(self.store, self.clock, task, settings,
+                                    source="creation_result")
+                    try:
+                        code, answer = self.packet_check(packet, receiver_id=CHILD)
+                    finally:
+                        self.store.db.execute(
+                            "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                            (original, task))
+                    self.assertEqual(code, 0, answer)
+                    self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+        (original,) = self.store.db.execute(
+            "SELECT settings FROM authorized_settings WHERE task_id = ?", (CHILD,)).fetchone()
+        data = json.loads(original)
+        marker = '"deep-value-marker"'
+        shaped = json.dumps(dict(data, sandbox=dict(data["sandbox"], extra="deep-value-marker")))
+
+        def accepted(depth):
+            code, answer = self.checked_under(
+                CHILD, shaped.replace(marker, "[" * depth + '"x"' + "]" * depth), packet)
+            self.assertEqual(code, 0, (depth, answer))
+            if answer["disposition"] == packets.ACCEPTED:
+                return True
+            self.assertEqual(answer["disposition"], packets.UNAVAILABLE, (depth, answer))
+            self.assertIn(packets.POLICY, self.gap_fields(answer), (depth, answer))
+            return False
+
+        # The deepest sandbox value this reader parses here, found rather than assumed.
+        low, high = 40, 20000
+        self.assertTrue(accepted(low))
+        self.assertFalse(accepted(high))
+        while high - low > 1:
+            middle = (low + high) // 2
+            if accepted(middle):
+                low = middle
+            else:
+                high = middle
+
+    def checked_under(self, task, settings_text, packet):
+        """packet-check with the task's settings row replaced as written, then restored."""
+        (original,) = self.store.db.execute(
+            "SELECT settings FROM authorized_settings WHERE task_id = ?", (task,)).fetchone()
+        self.store.db.execute("UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                              (settings_text, task))
+        try:
+            return self.packet_check(packet, receiver_id=CHILD)
+        finally:
+            self.store.db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                (original, task))
 
     def test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted(self):
         relationship = self.registered(project=None)
