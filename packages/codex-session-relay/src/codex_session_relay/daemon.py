@@ -38,6 +38,7 @@ class TickReport:
     acksVerified: int = 0
     anchorsBound: int = 0
     requeued: int = 0
+    faultsRecorded: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -48,6 +49,7 @@ class TickReport:
             "skipped": self.skipped, "acksVerified": self.acksVerified,
             "anchorsBound": self.anchorsBound,
             "requeued": self.requeued,
+            "faultsRecorded": self.faultsRecorded,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -106,7 +108,7 @@ class SingleInstance:
 
 class RelayDaemon:
     def __init__(self, store, registry, intake, delivery, ack, reconciler, adapter, *,
-                 policy=None, clock=None, log=None):
+                 policy=None, clock=None, log=None, faults=None, fault_scope=None):
         self.store = store
         self.registry = registry
         self.intake = intake
@@ -117,6 +119,10 @@ class RelayDaemon:
         self.policy = policy or RetryPolicy()
         self.clock = clock or delivery.clock
         self.log = log or (lambda _message: None)
+        # Optional, and absent means the pass does not run. A daemon that could not be given
+        # a ledger still ticks exactly as it did.
+        self.faults = faults
+        self.fault_scope = fault_scope or {}
         self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
@@ -126,6 +132,7 @@ class RelayDaemon:
         report = TickReport()
         self._bind_anchors(report)
         self._observe(report, now)
+        self._sweep_faults(report)
         self._requeue_missing(report, now)
         self._reconcile(report, now)
         # Again, because reconciliation is what promotes a held_uncertain revision to
@@ -138,8 +145,33 @@ class RelayDaemon:
         self._deliver(report, now)
         report.quiet = not (report.observed or report.reconciled or report.delivered
                             or report.deferred or report.acksVerified or report.anchorsBound
-                            or report.requeued)
+                            or report.requeued or report.faultsRecorded)
         return report
+
+    def _sweep_faults(self, report) -> None:
+        """Record what the store currently shows is broken, so nobody has to notice first.
+
+        Counts only what was NEWLY recorded. A stuck row read again on the next tick produces
+        the same occurrence key and records nothing, which is what keeps a steady-state
+        failure from making every tick look busy and holding the loop at its fastest cadence
+        forever.
+
+        This pass never writes to Linear and never can: it queues what a credential holder
+        will write, and the relay holds no credential.
+        """
+        if self.faults is None:
+            return
+        try:
+            from . import faultsweep
+
+            batch = faultsweep.sweep(self.store, scope=self.fault_scope,
+                                     policy=self.policy)
+            answer = faultsweep.record_all(self.faults, batch, store=self.store)
+            report.faultsRecorded += answer["recorded"]
+            for gap in answer["gaps"]:
+                report.notes.append(f"fault reading unusable: {gap['reason']}")
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"fault sweep failed: {error}")
 
     def _bind_anchors(self, report) -> None:
         """Repair any generation left anchor_pending by a dispatch this loop did not make.
