@@ -884,8 +884,10 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     submission - would leave bytes that went upward naming one pull request while their
     evidence reads another.
     """
-    # Only a message composed FROM a recorded report, and only once one of its attempts reached
-    # the transport. Before that the staged row is a proposal (I-247): the claim and the write
+    # Any message about this event, and only once one of its attempts reached the transport -
+    # including one staged before any report existed: its bytes went up saying there was none,
+    # and its evidence pointer reads this event, so even a FIRST report would change what that
+    # pointer returns under bytes that never said it. Before that the staged row is a proposal (I-247): the claim and the write
     # that stamps the transport start re-derive it from the report that stands, so a correction
     # made before the send is the one the send carries. The stamp is the line: it is committed
     # in the write that lets the transport start, so this write and that one serialize - a
@@ -893,7 +895,7 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     # attempt the transport refused before sending, retry-safe, put nothing anywhere.
     frozen = db.execute(
         "SELECT m.message_id, m.submission_no FROM supervisor_messages m"
-        " WHERE m.event_id = ? AND m.submission_no IS NOT NULL"
+        " WHERE m.event_id = ?"
         "   AND EXISTS (SELECT 1 FROM supervisor_attempts a"
         "                WHERE a.message_id = m.message_id"
         "                  AND a.transport_started_at IS NOT NULL"
@@ -904,8 +906,8 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     if frozen is not None:
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            f"a supervisor report composed from submission {frozen['submission_no']} of this"
-            f" report was sent (message {frozen['message_id']}), and its evidence points at"
+            f"a supervisor report about this event was sent (message {frozen['message_id']},"
+            f" composed from submission {frozen['submission_no']}), and its evidence points at"
             " this event; a changed report would leave those bytes saying one thing while"
             " their evidence says another, so this report no longer changes. A correction the"
             " level above needs is a new fact, reported as one",

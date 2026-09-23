@@ -3215,3 +3215,64 @@ class WhatTheFourteenthIndependentReviewFound(ChannelTestCase):
         self.assertEqual(record["deliveryState"], DISPATCHED)
         self.assertEqual(
             self.channel.reach(message_id)[envelope.TRANSPORT_ACCEPTED]["state"], envelope.YES)
+
+
+class WhatTheSixteenthIndependentReviewFound(ChannelTestCase):
+    """The current statement is found by the obligation's key, not by the event a message was
+    staged from; and a report cannot change under bytes that already went up about its event."""
+
+    blocked = WhatTheSeventhIndependentReviewFound.blocked
+    claimed_then = WhatTheTwelfthIndependentReviewFound.claimed_then
+    attempts = WhatTheTwelfthIndependentReviewFound.attempts
+    report_naming = WhatTheEighthReviewRoundFound.report_naming
+
+    def test_a_block_stated_again_while_its_first_statement_became_a_decision_goes_up(self):
+        """RED (review 16): staged from E1, claimed; E2 states the same block and E1's report is
+        corrected into a decision. The check asked E1 first, called the block obsolete and held
+        it, though E2 still raised it. By the key, E2 is the current statement and goes up."""
+        from codex_session_relay import cxc
+
+        first = self.blocked("the log at /logs/wrong.txt", attempt=1)
+        one = self.obligation(first)
+        message_id = self.channel.stage(one)["messageId"]
+        second = []
+
+        def restated_and_the_first_turned_into_a_decision():
+            self.clock.advance(5)
+            second.append(self.blocked("the log at /logs/right.txt", attempt=2))
+            report_module.record(
+                self.store, self.clock, event_id=first,
+                repository="thisisjun786/codex-relay-workflow", cxc_status=cxc.NEEDS_HUMAN,
+                cxc_reason="the upstream package needs the user's call",
+                summary="which upstream package to wait for", next_action="ask the user",
+                evidence=["the upstream pull request is still open"], submission_no=2)
+
+        with self.claimed_then(restated_and_the_first_turned_into_a_decision):
+            try:
+                record = self.channel.attempt(message_id, self.adapter)
+            except DeliveryRefused as refused:
+                self.fail("the block is still owed through E2 and was refused: " + str(refused))
+        self.assertIsNotNone(record, "the block is still owed through E2 and nothing sent it")
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        self.assertEqual(self.obligation(second[0])["obligationId"], one["obligationId"])
+        self.assertIsNone(self.channel.get(message_id)["hold_reason"])
+        self.assertIn("show --event " + second[0], self.bytes_of(message_id))
+        self.assertEqual(self.attempts(message_id), [(1, "no", 0), (2, "yes", 1)])
+        self.assertEqual(len(self.adapter.sends), 1)
+
+    def test_a_first_report_after_a_reportless_send_is_refused(self):
+        """RED (Devin lGhiL): a completion sent before any report existed left its first report
+        free, and the evidence its bytes point at then showed a pull request they never said."""
+        from codex_session_relay.errors import ReceiptRefused
+
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(self.relationship, [path])
+        self.accept(payload)
+        event_id = payload["eventId"]
+        message_id = self.channel.stage(self.obligation(event_id))["messageId"]
+        self.assertEqual(self.channel.attempt(message_id, self.adapter)["deliveryState"],
+                         DISPATCHED)
+        with self.assertRaises(ReceiptRefused) as caught:
+            self.report_naming(event_id, 42)
+        self.assertIn("was sent", caught.exception.detail)
+        self.assertIsNone(report_module.read(self.store, event_id))

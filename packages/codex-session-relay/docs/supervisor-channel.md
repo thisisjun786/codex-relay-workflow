@@ -57,8 +57,9 @@ has been told half of it.
 A report is a pointer with a kind rather than a copy of the record. What the child actually said
 is read through the evidence line, which is `show --event` for anything with an event and
 `supervisor-show --message` for an omission, which has none. Each points at a version that
-cannot change under the packet: an event's work report stops changing once a message names it,
-and an omission's reading is frozen on the message row when it is staged. The command that
+cannot change under the bytes that went up: an event's work report stops changing once a message
+about that event has been sent, and until then the send carries whatever report stands; an
+omission's reading is frozen on the message row when it is staged. The command that
 produced that reading, `reporting-show`, re-reads the turn NOW, so a report that reached the
 turn afterwards made it answer `reported` under a packet saying `unreported`; `supervisor-show`
 prints it as `stagedFrom.recheck` beside the frozen `stagedFrom.reading`, and the two are
@@ -150,10 +151,10 @@ staging lock the report is read again and has to be the same report WHOLE, becau
 correction made in place keeps its submission number; the obligation is re-derived and compared
 field by field; and the packet is composed again from what the store now says and has to be
 the packet about to be frozen. Any difference refuses as `superseded_revision` with nothing
-written. Once a message composed from a report has reached the transport - its attempt's
-transport start is stamped - `report.record` refuses to change that report at all, in place or
-as a new submission, because the bytes that went up would otherwise name one pull request while
-their evidence reads another. Before that, the staged row is a proposal: a correction lands, and
+written. Once a message about the event has reached the transport - its attempt's transport
+start is stamped - `report.record` refuses to change that event's report at all, in place, as a
+new submission or as a first report, because the bytes that went up would otherwise say one
+thing, or say there was no report, while their evidence reads another. Before that, the staged row is a proposal: a correction lands, and
 the send carries it (see a staged row is a proposal). The stamp is written in the same write
 that lets the transport start, so a correction and that write serialize: one committing first
 is restated and sent, one committing after is refused.
@@ -192,8 +193,9 @@ now:
 - who it is for: the live hierarchy, through `resolve()`;
 - what it is: the obligation the row's event raises from that event's current work report, or
   the one the reading frozen on an omission's row raises;
-- which statement: the newest event raising the same block or decision, and that event's
-  current report;
+- which statement: the newest event raising the obligation, found by the obligation's key
+  rather than by asking the event the row was staged from first - that event can stop raising
+  it while a newer statement of the same block still does - and that event's current report;
 - whether it is still owed: a confirmed Linear record discharges it, and a final receipt for
   an omitted turn means the turn reported;
 - the bytes: the packet composed from all of that with the observation time the row was staged

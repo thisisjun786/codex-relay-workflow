@@ -389,22 +389,39 @@ class SupervisorChannel:
         left the packet pointing at the first statement's evidence with no way for the
         correction to reach the level above before anything was sent.
         """
-        from .report import read as read_work_report
-
         if obligation["kind"] not in (supervision.BLOCKED, supervision.DECISION):
             return obligation
+        return self._newest_raising(obligation["relationId"], obligation["obligationId"],
+                                    obligation["kind"]) or obligation
+
+    def _newest_raising(self, relation_id, obligation_id, kind, event_id=None):
+        """The obligation with this id as the newest event raising it states it, or None.
+
+        Looked up by the obligation's KEY, not by the event a message happened to be staged
+        from: that event can stop raising it - its report corrected into a decision - while a
+        newer statement of the same block still does. A completion is keyed on its own event,
+        so for one that is the only event that can raise it.
+        """
+        from .report import read as read_work_report
+
+        if kind not in (supervision.BLOCKED, supervision.DECISION):
+            if not event_id:
+                return None
+            raised = supervision.from_event(self.store, event_id,
+                                            read_work_report(self.store, event_id))
+            return raised if raised is not None and raised["obligationId"] == obligation_id                 else None
         for row in self.store.all(
                 # Newest by ARRIVAL: the order this store accepted the events in. Two
                 # statements accepted at one instant have the same first_seen_at, and breaking
                 # that tie on the event id - a hash - chose between them at random, so the
                 # corrected one could be the one left out.
                 "SELECT event_id FROM events WHERE relationship_id = ?"
-                " ORDER BY rowid DESC", (obligation["relationId"],)):
+                " ORDER BY rowid DESC", (relation_id,)):
             one = supervision.from_event(self.store, row["event_id"],
                                          read_work_report(self.store, row["event_id"]))
-            if one is not None and one["obligationId"] == obligation["obligationId"]:
+            if one is not None and one["obligationId"] == obligation_id:
                 return one
-        return obligation
+        return None
 
     def _command_line(self, *argv, socket=False) -> str:
         """A codex-session-relay line that selects THIS store, and this host when asked to."""
@@ -533,19 +550,21 @@ class SupervisorChannel:
         event_id = row["event_id"]
         report = None
         if event_id:
-            report = read_work_report(self.store, event_id)
-            obligation = supervision.from_event(self.store, event_id, report)
-            if obligation is None or obligation["obligationId"] != row["obligation_id"]:
+            # By the obligation's key: the newest event raising it, whichever event the row
+            # was staged from. That event can stop raising it while a newer statement of the
+            # same block still does, and asking it first held a block that was still owed.
+            obligation = self._newest_raising(row["relationship_id"], row["obligation_id"],
+                                              row["obligation_kind"], event_id)
+            if obligation is None:
+                raised = supervision.from_event(self.store, event_id,
+                                                read_work_report(self.store, event_id))
                 return obsolete(
-                    "event " + repr(event_id) + " now raises "
-                    + (repr(obligation["kind"]) + " obligation " + repr(obligation["obligationId"])
-                       if obligation is not None else "nothing")
-                    + ", not the one this message is for")
-            latest = self._latest_statement(obligation)
-            newest = (latest.get("basis") or {}).get("eventId")
-            if newest and newest != event_id:
-                obligation, event_id = latest, newest
-                report = read_work_report(self.store, event_id)
+                    "no event raises obligation " + repr(row["obligation_id"]) + " any more;"
+                    " event " + repr(event_id) + " now raises "
+                    + (repr(raised["kind"]) + " obligation " + repr(raised["obligationId"])
+                       if raised is not None else "nothing"))
+            event_id = obligation["basis"]["eventId"]
+            report = read_work_report(self.store, event_id)
         else:
             obligation = supervision.from_observation(reading)
             if obligation is None or obligation["obligationId"] != row["obligation_id"]:

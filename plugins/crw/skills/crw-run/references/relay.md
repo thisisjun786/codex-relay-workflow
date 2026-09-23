@@ -920,9 +920,9 @@ A send whose response never came back is held as `held_uncertain` and is never r
 supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
 that attempt's delivery token - its request id and a random part drawn when the send was claimed - in a turn that began no earlier than the transport; `supervisor-show` then records how it was settled.
 
-Once a message composed from a work report has been sent upward, that report no longer
-changes: the relay refuses a correction to it, in place or as a new submission, because the
-bytes that went up named its pull request and point at it for evidence. Before the send a
+Once a message about an event has been sent upward, that event's work report no longer
+changes: the relay refuses a correction to it, in place, as a new submission or as a first
+report, because the bytes that went up described it and point at it for evidence. Before the send a
 correction lands and the send carries it, so send after the report is final. A message
 staged from the event before any report existed froze nothing, so the first report is still
 recorded; the send restates the message to the report that stands and sends that, and when the
