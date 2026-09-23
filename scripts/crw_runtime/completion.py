@@ -367,6 +367,16 @@ ANSWER_TEXT_MISMATCH = "answer_text_mismatch"
 ANSWER_TEXT_AMBIGUOUS = "answer_text_ambiguous"
 SESSION_MISMATCH = "session_mismatch"
 
+# Every reason an identity is left unestablished, and those given before the path is looked at.
+UNESTABLISHED_REASONS = (IDENTITY_FIELDS_INCOMPLETE, TRANSCRIPT_PATH_MISSING,
+                         TRANSCRIPT_PATH_RELATIVE, TRANSCRIPT_ABSENT, TRANSCRIPT_UNREACHABLE,
+                         TRANSCRIPT_NOT_REGULAR, SCAN_BOUND_EXCEEDED, SCAN_TIMED_OUT,
+                         TRANSCRIPT_TAIL_INCOMPLETE, TRANSCRIPT_LINE_UNREADABLE,
+                         TURN_START_NOT_FOUND, NO_ANSWER_ITEM_FOR_TURN, ANSWER_ITEM_UNIDENTIFIED,
+                         ANSWER_PRECEDES_LATEST_INPUT, ANSWER_TEXT_MISMATCH, ANSWER_TEXT_AMBIGUOUS,
+                         SESSION_MISMATCH)
+PATHLESS_REASONS = (IDENTITY_FIELDS_INCOMPLETE, TRANSCRIPT_PATH_MISSING)
+
 # The items that start a sampling. Met before any answer when reading newest-first, one of these
 # means the transcript does not yet show this Stop's answer.
 HOOK_PROMPT = "HookPrompt"
@@ -1746,11 +1756,30 @@ def _row_fields_written(row):
     if any(field not in row for field in ROW_FIELDS) or row.get("event") != EVENT:
         return False
     # The types the adapter writes these in; their values are observations nothing else records.
-    if (not isinstance(row.get("configuration"), str)
+    configuration = row.get("configuration")
+    if (not isinstance(configuration, str) or not os.path.isabs(configuration)
             or not _is_count(row.get("elapsedMs"), zero=True)
             or not (row.get("detail") is None or isinstance(row.get("detail"), str))):
         return False
     outcome, acceptance = row.get("adapterOutcome"), row.get("acceptance")
+    # Once the payload is read, run() records its session, turn and flag together with the mode of
+    # the settings it has already validated; before that, none of them. An identity comes after.
+    read = all(field in row for field in PAYLOAD_FIELDS)
+    if any(field in row for field in PAYLOAD_FIELDS) and not read:
+        return False
+    if read != (row.get("guardMode") in MODES) or (row.get("guardMode") is not None and not read):
+        return False
+    if acceptance is None and (read and outcome != ADAPTER_FAULTED
+                               or row.get("identityScanMs") is not None):
+        return False
+    # A release always says why; a guard call's detail is invoke_guard()'s, which has none for a
+    # process that exited or was signalled and always has one otherwise.
+    if (outcome in BEFORE_THE_GUARD + (DUPLICATE_INVOCATION, ARBITRATION_FAILED)
+            and not isinstance(row.get("detail"), str)):
+        return False
+    if outcome in FROM_THE_GUARD and ((row.get("detail") is None)
+                                      != (row.get("processEnding") in (EXITED, SIGNALLED))):
+        return False
     if outcome == ADAPTER_FAULTED:
         if not isinstance(row.get("fault"), str):
             return False
@@ -1951,6 +1980,8 @@ def _row_shape(row):
         # another session or turn than its key's is not counted as a record of that event.
         if not (keyed and named and isinstance(identity, dict)
                 and identity.get("established") is True and identity.get("reason") is None
+                and isinstance(identity.get("transcriptPath"), str)
+                and os.path.isabs(identity["transcriptPath"])
                 and isinstance(row.get("stopHookActive"), bool)
                 and isinstance(identity.get("answerItem"), str) and bool(identity.get("answerItem"))
                 and key == event_key(row["sessionId"], row["turnId"], row["stopHookActive"],
@@ -1964,9 +1995,23 @@ def _row_shape(row):
                              "/".join(HOST_LEDGER_PARTS + (key + ".json",)))
         return where is None
     if acceptance == UNESTABLISHED:
-        return (key is None and isinstance(identity, dict)
+        if not (key is None and isinstance(identity, dict)
                 and identity.get("established") is False
-                and isinstance(identity.get("reason"), str))
+                and identity.get("reason") in UNESTABLISHED_REASONS):
+            return False
+        # What event_identity() had recorded when it stopped: no path before it looked at one, a
+        # relative one only when that was the reason, and an answer item only when the session
+        # was all that failed.
+        reason, path = identity["reason"], identity.get("transcriptPath")
+        if reason in PATHLESS_REASONS:
+            if path is not None:
+                return False
+        elif not isinstance(path, str) or os.path.isabs(path) != (reason != TRANSCRIPT_PATH_RELATIVE):
+            return False
+        item = identity.get("answerItem")
+        if reason == SESSION_MISMATCH:
+            return isinstance(item, str) and bool(item)
+        return item is None
     return key is None and identity is None
 
 

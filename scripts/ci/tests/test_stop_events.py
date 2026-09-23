@@ -1187,3 +1187,65 @@ class ReviewRoundEightControls(OneEventRecords, unittest.TestCase):
         self.assertEqual(done.returncode, 2, "a fractional bound was accepted as a window")
         with self.assertRaises(ValueError):
             completion.stop_events([host.journal], until="2026-09-23 11:58:17")
+
+
+class ReviewRoundNineControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the ninth review round (CRW-212, PR #144).
+
+    run() records in stages: the settings path, then, once the payload is read, its session, turn
+    and flag together with the settings' mode, then the identity. Each value a stage writes is
+    pinned by what run() does there -- a mode from the settings, an established identity's absolute
+    transcript path, an absolute settings path, a release's detail, a call's detail exactly when
+    the process neither exited nor was signalled -- and a row carrying another is not one it wrote.
+    """
+
+    def test_values_a_stage_pins_are_not_vouched_for_otherwise(self):
+        cases = [
+            ("accepted", "guardMode", None), ("duplicate", "guardMode", None),
+            ("accepted", ("eventIdentity", "transcriptPath"), None),
+            ("accepted", ("eventIdentity", "transcriptPath"), "rollout.jsonl"),
+            ("accepted", "configuration", "crw-completion-hook.json"),
+            ("duplicate", "detail", None),
+            ("accepted", "detail", "the guard did not answer"),
+        ]
+        for which, field, value in cases:
+            with self.subTest(record=which, field=str(field), value=repr(value)):
+                host, records = self.one_event()
+                def change(body):
+                    target = body[field[0]] if isinstance(field, tuple) else body
+                    target[field[-1] if isinstance(field, tuple) else field] = value
+                self.change(records[which], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 which + "." + str(field) + "=" + repr(value) + " was vouched for")
+
+    def test_an_unestablished_row_carries_only_what_its_reason_had_recorded(self):
+        """event_identity() stops at its first failure: a reason it never gives, a path before the
+        path was looked at, a relative path under any other reason, or an answer item before one was
+        found is not a row it wrote, so it is not counted as an invocation left unjudged."""
+        cases = [
+            ("made_up", None, None, False), ("transcript_path_missing", "/x/rollout.jsonl", None, False),
+            ("transcript_absent", None, None, False), ("transcript_absent", "/x/rollout.jsonl", "m", False),
+            ("transcript_path_relative", "/x/rollout.jsonl", None, False),
+            ("session_mismatch", "/x/rollout.jsonl", None, False),
+            ("transcript_absent", "/x/rollout.jsonl", None, True),
+            ("session_mismatch", "/x/rollout.jsonl", "m", True),
+        ]
+        for reason, path, item, written in cases:
+            with self.subTest(reason=reason, path=path, item=item):
+                self.count += 1
+                root = self.base / ("unestablished-%d" % self.count)
+                root.mkdir()
+                host = Host(root)
+                loose = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
+                                    "last_assistant_message": "done"}).encode("utf-8")
+                run_one(host.checkout(), loose)
+                def change(body):
+                    body["eventIdentity"].update(reason=reason, transcriptPath=path, answerItem=item)
+                self.change(host.row_paths()[0], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+                counted = {"unestablished:" + reason: 1} if written else {}
+                self.assertEqual(answer["unjudgedInvocations"], counted,
+                                 "a row event_identity() cannot write was counted as one it wrote"
+                                 if not written else "a row it writes was not counted")
