@@ -140,12 +140,16 @@ def child_purpose(outcome) -> str:
     would owe two obligations where one fact happened. The outcome is asserted once by the
     child's receipt and never moves, so a purpose derived from it does not either.
 
-    The distinction between a candidate offered for judgement and a result being delivered
-    has not been lost; it lives in relay-packet/1, where review_ready is its own purpose and
-    the packet carries the handoff evidence that makes it one.
+    So a ready_for_review outcome is a review_ready message in the delivered envelope, not a
+    completion. Keeping it a completion left relay-packet/1 the only place the distinction
+    existed, and nothing in production produced that packet, so on the path a parent actually
+    receives, a candidate offered for judgement and a result being delivered read the same.
+    The purpose's extra bytes on the announce line are charged by _confirmations_room.
     """
     if outcome == "blocked_needs_input":
         return "blocked"
+    if outcome == "ready_for_review":
+        return "review_ready"
     return MEASURED_PURPOSE
 
 

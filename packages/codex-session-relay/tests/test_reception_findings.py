@@ -14,7 +14,7 @@ when the record cannot answer it, is unavailable rather than accepted.
 
 import unittest
 
-from codex_session_relay import envelope, packets
+from codex_session_relay import envelope, packets, report
 from codex_session_relay.errors import RelayError
 
 RELATION = "rel-46d5b5ac690ef861"
@@ -345,6 +345,19 @@ class RB7AMalformedHandoverEntry(unittest.TestCase):
                 except Exception as error:  # noqa: BLE001 - the finding IS the host error
                     self.fail("a malformed entry escaped as " + repr(error))
                 self.fail("a malformed entry passed")
+
+
+class RB6ReviewReadyInTheDeliveredEnvelope(unittest.TestCase):
+    """A candidate offered for review is not delivered under the word completion."""
+
+    def test_a_ready_for_review_outcome_is_delivered_as_review_ready(self):
+        self.assertEqual(report.child_purpose("ready_for_review"), "review_ready")
+
+    def test_a_blocked_outcome_and_any_other_stay_as_they_were(self):
+        self.assertEqual(report.child_purpose("blocked_needs_input"), "blocked")
+        for outcome in ("failed", "interrupted"):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(report.child_purpose(outcome), "completion")
 
 
 # Which record key answers which compared field, per the direction's roles.

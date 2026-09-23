@@ -329,7 +329,7 @@ class TheSevenStatesOfAHandover(unittest.TestCase):
                              (packets.CRITERIA_VERDICT, "verdicts"),
                              (packets.PARENT_ACCEPTANCE, "verdicts"),
                              (packets.MERGE_LANDING, "merge_turns"),
-                             (packets.LINEAR_DONE, "sync_outbox")):
+                             (packets.LINEAR_DONE, "linear_issue_status")):
             ladder[name] = envelope.stage(envelope.YES, source=source)
         self.assertEqual(packets.unsupported_promotions(ladder), [])
 
@@ -474,7 +474,7 @@ class WhichChildMessageThisActuallyIs(unittest.TestCase):
         would derive a second id and the recipient would owe two obligations where one fact
         happened. Taking only the outcome is what keeps the identity still.
         """
-        self.assertEqual(report.child_purpose("ready_for_review"), "completion")
+        self.assertEqual(report.child_purpose("ready_for_review"), "review_ready")
         self.assertEqual(
             len(inspect.signature(report.child_purpose).parameters), 1,
             "a second input is a second thing that can move the message id")
@@ -564,7 +564,7 @@ class TheWholeRoundTrip(unittest.TestCase):
                              (packets.CRITERIA_VERDICT, "verdicts"),
                              (packets.PARENT_ACCEPTANCE, "verdicts"),
                              (packets.MERGE_LANDING, "merge_turns"),
-                             (packets.LINEAR_DONE, "sync_outbox")):
+                             (packets.LINEAR_DONE, "linear_issue_status")):
             with self.subTest(state=name):
                 self.assertEqual(packets.unsupported_promotions(ladder), [])
                 ladder[name] = envelope.stage(envelope.YES, source=source)
