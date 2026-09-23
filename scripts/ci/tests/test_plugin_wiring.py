@@ -11,7 +11,6 @@ relay is a file these cases create, and every command runs against a temporary C
 
 import contextlib
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -54,10 +54,15 @@ def write_policy(path, mapping=POLICY):
 
 
 def load_launcher():
-    """The packaged launcher as a module. Its main() runs only under __main__."""
-    spec = importlib.util.spec_from_file_location("crw_bridge_mcp_under_test", BRIDGE_LAUNCHER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    """The packaged launcher as a module. Its main() runs only under __main__.
+
+    Compiled from its source rather than imported, because an import writes a __pycache__ into
+    the plugin root, and everything in that directory ships: the payload check then refuses it.
+    """
+    module = types.ModuleType("crw_bridge_mcp_under_test")
+    module.__file__ = str(BRIDGE_LAUNCHER)
+    exec(compile(BRIDGE_LAUNCHER.read_text(encoding="utf-8"), str(BRIDGE_LAUNCHER), "exec"),
+         module.__dict__)
     return module
 
 try:  # The configuration reader arrived in 3.11 and this repository still supports 3.10.
