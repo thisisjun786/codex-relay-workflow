@@ -1541,9 +1541,11 @@ def journal(config, record, slot=None):
     day, name = slot or new_slot()
     directory = Path(root).expanduser() / day
     target = directory / (name + ".json")
+    created = False
     try:
         directory.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        created = True
         try:
             # Written to completion, and removed if it cannot be. os.write may write fewer bytes
             # than it was given, and a truncated record is worse than none: it survives under a
@@ -1556,10 +1558,14 @@ def journal(config, record, slot=None):
         finally:
             os.close(handle)
     except (OSError, ValueError):
-        try:
-            os.unlink(str(target))
-        except OSError:
-            pass
+        # Only a file this call created is its to remove. A name it could not create belongs to
+        # whatever wrote it first -- this invocation's own finished row, when the fault path
+        # retries the slot run() chose -- and removing it would erase that record.
+        if created:
+            try:
+                os.unlink(str(target))
+            except OSError:
+                pass
         return None
     return str(target)
 
@@ -1704,6 +1710,130 @@ def _read_json(path):
         return None, False
 
 
+# The outcomes run() records before any guard is asked, and those that report asking one.
+BEFORE_THE_GUARD = (STDIN_UNREADABLE, STDIN_NOT_JSON, STDIN_NOT_OBJECT, CONFIG_ABSENT,
+                    CONFIG_UNREADABLE, CONFIG_UNREACHABLE, CONFIG_MALFORMED)
+FROM_THE_GUARD = tuple(outcome for outcome in OUTCOMES
+                       if outcome not in BEFORE_THE_GUARD and outcome != ADAPTER_FAULTED)
+# The outcomes each acceptance ends in, besides a fault. An invocation that never reached an
+# event (acceptance None) stopped at its input.
+OUTCOMES_OF = {None: BEFORE_THE_GUARD, UNESTABLISHED: FROM_THE_GUARD, ACCEPTED: FROM_THE_GUARD,
+               UNCLAIMABLE: FROM_THE_GUARD, CLAIM_FAILED: FROM_THE_GUARD,
+               DUPLICATE: (DUPLICATE_INVOCATION,), UNARBITRATED: (ARBITRATION_FAILED,)}
+
+
+# The fields run() puts in every record before anything can end it, and those it adds on the way.
+ROW_FIELDS = ("recordVersion", "event", "at", "adapterOutcome", "processEnding", "stdoutReading",
+              "guardState", "guardDecision", "guardMode", "assignmentId", "guardRecordedAs", "held",
+              "eventKey", "eventIdentity", "identityScanMs", "acceptance", "acceptedAs",
+              "guardInvoked", "configuration", "elapsedMs")
+PAYLOAD_FIELDS = ("sessionId", "turnId", "stopHookActive")
+GUARD_CALL_FIELDS = ("exitCode", "signal", "errno", "guardElapsedMs", "guardStderr")
+ANSWER_FIELDS = ("observation", "counters")
+IDENTITY_FIELDS = ("established", "reason", "answerItem", "transcriptPath", "scannedBytes",
+                   "scannedLines")
+
+
+def _row_fields_written(row):
+    """Whether a row carries every field run() writes on the path its outcome names.
+
+    Presence, not agreement: the values the adapter observed once -- timings, the transcript path,
+    the guard's stderr and receipt fields -- appear in this record only, so nothing else can
+    contradict them. Their absence is still a record run() did not write.
+    """
+    if any(field not in row for field in ROW_FIELDS) or row.get("event") != EVENT:
+        return False
+    outcome, acceptance = row.get("adapterOutcome"), row.get("acceptance")
+    if outcome == ADAPTER_FAULTED:
+        if not isinstance(row.get("fault"), str):
+            return False
+    elif "detail" not in row:
+        return False
+    if outcome in FROM_THE_GUARD:
+        if any(field not in row for field in GUARD_CALL_FIELDS) or not _outcome_follows(row):
+            return False
+    elif outcome != ADAPTER_FAULTED and any(field in row for field in GUARD_CALL_FIELDS):
+        # A guard call's fields on a row that asked nothing.
+        return False
+    if outcome == GUARD_ANSWERED:
+        if any(field not in row for field in ANSWER_FIELDS):
+            return False
+    elif outcome != ADAPTER_FAULTED and any(field in row for field in ANSWER_FIELDS):
+        return False
+    if row.get("guardMode") not in MODES + (None,):
+        return False
+    if acceptance is not None:
+        # The payload was read, and the transcript with it.
+        identity = row.get("eventIdentity")
+        if (any(field not in row for field in PAYLOAD_FIELDS) or not isinstance(identity, dict)
+                or any(field not in identity for field in IDENTITY_FIELDS)
+                or not _is_count(row.get("identityScanMs"), zero=True)
+                or not _is_count(identity.get("scannedBytes"), zero=True)
+                or not _is_count(identity.get("scannedLines"), zero=True)):
+            return False
+    return True
+
+
+SAID = (SAID_NOTHING, SAID_A_VERDICT, SAID_AN_ERROR_RECORD, SAID_SOMETHING_UNREADABLE)
+ENDINGS = (NOT_STARTED, EXITED, SIGNALLED, TIMED_OUT)
+
+
+def _outcome_follows(row):
+    """Whether a guard outcome is the one outcome_of() reaches from the call the row records.
+
+    The process ending, the exit code and what stdout said are recorded; the verdict itself is not,
+    so a verdict printed by a run that exited cleanly may have been answered or incomplete.
+    """
+    said, how = row.get("stdoutReading"), row.get("processEnding")
+    if said not in SAID or how not in ENDINGS:
+        return False
+    code, signal, errno_name = row.get("exitCode"), row.get("signal"), row.get("errno")
+    # What invoke_guard() records with each ending: an exit code only from a process that exited,
+    # a signal only from one that was signalled, an errno only from one that never started.
+    if how == EXITED:
+        if not _is_count(code, zero=True) or signal is not None or errno_name is not None:
+            return False
+    elif how == SIGNALLED:
+        if code is not None or not _is_count(signal) or errno_name is not None:
+            return False
+    elif how == NOT_STARTED:
+        if code is not None or signal is not None or errno_name is None:
+            return False
+    elif code is not None or signal is not None or errno_name is not None:
+        return False
+    ending = {"ending": how, "code": code}
+    if how == EXITED and said == SAID_A_VERDICT and row.get("exitCode") == GUARD_EXIT_OK:
+        return row.get("adapterOutcome") in (GUARD_VERDICT_INCOMPLETE, GUARD_ANSWERED)
+    return outcome_of(ending, said, None) == row.get("adapterOutcome")
+
+
+def _guard_result_written(record):
+    """Whether a record's guard result is one run() writes.
+
+    Only an answer carries a decision, and it holds exactly when it blocks: verdict_complaints turns
+    every other pairing into guard_verdict_incomplete. Every other outcome carries no decision, no
+    state and no hold, except a fault, which may keep what it had reached and never holds, because
+    the fault path prints nothing.
+    """
+    outcome, decision = record.get("adapterOutcome"), record.get("guardDecision")
+    state, held = record.get("guardState"), record.get("held")
+    if not isinstance(held, bool) or not (state is None or isinstance(state, str)):
+        return False
+    if outcome == GUARD_ANSWERED:
+        return decision in DECISIONS and held == (decision == BLOCK)
+    if held:
+        return False
+    if outcome == ADAPTER_FAULTED:
+        return decision is None or decision in DECISIONS
+    # No answer, so no decision, no state and none of the receipts an answer carries.
+    return (decision is None and state is None and record.get("assignmentId") is None
+            and record.get("guardRecordedAs") is None)
+
+
+OUTCOME_FIELDS = ("ledgerVersion", "eventKey", "sessionId", "turnId", "journalPolicy",
+                  "adapterOutcome", "guardDecision", "guardState", "held", "attemptRow", "at")
+
+
 def _ledger_shape(body, key, outcome):
     """Whether an accepted record carries every field its kind is written with, and names its key."""
     if (not isinstance(body, dict) or body.get("eventKey") != key
@@ -1713,11 +1843,14 @@ def _ledger_shape(body, key, outcome):
         if not isinstance(body.get(field), str) or not body.get(field):
             return False
     if outcome:
-        return (isinstance(body.get("at"), str) and isinstance(body.get("adapterOutcome"), str)
+        # The owner's outcome: it got past its claim, so it asked the guard or faulted, and its
+        # guard result is one run() writes.
+        return (all(field in body for field in OUTCOME_FIELDS)
+                and isinstance(body.get("at"), str)
+                and (body.get("adapterOutcome") in FROM_THE_GUARD
+                     or body.get("adapterOutcome") == ADAPTER_FAULTED)
                 and body.get("journalPolicy") in JOURNAL_POLICIES
-                and isinstance(body.get("held"), bool)
-                # Only a guard's answer can hold, exactly as run() decides it.
-                and (body["held"] is False or body["adapterOutcome"] == GUARD_ANSWERED)
+                and _guard_result_written(body)
                 and (body.get("attemptRow") is None or isinstance(body.get("attemptRow"), str)))
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("claimedAt"), str) and isinstance(body.get("stopHookActive"), bool)
@@ -1732,15 +1865,36 @@ def _ledger_shape(body, key, outcome):
 
 
 def _row_shape(row):
-    """Whether a version-2 row has the fields its acceptance is written with.
+    """Whether a version-2 row is one run() writes.
 
     Checked before any window is applied. A row that names an event needs its session, turn and
     key; one that could not be identified needs its reason (its session and turn may be the very
-    fields that were missing); one that never reached an event carries none of them.
+    fields that were missing); one that never reached an event carries none of them. And every row
+    carries what its acceptance is written with: the outcomes that acceptance ends in, whether the
+    guard was asked, and a guard result only where one was reached (_guard_result_written).
     """
-    if not isinstance(row.get("at"), str) or not row.get("at"):
+    if not isinstance(row.get("at"), str) or not row.get("at") or not _row_fields_written(row):
         return False
     acceptance, key, identity = row.get("acceptance"), row.get("eventKey"), row.get("eventIdentity")
+    outcome, asked = row.get("adapterOutcome"), row.get("guardInvoked")
+    if (acceptance not in OUTCOMES_OF or not isinstance(asked, bool)
+            or not _guard_result_written(row)):
+        return False
+    if outcome == ADAPTER_FAULTED:
+        # A fault may end any invocation that got past reading its input, except the two that
+        # release before anything else can happen.
+        if acceptance in (DUPLICATE, UNARBITRATED):
+            return False
+    elif outcome not in OUTCOMES_OF[acceptance]:
+        return False
+    elif outcome in FROM_THE_GUARD:
+        if asked is not True or not isinstance(row.get("processEnding"), str):
+            return False
+    elif ((asked and acceptance != DUPLICATE) or row.get("processEnding") is not None
+          or row.get("stdoutReading") is not None):
+        # Nothing was asked. A duplicate that says it asked is left to the verdict, which reads
+        # it FALSE rather than merely unreadable.
+        return False
     keyed = isinstance(key, str) and LEDGER_NAME.match(key + ".json") is not None
     named = all(isinstance(row.get(field), str) and row.get(field)
                 for field in ("sessionId", "turnId"))
@@ -1748,36 +1902,24 @@ def _row_shape(row):
         # The key is recomputed from the row's own session, turn, flag and answer, so a row about
         # another session or turn than its key's is not counted as a record of that event.
         if not (keyed and named and isinstance(identity, dict)
-                and identity.get("established") is True
+                and identity.get("established") is True and identity.get("reason") is None
                 and isinstance(row.get("stopHookActive"), bool)
                 and isinstance(identity.get("answerItem"), str) and bool(identity.get("answerItem"))
                 and key == event_key(row["sessionId"], row["turnId"], row["stopHookActive"],
                                      identity["answerItem"])):
             return False
-        # And each kind carries what it is written with, so a row stripped of the invocation it
-        # records is not counted as that invocation.
-        outcome, asked, where, held = (row.get("adapterOutcome"), row.get("guardInvoked"),
-                                       row.get("acceptedAs"), row.get("held"))
-        if not isinstance(outcome, str) or not isinstance(asked, bool) or not isinstance(held, bool):
-            return False
-        # Only a guard's answer can hold, exactly as run() decides it.
-        if held and outcome != GUARD_ANSWERED:
-            return False
+        where = row.get("acceptedAs")
         if acceptance == ACCEPTED:
-            return (asked is True and where == LEDGER_DIRECTORY + "/" + key + ".json"
-                    and outcome not in (DUPLICATE_INVOCATION, ARBITRATION_FAILED))
+            return where == LEDGER_DIRECTORY + "/" + key + ".json"
         if acceptance == DUPLICATE:
-            return (outcome == DUPLICATE_INVOCATION
-                    and where in (LEDGER_DIRECTORY + "/" + key + ".json",
-                                  "/".join(HOST_LEDGER_PARTS + (key + ".json",))))
-        if acceptance == UNARBITRATED:
-            return outcome == ARBITRATION_FAILED and asked is False and where is None
-        return where is None and outcome not in (DUPLICATE_INVOCATION, ARBITRATION_FAILED)
+            return where in (LEDGER_DIRECTORY + "/" + key + ".json",
+                             "/".join(HOST_LEDGER_PARTS + (key + ".json",)))
+        return where is None
     if acceptance == UNESTABLISHED:
         return (key is None and isinstance(identity, dict)
                 and identity.get("established") is False
                 and isinstance(identity.get("reason"), str))
-    return acceptance is None and key is None and identity is None
+    return key is None and identity is None
 
 
 def _host_shape(body, key):
@@ -1791,14 +1933,16 @@ def _host_shape(body, key):
     claimed_by = body.get("claimedBy")
     return (isinstance(body.get("stopHookActive"), bool) and isinstance(claimed_by, dict)
             and isinstance(claimed_by.get("attemptRow"), str) and _is_count(claimed_by.get("pid"))
+            and "journalRoot" in claimed_by
             and (claimed_by.get("journalRoot") is None
                  or isinstance(claimed_by.get("journalRoot"), str))
             and key == event_key(body["sessionId"], body["turnId"], body["stopHookActive"],
                                  body["answerItem"]))
 
 
-def _is_count(value):
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+def _is_count(value, zero=False):
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and (value >= 0 if zero else value > 0))
 
 
 # The guard's result as the outcome and the accepted row both record it. One owner writes both in
@@ -1874,6 +2018,16 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
               "turnsWithMoreThanOneEvent": 0,
               "supersededPerTurn": {"predicate": SUPERSEDED_PREDICATE, "pairs": 0,
                                     "pairsWithMoreThanOneRow": 0}}
+    try:
+        return _read_stop_events(answer, roots, since, until, session, turn, hosts)
+    except Exception as error:  # noqa: BLE001 - a reading that cannot finish cannot vouch
+        answer["verdict"] = UNREADABLE_VERDICT
+        answer["readerFault"] = type(error).__name__ + ": " + str(error)
+        return answer
+
+
+def _read_stop_events(answer, roots, since, until, session, turn, hosts):
+    """The reading stop_events() answers with, filled into answer."""
 
     def in_window(stamp, owner, of_turn):
         return (_within(stamp, since, until)
@@ -2110,14 +2264,22 @@ def stop_events(roots, since=None, until=None, session=None, turn=None, hosts=No
                     str(Path(root) / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX)))
             if outcome["journalPolicy"] == NO_JOURNAL:
                 answer["invocationsUnrecorded"].append(key)
-            row = outcome["attemptRow"]
+            row, policy = outcome["attemptRow"], outcome["journalPolicy"]
             outcome_path = str(Path(root) / LEDGER_DIRECTORY / (key + OUTCOME_SUFFIX))
-            if row is None and outcome["journalPolicy"] == EVERY_INVOCATION:
-                # Every invocation was to leave a row, so the accepted one's is missing: its write
-                # failed, and what the event was answered with rests on the outcome alone.
-                answer["acceptedRowsMissing"].append(key)
-            elif row is not None:
-                if row != slot:
+            # Whether the owner's policy wrote its row: every_invocation always, faults_only for
+            # anything but a plain answer, no_journal never.
+            kept = (policy == EVERY_INVOCATION
+                    or (policy == FAULTS_ONLY and outcome["adapterOutcome"] not in QUIET))
+            if row is None:
+                if kept:
+                    # The row was to be written, so the accepted one's is missing: its write
+                    # failed, and what the event was answered with rests on the outcome alone.
+                    answer["acceptedRowsMissing"].append(key)
+                if accepted_at.get((root, key)):
+                    # An accepted row the outcome says was never written.
+                    answer["recordsThatDisagree"].append(outcome_path)
+            else:
+                if not kept or row != slot:
                     answer["recordsThatDisagree"].append(outcome_path)
                 named_row = _read_row(root, row)
                 if (named_row is None or named_row.get("recordVersion") != RECORD_VERSION

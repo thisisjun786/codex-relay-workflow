@@ -1848,10 +1848,13 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
 (exit 3) means the reading cannot vouch for what it read:
 
 - a listing that failed, including an `accepted` or host ledger path that is not a directory;
-- a row, claim, outcome or host file that does not parse or lacks what its kind is written with:
-  an accepted row that did not ask the guard or names another record, a duplicate row that is not a
-  `duplicate_invocation`, or any record whose own session, turn, `stop_hook_active` and answer
-  item do not hash to its key;
+- a row, claim, outcome or host file that does not parse or is not one the adapter writes: a
+  missing field its path writes, an outcome its acceptance never ends in (a duplicate is only a
+  `duplicate_invocation`, an unowned release only `arbitration_failed`), a guard outcome that does
+  not follow from the process ending, exit code and stdout reading it records, a decision, state,
+  hold or receipt on a record that got no answer, a hold without a block or a block without a
+  hold, an accepted row that did not ask the guard or names another record, or any record whose
+  own session, turn, `stop_hook_active` and answer item do not hash to its key;
 - a row version it does not know, or an entry in a ledger that is not one of its records;
 - an outcome without its claim, naming another session or turn than its claim, or without the
   accepted row it names (or with none under `every_invocation`), and a claim without its outcome
@@ -1863,8 +1866,11 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
   process, the accepted row sits in that slot, the outcome and that row carry one guard result
   (`adapterOutcome`, `guardDecision`, `guardState`, `held`), only a guard's answer holds, and a
   duplicate that found the accepted record in its own root finds it there;
+- an accepted row the owner's policy would not have written (`no_journal`, or a plain answer
+  under `faults_only`), or a missing one it would have;
 - a duplicate whose event has no claim in any root read, or a ledger written under `no_journal`;
-- any invocation in the window it cannot judge, or nothing to judge.
+- any invocation in the window it cannot judge, nothing to judge, or a reading that could not
+  finish (`readerFault`).
 
 `TRUE` (exit 0) otherwise. The invocations it cannot judge are those whose identity was not
 established, that had no owner, whose owner's root could not hold the claim or that never reached
@@ -1881,7 +1887,11 @@ before the claim). The same reading is `completion.stop_events()`.
 The guarantee holds among the registrations of one Codex home, which is every registration one
 host starts for a Stop. Registrations that do not share it, or an adapter from before the host's
 file existed, each accept an event in their own root; a reading given both roots says `FALSE`.
-The claim files are never removed, like the rows. That the host
+The claim files are never removed, like the rows. The reading checks that records are ones the
+adapter writes and that the records of one event agree; it does not order their timestamps, and it
+cannot contradict the values the adapter observed once and recorded in one place (timings, the
+transcript path, the guard's stderr and detail, the configuration path, and the receipt values an
+answer carries). That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
 with every record in the live journal, but it is not a documented host contract; a host that ran a
 Stop before recording both that sampling's continuation and its answer would show the previous

@@ -1037,9 +1037,11 @@ def journal(config, record, slot=None):
     day, name = slot or new_slot()
     directory = Path(root).expanduser() / day
     target = directory / (name + ".json")
+    created = False
     try:
         directory.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        created = True
         try:
             # Written to completion, and removed if it cannot be: os.write may write fewer bytes
             # than it was given, and a truncated record survives under a name nothing will reuse
@@ -1051,10 +1053,14 @@ def journal(config, record, slot=None):
         finally:
             os.close(handle)
     except (OSError, ValueError):
-        try:
-            os.unlink(str(target))
-        except OSError:
-            pass
+        # Only a file this call created is its to remove. A name it could not create belongs to
+        # whatever wrote it first -- this invocation's own finished row, when the fault path
+        # retries the slot run() chose -- and removing it would erase that record.
+        if created:
+            try:
+                os.unlink(str(target))
+            except OSError:
+                pass
         return None
     return str(target)
 

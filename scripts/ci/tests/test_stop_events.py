@@ -396,6 +396,7 @@ class VerifierTests(unittest.TestCase):
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(
             json.dumps({"ledgerVersion": 1, "eventKey": key, "sessionId": "s", "turnId": "t",
                         "at": "2026-09-23T00:00:00Z", "adapterOutcome": "guard_answered",
+                        "guardDecision": "release", "guardState": "unmanaged",
                         "journalPolicy": "faults_only", "held": False, "attemptRow": None}),
             encoding="utf-8")
         code, answer = verify(host.journal)
@@ -492,7 +493,8 @@ class ReviewRoundOneControls(unittest.TestCase):
         (host.journal / "accepted" / (key + ".outcome.json")).write_text(json.dumps(
             {"ledgerVersion": 1, "eventKey": key, "sessionId": stop["session_id"],
              "turnId": stop["turn_id"], "at": "2026-09-23T00:00:00Z", "attemptRow": None,
-             "adapterOutcome": "guard_answered", "journalPolicy": "faults_only", "held": False}),
+             "adapterOutcome": "guard_answered", "guardDecision": "release",
+             "guardState": "unmanaged", "journalPolicy": "faults_only", "held": False}),
             encoding="utf-8")
         for window in ({}, {"turn": stop["turn_id"]}, {"since": "2000-01-01T00:00:00Z"}):
             with self.subTest(window=window):
@@ -1010,3 +1012,80 @@ class ReviewRoundFiveControls(unittest.TestCase):
                                                         "accepted/" + b["eventKey"] + ".json"))
         code, answer = verify(host.journal, other)
         self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+
+
+class ReviewRoundSixControls(ReviewRoundFiveControls):
+    """Red-first controls for the sixth review round and Devin's sixth (CRW-212, PR #144).
+
+    Records that agree with each other can still describe something the adapter never writes. Each
+    record is checked against what run() can write: only a guard's answer carries a decision, and it
+    holds exactly when it blocks; a duplicate or an unowned release asked nothing and carries no
+    guard result; and the owner's policy decides whether its accepted row exists.
+    """
+
+    def test_records_of_one_event_that_disagree_are_not_vouched_for(self):
+        pass
+
+    def test_a_duplicate_naming_a_claim_its_own_root_does_not_hold_is_not_vouched_for(self):
+        pass
+
+    def test_values_the_runtime_cannot_write_are_not_vouched_for_even_when_they_agree(self):
+        for field, value in (("adapterOutcome", "invented"), ("guardDecision", "nonsense")):
+            with self.subTest(field=field):
+                host, records = self.one_event()
+                for which in ("accepted", "outcome"):
+                    self.change(records[which], lambda b: b.__setitem__(field, value))
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 field + "=" + value + " was vouched for")
+
+    def test_combinations_the_runtime_cannot_write_are_not_vouched_for(self):
+        both = ("accepted", "outcome")
+        cases = [
+            ("a release that held", both, {"held": True}),
+            ("a block that did not hold", both, {"guardDecision": "block"}),
+            ("an answer under faults_only beside its row", ("outcome",),
+             {"journalPolicy": "faults_only"}),
+            ("a duplicate carrying a decision", ("duplicate",), {"guardDecision": "block"}),
+            ("a duplicate carrying a guard state", ("duplicate",), {"guardState": "declared"}),
+            ("a duplicate carrying a process ending", ("duplicate",), {"processEnding": "exited"}),
+        ]
+        for label, which, changes in cases:
+            with self.subTest(case=label):
+                host, records = self.one_event()
+                for kind in which:
+                    self.change(records[kind], lambda b: b.update(changes))
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 label + " was vouched for")
+
+    def test_a_record_missing_a_field_it_is_written_with_is_read_and_not_vouched_for(self):
+        """Found by a sweep over every field of every record: a missing field is unreadable, and the
+        reader never stops on one."""
+        cases = [("outcome", ("attemptRow",)), ("host", ("claimedBy", "journalRoot")),
+                 ("duplicate", ("guardDecision",)), ("duplicate", ("processEnding",)),
+                 ("accepted", ("event",)), ("accepted", ("configuration",))]
+        for which, path in cases:
+            with self.subTest(record=which, field=".".join(path)):
+                host, records = self.one_event()
+                self.change(records[which], lambda b: (b[path[0]] if len(path) > 1 else b).pop(
+                    path[-1]))
+                code, answer = verify(host.journal, **{"codex-home": str(host.codex_home)})
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+                self.assertNotIn("readerFault", answer)
+
+    def test_a_row_that_asked_nothing_carries_no_receipt(self):
+        for field in ("assignmentId", "guardRecordedAs"):
+            with self.subTest(field=field):
+                host, records = self.one_event()
+                self.change(records["duplicate"], lambda b: b.__setitem__(field, "receipt"))
+                self.assertEqual(verify(host.journal)[0], 3)
+
+    def test_a_guard_outcome_that_does_not_follow_from_its_call_is_not_vouched_for(self):
+        cases = [("processEnding", "signalled"), ("stdoutReading", "said_nothing"),
+                 ("exitCode", 3), ("signal", 9)]
+        for field, value in cases:
+            with self.subTest(field=field):
+                host, records = self.one_event()
+                self.change(records["accepted"], lambda b: b.__setitem__(field, value))
+                self.assertEqual(verify(host.journal)[0], 3, field + " was vouched for")

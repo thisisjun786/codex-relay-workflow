@@ -28,6 +28,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1010,6 +1011,27 @@ class EventMutationNoticed(unittest.TestCase):
         copy.claim_event = leaky
         found = self.noticed(copy, EventAcceptanceAgrees("run").replay())
         self.assertTrue(any("guard calls" in line for line in found), found)
+
+
+class FaultRecoveryKeepsTheRow(unittest.TestCase):
+    """A fault after an invocation's row is written must not erase that row (CRW-212, Devin round 6).
+
+    The recovery path writes its record into the slot run() chose at the start; when the row is
+    already there the write fails, and what failed to be created is not this call's to remove."""
+
+    def test_an_outcome_that_raises_after_the_row_leaves_the_row_in_both(self):
+        def raising(*_args, **_kwargs):
+            raise OSError("the outcome's final close failed")
+
+        copy = load_packaged()
+        copy.record_outcome = raising
+        runner = EventAcceptanceAgrees("run")
+        with mock.patch.object(completion, "record_outcome", raising):
+            left, right = runner.run_steps(runner.replay(), packaged=copy)
+        for label, answer in (("checkout", left), ("packaged", right)):
+            self.assertEqual(runner.acceptances(answer), ["accepted", "duplicate"],
+                             label + ": the accepted invocation's row was erased by its own recovery")
+            self.assertEqual(answer["calls"], 1)
 
 
 class TheGuardCommandAgrees(unittest.TestCase):
