@@ -3,6 +3,12 @@
 Stop is a pre-terminal observation. Only an independently settled, admitted turn
 can be diagnosed as having ended without a report. This reading is neither a
 receipt, a delivery acknowledgement nor acceptance of the assignment.
+
+Two readers, one diagnosis. observe() reads a turn through the marker and this store, the way a
+caller who holds the marker selectors can; derive() reads the same turn from this store alone,
+which is what the relay daemon can do - it reads no marker file. Both gather the same facts and
+hand them to classify(), the one predicate that decides what the turn's evidence says and whether
+a report is still owed because of it. Neither carries a classifier of its own.
 """
 
 import json
@@ -12,12 +18,30 @@ from pathlib import Path
 from . import guard, intent, marker
 from .admission import AnchorOrExplicit, BOUND_ADMISSION_SQL
 from .store import read_only_rows
-from .receipts import DAEMON
+from .receipts import CHILD as CHILD_PRODUCER, DAEMON
 
 SCHEMA = "reporting-observation/1"
 MAX_RECORDS = 128
 MAX_FACTS = 512
 MAX_BYTES = 1024 * 1024
+
+# The one reading derive() produces, and the only thing that tells a store reading from a marker
+# reading once either is frozen on a staged message.
+STORE_SOURCE = "relay_store"
+# The capability a child's relay records when it claims (declarations.CAPABILITY). Repeated here
+# for the same reason supervision repeats this module's schema: importing the writer for one
+# string would pull the Store into every reader of the diagnosis.
+CAPABILITY = "declarations/1"
+TERMINAL_STATUSES = ("completed", "failed", "interrupted")
+
+# What classify() answers about whether a report is still owed, beside the diagnosis itself. The
+# diagnosis of a turn does not change because something happened after it; what is owed does.
+OWED = "terminal_without_report"
+NOT_AN_OMISSION = "not_an_omission"
+LATER_TURN_ADMITTED = "later_turn_admitted"
+TURN_RECEIPTED = "turn_receipted"
+WITHIN_GRACE = "within_report_grace"
+GRACE_UNMEASURED = "report_grace_unmeasured"
 
 # One SELECT gives the registry, admission and terminal facts the same SQLite
 # snapshot. Filesystem reads happen afterwards, with this snapshot rechecked.
@@ -43,7 +67,16 @@ SELECT r.relationship_id, r.issue_key, r.status, r.parent_task_id, r.child_task_
                  'relationship',m.relationship_id,'generation',m.execution_generation,
                  'workspace',m.workspace,'markerRoot',m.marker_root,'issue',m.issue_key))
         FROM managed_start_requests m WHERE m.dispatch_request_id=g.dispatch_request_id)
-        AS managed
+        AS managed,
+       (SELECT COUNT(*) FROM generation_turns t
+        WHERE t.relationship_id=r.relationship_id
+          AND t.execution_generation=g.execution_generation
+          AND """ + BOUND_ADMISSION_SQL + """
+          AND t.turn_id<>?
+          AND t.rowid>COALESCE((SELECT a.rowid FROM generation_turns a
+                                WHERE a.relationship_id=r.relationship_id
+                                  AND a.execution_generation=g.execution_generation
+                                  AND a.turn_id=?), 0)) AS later_admitted
 FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
 WHERE r.relationship_id=? AND g.dispatch_request_id=?
 """
@@ -144,13 +177,18 @@ def _stops(directory, session, turn):
 
 
 def _context(selection, relationship, dispatch, session, turn):
-    reading = read_only_rows(selection, CONTEXT, (session, turn, session, turn,
-                                                relationship, dispatch))
+    reading = read_only_rows(selection, CONTEXT, _context_params(relationship, dispatch,
+                                                                 session, turn))
     if not reading["readable"] or reading["detail"]:
         raise Unmeasured("store_unreadable: " + str(reading["detail"]))
     if len(reading["rows"]) != 1:
         raise Unmeasured("registration_unresolved")
     return reading
+
+
+def _context_params(relationship, dispatch, session, turn):
+    """CONTEXT's parameters, in the order its placeholders appear."""
+    return (session, turn, session, turn, turn, turn, relationship, dispatch)
 
 
 class _AdmissionReader:
@@ -175,6 +213,15 @@ def _registry_evidence(row, facts, root, workspace, assignment, session, turn):
             or not row["child_cwd"] or _path(row["child_cwd"]) != workspace
             or marker.assignment_id(row["dispatch_request_id"]) != assignment):
         raise Unmeasured("registry_identity_mismatch")
+    return _admission(row, session, root, workspace, turn)
+
+
+def _admission(row, session, root, workspace, turn):
+    """Whether this turn belongs to the execution, read off the snapshotted CONTEXT row.
+
+    Shared by both readers. The marker reader checks the marker's identity facts first; the
+    store reader has no marker, and checks the session and the paths its claim recorded instead.
+    """
     if row["execution_generation"] != row["opened_generation"] or row["superseded_by"]:
         raise Unmeasured("stale_generation")
     requests = json.loads(row["managed"])
@@ -214,36 +261,137 @@ def _current(facts, disposition, selection, assignment, session, turn, now):
     return label, detail, receipt
 
 
-def _classify(result, row):
-    label = result["currentObservation"]["label"]
-    settlements = json.loads(row["settlements"])
+def _terminal(settlements):
+    """The one terminal status the relay settled this turn with, or None when they conflict."""
     statuses = {item["status"] for item in settlements}
-    if len(statuses) > 1 or statuses - {"completed", "failed", "interrupted"}:
-        raise Unmeasured("terminal_conflict")
-    result["terminalObservation"] = {"source": "relay_settlement", "records": settlements,
-                                     "status": next(iter(statuses), "unobserved")}
-    terminal = result["terminalObservation"]["status"]
+    if len(statuses) > 1 or statuses - set(TERMINAL_STATUSES):
+        return None
+    return next(iter(statuses), "unobserved")
+
+
+def _execution_reports(row, terminal):
+    """The daemon's own final events stating the ending the relay settled."""
+    return [event for event in json.loads(row["events"])
+            if event["producer"] == DAEMON and event["stage"] == "final"
+            and event["outcome"] == terminal and event["status"] == terminal]
+
+
+def facts_of(row, *, witness, admission, label, now, grace):
+    """The facts classify() decides from, gathered off one CONTEXT row.
+
+    Everything that is not specific to where the declaration was read comes from this row, so
+    both readers hand classify() facts assembled the same way. witness is the reader's own: the
+    marker reader's is the last Stop record, the store reader's is its declaration record.
+    """
+    settlements = json.loads(row["settlements"])
+    terminal = _terminal(settlements)
+    events = json.loads(row["events"])
+    return {
+        "witness": witness,
+        "admission": admission,
+        "settlements": settlements,
+        "label": label,
+        "executionReport": bool(terminal and _execution_reports(row, terminal)),
+        # A final receipt from the child for this very turn. The channel's I-247 recheck has
+        # always treated one as answering an omission; the predicate now says so for everyone.
+        "receipted": any(event["producer"] == CHILD_PRODUCER and event["stage"] == "final"
+                         for event in events),
+        "laterAdmitted": bool(row["later_admitted"]),
+        "now": now,
+        "grace": float(grace or 0),
+    }
+
+
+def _answer(state, reason, owed_reason=None):
+    owed = state == "unreported" and owed_reason is None
+    return {"reportingState": state, "reason": reason, "owed": owed,
+            "owedReason": OWED if owed else (owed_reason or NOT_AN_OMISSION)}
+
+
+def classify(facts) -> dict:
+    """What one turn's evidence says, and whether a report is still owed because of it. Pure.
+
+    The ONE predicate. observe() and derive() both call it, with facts assembled by facts_of();
+    neither decides anything about the turn itself.
+
+    facts:
+      witness         None when nothing witnessed the turn ending; otherwise whether it ended as
+                      an omission (the Stop record for the marker reader, the recorded
+                      declaration for the store reader)
+      admission       admitted, bootstrap or unadmitted
+      settlements     the terminal statuses the relay settled this turn with
+      label           the turn's declaration now, in the guard's vocabulary
+      executionReport the daemon's own final event states the settled ending
+      receipted       the child's final receipt for this turn exists
+      laterAdmitted   a later turn was admitted to the same generation
+      now, grace      when this is read, and how long after settlement an omission waits
+
+    reportingState and reason are CRW-180's diagnosis, unchanged. owed says whether the
+    diagnosis still leaves a report owed, and owedReason why not: a receipt for the turn goes up
+    as its own fact, a later admitted turn means the work went on, and an omission younger than
+    the grace has not yet had the chance to be answered. A diagnosis is never rewritten by what
+    happened after the turn; only what is owed is.
+    """
+    if facts["witness"] is None:
+        return _answer("unmeasured", "stop_unobserved")
+    if facts["admission"] != "admitted":
+        return _answer("unmeasured", "bootstrap" if facts["admission"] == "bootstrap"
+                       else "admission_unrecorded")
+    terminal = _terminal(facts["settlements"])
+    if terminal is None:
+        return _answer("unmeasured", "terminal_conflict")
+    label = facts["label"]
     if label == "declared_in_progress":
-        return "in_progress", "declared_in_progress"
+        return _answer("in_progress", "declared_in_progress")
     if label.startswith("declared_"):
-        return "reported", label
-    events = [event for event in json.loads(row["events"])
-              if event["producer"] == DAEMON and event["stage"] == "final"
-              and event["outcome"] == terminal and event["status"] == terminal]
-    if terminal in ("failed", "interrupted") and events:
-        result["executionReports"] = events
-        return "reported", "daemon_execution_report"
+        return _answer("reported", label)
+    if terminal in ("failed", "interrupted") and facts["executionReport"]:
+        return _answer("reported", "daemon_execution_report")
     if terminal == "unobserved":
-        return "unmeasured", "host_terminal_unobserved"
-    old = result["stopObservation"]["record"]
-    omission = old["observation"] in guard.OMISSIONS or old["decisionState"] == "unresolved_handoff"
-    if omission and label in guard.OMISSIONS:
-        return "unreported", "terminal_without_report"
-    return "unmeasured", "no_confirmed_omission"
+        return _answer("unmeasured", "host_terminal_unobserved")
+    if not (facts["witness"] and label in guard.OMISSIONS):
+        return _answer("unmeasured", "no_confirmed_omission")
+    if facts["receipted"]:
+        return _answer("unreported", "terminal_without_report", TURN_RECEIPTED)
+    if facts["laterAdmitted"]:
+        return _answer("unreported", "terminal_without_report", LATER_TURN_ADMITTED)
+    if facts["grace"] > 0:
+        ended = [intent.moment(item.get("at")) for item in facts["settlements"]]
+        now = intent.moment(facts["now"])
+        if now is None or not ended or any(one is None for one in ended):
+            return _answer("unreported", "terminal_without_report", GRACE_UNMEASURED)
+        if (now - max(ended)).total_seconds() < facts["grace"]:
+            return _answer("unreported", "terminal_without_report", WITHIN_GRACE)
+    return _answer("unreported", "terminal_without_report")
 
 
-def observe(selection, root, workspace, assignment, session, turn, now):
-    """Diagnose explicit selectors; all reads are optional evidence, never writes."""
+def _stop_witness(stops):
+    """The marker reader's witness: whether the last Stop record saw an omission, or None."""
+    if not stops:
+        return None
+    old = stops[-1]["record"]
+    return old["observation"] in guard.OMISSIONS or old["decisionState"] == "unresolved_handoff"
+
+
+def _record_terminal(result, row, verdict):
+    """What the reading shows about the ending, where classification got far enough to read it."""
+    if verdict["reason"] in ("stop_unobserved", "bootstrap", "admission_unrecorded",
+                             "terminal_conflict"):
+        return
+    settlements = json.loads(row["settlements"])
+    terminal = _terminal(settlements)
+    result["terminalObservation"] = {"source": "relay_settlement", "records": settlements,
+                                     "status": terminal}
+    if verdict["reason"] == "daemon_execution_report":
+        result["executionReports"] = _execution_reports(row, terminal)
+
+
+def observe(selection, root, workspace, assignment, session, turn, now, grace=0):
+    """Diagnose explicit selectors; all reads are optional evidence, never writes.
+
+    grace is classify()'s: how long after settlement an omission waits before it is owed. A
+    caller asking about one turn gets the diagnosis at once unless it asks for the grace.
+    """
     if not marker.valid_assignment(assignment):
         raise ValueError("assignment must be a dispatch hash")
     if not marker.valid_segment(session) or not marker.valid_segment(turn):
@@ -256,7 +404,7 @@ def observe(selection, root, workspace, assignment, session, turn, now):
               "session": session, "turn": turn}, "stopObservation": None,
               "terminalObservation": {"source": "relay_settlement", "status": "unobserved"},
               "currentObservation": None, "turnAdmission": "unmeasured",
-              "relationshipStatus": None}
+              "relationshipStatus": None, "owed": False, "owedReason": NOT_AN_OMISSION}
     try:
         root, workspace = _path(root), _path(workspace)
         directory = marker.assignment_dir(root, workspace, assignment)
@@ -300,17 +448,146 @@ def observe(selection, root, workspace, assignment, session, turn, now):
             facts, disposition, selection, assignment, session, turn, now)
         result.update(currentObservation={"label": label, "detail": detail},
                       declaration=disposition, receipt=receipt)
-        if not stops:
-            state, reason = "unmeasured", "stop_unobserved"
-        elif admission != "admitted":
-            state, reason = "unmeasured", ("bootstrap" if admission == "bootstrap" else "admission_unrecorded")
-        else:
-            state, reason = _classify(result, row)
+        verdict = classify(facts_of(row, witness=_stop_witness(stops), admission=admission,
+                                    label=label, now=now, grace=grace))
+        _record_terminal(result, row, verdict)
         if _context(selection, relationship, claim["dispatchRequestId"], session, turn) != snapshot:
             raise Unmeasured("registry_changed_during_read")
-        result.update(reportingState=state, reason=reason)
+        result.update(verdict)
     except Unmeasured as error:
-        result.update(reportingState="unmeasured", reason=str(error))
+        result.update(_answer("unmeasured", str(error)))
     except (OSError, ValueError, TypeError, RuntimeError) as error:
-        result.update(reportingState="unmeasured", reason="evidence_unreadable: " + str(error))
+        result.update(_answer("unmeasured", "evidence_unreadable: " + str(error)))
     return result
+
+
+# ------------------------------------------------------------------ from this store alone
+
+CURRENT = """
+SELECT r.relationship_id, r.status, r.parent_task_id, r.child_task_id, r.issue_key,
+       r.execution_generation, r.superseded_by, g.dispatch_request_id, g.dispatch_turn_id
+FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id
+ AND g.execution_generation=r.execution_generation
+WHERE r.relationship_id=?
+"""
+
+# The newest turn admitted to a generation by an explicit bound record, in admission order.
+# Every other admitted turn of the generation has a later one, so it is the only turn whose
+# omission can still be owed; the anchor is that turn when nothing was admitted after it.
+LATEST_ADMITTED = """
+SELECT t.turn_id FROM generation_turns t JOIN generations g
+  ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation
+WHERE t.relationship_id=? AND t.execution_generation=? AND """ + BOUND_ADMISSION_SQL + """
+ORDER BY t.rowid DESC LIMIT 1
+"""
+
+
+def derive(store, relationship_id, *, state_directory, now, grace, turn=None):
+    """The reading observe() would give, taken from this store alone. Reads; never writes.
+
+    The relay daemon reads no marker file, so it cannot call observe(). What it can read is
+    what the child's own relay recorded here beside the marker (declarations.py): that this
+    session records its declarations in this store, and what each turn declared. With those,
+    the facts classify() needs are all in this store, and they go through the same predicate.
+
+    The cut-over is the claim record. A turn whose session never recorded one - every child
+    that claimed before its relay wrote here, or through a relay that does not - is a legacy
+    admission: its declarations may exist only in the marker, so this store's silence about
+    them proves nothing and nothing is derived. It stays owed and visible exactly as before,
+    through a reading somebody passes in.
+
+    turn defaults to the relationship's newest admitted turn, which is the only one whose
+    omission can still be owed. The store's witness of the ending is its declaration record:
+    there is no pre-terminal record here like the marker's Stop record, and the relay's own
+    settlement is what says the turn ended.
+    """
+    result = {"schema": SCHEMA, "source": STORE_SOURCE, "reportingState": "unmeasured",
+              "reason": None, "observedAt": now, "selectors": None,
+              "relationshipId": relationship_id, "relationshipStatus": None,
+              "terminalObservation": {"source": "relay_settlement", "status": "unobserved"},
+              "currentObservation": None, "turnAdmission": "unmeasured",
+              "declaration": None, "receipt": None,
+              "owed": False, "owedReason": NOT_AN_OMISSION}
+    try:
+        current = store.one(CURRENT, (relationship_id,))
+        if current is None:
+            raise Unmeasured("registration_unresolved")
+        result.update(relationshipStatus=current["status"],
+                      executionGeneration=current["execution_generation"],
+                      parentTaskId=current["parent_task_id"])
+        session = current["child_task_id"]
+        dispatch = current["dispatch_request_id"]
+        assignment = marker.assignment_id(dispatch)
+        claimed = store.one(
+            "SELECT * FROM reporting_sessions WHERE assignment_id=? AND session_id=?",
+            (assignment, session))
+        if (claimed is None or claimed["dispatch_request_id"] != dispatch
+                or claimed["capability"] != CAPABILITY):
+            raise Unmeasured("declarations_not_recorded")
+        if turn is None:
+            latest = store.one(LATEST_ADMITTED, (relationship_id,
+                                                 current["execution_generation"]))
+            turn = latest["turn_id"] if latest is not None else current["dispatch_turn_id"]
+        if not marker.valid_segment(turn or ""):
+            raise Unmeasured("admission_unrecorded")
+        result["selectors"] = {"state": str(state_directory),
+                               "markerRoot": claimed["marker_root"],
+                               "workspace": claimed["workspace"], "assignment": assignment,
+                               "session": session, "turn": turn}
+        rows = store.all(CONTEXT, _context_params(relationship_id, dispatch, session, turn))
+        if len(rows) != 1:
+            raise Unmeasured("registration_unresolved")
+        row = rows[0]
+        admission, requests = _admission(row, session, _path(claimed["marker_root"]),
+                                         _path(claimed["workspace"]), turn)
+        result.update(turnAdmission=admission, managedRequests=requests)
+        declared = store.one(
+            "SELECT outcome, declared_at, recorded_at FROM turn_declarations"
+            " WHERE assignment_id=? AND session_id=? AND turn_id=?",
+            (assignment, session, turn))
+        disposition = None if declared is None else {
+            "sessionId": session, "turnId": turn, "outcome": declared["outcome"],
+            "at": declared["declared_at"], "recordedAt": declared["recorded_at"]}
+        receipt = None
+        if disposition and disposition["outcome"] == guard.READY:
+            receipt, readable = guard.lookup_receipt(
+                str(store.path), relationship_id=relationship_id, session_id=session,
+                turn_id=turn, execution_generation=current["execution_generation"],
+                dispatch_request_id=dispatch)
+            if not readable:
+                raise Unmeasured("receipt_unreadable")
+        label = guard.classify_declaration({
+            "stop_input": {"session_id": session, "turn_id": turn},
+            "disposition": disposition, "receipt": receipt,
+            "marker": {"relationship": {"relationshipId": relationship_id}}})
+        result.update(currentObservation={"label": label}, declaration=disposition,
+                      receipt=receipt)
+        verdict = classify(facts_of(row, witness=label in guard.OMISSIONS,
+                                    admission=admission, label=label, now=now, grace=grace))
+        _record_terminal(result, row, verdict)
+        result.update(verdict)
+    except Unmeasured as error:
+        result.update(_answer("unmeasured", str(error)))
+    except (OSError, ValueError, TypeError, RuntimeError) as error:
+        result.update(_answer("unmeasured", "evidence_unreadable: " + str(error)))
+    return result
+
+
+def owed_in_project(store, project_key, *, state_directory, now, grace) -> list:
+    """Every store reading in one project that leaves a report owed, and nothing else.
+
+    One reading per relationship, of its newest admitted turn. A reading that owes nothing -
+    reported, still running, legacy, inside its grace - is not returned: this is what the
+    automatic pass stages from, and a list of everything it did NOT owe would be a gap per
+    relationship per tick.
+    """
+    owed = []
+    for row in store.all(
+            "SELECT r.relationship_id FROM relationships r"
+            "  JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
+            " WHERE s.project_key = ? ORDER BY r.created_at", (project_key,)):
+        reading = derive(store, row["relationship_id"], state_directory=state_directory,
+                         now=now, grace=grace)
+        if reading["reportingState"] == "unreported" and reading["owed"]:
+            owed.append(reading)
+    return owed

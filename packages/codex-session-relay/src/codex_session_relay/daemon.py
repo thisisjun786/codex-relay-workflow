@@ -906,6 +906,13 @@ class RelayDaemon:
         sending is not claimable. A parent that also stages or sends by hand converges on the
         same ids and cannot cause a second wake.
 
+        An omission - a turn that ended with no report - is staged here too, from what this
+        store derives (SupervisorChannel.store_readings): the declarations the child's own relay
+        recorded beside its marker, read through the same predicate reporting-show uses, once
+        the grace has passed. The daemon still reads no marker file. A child that claimed
+        without recording that it writes declarations here is a legacy admission and nothing is
+        derived for it.
+
         Bounded like every pass here: max_supervisor_projects_per_tick projects are staged and
         max_supervisor_sends_per_tick messages attempted per tick, and a project whose messages
         have all gone out costs reads and no write.

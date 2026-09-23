@@ -1070,6 +1070,36 @@ CREATE INDEX IF NOT EXISTS supervisor_messages_recipient ON supervisor_messages
     (recipient_task_id, staged_at);
 CREATE INDEX IF NOT EXISTS supervisor_messages_event ON supervisor_messages (event_id);
 
+-- What a child's own relay recorded here beside the marker facts it writes (declarations.py).
+-- The relay daemon reads no marker file, so a turn that ended without a report is invisible
+-- to it unless the declarations a child DID make are in this store as well. Both are written by
+-- the command that writes the marker fact, after it, and mirror the fact the marker stands on.
+--
+-- reporting_sessions is the cut-over. A session whose relay records its declarations here says
+-- so once, when it claims its assignment; a turn whose session has no row is a legacy admission
+-- whose declarations may exist only in the marker, and omitted.derive derives nothing for it.
+CREATE TABLE IF NOT EXISTS reporting_sessions (
+    assignment_id       TEXT NOT NULL,
+    session_id          TEXT NOT NULL,
+    dispatch_request_id TEXT NOT NULL,
+    marker_root         TEXT NOT NULL,
+    workspace           TEXT NOT NULL,
+    capability          TEXT NOT NULL,
+    recorded_at         TEXT NOT NULL,
+    PRIMARY KEY (assignment_id, session_id)
+);
+
+-- A turn's declared outcome, create-once like dispositions/<session>/<turn>.json.
+CREATE TABLE IF NOT EXISTS turn_declarations (
+    assignment_id TEXT NOT NULL,
+    session_id    TEXT NOT NULL,
+    turn_id       TEXT NOT NULL,
+    outcome       TEXT NOT NULL,
+    declared_at   TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL,
+    PRIMARY KEY (assignment_id, session_id, turn_id)
+);
+
 -- Operational faults: the machinery failing to do its job, as opposed to a child failing at
 -- its task. One row per distinct BREAKAGE and never one per incident, which is what makes
 -- the difference between a record somebody reads and a Linear project nobody can.

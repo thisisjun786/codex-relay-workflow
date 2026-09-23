@@ -36,7 +36,7 @@ import secrets
 import shlex
 from datetime import datetime
 
-from . import envelope, packets, supervision
+from . import envelope, omitted, packets, supervision
 from .ack import TURN_START_PRECISION_SECONDS
 from .delivery import authorized_settings, reserve_send, send_refusal
 from .errors import DeliveryRefused, RefusalReason
@@ -285,6 +285,11 @@ def _recheck_line(reading):
     selectors = _selectors(reading)
     if selectors is None:
         return None
+    if reading.get("source") == omitted.STORE_SOURCE:
+        # Derived from the store, so rechecked from the store: the command that derived it.
+        return _command("codex-session-relay", "--state", selectors["state"],
+                        "reporting-derive", "--relationship", reading.get("relationshipId"),
+                        "--turn", selectors["turn"])
     return _command("codex-session-relay", "--state", selectors["state"],
                     "reporting-show", "--marker-root", selectors["markerRoot"],
                     "--workspace", selectors["workspace"],
@@ -570,6 +575,26 @@ class SupervisorChannel:
             if obligation is None or obligation["obligationId"] != row["obligation_id"]:
                 return obsolete("the reading frozen on this message no longer raises its"
                                 " obligation")
+            if reading.get("source") == omitted.STORE_SOURCE:
+                # Derived from this store, so it is derived again, here, from what the store
+                # says now: a declaration the child's relay recorded since, a later admitted
+                # turn or the turn's own receipt each leave nothing owed through this message.
+                # No grace: the staging that froze it had already waited it out.
+                derived = omitted.derive(self.store, obligation["relationId"],
+                                         state_directory=self.state_directory,
+                                         now=self.clock.iso(), grace=0,
+                                         turn=obligation["subject"])
+                if not (derived["reportingState"] == supervision.OBSERVED_OMISSION
+                        and derived["owed"]):
+                    return obsolete(
+                        "this store no longer derives an owed omission for turn "
+                        + repr(obligation["subject"]) + ": it reads "
+                        + repr(derived["reportingState"]) + " (" + str(derived["reason"])
+                        + "), owed answers " + repr(derived["owedReason"]))
+                if _reading_key(derived) != _reading_key(reading):
+                    return obsolete("this store derives turn " + repr(obligation["subject"])
+                                    + "'s omission differently from the reading frozen on this"
+                                    " message")
             answered = db.execute(
                 "SELECT event_id FROM events WHERE relationship_id = ? AND turn_id = ?"
                 "   AND stage = 'final' ORDER BY rowid DESC LIMIT 1",
@@ -1066,9 +1091,16 @@ class SupervisorChannel:
         handover re-addresses it and a derived hold is re-derived. One whose message is on its
         way, sent, read or held uncertain is left alone: staging it again could only answer that
         it went, and asking that under the write lock on every tick is what a pass that runs
-        with nobody watching must not do. The manual stage_standing is unchanged.
+        with nobody watching must not do. stage_standing, by hand, stages everything standing.
+
+        An omission is staged with the reading this store derives for it (store_readings), the
+        only reading a pass with no marker access can take. A caller's own reading, staged by
+        hand first, keeps the message: stage() refuses a second reading of one omission.
         """
-        standing = supervision.standing_for(self.store, self.linkage, project_key)
+        derived = self.store_readings(project_key)
+        standing = supervision.standing_for(self.store, self.linkage, project_key,
+                                            observations=derived)
+        readings = {supervision.from_observation(one)["obligationId"]: one for one in derived}
         staged, refused, skipped = [], [], 0
         for obligation in standing["standing"]:
             row = self.store.one(
@@ -1080,7 +1112,8 @@ class SupervisorChannel:
                 skipped += 1
                 continue
             try:
-                staged.append(self.stage(obligation))
+                staged.append(self.stage(obligation,
+                                         reading=readings.get(obligation["obligationId"])))
             except DeliveryRefused as refusal:
                 refused.append({
                     "obligationId": obligation["obligationId"],
@@ -1091,6 +1124,26 @@ class SupervisorChannel:
         return {"schema": VERSION, "projectKey": project_key, "staged": staged,
                 "refused": refused, "skipped": skipped, "gaps": standing["gaps"]}
 
+    def store_readings(self, project_key, observations=()) -> list:
+        """The owed omissions this store derives for a project, beside a caller's readings.
+
+        omitted.derive reads the same turn a caller's reporting-show would, from this store
+        alone, through the same predicate; only turns whose child's relay records its
+        declarations here are derived at all, and only once the grace has passed. Where a
+        caller passed a reading of the same obligation, the caller's is kept and this store's
+        left out: one omission travels with one reading.
+        """
+        covered = set()
+        for one in observations:
+            raised = supervision.from_observation(one)
+            if raised is not None:
+                covered.add(raised["obligationId"])
+        derived = omitted.owed_in_project(
+            self.store, project_key, state_directory=self.state_directory,
+            now=self.clock.iso(), grace=self.policy.omission_grace_seconds)
+        return [one for one in derived
+                if supervision.from_observation(one)["obligationId"] not in covered]
+
     def stage_standing(self, project_key, *, observations=()) -> dict:
         """Everything a project still owes upward, staged in one call.
 
@@ -1098,7 +1151,11 @@ class SupervisorChannel:
         obligation something a parent discharges rather than something it has to remember. What
         is refused is reported beside what was staged: a project where one relationship has no
         supervisor is not a project where nothing can be reported.
+
+        The omissions this store derives are staged beside the caller's readings
+        (store_readings), so a parent who passes none still stages what the daemon would.
         """
+        observations = list(observations) + self.store_readings(project_key, observations)
         standing = supervision.standing_for(
             self.store, self.linkage, project_key, observations=observations)
         staged, refused = [], []

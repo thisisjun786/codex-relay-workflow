@@ -876,7 +876,9 @@ wakes anybody; four more below do the sending, and there is no daemon behind any
 codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
 
 # What does this project still owe upward? An explicit question, never suppressed.
-# A turn that ended without reporting writes no row here, so pass its reporting-show reading.
+# A turn that ended without reporting writes no event. The store derives it where the child's
+# relay recorded its claim here; for a child that claimed without that, pass its reporting-show
+# reading.
 codex-session-relay supervisor-standing --project <key> [--observation <file>]...
 
 # Record that a report was produced for this event's obligation, once.
@@ -912,8 +914,15 @@ answer now, and they converge on the same messages. Only `supervisor-send` attem
 from the command line, and it answers `sent: false` without touching the host when the message
 is held, inside its backoff or already sent - including one the daemon sent first.
 `supervisor-stage` records the report itself, so a run that stages does not also call
-`supervisor-report-recorded`. A turn that ended without a receipt is not staged by the daemon;
-stage it with its `reporting-show` reading.
+`supervisor-report-recorded`. A turn that ended without a receipt is staged by the daemon too,
+once `omission_grace_seconds` have passed since the relay settled it, from what the child's own
+relay recorded in the store: `intent-claim` records there that the session writes its
+declarations into it, and `intent-disposition` records each turn's declaration beside the
+marker file. Both answer a `storeRecord`, and `failed` exits 2 with the marker answer beside
+it; run the same command again, which retries only the store record. `reporting-derive
+--relationship <id>` prints the reading the daemon acts on. A child that claimed without that
+record - through an older relay - is never staged automatically; stage its omission with its
+`reporting-show` reading.
 
 After a supervisor handover, stage the project again. A report staged for the former
 supervisor and never sent is re-addressed to the live one under the same message; one that was

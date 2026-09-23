@@ -53,8 +53,10 @@ HOST_REQUIRED_COMMANDS = (
     # host's own turn list and the recipient's transcript. Neither can answer without one.
     "supervisor-send", "supervisor-read",
 )
-# Every command that touches the managed marker and nothing else. Listed once so the store-selection
-# refusal and the doctor reachability report cannot drift apart.
+# Every command that touches the managed marker and no store this invocation would have to select.
+# intent-claim and intent-disposition also record into the store the INTENT names, after the marker
+# write (declarations.py), which is a store the coordinator chose rather than one discovery guessed.
+# Listed once so the store-selection refusal and the doctor reachability report cannot drift apart.
 MARKER_COMMANDS_BY_NAME = (
     "intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim",
     "intent-disposition", "intent-resolve", "intent-show", "guard-evaluate",
@@ -100,6 +102,8 @@ OFFLINE_COMMANDS = (
     # none of the three reaches the host, so leaving them out under-reported what an operator
     # can run with no App Server.
     "supervisor-select", "supervisor-standing", "supervisor-report-recorded",
+    # The reading the automatic pass derives an omission from, read from this store alone.
+    "reporting-derive",
     # Staging writes the message and the journal entry for it and reaches no host, and
     # showing one reads the rows back. Sending and reading back are in the host list above.
     "supervisor-stage", "supervisor-show",
@@ -443,6 +447,24 @@ def cmd_reporting_show(services, args) -> dict:
         )
     except ValueError as error:
         raise SystemExit2(str(error), EXIT_USAGE) from error
+
+
+def cmd_reporting_derive(services, args) -> dict:
+    """The reading this store alone gives for one relationship's turn, written nowhere.
+
+    What the automatic supervisor pass stages an omission from, and what supervisor-show prints
+    as the recheck of one it staged: omitted.derive, through the same predicate reporting-show
+    uses, over the declarations the child's relay recorded in this store. --grace defaults to
+    the pass's own, so this answers what the pass would.
+    """
+    from . import omitted
+
+    policy = services.supervisor_channel.policy
+    return omitted.derive(
+        services.store, args.relationship, state_directory=services.state_directory,
+        now=services.clock.iso(),
+        grace=policy.omission_grace_seconds if args.grace is None else args.grace,
+        turn=args.turn)
 
 
 def cmd_register(services, args) -> dict:
@@ -1007,10 +1029,14 @@ def cmd_supervisor_standing(services, args) -> dict:
 
     An observation is passed in with --observation because a turn that ended without reporting
     writes no row this store can find; reporting-show is what produces one.
+
+    The omissions this store can derive itself - from the declarations a child's relay
+    recorded here - are added beside them, as the automatic pass would stage them.
     """
     from . import supervision
 
     readings = [_observation_file(path) for path in args.observation or []]
+    readings += services.supervisor_channel.store_readings(args.project, readings)
     return supervision.status_answer(
         services.store, services.linkage, services.assignments, args.project,
         observations=readings)
@@ -2992,8 +3018,10 @@ def _reachability(services, report) -> dict:
 # ------------------------------------------------------------------ managed marker
 
 # The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
-# Store writes on open; every command below writes only to the marker filesystem and records
-# nothing in the relay's tables. intent-register is the one that does more than read: it holds the
+# Store writes on open; every command below writes to the marker filesystem, and only two record
+# anything in the relay's tables: intent-claim and intent-disposition, which after the marker write
+# mirror the fact it stands on into the store the intent's dbPath names (declarations.py), so the
+# relay can derive an omission without reading the marker. intent-register does more than read: it holds the
 # relay's write lock across its generation check and its publication, so an advance cannot commit
 # between them, then releases it with a rollback having written nothing. The state directory is
 # still resolved, because the coordinator is the party that knows where the store it registered
@@ -3067,7 +3095,7 @@ def cmd_intent_register(services, args) -> dict:
 
 
 def cmd_intent_claim(services, args) -> dict:
-    return intent.publish_claim(
+    published = intent.publish_claim(
         _marker_root(args),
         workspace=args.workspace,
         assignment=args.assignment,
@@ -3076,10 +3104,38 @@ def cmd_intent_claim(services, args) -> dict:
         first_turn_id=args.first_turn,
         at=services.clock.iso(),
     )
+    # And in the relay store, after the marker: this session's relay records its declarations
+    # there, which is what lets the store derive an omission for its turns at all. Recorded only
+    # for the claim the marker now stands on, so a claim the marker refused records nothing.
+    from . import declarations
+
+    directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
+    facts, unreadable = marker.read_assignment(directory)
+    standing = next((claim for claim in facts.get("claims", [])
+                     if intent.claimant(claim) == published["sessionId"]), None)
+    # Only the facts this record rests on: the intent (which store) and this session's claim.
+    needed = {"intent", "claims", "claims/" + published["sessionId"] + "/" + marker.CLAIM_FILE}
+    if needed & set(unreadable):
+        record = declarations.failure(
+            "marker_unreadable", "the marker could not be read back after the claim ("
+            + ", ".join(sorted(needed & set(unreadable))) + "), so what it stands on is"
+            " unknown", None)
+    elif published["outcome"] == intent.CONFLICT or standing is None or (
+            standing.get("dispatchRequestId") != args.dispatch_request_id):
+        record = declarations.not_recorded(
+            "claim_not_standing", "the marker does not stand on this claim, so this session"
+            " records nothing about how it reports")
+    else:
+        record = declarations.record_claim(
+            declarations.store_of(facts), assignment=args.assignment,
+            session_id=published["sessionId"], dispatch_request_id=args.dispatch_request_id,
+            marker_root=_resolved(_marker_root(args)), workspace=_resolved(args.workspace),
+            at=services.clock.iso())
+    return _with_store_record(published, record)
 
 
 def cmd_intent_disposition(services, args) -> dict:
-    return intent.publish_disposition(
+    published = intent.publish_disposition(
         _marker_root(args),
         workspace=args.workspace,
         assignment=args.assignment,
@@ -3088,6 +3144,49 @@ def cmd_intent_disposition(services, args) -> dict:
         outcome=args.outcome,
         at=services.clock.iso(),
     )
+    # And in the relay store, after the marker, mirroring the disposition the marker now stands
+    # on: after a create-once conflict that is the first one, as it is for every marker reader.
+    from . import declarations
+
+    directory = marker.assignment_dir(_marker_root(args), args.workspace, args.assignment)
+    facts, unreadable = marker.read_assignment(directory)
+    standing, readable = marker.read_disposition(
+        directory, published["sessionId"], published["turnId"])
+    # Only the facts this record rests on: the intent (which store) and this disposition.
+    if ("intent" in unreadable or not readable or not standing
+            or intent.malformed_disposition(standing)):
+        record = declarations.failure(
+            "marker_unreadable", "the intent or the disposition could not be read back from"
+            " the marker after it was published, so what the marker stands on is unknown",
+            None)
+    else:
+        record = declarations.record_disposition(
+            declarations.store_of(facts), assignment=args.assignment,
+            session_id=published["sessionId"], turn_id=published["turnId"],
+            outcome=standing.get("outcome"), declared_at=standing.get("at") or "",
+            at=services.clock.iso())
+    return _with_store_record(published, record)
+
+
+def _resolved(path) -> str:
+    """A path as omitted.observe spells it, so both readers name one marker the same way."""
+    return str(Path(path).expanduser().resolve())
+
+
+def _with_store_record(published, record) -> dict:
+    """The marker answer with the store record beside it; a failed record fails the command.
+
+    Exit non-zero with the whole answer, because the marker write DID happen and the caller has
+    to be able to see that as well as what did not. Running the command again is safe: the
+    marker fact answers unchanged and only the store record is retried.
+    """
+    from . import declarations
+
+    payload = {**published, "storeRecord": record}
+    if record.get("state") == declarations.FAILED:
+        raise PayloadExit({**payload, "detail": "the marker fact was published and the relay"
+                           " store record was not: " + str(record["detail"])}, EXIT_REFUSED)
+    return payload
 
 
 def cmd_intent_resolve(services, args) -> dict:
@@ -3434,6 +3533,19 @@ def build_parser() -> argparse.ArgumentParser:
     reporting_show.add_argument("--turn", required=True)
     reporting_show.set_defaults(handler=cmd_reporting_show)
 
+    reporting_derive = subparsers.add_parser(
+        "reporting-derive",
+        help="the reporting reading this store alone gives for one relationship's turn, from"
+             " the declarations its child's relay recorded here. Writes nothing")
+    reporting_derive.add_argument("--relationship", required=True)
+    reporting_derive.add_argument(
+        "--turn", help="the turn to read; the relationship's newest admitted turn by default")
+    reporting_derive.add_argument(
+        "--grace", type=float,
+        help="seconds an omission waits after settlement before it is owed; the automatic"
+             " pass's own by default")
+    reporting_derive.set_defaults(handler=cmd_reporting_derive)
+
     register = subparsers.add_parser("register")
     register.add_argument("--parent-task", required=True)
     register.add_argument("--parent-host", required=True)
@@ -3629,8 +3741,9 @@ def build_parser() -> argparse.ArgumentParser:
     standing.add_argument("--observation", action="append",
                           help="a reporting-observation/1 file from reporting-show. A turn that"
                                " ended without reporting writes no row this store can find, so"
-                               " it is present only when its observation is passed in. Repeat"
-                               " once per reading")
+                               " it is present only when its observation is passed in or this"
+                               " store derives it from the declarations a child's relay"
+                               " recorded here. Repeat once per reading")
     standing.set_defaults(handler=cmd_supervisor_standing)
 
     recorded = subparsers.add_parser(
