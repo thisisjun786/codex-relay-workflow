@@ -4773,38 +4773,29 @@ def _plugin_declared_servers(codex_home):
         return None
     for version in versions:
         manifest_path = version / ".codex-plugin" / "plugin.json"
-        # observe, not is_file(): a version directory without a manifest is not a package, but
-        # a manifest this run may not look at is a package nobody asked.
-        found = reading.observe(manifest_path, "a cached plugin manifest")
-        if found is not None and found.state == reading.ABSENT:
+        # reading.read_json, not is_file() and read_text(): a version directory without a
+        # manifest is not a package, a manifest this run may not look at is a package nobody
+        # asked, and the bytes come from one descriptor judged as a regular file, so a pipe
+        # swapped in after the look cannot hold the ownership lock this runs under.
+        found = reading.read_json(manifest_path, "a cached plugin manifest")
+        if found.state == reading.ABSENT:
             continue
-        if found is not None:
+        if found.state != reading.PRESENT or not isinstance(found.value, dict):
+            # Valid JSON is not a manifest either: a root that is a list answered .get with an
+            # AttributeError and register-mcp an internal error instead of the refusal it owes.
             unreadable = True
             continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if not isinstance(manifest, dict):
-                # Valid JSON is not a manifest. A root that is a list answers .get with an
-                # AttributeError, which the handler below does not catch, so register-mcp
-                # answered internal_error instead of the ownership refusal it promises. A
-                # package this cannot read is unreadable, which refuses, not absent.
-                unreadable = True
-                continue
-            named = manifest.get("mcpServers")
-            if not (isinstance(named, str) and named.strip()):
-                continue
-            relative = named[2:] if text_prefix(named, "./", at="start") else named
-            document = json.loads((version / relative).read_text(encoding="utf-8"))
-            if not isinstance(document, dict):
-                unreadable = True
-                continue
-            servers = document.get("mcpServers")
-            if not isinstance(servers, dict):
-                unreadable = True
-                continue
-            declared.update(str(server) for server in servers)
-        except (OSError, ValueError):
+        named = found.value.get("mcpServers")
+        if not (isinstance(named, str) and named.strip()):
+            continue
+        relative = named[2:] if text_prefix(named, "./", at="start") else named
+        found = reading.read_json(version / relative, "a cached plugin MCP declaration")
+        servers = found.value.get("mcpServers") \
+            if found.state == reading.PRESENT and isinstance(found.value, dict) else None
+        if not isinstance(servers, dict):
             unreadable = True
+            continue
+        declared.update(str(server) for server in servers)
     return None if unreadable else declared
 
 
@@ -4905,8 +4896,25 @@ def _probe_launcher_once(argv, codex_home, user_home, policy, probe, recorded, p
     done = subprocess.run(list(argv), cwd=str(cwd), env=environment,
                           stdin=subprocess.DEVNULL, capture_output=True, text=True,
                           timeout=LAUNCHER_PROBE_SECONDS)
-    seen = json.loads(proof.read_text(encoding="utf-8")) if proof.exists() else None
+    # Read like every other file under the ownership lock: one descriptor, judged as a regular
+    # file, so nothing the probe leaves at this name can hold the lock.
+    found = reading.read_json(proof, "the launcher probe's proof")
+    seen = found.value if found.state == reading.PRESENT else None
     return done, seen
+
+
+def _copy_regular(source, destination):
+    """copytree's copy step for the probe: regular files only, read from a non-blocking descriptor.
+
+    shutil.copyfile refuses a pipe it sees, then opens the source by path, and a pipe swapped in
+    between would hold that open -- under the ownership lock. The descriptor is opened first and
+    judged, so anything that is not a regular file is an OSError and the probe refuses.
+    """
+    with os.fdopen(reading.open_regular(source), "rb") as reader, \
+            open(destination, "wb") as writer:
+        shutil.copyfileobj(reader, writer)
+    shutil.copymode(source, destination)
+    return destination
 
 
 def _launcher_honours_policy_records(version, entry):
@@ -4936,8 +4944,9 @@ def _launcher_honours_policy_records(version, entry):
         user_home = root / "home"
         work = root / "work"
         try:
-            # copytree refuses a pipe or a device inside the package rather than opening it.
-            shutil.copytree(str(version), str(copy), symlinks=True)
+            # Every file through _copy_regular, so a pipe or a device inside the package is
+            # refused rather than opened, even one that appears after copytree looked at it.
+            shutil.copytree(str(version), str(copy), symlinks=True, copy_function=_copy_regular)
             user_home.mkdir()
             work.mkdir()
         except (OSError, shutil.Error) as error:

@@ -1232,11 +1232,16 @@ so what stays fails visibly. It is not removed. Every writer of the bridge recor
 holds the ownership lock (`crw-mcp-ownership` beside the record) while it writes, moves or retires
 the record: `register-mcp`, the transition's bridge steps and `disable`. A removal by path cannot
 exclude a writer that does not take that lock, such as an editor, and would delete that writer's
-file. A `register-mcp` rerun after the file was edited hashes the new bytes and is refused as
-`record_differs` with the move-aside repair. The transition carries the recorded reference, so its
-preflight refuses a changed file, and its record step writes through the same function as
-`register-mcp`. An edit made after the last check is caught where every other one is: the launcher
-hashes the file at every start and refuses the record.
+file. Every file `register-mcp` reads while it holds that lock (the record, the policy, the Codex
+configuration, the cached manifests and declarations, and the package the launcher probe copies) is
+read from one descriptor opened without blocking and judged as a regular file, never by a second
+open of the path, so a pipe put in place of any of them cannot hold the lock. The transition reads
+the configuration, the record, its archives and the manifest the same way. A `register-mcp` rerun
+after the file was edited hashes the new bytes and is refused as `record_differs` with the
+move-aside repair. The transition carries the recorded reference, so its preflight refuses a changed
+file, and its record step writes through the same function as `register-mcp`. An edit made after the
+last check is caught where every other one is: the launcher hashes the file at every start and
+refuses the record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the

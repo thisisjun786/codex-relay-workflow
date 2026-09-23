@@ -818,6 +818,29 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertIn("encoded", why)
         self.assertNotEqual(bridgerecord.policy_path_complaints("/p\ud800"), [])
 
+    def test_the_shared_readers_judge_the_descriptor_not_the_earlier_look(self):
+        """Every read under the ownership lock goes through reading.read_text or read_json.
+
+        Both looked at the path and then opened it by path; a pipe swapped in between blocked the
+        open. Now the bytes come from one non-blocking descriptor judged as a regular file.
+        """
+        for reader in ("read_text", "read_json"):
+            with self.subTest(reader):
+                target = self.home.destination.parent / ("swapped-" + reader + ".json")
+                target.write_text("{}", encoding="utf-8")
+                program = RegisterMcpDoesNotShadowADeclaredServer.SWAPS_A_PIPE_IN_AFTER_OBSERVE + (
+                    "print(getattr(reading, sys.argv[3])(sys.argv[4], 'the file').state)\n")
+                try:
+                    done = subprocess.run(
+                        [sys.executable, "-c", program, str(ROOT / "scripts"), target.name,
+                         reader, str(target)], capture_output=True, text=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    self.fail(reader + " blocked on a file swapped for a pipe")
+                self.assertEqual(done.returncode, 0, done.stderr)
+                # Answered, and in the partition nothing is concluded from.
+                self.assertEqual(len(done.stdout.split()), 1, done.stdout)
+                self.assertIn(done.stdout.split()[0], reading.UNUSABLE, done.stdout)
+
     def test_reading_a_record_that_is_a_pipe_answers_without_blocking(self):
         """Every reader of the record goes through this, register-mcp and the transition too."""
         pipe = self.home.destination.parent / "record.fifo"
@@ -2118,6 +2141,50 @@ class RegisterMcpDoesNotShadowADeclaredServer(unittest.TestCase):
         status, emitted, output = self.register("--apply", "--name", "my-bridge")
         self.assertEqual(status, 0, output)
         self.assertEqual(emitted["serversNow"], ["my-bridge"])
+
+    # Swaps a pipe in for the first path it is asked about whose name ends with argv[2], right
+    # after reading.observe has looked at it and found a regular file there.
+    SWAPS_A_PIPE_IN_AFTER_OBSERVE = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from crw_runtime import reading\n"
+        "suffix, swapped = sys.argv[2], []\n"
+        "real = reading.observe\n"
+        "def observed_then_swapped(path, what):\n"
+        "    found = real(path, what)\n"
+        "    if found is None and not swapped and str(path).endswith(suffix):\n"
+        "        os.unlink(str(path))\n"
+        "        os.mkfifo(str(path))\n"
+        "        swapped.append(str(path))\n"
+        "    return found\n"
+        "reading.observe = observed_then_swapped\n"
+    )
+
+    @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
+    def test_a_manifest_swapped_for_a_pipe_after_the_look_does_not_hold_the_lock(self):
+        """Devin, PR #137: observe, then read_text by path, blocked on a pipe put there between.
+
+        register-mcp reads the cached manifests under the ownership lock, so that read held the
+        lock for every later run. Bounded by a timeout, so a regression fails instead of hanging.
+        """
+        self.install_plugin()
+        program = self.SWAPS_A_PIPE_IN_AFTER_OBSERVE + (
+            "import runtime_install\n"
+            "raise SystemExit(runtime_install.main(sys.argv[3:]))\n")
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", program, str(ROOT / "scripts"),
+                 os.path.join(".codex-plugin", "plugin.json"), "register-mcp", "--owner",
+                 "user", "--codex-home", str(self.home.codex_home), "--bridge-command",
+                 str(self.home.destination / "current" / "bin" / "codex-thread-bridge"),
+                 "--apply"],
+                capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("register-mcp blocked on a manifest swapped for a pipe")
+        emitted = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("could not be read", emitted.get("detail") or "", done.stdout)
+        self.assertNotIn("[mcp_servers.codex-thread-bridge]", self.config())
 
     @unittest.skipUnless(TOML_READER, "register-mcp needs a configuration reader")
     def test_a_cached_manifest_that_is_not_an_object_refuses_rather_than_crashing(self):
