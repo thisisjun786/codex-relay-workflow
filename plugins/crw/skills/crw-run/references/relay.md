@@ -916,6 +916,10 @@ supervisor and never sent is re-addressed to the live one under the same message
 already sent stays with the task it went to and is listed under `refused` as
 `relation_owner_drift`, which means the successor has not been told through this channel.
 
+A send whose response never came back is held as `held_uncertain` and is never resent. The
+supervisor's `supervisor-read` can still settle it, and does only when its transcript holds
+that attempt's request id; `supervisor-show` then records how it was settled.
+
 ```bash
 # Freeze what is owed upward as a message. Staging is not sending.
 codex-session-relay supervisor-stage --event <id> [--recipient <supervisor task>]
@@ -945,11 +949,13 @@ it carries a start time which is not CERTAINLY earlier than the send. That compa
 to every candidate, including the turn the attempt names, because a send can steer an existing
 turn rather than open one. Where the readback names the turn the send itself opened, the
 delivered bytes have to be in that same turn: what the token is in is where the message
-landed. It does not say the turn answered,
-who wrote the answer, or that anybody acted, and it discharges nothing: the obligation stands
-until Linear confirms. Nothing here is automatic - there is no daemon behind these commands, so
-a report is expected to go out inside the parent's own turn, which is an instruction to the
-parent rather than something the relay enforces.
+landed. It does not say the turn answered, who computed the proof, or that anybody acted, and
+it discharges nothing: the obligation stands until Linear confirms. For the turn the send
+opened (`turnOrigin: relay_opened`, the ordinary case) a readback needs nothing from the
+supervisor, since that turn's id is already in the store, so it shows the report arrived
+rather than that it was read. Nothing here is automatic - there is no daemon behind these
+commands, so a report is expected to go out inside the parent's own turn, which is an
+instruction to the parent rather than something the relay enforces.
 
 `linkage-directive` takes `--purpose` now, which derives the envelope pointer from the link and
 the digest rather than leaving it to be written by hand. A pointer belonging to another

@@ -192,6 +192,21 @@ a later readback is answered from it on a fast path BEFORE the proof is checked,
 neither verified nor recorded, and a settled verdict cannot be replaced - the guard for that is
 the re-read inside the write transaction, not the check before it.
 
+The write also asks whether the message is still the one the checks were made against. They
+run outside the lock, so a message whose state or attempt count moved in between refuses and
+records nothing, and the answer is to ask again.
+
+A message held uncertain is read back as well. Its send's response was lost, or its sender died
+between the claim and the receipt, and nothing else reconciles this queue, so refusing it here
+made the one check that could prove the send arrived unreachable. It is verified against THAT
+attempt's request id: a real turn on the recipient's thread that did not begin before the send,
+and that request id in the recipient's own transcript. Only then does the readback settle it
+to `read`, with a `supervisor_message_reconciled` journal entry and a `reconciled` field on
+the readback saying so. The answer alone never settles it; an unverified readback is recorded
+and the message stays `held_uncertain`. The attempt keeps the transport state it had, so the
+reach ladder still reads `transport_accepted` as unmeasured - the transport never answered -
+while `received` is answered from the readback.
+
 ### The five stages
 
 `envelope.REACH_SOURCES` changes for this direction, because the table is data precisely so it
@@ -273,41 +288,55 @@ like a command and could not be run. With the reading the pointer is rendered wh
 ## What a readback is not
 
 It carries no supervisor authority, and the bound on that is worth stating exactly rather than
-in general. Reaching `host_read` takes four things no caller can produce from this store
-alone: a turn the host will read on the RECIPIENT's own thread, a start time for it that is
-not certainly before the send, this attempt's request id in the recipient's own transcript,
-and - where the readback names the turn the send opened - the token in that same turn. Every
-one of those is a question put to the host about the recipient's thread. A caller holding
-nothing but this database gets `unverified_turn` or `transcript_unconfirmed`, which is
-recorded and leaves the message where it was.
+in general. `host_read` takes four answers from the host about the RECIPIENT's thread and
+nothing else: the named turn is readable there, its start is not certainly before the send,
+this attempt's request id is in the thread's transcript, and - where the named turn is the one
+the send opened - the token is in that turn. A caller with this store and no host gets
+`unverified_turn`, which is recorded and leaves the message where it was.
 
-One residual is left and this channel cannot close it. A local operator who can DRIVE the
-recipient's thread - open a turn on it and get the request id into it - satisfies all four,
-and so can produce a verified readback the supervisor never wrote. That operator already holds
-the authority to write the row directly: the store is a file, not a service with callers to
-authenticate, so nothing on this side can tell the two apart. Closing it takes an
-authenticated caller, which is a relay-wide change and not this channel's to make. What the
-channel does inside its own reach is record who ASSERTED the readback and refuse an assertion
-that does not name the message's recipient - a declaration, written down as one, and calling
-it anything stronger would be the kind of claim the rest of this document exists to avoid.
+A caller who can read this store and reach the host needs nothing more. The turn a send opens
+is on the recipient's thread, holds the token, and has its id in `supervisor_attempts`, and the
+proof is computed from that id and the message id. So a readback naming that turn -
+`turnOrigin: relay_opened`, the ordinary case - verifies without any act of the supervisor's,
+and what it establishes is that the message ARRIVED where the recipient reads, not that anybody
+read it. A readback naming a turn the relay did not open - `recipient_opened` - needs a turn
+opened on the recipient's thread after the send, which the supervisor does by answering and
+which an operator who can drive that thread could do as well. Neither says who computed the
+proof. Anyone able to do either can already write the row directly, because the store is a
+file and not a service with callers to authenticate, so nothing on this side can tell them
+apart; closing that takes an authenticated caller, which is a relay-wide change and not this
+channel's to make. What the channel does inside its own reach is record who ASSERTED the
+readback and refuse an assertion that does not name the message's recipient - a declaration,
+written down as one, and calling it anything stronger would be the kind of claim the rest of
+this document exists to avoid.
 
-Read `received` on the reach ladder as "a readback was recorded, the host agreed its turn is
-real, and the recipient's own transcript holds the message". It is not "the supervisor acted",
-and the obligation is not discharged by it.
+Read `received` on the reach ladder as "a readback was recorded, the named turn is real on the
+recipient's thread, and its transcript holds this attempt's request id", with `turnOrigin`
+read beside it. It is not "the supervisor read it" and not "the supervisor acted", and the
+obligation is not discharged by it.
 
 ## What this does not do
 
 Nothing here wakes anybody on a timer. There is no daemon pass behind these commands: a report
 goes out inside the parent's own turn. An uncertain send is never retried automatically either,
 because there is no reconciler for this queue and a second send that lands is a second wake for
-one fact; it stays `held_uncertain`, which is not claimable, and says so.
+one fact; it stays `held_uncertain`, which is not claimable, and says so, until a verified
+readback of that attempt settles it.
 
 A send interrupted between its claim and its transport receipt is the same answer reached a
 different way. The claim commits first, so a process that stops existing in between leaves the
 row in `sending` with a lease nobody will settle. An expired lease moves it to
 `held_uncertain`, which authorises no resend, because nothing observed what that send did.
 `stranded()` lists such rows and is a READ: there is no sweep behind it, and a row is moved
-when `attempt()` is called for that message again.
+when `attempt()` or `read_back()` is called for that message again. The lease is re-checked
+inside that move, and a receipt that arrives after it is recorded on the attempt without moving
+a message its sender no longer owns.
+
+Staging decides whether anything is owed a second time under the write lock. The reading
+`supervision.select` takes before it can be overtaken by a `supervisor-report-recorded`
+committing in between, and the insert then stood beside a journal entry that already said the
+report existed. Under the lock, an obligation already reported or discharged refuses as
+`not_claimable` and nothing is written.
 
 ## Who calls it today
 

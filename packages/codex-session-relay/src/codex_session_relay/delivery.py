@@ -1883,20 +1883,29 @@ def send_refusal(db, policy, recipient: str, now: float):
 
     The gap is read across windows. last_send_at lives on the hour's row, so a read of the
     current hour alone let two sends a second apart straddle the boundary.
+    Only the windows the gap can reach are read, never a later one: a row dated ahead of this
+    clock, left by a clock that ran fast, would otherwise stall the recipient for as long as
+    that clock was wrong rather than for at most the hour a single window already allowed.
+
+    An hour with no row yet has spent nothing, and is compared as zero rather than skipped: a
+    configured cap of zero refuses the first send too, which is what the count checked after
+    its increment always did.
     """
+    window = int(now // 3600) * 3600
+    reach = 3600 * (1 + int(policy.min_send_interval_seconds // 3600))
     last = db.execute(
-        "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?",
-        (recipient,),
+        "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?"
+        "   AND window_start BETWEEN ? AND ?",
+        (recipient, window - reach, window),
     ).fetchone()
     if (last is not None and last["last"] is not None
             and (now - last["last"]) < policy.min_send_interval_seconds):
         return "min_send_interval"
-    window = int(now // 3600) * 3600
     used = db.execute(
         "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?",
         (recipient, window),
     ).fetchone()
-    if used is not None and used["sends"] >= policy.max_sends_per_recipient_per_hour:
+    if (used["sends"] if used is not None else 0) >= policy.max_sends_per_recipient_per_hour:
         return "hourly_cap"
     return None
 

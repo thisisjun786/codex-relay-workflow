@@ -15,12 +15,13 @@ derived from the direction, the relation, the purpose and the subject, so one fa
 converges on one row rather than waking a supervisor twice.
 
 What a verified readback establishes, written here because the word "received" invites more
-than it holds: the delivered bytes are in the recipient's own transcript, a real turn on its
-thread answered with a value those bytes do not contain, and that turn started no earlier than
-the send. What it does not establish is who wrote the answer. This transport carries opaque
-text and no authenticated caller, and the turn a send opens is a turn the sender already knows
-the id of - so a readback from that turn is the ordinary case AND the weakest one, and which
-turn answered is recorded rather than averaged into one word.
+than it holds: this attempt's request id is in the recipient's own transcript, the named turn is
+real on its thread, and that turn did not certainly begin before the send. It does not establish
+that the turn answered anything or who computed the proof. The proof is built from two
+identifiers this store holds, and the turn a send opens is one whose id the sender already
+knows - so for that turn, which is the ordinary case, a verified readback needs no act of the
+supervisor's at all and shows arrival rather than reading. Which turn was named is recorded
+rather than averaged into one word.
 
 Nothing here wakes anybody on a timer. There is no daemon pass behind these methods: a report
 goes out inside the parent's own turn, and what discharges the obligation is still the Linear
@@ -115,6 +116,18 @@ def _addressed_as(row, resolution):
     return (row["sender_task_id"] == resolution["sender"]
             and row["recipient_task_id"] == resolution["recipient"]
             and row["project_key"] == resolution["projectKey"])
+
+
+def _nothing_owed(obligation, decided):
+    """The refusal for an obligation select() says produces no report, decided under the lock."""
+    return DeliveryRefused(
+        RefusalReason.NOT_CLAIMABLE,
+        "nothing is owed upward for obligation " + repr(obligation["obligationId"])
+        + ": " + str(decided["reason"]) + ", decided under the staging write lock."
+        " The obligation is preserved either way; what is refused is producing a second"
+        " report about a fact somebody has already reported or the supervisor can already"
+        " read for itself",
+    )
 
 
 class _NotClaimable(Exception):
@@ -276,7 +289,43 @@ class SupervisorChannel:
         packet = self.compose(obligation, resolution=resolution, reading=reading,
                               observed_at=self.clock.iso())
         message_id = packet["envelope"]["messageId"]
-        existing = self.find(message_id)
+        at = self.clock.iso()
+        staged = False
+        existing = None
+        with self.store.composing() as db:
+            # Both questions are asked HERE, under the write lock, and nowhere before it. A
+            # reading taken earlier can be overtaken twice over: a supervisor-report-recorded
+            # committing in between left the insert standing beside a journal entry that
+            # already said the report existed, and a stage from the former hierarchy
+            # committing in between made this caller refuse or return that row instead of
+            # re-addressing it, so the successor was never told.
+            existing = db.execute("SELECT * FROM supervisor_messages WHERE message_id = ?",
+                                  (message_id,)).fetchone()
+            if existing is None:
+                decided = supervision.select(self.store, obligation, recipient=None)
+                if not decided["report"]:
+                    raise _nothing_owed(obligation, decided)
+                cursor = db.execute(
+                    "INSERT OR IGNORE INTO supervisor_messages (message_id, obligation_id,"
+                    " obligation_kind, relationship_id, project_key, purpose, kind,"
+                    " sender_task_id, recipient_task_id, subject, packet, state,"
+                    " attempt_count, next_eligible_at, staged_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?)",
+                    (message_id, obligation["obligationId"], obligation["kind"],
+                     obligation["relationId"], resolution["projectKey"],
+                     packet["envelope"]["purpose"], packet["envelope"]["kind"],
+                     resolution["sender"], resolution["recipient"], obligation["subject"],
+                     json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at),
+                )
+                staged = cursor.rowcount == 1
+                if staged:
+                    # In the SAME transaction as the row. A report that exists and is not
+                    # recorded would be produced again by the next reading of the same fact,
+                    # which is the duplicate wake the journal entry exists to prevent; and a
+                    # record with no row would suppress a report nobody can send.
+                    supervision.record_report(
+                        self.store, obligation, at=at, messageId=message_id,
+                        note="staged on the supervisor channel")
         if existing is not None:
             if _addressed_as(existing, resolution):
                 return {"schema": VERSION, "staged": False, "messageId": message_id,
@@ -285,40 +334,9 @@ class SupervisorChannel:
             # The id is the FACT's and the endpoints are the hierarchy's, so a handover moves
             # the second from under the first. Returning the row as it stands is what left a
             # report staged for a supervisor who had stepped down: attempt() refuses it as
-            # drift, and the journal keeps a replacement from being produced.
+            # drift, and the journal keeps a replacement from being produced. _readdress
+            # decides again inside its own write, so a claim committing after this read wins.
             return self._readdress(existing, packet, resolution)
-        decided = supervision.select(self.store, obligation, recipient=None)
-        if not decided["report"]:
-            raise DeliveryRefused(
-                RefusalReason.NOT_CLAIMABLE,
-                "nothing is owed upward for obligation " + repr(obligation["obligationId"])
-                + ": " + str(decided["reason"]) + ". The obligation is preserved either way;"
-                " what is refused is producing a second report about a fact somebody has"
-                " already reported or the supervisor can already read for itself",
-            )
-        at = self.clock.iso()
-        staged = False
-        with self.store.composing() as db:
-            cursor = db.execute(
-                "INSERT OR IGNORE INTO supervisor_messages (message_id, obligation_id,"
-                " obligation_kind, relationship_id, project_key, purpose, kind, sender_task_id,"
-                " recipient_task_id, subject, packet, state, attempt_count, next_eligible_at,"
-                " staged_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,NULL,?,?)",
-                (message_id, obligation["obligationId"], obligation["kind"],
-                 obligation["relationId"], resolution["projectKey"],
-                 packet["envelope"]["purpose"], packet["envelope"]["kind"],
-                 resolution["sender"], resolution["recipient"], obligation["subject"],
-                 json.dumps(packet, ensure_ascii=False, sort_keys=True), QUEUED, at, at),
-            )
-            staged = cursor.rowcount == 1
-            if staged:
-                # In the SAME transaction as the row. A report that exists and is not recorded
-                # would be produced again by the next reading of the same fact, which is the
-                # duplicate wake the journal entry exists to prevent; and a record with no row
-                # would suppress a report nobody can send.
-                supervision.record_report(
-                    self.store, obligation, at=at, messageId=message_id,
-                    note="staged on the supervisor channel")
         return {"schema": VERSION, "staged": staged, "messageId": message_id,
                 "reason": "staged" if staged else "another caller staged this fact first",
                 "message": dict(self.get(message_id)),
@@ -690,17 +708,20 @@ class SupervisorChannel:
             return row
         at = self.clock.iso()
         with self.store.transaction() as db:
-            db.execute(
+            # The lease is re-checked here rather than trusted from the reading above: that
+            # reading is taken outside the lock, and what decides a recovery is the row now.
+            cursor = db.execute(
                 "UPDATE supervisor_messages SET state = ?, lease_owner = NULL,"
                 " lease_until = NULL, updated_at = ? WHERE message_id = ? AND state = ?"
-                "   AND attempt_count = ?",
-                (HELD_UNCERTAIN, at, row["message_id"], SENDING, row["attempt_count"]))
-            self.store.journal(
-                "supervisor_message_stranded", row["message_id"],
-                {"attemptNo": row["attempt_count"], "leaseOwner": row["lease_owner"],
-                 "leaseUntil": row["lease_until"],
-                 "reason": "the lease expired with no transport receipt, so what that send"
-                           " did is unknown and is not repeated"}, at=at)
+                "   AND attempt_count = ? AND (lease_until IS NULL OR lease_until <= ?)",
+                (HELD_UNCERTAIN, at, row["message_id"], SENDING, row["attempt_count"], now))
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "supervisor_message_stranded", row["message_id"],
+                    {"attemptNo": row["attempt_count"], "leaseOwner": row["lease_owner"],
+                     "leaseUntil": row["lease_until"],
+                     "reason": "the lease expired with no transport receipt, so what that"
+                               " send did is unknown and is not repeated"}, at=at)
         return self.get(row["message_id"])
 
     def stranded(self, *, now=None) -> list:
@@ -891,32 +912,45 @@ class SupervisorChannel:
                 (state, facts.send_attempted, int(bool(facts.retry_safe)), facts.turn_id,
                  json.dumps(record, ensure_ascii=False, sort_keys=True), at, request_id),
             )
-            db.execute(
+            # The attempt's own receipt is always recorded; the MESSAGE moves only from the
+            # states this send can still own. A send slow enough for its lease to expire is
+            # recovered to held_uncertain by somebody else, and a readback can then settle
+            # that to read on the recipient's own evidence - so an unguarded write here let a
+            # late receipt drag a read message back to dispatched.
+            cursor = db.execute(
                 "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
                 " hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"
-                " WHERE message_id = ?",
-                (state, when, hold, at, message_id),
+                " WHERE message_id = ? AND attempt_count = ? AND state IN (?,?)",
+                (state, when, hold, at, message_id, attempts, SENDING, HELD_UNCERTAIN),
             )
             self.store.journal(
                 "supervisor_message_attempted", message_id,
                 {"requestId": request_id, "deliveryState": state,
                  "sendAttempted": facts.send_attempted, "turnId": facts.turn_id,
-                 "holdReason": hold}, at=at)
+                 "holdReason": hold, "messageMoved": cursor.rowcount == 1}, at=at)
 
     def _rate_limited(self, recipient, now):
         """A preflight over the claim's own predicate, which saves the host a read."""
         return send_refusal(self.store.db, self.policy, recipient, now) is not None
 
     def _reschedule(self, row, when, *, state=None, hold=None) -> None:
-        # Guarded on the state and attempt count that were observed, so a stale reading cannot
-        # drag a message another caller has already dispatched backwards.
         with self.store.transaction() as db:
-            db.execute(
-                "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
-                " hold_reason = ?, updated_at = ? WHERE message_id = ? AND state IN (?,?,?)"
-                "   AND attempt_count = ?",
-                (state or row["state"], when, hold, self.clock.iso(), row["message_id"],
-                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, row["attempt_count"]))
+            self._reschedule_in(db, row, when, state=state, hold=hold)
+
+    def _reschedule_in(self, db, row, when, *, state=None, hold=None) -> bool:
+        # A compare-and-set on everything the caller's decision rested on: the state, the hold,
+        # the recheck time, the recipient and the attempt count it observed. Matching only the
+        # state class and the count let a stale caller clear another caller's busy cap, and
+        # put the former recipient's delay back on a message re-addressed since it looked.
+        cursor = db.execute(
+            "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"
+            " hold_reason = ?, updated_at = ? WHERE message_id = ? AND state IN (?,?,?)"
+            "   AND state = ? AND hold_reason IS ? AND next_eligible_at IS ?"
+            "   AND recipient_task_id = ? AND attempt_count = ?",
+            (state or row["state"], when, hold, self.clock.iso(), row["message_id"],
+             QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, row["state"], row["hold_reason"],
+             row["next_eligible_at"], row["recipient_task_id"], row["attempt_count"]))
+        return cursor.rowcount == 1
 
     def _defer_busy(self, row, now) -> None:
         """A recipient mid-turn is left strictly alone: no resume, no attempt, no record.
@@ -928,14 +962,21 @@ class SupervisorChannel:
         made the busy cap unreachable AND froze the backoff at its base interval, so an
         endlessly busy supervisor was retried at a fixed rate for ever. The journal is durable
         and already exists, which is what makes this a bound rather than a hope.
+
+        Counted, decided and written in ONE transaction. Counting before it let two callers
+        deferring one message both read the same count, both journal, and reach the cap
+        twice as fast; and a deferral whose reschedule found the row already moved was
+        counted anyway.
         """
-        deferrals = self._deferrals(row["message_id"]) + 1
-        hold = (self.policy.cap_reason("busy")
-                if deferrals >= self.policy.busy_max_attempts else None)
-        self.store.journal("supervisor_message_deferred", row["message_id"],
-                           {"deferral": deferrals, "holdReason": hold}, at=self.clock.iso())
-        self._reschedule(row, now + self.policy.delay_for(deferrals, "busy"),
-                         state=DEFERRED_BUSY, hold=hold)
+        with self.store.transaction() as db:
+            deferrals = self._deferrals(row["message_id"]) + 1
+            hold = (self.policy.cap_reason("busy")
+                    if deferrals >= self.policy.busy_max_attempts else None)
+            if self._reschedule_in(db, row, now + self.policy.delay_for(deferrals, "busy"),
+                                   state=DEFERRED_BUSY, hold=hold):
+                self.store.journal("supervisor_message_deferred", row["message_id"],
+                                   {"deferral": deferrals, "holdReason": hold},
+                                   at=self.clock.iso())
 
     def _deferrals(self, message_id) -> int:
         """How many times this message has been put off for its CURRENT recipient being busy.
@@ -960,12 +1001,13 @@ class SupervisorChannel:
         is why. A hold is for a bound this channel chose, not for a fact about the recipient
         that the next observation may contradict.
         """
-        self._reschedule(row, now + self.policy.lifecycle_recheck_seconds,
-                         state=WITHHELD_PRE_SEND)
-        self.store.journal(
-            "supervisor_message_withheld", row["message_id"],
-            {"deliverable": observation.deliverable, "reason": observation.withhold_reason},
-            at=self.clock.iso())
+        with self.store.transaction() as db:
+            if self._reschedule_in(db, row, now + self.policy.lifecycle_recheck_seconds,
+                                   state=WITHHELD_PRE_SEND):
+                self.store.journal(
+                    "supervisor_message_withheld", row["message_id"],
+                    {"deliverable": observation.deliverable,
+                     "reason": observation.withhold_reason}, at=self.clock.iso())
 
     def _withhold_settings(self, row, now, refusal) -> None:
         """Withheld before any transport call, naming what the record got wrong.
@@ -973,12 +1015,13 @@ class SupervisorChannel:
         Not a permanent hold: settings that were never recorded can be recorded, and the next
         pass decides again. Nothing was claimed, so there is no attempt to explain.
         """
-        self._reschedule(row, now + self.policy.lifecycle_recheck_seconds,
-                         state=WITHHELD_PRE_SEND)
-        self.store.journal(
-            "supervisor_message_withheld", row["message_id"],
-            {"reason": refusal.reason.value if refusal.reason else None,
-             "detail": refusal.detail}, at=self.clock.iso())
+        with self.store.transaction() as db:
+            if self._reschedule_in(db, row, now + self.policy.lifecycle_recheck_seconds,
+                                   state=WITHHELD_PRE_SEND):
+                self.store.journal(
+                    "supervisor_message_withheld", row["message_id"],
+                    {"reason": refusal.reason.value if refusal.reason else None,
+                     "detail": refusal.detail}, at=self.clock.iso())
 
     # ------------------------------------------------------------------ reading it back
 
@@ -1004,8 +1047,15 @@ class SupervisorChannel:
         time once it has one, and an item keeps its text and its turn. A host that rewrites
         history between the two reads - a rollback removing the turn or the item - is not
         visible from here, and the verdict does not claim otherwise.
+
+        A message held uncertain is read back too. Its send's response was lost, or its sender
+        died between the claim and the receipt, and nothing else reconciles this queue - so
+        refusing it here made the one check that could prove this exact attempt arrived
+        unreachable. It is verified against THAT attempt's request id, and only a verified
+        readback settles it: the answer alone never does, and an unverified one is recorded
+        with the message left where it was.
         """
-        row = self.get(message_id)
+        row = self._recover_if_stranded(self.get(message_id), self.clock.now())
         if asserted_by is not None and asserted_by != row["recipient_task_id"]:
             raise DeliveryRefused(
                 RefusalReason.RECIPIENT_NOT_AUTHORIZED,
@@ -1014,11 +1064,12 @@ class SupervisorChannel:
                 " row; it is not evidence of who is calling, and nothing on this side could"
                 " be",
             )
-        if row["state"] not in DELIVERED + (READ,):
+        if row["state"] not in DELIVERED + (HELD_UNCERTAIN, READ):
             raise DeliveryRefused(
                 RefusalReason.NOT_CLAIMABLE,
                 "message " + repr(message_id) + " is " + repr(row["state"]) + "; only a"
-                " delivered message is read back, because there is nothing yet to have read",
+                " message that was sent, or whose send nobody heard back from, is read back,"
+                " because otherwise there is nothing yet to have read",
             )
         if not isinstance(read_turn_id, str) or not read_turn_id.strip():
             raise DeliveryRefused(
@@ -1043,9 +1094,22 @@ class SupervisorChannel:
                 "the proof does not match this message and turn. It is sha256(messageId|your"
                 " own turn id), and quoting the delivered fields back cannot produce it",
             )
-        attempt = self.store.one(
-            "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state IN (?,?)"
-            " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
+        uncertain = row["state"] == HELD_UNCERTAIN
+        if uncertain:
+            # The attempt whose outcome nobody heard. Its own request id is the token, so what
+            # the scan finds is evidence about THAT send and no other.
+            attempt = self.store.one(
+                "SELECT * FROM supervisor_attempts WHERE message_id = ? AND attempt_no = ?"
+                "   AND state = ?", (message_id, row["attempt_count"], HELD_UNCERTAIN))
+            if attempt is None:
+                raise DeliveryRefused(
+                    RefusalReason.NOT_CLAIMABLE,
+                    "message " + repr(message_id) + " is held uncertain with no uncertain"
+                    " attempt to read it back against, so there is no token to look for")
+        else:
+            attempt = self.store.one(
+                "SELECT * FROM supervisor_attempts WHERE message_id = ? AND state IN (?,?)"
+                " ORDER BY attempt_no DESC LIMIT 1", (message_id, DISPATCHED, INBOX_ONLY))
         verified, detail, origin = self._verify_read_turn(row, attempt, read_turn_id, adapter)
         delivered = self._delivered_evidence(row, attempt, adapter)
         if verified == HOST_READ and not delivered.get("found"):
@@ -1075,6 +1139,14 @@ class SupervisorChannel:
             detail = ("this readback names the turn the send opened, " + str(read_turn_id)
                       + ", and the delivered token is in " + str(delivered["turnId"])
                       + "; where the message landed is where a reader of it reads")
+        reconciled = None
+        if uncertain and verified == HOST_READ:
+            reconciled = {"from": HELD_UNCERTAIN, "by": "readback",
+                          "requestId": attempt["request_id"],
+                          "attemptNo": attempt["attempt_no"],
+                          "deliveredTurnId": delivered.get("turnId")}
+            detail += ("; the send's own response was never heard, and this attempt's request"
+                       " id in the recipient's transcript is what settles it")
         at = self.clock.iso()
         with self.store.transaction() as db:
             # Re-read FIRST, inside the write, because the check above happens outside the
@@ -1094,6 +1166,19 @@ class SupervisorChannel:
                         "readTurnId": settled["read_turn_id"],
                         "detail": settled["detail"], "readAt": settled["read_at"],
                         "raced": True}
+            # And the message is still the one these checks were made against. They ran outside
+            # the lock, so a move in between would have them describe a state that is gone.
+            current = db.execute(
+                "SELECT state, attempt_count FROM supervisor_messages WHERE message_id = ?",
+                (message_id,)).fetchone()
+            if (current["state"], current["attempt_count"]) != (row["state"],
+                                                                 row["attempt_count"]):
+                raise DeliveryRefused(
+                    RefusalReason.NOT_CLAIMABLE,
+                    "message " + repr(message_id) + " moved from " + repr(row["state"])
+                    + " to " + repr(current["state"]) + " while this readback was being"
+                    " checked, so the checks describe a message that is no longer there."
+                    " Nothing was recorded; answer again")
             db.execute(
                 "INSERT INTO supervisor_readbacks (message_id, read_turn_id, proof, verified,"
                 " request_id, detail, read_at) VALUES (?,?,?,?,?,?,?)"
@@ -1105,26 +1190,35 @@ class SupervisorChannel:
                  attempt["request_id"] if attempt is not None else None,
                  json.dumps({"turnOrigin": origin, "detail": detail,
                              "delivered": delivered,
-                             "assertedBy": asserted_by or "undeclared"},
+                             "assertedBy": asserted_by or "undeclared",
+                             "reconciled": reconciled},
                             ensure_ascii=False, sort_keys=True),
                  at),
             )
             if verified == HOST_READ:
                 db.execute(
                     "UPDATE supervisor_messages SET state = ?, updated_at = ?"
-                    " WHERE message_id = ?", (READ, at, message_id))
+                    " WHERE message_id = ? AND state = ? AND attempt_count = ?",
+                    (READ, at, message_id, row["state"], row["attempt_count"]))
+            if reconciled is not None:
+                self.store.journal("supervisor_message_reconciled", message_id,
+                                   {**reconciled, "readTurnId": read_turn_id}, at=at)
             self.store.journal(
                 "supervisor_message_read", message_id,
                 {"verified": verified, "turnOrigin": origin, "readTurnId": read_turn_id,
-                 "deliveredEvidence": delivered.get("found")}, at=at)
+                 "deliveredEvidence": delivered.get("found"),
+                 "reconciled": reconciled is not None}, at=at)
         return {"schema": VERSION, "messageId": message_id, "recorded": True,
                 "verified": verified, "readTurnId": read_turn_id, "turnOrigin": origin,
                 "detail": detail, "delivered": delivered, "readAt": at,
-                "assertedBy": asserted_by or "undeclared",
-                "limits": "a verified readback says this message is in the recipient's"
-                          " transcript and that a real turn on its thread answered with a value"
-                          " these bytes do not contain. It does not say who wrote the answer:"
-                          " this transport carries opaque text and no authenticated caller."
+                "assertedBy": asserted_by or "undeclared", "reconciled": reconciled,
+                "limits": "a verified readback says this attempt's request id is in the"
+                          " recipient's transcript and that the named turn is real on its thread"
+                          " and did not certainly begin before the send. It does not say that"
+                          " turn answered or who computed the proof: the proof is two"
+                          " identifiers this store holds, and when the named turn is the one"
+                          " the send opened (turnOrigin relay_opened) no act of the recipient's"
+                          " is needed at all, so it shows arrival rather than reading."
                           " The turn and the transcript are read by separate host calls with"
                           " no shared snapshot, which is sound for an append-only history and"
                           " blind to one rewritten between them"}

@@ -283,6 +283,8 @@ FOLDS_BEYOND_ITS_PATHS = (
     ("service.py", None, "_existing_lock_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    # A compare-and-set's rowcount: true only when every observed field still matched.
+    ("supervisorchannel.py", None, "_reschedule_in", "function"),
     ("transport.py", "TransportFacts", "retry_safe", "field"),
 )
 

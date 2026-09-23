@@ -17,6 +17,8 @@ the direction that matters: a send that cannot say what it is preserving does no
 import json
 import shlex
 import unittest
+from contextlib import contextmanager
+from unittest import mock
 
 from codex_session_relay import envelope, identity, manifest, packets, supervision
 from codex_session_relay import report as report_module
@@ -31,6 +33,7 @@ from codex_session_relay.store import Store
 from codex_session_relay.supervisorchannel import SupervisorChannel
 from codex_session_relay.transport import (
     DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, WITHHELD_PRE_SEND,
+    classify_operation_receipt,
 )
 
 from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase, task_settings
@@ -1396,3 +1399,213 @@ class WhatTheFifthReviewRoundFound(ChannelTestCase):
             commands.add(cli.build_parser().parse_args(argv[1:]).command)
         self.assertEqual(commands, {"show", "supervisor-read", "supervisor-show",
                                     "supervisor-standing"})
+
+
+class WhatTheSixthReviewRoundFound(ChannelTestCase):
+    """Decisions read before the write lock and acted on under it, at staging and readback."""
+
+    hand_over = WhatTheFifthReviewRoundFound.hand_over
+
+    def reconciliations(self):
+        return self.store.all("SELECT detail FROM journal WHERE kind = ?",
+                              ("supervisor_message_reconciled",))
+
+    def lost_response(self):
+        """A send the host carried out and whose answer never came back."""
+        _one, message_id = self.staged()
+        self.adapter.script("transport_unknown")
+        record = self.channel.attempt(message_id, self.adapter)
+        self.assertEqual(record["deliveryState"], HELD_UNCERTAIN)
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.clock.advance(1)
+        return message_id, record
+
+    # ------------------------------------------------------------ uncertain sends
+
+    def test_a_lost_response_is_settled_by_a_readback_proving_this_attempt_arrived(self):
+        message_id, record = self.lost_response()
+        landed = self.adapter.start_turn(SUPERVISOR, status="completed",
+                                         text=self.bytes_of(message_id))
+        answer = self.read_back(message_id, landed.turn_id)
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(answer["reconciled"]["requestId"], record["requestId"])
+        self.assertEqual(answer["reconciled"]["from"], HELD_UNCERTAIN)
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
+        self.assertEqual(len(self.reconciliations()), 1, "how it was settled is recorded")
+        self.assertEqual(len(self.adapter.sends), 1, "settling it sent nothing")
+
+    def test_an_uncertain_send_is_never_settled_by_the_answer_alone(self):
+        """A real turn and a valid proof, and no trace of this attempt in the transcript."""
+        message_id, _record = self.lost_response()
+        own = self.adapter.start_turn(SUPERVISOR, status="completed")
+        answer = self.read_back(message_id, own.turn_id)
+        self.assertEqual(answer["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
+        self.assertIsNone(answer["reconciled"])
+        self.assertEqual(self.channel.get(message_id)["state"], HELD_UNCERTAIN)
+        self.assertEqual(self.store.one(
+            "SELECT verified FROM supervisor_readbacks WHERE message_id = ?",
+            (message_id,))["verified"], channel_module.TRANSCRIPT_UNCONFIRMED)
+        self.assertEqual(self.reconciliations(), [])
+
+    def test_a_send_whose_worker_died_is_recovered_and_settled_by_its_readback(self):
+        """Claimed, the bytes landed, the worker died before the receipt, the lease ran out."""
+        _one, message_id = self.staged()
+        _n, request_id, message = self.channel._claim(
+            message_id, now=self.clock.now(), owner="a worker that died",
+            recipient=SUPERVISOR, resolution=self.channel.resolve(self.rid))
+        landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        self.clock.advance(self.channel.policy.lease_seconds + 1)
+        answer = self.read_back(message_id, landed.turn_id)
+        self.assertEqual(answer["verified"], channel_module.HOST_READ)
+        self.assertEqual(answer["reconciled"]["requestId"], request_id)
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
+
+    def test_a_late_receipt_does_not_drag_a_settled_message_back(self):
+        """The slow sender's own receipt is recorded; the message it no longer owns is not moved."""
+        _one, message_id = self.staged()
+        before = self.channel.get(message_id)
+        _n, request_id, message = self.channel._claim(
+            message_id, now=self.clock.now(), owner="slow", recipient=SUPERVISOR,
+            resolution=self.channel.resolve(self.rid))
+        landed = self.adapter.start_turn(SUPERVISOR, status="completed", text=message)
+        self.clock.advance(self.channel.policy.lease_seconds + 1)
+        self.read_back(message_id, landed.turn_id)
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
+
+        receipt = {"requestId": request_id, "operation": "send_message_to_thread",
+                   "status": "accepted", "threadId": SUPERVISOR, "retrySafe": False,
+                   "resumed": {"approvalPolicy": "never"}, "turnId": landed.turn_id}
+        self.channel._settle(before, request_id, classify_operation_receipt(receipt),
+                             {"requestId": request_id}, self.clock.now())
+        self.assertEqual(self.channel.get(message_id)["state"], channel_module.READ)
+        self.assertEqual(self.store.one(
+            "SELECT state FROM supervisor_attempts WHERE request_id = ?",
+            (request_id,))["state"], DISPATCHED, "the receipt itself is still recorded")
+
+    def test_a_message_that_moves_during_the_checks_records_nothing(self):
+        """The checks run outside the lock; the write asks whether they still describe the row."""
+        _one, message_id, record = self.delivered()
+        scan = self.channel._delivered_evidence
+
+        def moved_meanwhile(row, attempt, adapter):
+            found = scan(row, attempt, adapter)
+            self.store.db.execute(
+                "UPDATE supervisor_messages SET attempt_count = attempt_count + 1"
+                " WHERE message_id = ?", (message_id,))
+            self.store.db.commit()
+            return found
+
+        self.channel._delivered_evidence = moved_meanwhile
+        refusal = self.assertRefused(
+            RefusalReason.NOT_CLAIMABLE, self.read_back, message_id, record["turnId"])
+        self.assertIn("while this readback was being checked", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_readbacks"), [])
+
+    # ------------------------------------------------------------------- staging
+
+    def test_a_report_recorded_between_the_reading_and_the_write_is_not_staged(self):
+        """supervisor-report-recorded commits after every read this caller takes, before its lock.
+
+        Modelled by committing just before the staging transaction opens, which is the last
+        moment a concurrent writer can land; a decision read any earlier misses it.
+        """
+        one = self.obligation()
+        with self.committed_before_the_lock(lambda: supervision.record_report(
+                self.store, one, at=self.clock.iso(),
+                note="a concurrent supervisor-report-recorded")):
+            refusal = self.assertRefused(RefusalReason.NOT_CLAIMABLE, self.channel.stage, one)
+        self.assertIn("decided under the staging write lock", refusal.detail)
+        self.assertEqual(self.store.all("SELECT message_id FROM supervisor_messages"), [])
+        self.assertEqual(len(self.reports_for(one)), 1)
+
+    def test_a_stage_from_the_former_hierarchy_landing_first_is_readdressed(self):
+        """Staged for S1 by a caller who read the hierarchy before the handover, committed
+        just before this caller's lock: this caller re-addresses it rather than refusing."""
+        one, message_id = self.staged()
+        frozen = dict(self.channel.get(message_id))
+        self.store.db.execute("DELETE FROM supervisor_messages WHERE message_id = ?",
+                              (message_id,))
+        self.store.db.commit()
+        self.hand_over()
+        columns = ", ".join(frozen)
+
+        def former_stage_commits():
+            self.store.db.execute(
+                "INSERT INTO supervisor_messages (" + columns + ") VALUES ("
+                + ", ".join("?" for _ in frozen) + ")", tuple(frozen.values()))
+            self.store.db.commit()
+
+        with self.committed_before_the_lock(former_stage_commits):
+            answer = self.channel.stage(one)
+        self.assertTrue(answer["readdressed"])
+        self.assertEqual(self.channel.get(message_id)["recipient_task_id"], SUCCESSOR)
+        self.assertEqual(len(self.reports_for(one)), 1)
+
+    # ------------------------------------------------------------ the reschedule
+
+    def test_a_stale_reschedule_does_not_clear_a_hold_another_caller_set(self):
+        _one, message_id = self.staged()
+        stale = self.channel.get(message_id)
+        self.store.db.execute(
+            "UPDATE supervisor_messages SET state = ?, hold_reason = ? WHERE message_id = ?",
+            (DEFERRED_BUSY, "busy_cap", message_id))
+        self.store.db.commit()
+        self.channel._reschedule(stale, self.clock.now() + 5)
+        row = self.channel.get(message_id)
+        self.assertEqual((row["state"], row["hold_reason"]), (DEFERRED_BUSY, "busy_cap"))
+
+    def test_a_stale_reschedule_does_not_put_the_former_recipients_delay_back(self):
+        one, message_id = self.staged()
+        stale = self.channel.get(message_id)
+        self.hand_over()
+        self.channel.stage(one)
+        self.channel._reschedule(stale, self.clock.now() + 600)
+        row = self.channel.get(message_id)
+        self.assertEqual(row["recipient_task_id"], SUCCESSOR)
+        self.assertIsNone(row["next_eligible_at"])
+
+    # ------------------------------------------------------------------ the cap
+
+    def test_an_hourly_cap_of_zero_refuses_the_first_send(self):
+        """No row yet means nothing spent, which is still not below a cap of nothing."""
+        from codex_session_relay.policy import RetryPolicy
+
+        channel = self.build_channel(policy=RetryPolicy(max_sends_per_recipient_per_hour=0))
+        _one, message_id = self.staged()
+        with self.assertRaises(channel_module._Paced):
+            channel._claim(message_id, now=self.clock.now(), owner="capped",
+                           recipient=SUPERVISOR, resolution=channel.resolve(self.rid))
+        self.assertEqual(self.store.all("SELECT * FROM recipient_rate"), [])
+        self.assertIsNone(channel.attempt(message_id, self.adapter))
+        self.assertEqual(self.adapter.sends, [])
+
+    def test_a_send_dated_ahead_by_a_fast_clock_does_not_stall_the_recipient(self):
+        """The gap reads the windows it can reach, and a later window is not one of them."""
+        from codex_session_relay.delivery import send_refusal
+
+        now = self.clock.now()
+        ahead = now + 86400
+        self.store.db.execute(
+            "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at)"
+            " VALUES (?,?,1,?)", (SUPERVISOR, int(ahead // 3600) * 3600, ahead))
+        self.store.db.commit()
+        self.assertIsNone(send_refusal(self.store.db, self.channel.policy, SUPERVISOR, now))
+
+    @contextmanager
+    def committed_before_the_lock(self, concurrent_write):
+        """Run a concurrent writer's commit immediately before the next staging lock."""
+        real = self.store.composing
+
+        @contextmanager
+        def composing():
+            concurrent_write()
+            with real() as db:
+                yield db
+
+        with mock.patch.object(self.store, "composing", composing):
+            yield
+
+    def reports_for(self, obligation):
+        return self.store.all(
+            "SELECT seq FROM journal WHERE kind = ? AND subject = ?",
+            (supervision.JOURNAL_KIND, obligation["obligationId"]))
