@@ -500,6 +500,12 @@ CREATE TABLE IF NOT EXISTS journal (
     subject TEXT,
     detail  TEXT
 );
+-- Read by the fault sweep's refusal source, which pages delivery_withheld rows by sequence and
+-- asks, per delivery, whether anything later ended the refusal streak. Each index also carries
+-- the sequence (the rowid), so both reads are range scans; without them every sweep scanned the
+-- whole journal.
+CREATE INDEX IF NOT EXISTS journal_kind ON journal (kind);
+CREATE INDEX IF NOT EXISTS journal_subject ON journal (subject);
 
 CREATE TABLE IF NOT EXISTS store_challenge (
     nonce      TEXT PRIMARY KEY,
@@ -1198,6 +1204,15 @@ CREATE INDEX IF NOT EXISTS fault_remediations_fault ON fault_remediations (fault
 -- Where each source got to last time. Without it every sweep re-read the same first page,
 -- so with more persistent faults than one page the ones past it were never observed again -
 -- the starvation shape the delivery window already keeps a per-parent cursor to avoid.
+--
+-- Shipped (installed at 0ffcc4d0): the text between CREATE and its closing parenthesis,
+-- in-body comments included, is stored verbatim by SQLite and compared by the runtime swap
+-- gate, so it never changes - even a comment. What changed since is said here instead:
+-- position now holds JSON {"at", "until"}, where the source's rotation stopped and the upper
+-- key it captured when the rotation started (a plain value written before rotations were
+-- bounded reads as a position with no bound yet); pages is no longer read, since counting
+-- full pages before a forced wrap starved every row past them, and it is kept because this
+-- store adds tables and never drops columns.
 CREATE TABLE IF NOT EXISTS fault_cursors (
     source     TEXT PRIMARY KEY,
     position   TEXT,
@@ -1270,6 +1285,159 @@ CREATE TABLE IF NOT EXISTS fault_timeline (
     recorded_ts REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS fault_timeline_fault ON fault_timeline (fault_id, kind);
+
+-- The corrected contract (docs/faults.md, "Corrected contract"). Every table below is NEW
+-- because this store has no migration path: CREATE TABLE IF NOT EXISTS runs on every open and
+-- nothing ever alters an existing table, so a column added to one of the tables above would
+-- simply be missing from every store created before it.
+--
+-- Which product set a target, and the project its issues are filed in. A target row above
+-- that has no row here was written before targets had owners, and nothing is issued through it.
+CREATE TABLE IF NOT EXISTS fault_target_projects (
+    scope_key   TEXT PRIMARY KEY,
+    product     TEXT NOT NULL,
+    project_ref TEXT,
+    recorded_at TEXT NOT NULL
+);
+
+-- What a queued write aims at beyond its tracker: the project an issue create files into, and
+-- a registered or update kind's payload. Kept in step with fault_publications.tracker_ref.
+-- target_mode is the kind's target requirement when the write was queued - 'team',
+-- 'team+project' or 'none' - so re-pointing a write never depends on whether the process doing
+-- it registered that kind. A row written before it existed is one of the built-in kinds, which
+-- every process registers.
+CREATE TABLE IF NOT EXISTS fault_publication_payloads (
+    publication_id TEXT PRIMARY KEY,
+    project_ref    TEXT,
+    payload        TEXT,
+    hold_reason    TEXT,
+    updated_at     TEXT NOT NULL,
+    target_mode    TEXT
+);
+
+-- Whether the issue a fault owns sits in the project its scope targets. revision is part of
+-- every set_project write's identity, so a later target always gets its own write.
+CREATE TABLE IF NOT EXISTS fault_links (
+    fault_id             TEXT PRIMARY KEY,
+    external_ref         TEXT NOT NULL,
+    project_ref          TEXT,
+    observed_project_ref TEXT,
+    state                TEXT NOT NULL,
+    revision             INTEGER NOT NULL DEFAULT 0,
+    updated_at           TEXT NOT NULL
+);
+
+-- An existing issue a recorded fault adopts. Pending until suppression opens the record.
+CREATE TABLE IF NOT EXISTS fault_adoptions (
+    fault_id     TEXT PRIMARY KEY,
+    external_ref TEXT NOT NULL,
+    scope        TEXT NOT NULL,
+    state        TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+-- An id that names a fault kept under another id: a workspace a fault moved into out of
+-- unassigned, or a workspace-bearing id for a fault recorded before workspace joined identity.
+CREATE TABLE IF NOT EXISTS fault_aliases (
+    alias_id   TEXT PRIMARY KEY,
+    fault_id   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- One row per claim, append-only. The first claimant is the write's owner; a takeover is a
+-- recorded act; ended marks an issued request somebody attested can no longer land.
+CREATE TABLE IF NOT EXISTS fault_publication_attempts (
+    attempt_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    publication_id TEXT NOT NULL,
+    attempt        INTEGER NOT NULL,
+    owner          TEXT NOT NULL,
+    takeover       INTEGER NOT NULL DEFAULT 0,
+    claimed_at     TEXT NOT NULL,
+    claimed_ts     REAL NOT NULL,
+    issued_at      TEXT,
+    issued_ts      REAL,
+    outcome        TEXT,
+    error          TEXT,
+    ended          INTEGER NOT NULL DEFAULT 0,
+    ended_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS fault_publication_attempts_publication
+    ON fault_publication_attempts (publication_id);
+
+-- A per-product sliding window per kind of write or notification. A use is consumed once per
+-- ref; what a spent budget holds stays pending and is never dropped.
+CREATE TABLE IF NOT EXISTS fault_budget_uses (
+    use_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    product TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    ref     TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    used_ts REAL NOT NULL,
+    UNIQUE (product, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS fault_budget_uses_window ON fault_budget_uses (product, kind, used_ts);
+
+CREATE TABLE IF NOT EXISTS fault_limits (
+    product        TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    max_count      INTEGER NOT NULL,
+    window_seconds REAL NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (product, kind)
+);
+
+-- What the level above is told: a broken fault opened, a decision somebody must make, a fault
+-- resolved. Eligibility is decided at reservation; a lapsed reservation is uncertain.
+CREATE TABLE IF NOT EXISTS fault_notifications (
+    notification_id TEXT PRIMARY KEY,
+    fault_id        TEXT NOT NULL,
+    product         TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    reason          TEXT,
+    cycle           INTEGER NOT NULL,
+    ref             TEXT,
+    state           TEXT NOT NULL,
+    token           TEXT,
+    owner           TEXT,
+    lease_until     REAL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    delivered_at    TEXT,
+    ack_ref         TEXT,
+    -- The order in which reservation last examined this notification: a sequence, never a
+    -- time, so no two tie. Candidates are taken least recently examined first, so one withheld
+    -- or held at the head of the queue cannot hide the eligible ones behind it.
+    examined_seq    INTEGER
+);
+CREATE INDEX IF NOT EXISTS fault_notifications_state ON fault_notifications (state, product);
+CREATE INDEX IF NOT EXISTS fault_notifications_examined ON fault_notifications (examined_seq);
+
+-- Deliveries the send path's own rule (delivery.supersession_reason) found overtaken, as the
+-- fault sweep read them. Every such answer is permanent - a later generation, an answered or
+-- replaced revision, a regranted merge turn never come back - so a verdict is recorded once and
+-- excluded in SQL afterwards. That is what bounds the sweep's existence question: each call asks
+-- the live rule about a bounded number of deliveries it has not judged before, instead of all of
+-- them. Written only by the fault sweep, and never read as delivery state.
+CREATE TABLE IF NOT EXISTS fault_overtaken_deliveries (
+    event_id TEXT PRIMARY KEY,
+    reason   TEXT NOT NULL,
+    noted_at TEXT NOT NULL
+);
+
+-- A product's adjustment of a class's suppression, prospective and journaled.
+CREATE TABLE IF NOT EXISTS fault_policies (
+    product        TEXT NOT NULL,
+    fault_class    TEXT NOT NULL,
+    severity       TEXT NOT NULL,
+    threshold      INTEGER,
+    window_seconds REAL,
+    reason         TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    PRIMARY KEY (product, fault_class, severity)
+);
 
 
 
