@@ -260,6 +260,15 @@ class RB3CallbackAndPolicy(_Reading):
         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
         self.assertIn("policy.sandbox", self.gap_fields(answer))
 
+    def test_a_policy_value_that_is_not_text_is_refused_rather_than_stringified(self):
+        # 123 read from disk would otherwise agree with a recorded "123".
+        for name in ("model", "effort", "workflow"):
+            with self.subTest(name=name):
+                one = self.assignment()
+                one[packets.POLICY] = {**one[packets.POLICY], name: 123}
+                detail = self.refusal(lambda: packets.check(one))
+                self.assertIn(name, detail)
+
     def test_the_pair_the_parent_left_is_refused_as_a_stale_callback(self):
         answer = self.received(
             lambda: self.assignment(callback=a_callback(pair=LEFT_PARENT_PAIR)), a_record())

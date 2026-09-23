@@ -495,6 +495,25 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         self.assertEqual(answer["provenance"]["mode"],
                          "ledger: assignment " + first["messageId"])
 
+    def test_a_policy_of_the_wrong_shape_is_refused_and_leaves_the_ledger_usable(self):
+        # Read back from disk, a packet never went through policy(). A workflow that is not
+        # text used to be accepted and written into the ledger, which the next check then
+        # refused as damaged: one malformed packet stopped every later reception.
+        self.registered(child=self.CREATED, issue="REL-FIRST", dispatch="dispatch-first",
+                        turn="turn-first")
+        ledger = os.path.join(self.tmp, "created-ledger.json")
+        for name, value in (("workflow", 123), ("model", 123), ("effort", ["xhigh"])):
+            with self.subTest(name=name):
+                one = self.first_assignment(dispatch="dispatch-first", subject="bad-" + name)
+                one[packets.POLICY][name] = value
+                code, answer = self.packet_check(one, receiver_id=self.CREATED, ledger=ledger)
+                self.assertEqual(code, cli.EXIT_REFUSED, answer)
+                self.assertIn(name, answer.get("detail", ""))
+        code, answer = self.packet_check(self.first_assignment(dispatch="dispatch-first"),
+                                         receiver_id=self.CREATED, ledger=ledger)
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+
 
 class WhatTheStoreCannotAnswer(StoreReception):
     def test_criteria_that_are_not_registered_leave_the_digest_unchecked(self):
@@ -604,7 +623,13 @@ class WhatTheStoreCannotAnswer(StoreReception):
                                              "disposition": "accepted", "applied": "yes"}),
                   ("assignments", rid, 7),
                   ("assignments", rid, {"mode": 3, "workflow": "CXC Loop",
-                                        "messageId": "m", "dispatchRequestId": None}))
+                                        "messageId": "m", "dispatchRequestId": None}),
+                  # An entry that cannot name the assignment it came from supplies no mode.
+                  ("assignments", rid, {"mode": "loop"}),
+                  ("assignments", rid, {"mode": "sometimes", "workflow": "CXC Loop",
+                                        "messageId": "m", "dispatchRequestId": None}),
+                  ("assignments", rid, {"mode": "loop", "workflow": " ", "messageId": "m",
+                                        "dispatchRequestId": None}))
         for number, (part, key, entry) in enumerate(broken, 1):
             with self.subTest(part=part, entry=entry):
                 ledger = os.path.join(self.tmp, "broken-%d.json" % number)
