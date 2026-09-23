@@ -5267,11 +5267,12 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted, codex_home=N
     return None
 
 
-def _register_mcp_plugin_note(outcome):
+def _register_mcp_plugin_note(outcome, wrote):
     """What the plugin-owned register-mcp run did, in the words its outcome supports.
 
     Each outcome gets its own sentence, so a rerun that wrote nothing never reads as a write and a
-    write that could not be confirmed never reads as nothing installed.
+    write that could not be confirmed, or was refused after it landed, never reads as nothing
+    installed.
     """
     unregistered = (" No MCP server was registered: the plugin package declares the server, so"
                     " installing that package registers it. Recorded, registered and a tool"
@@ -5287,6 +5288,9 @@ def _register_mcp_plugin_note(outcome):
         return ("The record was written and could not be read back as written, so whether a new"
                 " thread can start the bridge from it is not established; detail says what was"
                 " found.")
+    if wrote:
+        return ("Refused after the write. The record this run wrote is in place and a new thread"
+                " cannot start the bridge from it; detail says why and repair says what to do.")
     return ("Refused. This run installed no record a new thread can start the bridge from;"
             " detail says what is at the record path now and repair says what to do.")
 
@@ -5415,7 +5419,6 @@ def _register_mcp_owned(args, codex_home):
               **({"differingFields": written["differingFields"]}
                  if "differingFields" in written else {}),
               **({"repair": written["repair"]} if "repair" in written else {}),
-              **({"rolledBack": written["rolledBack"]} if "rolledBack" in written else {}),
               "preservedHow": "the Codex configuration was read and not written",
               "executionPolicy": policy,
               **({"activation": (
@@ -5424,7 +5427,7 @@ def _register_mcp_owned(args, codex_home):
                   " under it and a thread already running keeps the bridge it spawned. Read"
                   " get_capabilities in a new thread to observe it.")}
                  if answered in bridgerecord.SETTLED else {}),
-              "note": _register_mcp_plugin_note(answered)})
+              "note": _register_mcp_plugin_note(answered, written["wrote"])})
         return EXIT_OK if answered in bridgerecord.SETTLED else EXIT_REFUSED
     try:
         with reading.region(path, "the Codex configuration"):

@@ -255,10 +255,6 @@ def atomic_write(path, text):
 
     os.replace replaces a symlink rather than following it, which plain write_text does not.
     That difference is deliberate here: the file this command owns is the path it was given.
-
-    Returns the (device, inode) of the file it put in place, read from its own descriptor before
-    the replace, so a caller can later tell that file from one that replaced it -- including one
-    holding the same bytes.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,13 +262,10 @@ def atomic_write(path, text):
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
-            stream.flush()
-            written = os.fstat(stream.fileno())
         os.replace(temporary, str(path))
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
-    return written.st_dev, written.st_ino
 
 
 class Locked:

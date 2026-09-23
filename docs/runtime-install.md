@@ -1226,17 +1226,16 @@ and still matched. The digest is taken before the write, and nothing locks the p
 file is hashed twice more under the record's lock. Immediately before the write, a mismatch writes
 nothing: the run answers `record_policy_changed` with exit 1, and the host keeps no record, as
 before the run. After the write, with the record read back, a mismatch in that short interval gets
-the same answer, and the record this run wrote is removed again, which restores that absence. The
-removal is compare-and-remove under the same lock: the record goes only while the path still holds
-the file this run wrote, judged by the inode the write read from its own descriptor, so a record
-another writer put there, even one with the same bytes, stays, and the answer says so. The lock
-excludes every run of these commands. A writer that ignores it can still land between that look and
-the removal, which is the limit the lock states for the write itself. A `register-mcp` rerun after
-the file was edited hashes the new bytes and is refused as `record_differs` with the move-aside
-repair. The transition carries the recorded reference, so its preflight refuses a changed file, and
-its record step writes through the same function as `register-mcp`. An edit made after the last
-check is caught where every other one is: the launcher hashes the file at every start and refuses
-the record.
+the same answer and the move-aside repair, and the record stays where it is. The launcher refuses
+its stale digest at every start, so what stays fails visibly. It is not removed. Every writer of the
+bridge record in this repository holds the ownership lock (`crw-mcp-ownership` beside the record)
+while it writes, moves or retires the record: `register-mcp`, the transition's bridge steps and
+`disable`. A removal by path cannot exclude a writer that does not take that lock, such as an
+editor, and would delete that writer's file. A `register-mcp` rerun after the file was edited hashes
+the new bytes and is refused as `record_differs` with the move-aside repair. The transition carries
+the recorded reference, so its preflight refuses a changed file, and its record step writes through
+the same function as `register-mcp`. An edit made after the last check is caught where every other
+one is: the launcher hashes the file at every start and refuses the record.
 
 Two refusals protect the order of operations. `--execution-policy` is refused for `--owner user`,
 because a user-owned registration is started by its configuration entry and never reads the
