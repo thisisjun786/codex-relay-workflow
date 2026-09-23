@@ -653,6 +653,88 @@ def _with_handoff(store, *records: dict) -> list:
     return list(records)
 
 
+def required_for_candidate(store, *, relationship_id, repository, base_ref, head_sha) -> dict:
+    """What the candidate's own merge-readiness reading found the target requires, or why nothing.
+
+    The merge-turn grant notice fills merge-turn-check --required from this. The relay never
+    contacts a forge and the process rendering the notice has no checkout of the target, so the
+    one declared source it can read is the reading the child already took: merge-evidence records
+    the branch's effective rules as requiredDeclared in the handoff this module stores. The names
+    are proposed to the parent, never enforced here; merge-turn-check still stores whatever
+    --required its caller declares.
+
+    The report is chosen by the rule mergeturn._relationship_refusal applies at the merge itself -
+    the newest generation that names a head, then that generation's latest submission - so the
+    notice cannot propose a reading the check would then refuse as another candidate's. Every
+    narrowing below answers "not recorded" rather than guessing. A wrong set proposed with
+    confidence is worse than an empty one the parent is told to fill, because the command it
+    sits in is the one a parent runs as written.
+
+    Returns {"required": [names], "eventId", "submissionNo"}, or {"required": None, "reason"}.
+    An empty list is a reading that found nothing required, which is not the same answer as None.
+    """
+    def absent(reason):
+        return {"required": None, "reason": reason}
+
+    if not relationship_id:
+        return absent("the turn names no assignment")
+    if not head_sha:
+        return absent("the grant names no candidate head")
+    newest = store.one(
+        "SELECT MAX(execution_generation) AS generation FROM work_reports"
+        "  WHERE relationship_id = ? AND head_sha IS NOT NULL",
+        (relationship_id,),
+    )
+    if newest is None or newest["generation"] is None:
+        return absent("no work report on this assignment names a head")
+    latest = store.one(
+        "SELECT MAX(submission_no) AS submission FROM work_reports"
+        "  WHERE relationship_id = ? AND execution_generation = ? AND head_sha IS NOT NULL",
+        (relationship_id, newest["generation"]),
+    )
+    rows = store.all(
+        "SELECT w.event_id, w.submission_no, w.head_sha, w.repository, w.base_ref,"
+        "       h.required_declared"
+        "  FROM work_reports w LEFT JOIN work_report_handoffs h"
+        "    ON h.event_id = w.event_id AND h.submission_no = w.submission_no"
+        " WHERE w.relationship_id = ? AND w.execution_generation = ? AND w.submission_no = ?"
+        "   AND w.head_sha IS NOT NULL"
+        " ORDER BY w.event_id",
+        (relationship_id, newest["generation"], latest["submission"]),
+    )
+    heads = sorted({row["head_sha"] for row in rows})
+    if heads != [head_sha]:
+        # repr, because a head is whatever the child's report stated and this reason is
+        # printed into a message; a stray newline must not become a line of instructions.
+        return absent("the current work report is about " + ", ".join(map(repr, heads))
+                      + ", not the candidate " + repr(head_sha))
+    if any(row["repository"] != repository for row in rows):
+        return absent("the current work report is about another repository than "
+                      + str(repository))
+    # A report that records no base says nothing against this one; one that records a different
+    # base read another branch's rules.
+    if any(row["base_ref"] not in (None, base_ref) for row in rows):
+        return absent("the current work report is about another base than " + str(base_ref))
+    readings = []
+    for row in rows:
+        if row["required_declared"] is None:
+            continue
+        try:
+            names = json.loads(row["required_declared"])
+        except ValueError:
+            names = None
+        if not isinstance(names, list) or not all(isinstance(one, str) for one in names):
+            return absent("the recorded required set of work report " + row["event_id"]
+                          + " is unreadable")
+        readings.append((row, sorted(set(names))))
+    if not readings:
+        return absent("the current work report records no merge-readiness handoff")
+    if len({tuple(names) for _row, names in readings}) > 1:
+        return absent("the current work reports' readings disagree about what is required")
+    row, names = readings[0]
+    return {"required": names, "eventId": row["event_id"], "submissionNo": row["submission_no"]}
+
+
 def _row(row) -> dict:
     return {
         "eventId": row["event_id"],

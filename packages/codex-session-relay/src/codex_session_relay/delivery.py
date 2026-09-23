@@ -9,6 +9,7 @@ side effect.
 """
 
 import json
+import shlex
 
 from .errors import DeliveryRefused, RefusalReason, RelayError
 from .currency import (
@@ -38,6 +39,7 @@ from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import NO_DELIVERABLE, envelope, restoration, rolepolicy
 from .report import (
     compose_revision, read as read_work_report, render_completion, render_revision,
+    required_for_candidate,
 )
 
 COMPLETION = "completion_event"
@@ -457,7 +459,7 @@ class DeliveryService:
         with self.store.transaction() as db:
             db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
 
-    def _render_for(self, row, record, request, report=None) -> str:
+    def _render_for(self, row, record, request, report=None, required=None) -> str:
         """Deterministic, directional, and carrying no turn id belonging to the recipient.
 
         The two directions are answered differently and must therefore be INSTRUCTED
@@ -476,11 +478,16 @@ class DeliveryService:
 
         The work report is passed in for the same reason. Whoever owns the transaction reads
         it once and hands it over, so this stays a function of its arguments.
+
+        So is a grant's required-check reading. A grant event has no work report of its own;
+        what its notice needs is the reading recorded for the candidate it grants, which is a
+        different event's, and passing it separately keeps it out of the per-attempt record of
+        which report submission the bytes came from.
         """
         if row["kind"] == REVISION:
             return self._render_revision(row, record, request, report)
         if row["kind"] == MERGE_TURN_GRANT:
-            return self._render_grant(row, record, request)
+            return self._render_grant(row, record, request, required)
         return self._render_completion(row, record, request, report)
 
     def envelope_context(self, row) -> dict:
@@ -551,6 +558,20 @@ class DeliveryService:
                                      now=self.clock.now() if now is None else now),
                 "obligation": obligation}
 
+    def _grant_required(self, row, record):
+        """The required-check reading a grant notice proposes, or None for any other kind.
+
+        Read by whoever owns the transaction and passed to the renderer, the same way the work
+        report is. The subject is the grant's own candidate: the head the turn was granted for,
+        on the turn's own assignment and target, as the envelope names them.
+        """
+        if row["kind"] != MERGE_TURN_GRANT:
+            return None
+        return required_for_candidate(
+            self.store, relationship_id=row["relationship_id"],
+            repository=record.get("repository"), base_ref=record.get("baseRef"),
+            head_sha=record.get("candidateHead"))
+
     def _render_and_account(self, row, record, request, report=None):
         """The bytes, and what became of a declared restoration block in exactly those bytes.
 
@@ -568,7 +589,8 @@ class DeliveryService:
             # three directions now, and "not a revision" stopped meaning "a completion" the
             # moment a third one existed - a grant rendered as a verification request would
             # have told a parent to acknowledge an event with no receipt behind it.
-            return self._render_for(row, record, request, report), None
+            return self._render_for(row, record, request, report,
+                                    self._grant_required(row, record)), None
         findings = record.get("criteria") or []
         declared = restoration.declared(findings) is not None
         if report is not None:
@@ -593,7 +615,8 @@ class DeliveryService:
         row = self.get(event_id)
         record = self.intake.get(event_id) or {}
         request = derive_request_id(event_id, row["attempt_count"] + 1)
-        return self._render_for(row, record, request, read_work_report(self.store, event_id))
+        return self._render_for(row, record, request, read_work_report(self.store, event_id),
+                                self._grant_required(row, record))
 
     def render_message(self, event_id: str) -> str:
         """Kept as the preview alias so no caller can mean 'what was sent' by accident."""
@@ -703,7 +726,7 @@ class DeliveryService:
         ]
         return NEWLINE.join(lines)
 
-    def _render_grant(self, row, record, request, report=None) -> str:
+    def _render_grant(self, row, record, request, required=None) -> str:
         """The merge target is this parent's turn, and what it can actually do about it.
 
         Instructed differently from both other directions, because what the recipient owes is
@@ -716,7 +739,15 @@ class DeliveryService:
         No contract-v1 acknowledgement is offered, for the same reason the revision direction
         offers none: AckService refuses this kind, so telling a recipient to compute a proof
         would be telling it to do something that cannot succeed.
+
+        The check command carries --required, because it is the command a parent runs as
+        written and merge-turn-check stores exactly the set its caller declares: without the
+        flag it declared that nothing was required, and a failed dev-gate beside a green
+        optional check went through. The names are the candidate's own merge-evidence reading,
+        passed in as required; where there is none the flag is left for the parent to fill and
+        the notice says where to read it, rather than rendering a command that runs without it.
         """
+        declared, flags, guidance = _required_for_notice(record, required)
         lines = [
             "[codex-session-relay] merge turn granted",
             f"requestId: {request}",
@@ -726,6 +757,7 @@ class DeliveryService:
             f"target: {record.get('repository')} {record.get('baseRef')}",
             f"candidateHead: {record.get('candidateHead')}",
             f"grantedFrom: {record.get('grantedFrom')}",
+            declared,
             "",
             "The target was released and this claim was the oldest ready one that still owns",
             "its project, so the turn is yours. Nothing here expires: the target stays yours",
@@ -735,9 +767,11 @@ class DeliveryService:
             f"  merge-turn-acknowledge --turn {record.get('turnId')}"
             f" --grant {record.get('grantId')} --actor <your task id> --evidence <what you read>",
             f"  merge-turn-check --turn {record.get('turnId')} --actor <your task id>"
-            " --head-sha <head> --base-sha <base> --checks <json> --review <json>",
+            " --head-sha <head> --base-sha <base> --checks <json> --review <json>" + flags,
             f"  merge-turn-land --turn {record.get('turnId')} --actor <your task id>"
             " --landed-sha <sha> --observed-base-sha <sha> --evidence <what you observed>",
+            "",
+            *guidance,
             "",
             "Or hand it on without merging:",
             f"  merge-turn-release --turn {record.get('turnId')} --actor <your task id>"
@@ -1887,12 +1921,16 @@ class DeliveryService:
             )
             failure = self._last_failure(row["event_id"])
             superseded = self._supersession_note(row["event_id"])
+            # Read once for both fields. A grant is answered on its merge turn rather than
+            # through an acks row, so the phase and the reported state are both read from there
+            # and must not disagree about whether an acknowledgement is still owed.
+            grant = self._grant_state(row)
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
                 "recipient": row["recipient_task_id"],
                 "state": row["state"],
-                "reported": _reported_state(row, ack),
+                "reported": _reported_state(row, ack, grant),
                 "attempts": row["attempt_count"],
                 "holdReason": row["hold_reason"],
                 "nextEligibleAt": row["next_eligible_at"],
@@ -1901,8 +1939,7 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
-                "phase": _phase(row, attempts, ack, failure, superseded,
-                                grant=self._grant_state(row)),
+                "phase": _phase(row, attempts, ack, failure, superseded, grant=grant),
                 "lastFailedOperation": failure,
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": superseded,
@@ -1949,14 +1986,80 @@ def _message_status(row, record) -> str:
     return "uncertain"
 
 
-def _reported_state(row, ack) -> str:
+def _required_for_notice(record, required):
+    """The grant notice's requiredDeclared line, the --required flags, and what to do without them.
+
+    Each name is one shell word. A check name is free text - a space or a quote is a legal part
+    of one - and printed bare, "build linux" became two arguments and a quote ended the command
+    early, so the command a parent runs as written would declare something else.
+
+    Three answers, kept apart because they mean different things: a reading that named checks, a
+    reading that found none required, and no reading at all. Only the last leaves the flag as a
+    placeholder, because only there is the set unknown rather than known to be empty.
+    """
+    reading = required or {"required": None,
+                           "reason": "no reading was taken for this message"}
+    names = reading.get("required")
+    repository = record.get("repository")
+    if names is None:
+        return (
+            f"requiredDeclared: not recorded ({reading.get('reason')})",
+            " --required <each check the branch requires>",
+            [
+                "No required-check reading is recorded for this candidate, so --required is",
+                "yours to fill. Read the branch's required checks first:",
+                f"  codex-session-relay merge-evidence --repository {shlex.quote(str(repository))}"
+                " --pull-request <its number>",
+                "and pass each name in its requiredDeclared as its own --required. Leaving",
+                "--required out declares that nothing is required, and a failing required check",
+                "would then not stop the merge.",
+            ],
+        )
+    source = f"work report {reading.get('eventId')} submission {reading.get('submissionNo')}"
+    if not names:
+        return (
+            f"requiredDeclared: none ({source} found no required check)",
+            "",
+            [
+                "The candidate's merge-evidence reading found no required check on this branch,",
+                "so the check above declares none. Read the rules again with merge-evidence if",
+                "they may have changed since.",
+            ],
+        )
+    return (
+        f"requiredDeclared: {json.dumps(names, ensure_ascii=False)} ({source})",
+        "".join(" --required " + shlex.quote(name) for name in names),
+        [
+            "--required restates what the candidate's merge-evidence reading found the branch",
+            "rules require. The names are yours to declare; read them again with merge-evidence",
+            "if the rules may have changed since.",
+        ],
+    )
+
+
+def _reported_state(row, ack, grant=None) -> str:
     """What an operator should read, as distinct from the raw state.
 
     An inbox-only event is stored and NOT woken, and saying so plainly is the point: a durable
     inbox item is not a successful wake and must never be reported as one.
+
+    A merge-turn grant is answered on its turn, never through an acks row, so without its turn's
+    answer every delivered grant read dispatched_awaiting_ack for good - the acknowledged one,
+    and one its turn had since replaced, returned or lost. That answer is passed in as grant and
+    decides before the delivery state does, in every state but superseded: a suppressed grant
+    already reports held:<reason> with the same reason.
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
+    if row["kind"] == MERGE_TURN_GRANT and row["state"] != SUPERSEDED:
+        from .mergeturn import MERGE_TURN_GRANT_ANSWERED
+
+        if grant is not None and grant != MERGE_TURN_GRANT_ANSWERED:
+            return f"superseded:{grant}"
+        if row["state"] == DISPATCHED:
+            if grant == MERGE_TURN_GRANT_ANSWERED:
+                return "grant_acknowledged"
+            return "dispatched_awaiting_grant_acknowledgement"
     if row["state"] == INBOX_ONLY:
         return "stored_not_woken"
     if row["state"] == DISPATCHED:
@@ -2051,6 +2154,16 @@ def _phase(row, attempts, ack, failure=None, superseded=None, grant=None) -> str
         # deliberately left alone so a lost response stays reconcilable, but reporting it as
         # awaiting_ack or outcome_unknown describes an obligation nothing can now meet.
         return f"superseded:{superseded['reason']}"
+    if row["kind"] == MERGE_TURN_GRANT and grant is not None:
+        from .mergeturn import MERGE_TURN_GRANT_ANSWERED
+
+        if grant != MERGE_TURN_GRANT_ANSWERED:
+            # The grant's own turn says this notice no longer applies: regranted to another
+            # candidate, closed without being answered, gone, or unreadable. A delivered grant is
+            # never annotated above, because attempt() stops before the claim for a state that
+            # is not claimable, so its turn's answer is the only place that says so - and
+            # without it every one of them reported an acknowledgement nobody can now give.
+            return f"superseded:{grant}"
     if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
         return "channel_closed"
     if row["state"] == DISPATCHED:

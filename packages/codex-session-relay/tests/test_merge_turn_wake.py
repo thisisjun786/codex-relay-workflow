@@ -14,18 +14,24 @@ through.
 import json
 import os
 import pathlib
+import shlex
+import types
 
 from codex_session_relay import NO_DELIVERABLE
-from codex_session_relay import rolepolicy
+from codex_session_relay import cli, report, rolepolicy
 from codex_session_relay.delivery import MERGE_TURN_GRANT, REVISION
+from codex_session_relay.errors import CoordinationError, RefusalReason
+from codex_session_relay.identity import merge_turn_grant_event_id
 from codex_session_relay.linkage import Linkage, PARENT as PARENT_ROLE, PROJECT
 from codex_session_relay.mergeturn import (
-    MERGE_TURN_CLOSED, MERGE_TURN_GRANT_ANSWERED, MERGE_TURN_REGRANTED, MergeTurn,
+    MERGE_TURN_ABSENT, MERGE_TURN_CLOSED, MERGE_TURN_GRANT_ANSWERED,
+    MERGE_TURN_GRANT_UNREADABLE, MERGE_TURN_REGRANTED, MergeTurn,
 )
 from codex_session_relay.models import Endpoint
-from codex_session_relay.transport import DISPATCHED
+from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN
 
 from .support import CHILD, HOST, PARENT, DeliveryTestCase
+from .test_report_contract import a_handoff, a_report
 
 PROJECT_A = "PRJ-A"
 PROJECT_B = "PRJ-B"
@@ -428,3 +434,302 @@ class TheCollaboratorIsOptional(MergeTurnWakeTestCase):
         self.assertEqual(grant["grantedFrom"], "promotion")
         self.assertNotIn("wake", grant)
         self.assertEqual(self.wakes(), [])
+
+# ----------------------------------------------------------- PR132 post-merge review
+
+
+class DistinctGrantsAreDistinctNotices(MergeTurnWakeTestCase):
+    """Two grants are two notices, even on one assignment (PR132-RB3).
+
+    test_the_event_id_is_derived_from_the_grant_and_not_from_the_clock reads ONE grant twice,
+    and an identity keyed on the relationship alone passes it just as well. What the grant in
+    the identity buys is that a parent handed the same target a second time, through the same
+    assignment, is woken a second time rather than folded into a notice it already has.
+    """
+
+    def granted_twice(self):
+        """A promotion, a return, then a second promotion to the same parent and assignment."""
+        first_turn = self.promoted()
+        first = self.grant_of(first_turn)
+        self.answer_grant(first_turn, PARENT)
+        self.turns.release(
+            first_turn, actor=PARENT, disposition="returned", reason="handing it back")
+        held = self.claim(self.beta, PROJECT_B, "head-b2")
+        waiter = self.claim(self.alpha, PROJECT_A, "head-a2")
+        self.assertEqual(waiter["state"], "waiting")
+        self.turns.release(
+            held["turnId"], actor=self.beta.task_id, disposition="returned", reason="done")
+        return first, self.grant_of(waiter["turnId"])
+
+    def test_two_grants_on_one_assignment_queue_two_notices(self):
+        first, second = self.granted_twice()
+        self.assertNotEqual(first["grantId"], second["grantId"])
+        self.assertNotEqual(first["wake"]["eventId"], second["wake"]["eventId"])
+        queued = {row["event_id"]: json.loads(row["receipt"])["grantId"] for row in self.wakes()}
+        self.assertEqual(queued, {first["wake"]["eventId"]: first["grantId"],
+                                  second["wake"]["eventId"]: second["grantId"]})
+
+    def test_the_second_grant_reaches_the_parent_as_a_turn_of_its_own(self):
+        _first, second = self.granted_twice()
+        record = self.attempt(second["wake"]["eventId"])
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+        _turn_id, text = self.adapter.threads[PARENT].items[-1]
+        self.assertIn(second["grantId"], text)
+
+    def test_one_grant_derives_one_event_and_another_grant_another(self):
+        one = merge_turn_grant_event_id(self.rid, "mtg-one")
+        self.assertEqual(one, merge_turn_grant_event_id(self.rid, "mtg-one"))
+        self.assertNotEqual(one, merge_turn_grant_event_id(self.rid, "mtg-two"))
+
+    def test_the_same_grant_queued_again_converges_on_its_one_notice(self):
+        turn = self.promoted()
+        grant = self.grant_of(turn)
+        (row,) = self.wakes()
+        self.clock.advance(3600)
+        with self.store.transaction() as db:
+            channel = self.delivery.grant_channel_in(
+                db, relationship_id=self.rid, recipient_task_id=PARENT,
+                grant=grant["grantId"], project_key=PROJECT_A)
+            self.delivery.queue_grant_in(
+                db, event_id=channel["eventId"], relationship_id=self.rid,
+                recipient_task_id=PARENT, receipt=row["receipt"], grant=grant["grantId"],
+                at=self.clock.iso())
+        self.assertEqual(channel["eventId"], row["event_id"])
+        self.assertEqual([one["event_id"] for one in self.wakes()], [row["event_id"]])
+
+
+class AGrantThatNoLongerAppliesOwesNothing(MergeTurnWakeTestCase):
+    """Every status field for a grant answers from the grant's own turn (PR132-RB2).
+
+    A grant is answered on its merge turn, never through an acks row, so both the phase and
+    the reported state have to be read from there. Reading only the acknowledged case left a
+    grant that was replaced, returned or lost reporting an acknowledgement nobody can give.
+    """
+
+    def status(self, event):
+        (item,) = [one for one in self.delivery.snapshot()["deliveries"]
+                   if one["eventId"] == event]
+        return item["phase"], item["reported"]
+
+    def delivered(self):
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.assertEqual(self.attempt(event)["deliveryState"], DISPATCHED)
+        return turn, event
+
+    def test_a_delivered_current_grant_waits_for_its_acknowledgement(self):
+        _turn, event = self.delivered()
+        self.assertEqual(self.status(event), ("awaiting_grant_acknowledgement",
+                                              "dispatched_awaiting_grant_acknowledgement"))
+
+    def test_a_regranted_notice_reports_what_replaced_it(self):
+        turn, event = self.delivered()
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual(self.status(event), (expected, expected))
+
+    def test_a_turn_returned_unanswered_closes_its_notice(self):
+        turn, event = self.delivered()
+        self.turns.release(turn, actor=PARENT, disposition="returned", reason="cannot land it")
+        expected = "superseded:" + MERGE_TURN_CLOSED
+        self.assertEqual(self.status(event), (expected, expected))
+
+    def test_a_grant_answered_and_landed_stays_acknowledged(self):
+        # The ordinary end of a grant. Its turn closes because it was used, and reporting the
+        # notice as overtaken by that closure would describe the success path as a loss.
+        turn, event = self.delivered()
+        self.answer_grant(turn, PARENT)
+        self.turns.begin_merge(
+            turn, actor=PARENT, head_sha="head-a", base_sha="base-0",
+            checks=run_checks("head-a"), review=dict(GREEN), required=["dev-gate"])
+        landed = self.turns.land(
+            turn, actor=PARENT, landed_sha="merge-1", observed_base_sha="base-1",
+            evidence="the merge commit is on the base")
+        self.assertEqual(landed["released"]["state"], "landed")
+        self.assertEqual(self.status(event), ("grant_acknowledged", "grant_acknowledged"))
+
+    def test_a_queued_notice_regranted_before_any_send_is_not_awaiting_one(self):
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual(self.status(event), (expected, expected))
+
+    def test_an_unsettled_send_regranted_meanwhile_is_not_awaiting_evidence(self):
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        # Staged rather than driven through a transport that goes silent: what is under test
+        # is the report for a send whose outcome is unknown, not the route that leaves one.
+        self.store.db.execute(
+            "UPDATE deliveries SET state = ? WHERE event_id = ?", (HELD_UNCERTAIN, event))
+        self.turns.declare_ready(turn, actor=PARENT, ready=True, candidate_head="head-a2")
+        expected = "superseded:" + MERGE_TURN_REGRANTED
+        self.assertEqual(self.status(event), (expected, expected))
+
+    def test_a_notice_whose_turn_is_gone_says_so(self):
+        turn, event = self.delivered()
+        # A store that lost the turn row: damaged, not a state this package writes.
+        self.store.db.execute("DELETE FROM merge_turns WHERE turn_id = ?", (turn,))
+        expected = "superseded:" + MERGE_TURN_ABSENT
+        self.assertEqual(self.status(event), (expected, expected))
+
+    def test_a_notice_nobody_can_read_says_so(self):
+        _turn, event = self.delivered()
+        # Hand-edited, the only way this package's own receipt stops reading as a grant.
+        self.store.db.execute(
+            "UPDATE events SET receipt = ? WHERE event_id = ?", ("not a grant", event))
+        expected = "superseded:" + MERGE_TURN_GRANT_UNREADABLE
+        self.assertEqual(self.status(event), (expected, expected))
+
+
+class TheNoticeDeclaresTheRequiredChecks(MergeTurnWakeTestCase):
+    """A parent that follows the notice to the letter cannot merge past a red gate (PR132-RB1).
+
+    merge-turn-check stores whatever --required its caller declares, and a command without
+    one declares that nothing is required - so a failed dev-gate beside a green optional
+    check passed. The notice now proposes the names the candidate's own merge-evidence
+    reading recorded, and says plainly when there is no such reading.
+    """
+
+    def candidate(self, *, head="head-a", required=("dev-gate",), event=None,
+                  submission_no=1, name="candidate", **fields):
+        """The child's completion report for the turn's own assignment, as merge-evidence read it.
+
+        Built on this fixture's registered assignment rather than through ready_event, which
+        registers another one: the notice reads the reading recorded for the turn it grants.
+        """
+        if event is None:
+            payload = self.ready_payload(self.relationship, [self.artifact(name + ".txt", name)])
+            self.accept(payload)
+            event = payload["eventId"]
+        stated = {"repository": REPO, "base_ref": BASE, "head_sha": head}
+        if required is not None:
+            names = list(required)
+            green = [{"runId": "run-" + str(n), "name": one, "headSha": head,
+                      "conclusion": "success", "attempt": 1}
+                     for n, one in enumerate(names or ["dev-gate"])]
+            stated["handoff"] = a_handoff(head, requiredDeclared=names, checks=green)
+        stated.update(fields)
+        stored = report.record(self.store, self.clock, event_id=event,
+                               submission_no=submission_no, **a_report(**stated))
+        self.assertEqual(stored["submissionNo"], submission_no)
+        return event
+
+    def notice(self):
+        """The bytes the promoted parent actually received on its own thread."""
+        turn = self.promoted()
+        event = self.wakes()[0]["event_id"]
+        self.assertEqual(self.attempt(event)["deliveryState"], DISPATCHED)
+        _turn_id, text = self.adapter.threads[PARENT].items[-1]
+        return turn, event, text
+
+    @staticmethod
+    def line(text, verb):
+        (found,) = [one.strip() for one in text.splitlines()
+                    if one.strip().startswith(verb + " ")]
+        return found
+
+    def parsed(self, text, verb, *fills):
+        """One command from the notice, its placeholders filled, parsed by the real CLI."""
+        line = self.line(text, verb)
+        for placeholder, value in fills:
+            self.assertIn(placeholder, line)
+            line = line.replace(placeholder, shlex.quote(value), 1)
+        return cli.build_parser().parse_args(shlex.split(line))
+
+    def invoke(self, args):
+        return args.handler(types.SimpleNamespace(merge_turn=self.turns), args)
+
+    def check_command(self, text, dev_gate):
+        checks = [{"runId": "run-dev", "name": "dev-gate", "headSha": "head-a",
+                   "conclusion": dev_gate, "attempt": 1},
+                  {"runId": "run-lint", "name": "optional-lint", "headSha": "head-a",
+                   "conclusion": "success", "attempt": 1}]
+        return self.parsed(
+            text, "merge-turn-check", ("<your task id>", PARENT), ("<head>", "head-a"),
+            ("<base>", "base-0"), ("<json>", json.dumps(checks)), ("<json>", json.dumps(GREEN)))
+
+    def assertNotRecorded(self, text, reason):
+        self.assertIn("requiredDeclared: not recorded (", text)
+        self.assertIn(reason, text)
+        self.assertIn(" --required <", self.line(text, "merge-turn-check"))
+        self.assertIn("merge-evidence --repository " + REPO, text)
+
+    # ------------------------------------------------------- a recorded reading
+
+    def test_a_verbatim_parent_cannot_merge_past_a_failed_required_check(self):
+        self.candidate()
+        turn, _event, text = self.notice()
+        self.assertIn('requiredDeclared: ["dev-gate"]', text)
+        self.invoke(self.parsed(text, "merge-turn-acknowledge", ("<your task id>", PARENT),
+                                ("<what you read>", "read the notice and the candidate")))
+        red = self.check_command(text, "failure")
+        self.assertEqual(red.required, ["dev-gate"])
+        with self.assertRaises(CoordinationError) as caught:
+            self.invoke(red)
+        self.assertEqual(caught.exception.reason, RefusalReason.MERGE_CURRENCY_STALE)
+        self.assertIn("dev-gate", caught.exception.detail)
+        self.assertEqual(self.turns.turn(turn)["state"], "holding")
+        # The same command with the gate green reaches merging, so the refusal above was the
+        # gate's and not something else about the candidate.
+        answer = self.invoke(self.check_command(text, "success"))
+        self.assertEqual(answer["state"], "merging")
+        self.assertEqual(answer["requiredDeclared"], ["dev-gate"])
+
+    def test_the_preview_proposes_the_same_names(self):
+        self.candidate()
+        self.promoted()
+        preview = self.delivery.preview_message(self.wakes()[0]["event_id"])
+        self.assertTrue(self.line(preview, "merge-turn-check").endswith(" --required dev-gate"))
+
+    def test_names_that_need_quoting_survive_the_round_trip(self):
+        names = ["build linux", "dev-gate", "lint'; echo x"]
+        self.candidate(required=names)
+        _turn, _event, text = self.notice()
+        self.assertEqual(self.check_command(text, "success").required, sorted(names))
+        self.assertIn("requiredDeclared: " + json.dumps(sorted(names)), text)
+
+    def test_the_current_submission_decides_not_an_earlier_one(self):
+        event = self.candidate(head="head-old", required=("old-gate",))
+        self.candidate(head="head-a", required=("dev-gate",), event=event, submission_no=2)
+        _turn, _event, text = self.notice()
+        self.assertEqual(self.check_command(text, "success").required, ["dev-gate"])
+        self.assertNotIn("old-gate", text)
+
+    def test_a_reading_that_found_nothing_required_says_so(self):
+        self.candidate(required=())
+        _turn, _event, text = self.notice()
+        self.assertIn("requiredDeclared: none", text)
+        self.assertIsNone(self.check_command(text, "success").required)
+
+    # ------------------------------------------------------------- no reading
+
+    def test_no_report_leaves_the_required_set_for_the_parent_to_read(self):
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "no work report")
+
+    def test_a_report_without_a_handoff_is_not_a_reading(self):
+        self.candidate(required=None, pr_number=None, pr_url=None, pr_state=None, handoff=None)
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "no merge-readiness handoff")
+
+    def test_a_reading_about_another_head_is_not_this_candidates(self):
+        self.candidate(head="head-old")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "head-old")
+
+    def test_a_reading_about_another_repository_is_not_this_targets(self):
+        self.candidate(repository="owner/other")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "another repository")
+
+    def test_a_reading_about_another_base_is_not_this_targets(self):
+        self.candidate(base_ref="main")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "another base")
+
+    def test_two_current_readings_that_disagree_propose_neither(self):
+        self.candidate(required=("dev-gate",), name="one")
+        self.candidate(required=("other-gate",), name="two")
+        _turn, _event, text = self.notice()
+        self.assertNotRecorded(text, "disagree")
