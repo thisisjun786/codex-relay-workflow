@@ -121,9 +121,16 @@ def attention(snapshot):
     return None
 
 
+# The goal a caller does not write: the route keeps what it had. A caller writing a route from
+# its newest incident passes that incident's goal, None included, so a goal the incident dropped
+# is dropped from the route too; a stale one would still count the defect under a goal it left.
+KEEP = object()
+
+
 def upsert(db, clock, *, fault_id, product, workspace, disposition, stage, target, origin,
-           claimed_severity, goal=None, detail="", classification=None, superseded_by=None):
+           claimed_severity, goal=KEEP, detail="", classification=None, superseded_by=None):
     now = clock.iso()
+    replace_goal = goal is not KEEP
     db.execute(
         "INSERT INTO incident_routes (fault_id, product_key, workspace, disposition, stage,"
         "  target, origin, claimed_severity, goal, classification, superseded_by, detail,"
@@ -137,15 +144,15 @@ def upsert(db, clock, *, fault_id, product, workspace, disposition, stage, targe
         "       THEN 'broken'"
         "     WHEN 'degraded' IN (excluded.claimed_severity, incident_routes.claimed_severity)"
         "       THEN 'degraded'"
-        "     ELSE incident_routes.claimed_severity END,"
-        "   goal = COALESCE(excluded.goal, incident_routes.goal),"
+            "     ELSE incident_routes.claimed_severity END,"
+        "   goal = CASE WHEN ? THEN excluded.goal ELSE incident_routes.goal END,"
         "   classification = COALESCE(excluded.classification, incident_routes.classification),"
         "   superseded_by = COALESCE(excluded.superseded_by, incident_routes.superseded_by),"
         "   detail = excluded.detail, updated_at = excluded.updated_at",
         (fault_id, product, workspace, disposition, stage, products.canonical(target), origin,
-         claimed_severity, goal,
+         claimed_severity, goal if replace_goal else None,
          products.canonical(classification) if classification is not None else None,
-         superseded_by, detail, now, now))
+         superseded_by, detail, now, now, 1 if replace_goal else 0))
 
 
 def set_target(db, clock, fault_id, target):
@@ -161,22 +168,41 @@ def settle(db, clock, fault_id, detail):
 
 
 def outstanding_proposals(store, limit):
-    """(checked now, the product and goal of every one not reached): at most limit outstanding
-    project proposals, least recently checked first. The second part is a small grouped read
-    of routing's own rows, so a caller can tell which held defects a proposal it did not reach
-    might still move."""
+    """At most limit outstanding project proposals, least recently checked first: the ones a
+    digest checks now. unreached_proposal and unreached_count answer for the rest exactly, however
+    many there are."""
     rows = store.all(
         "SELECT rowid AS seq, * FROM incident_routes WHERE stage = ? AND disposition = ?"
         " ORDER BY checked_seq, rowid LIMIT ?",
         (products.STAGE_FILED, products.PROJECT_PROPOSAL,
          products.read_page(limit, None, ceiling=5000)[0]))
-    reached = [_decode(row) for row in rows]
-    placeholders = ",".join("?" * len(reached)) or "''"
-    waiting = store.all(
-        "SELECT DISTINCT product_key, goal FROM incident_routes WHERE stage = ?"
-        " AND disposition = ? AND fault_id NOT IN (" + placeholders + ") LIMIT 5000",
-        (products.STAGE_FILED, products.PROJECT_PROPOSAL, *(r["fault_id"] for r in reached)))
-    return reached, {(row["product_key"], row["goal"]) for row in waiting}
+    return [_decode(row) for row in rows]
+
+
+# Outstanding proposals other than the ones a digest reached, which are passed as one JSON list
+# so neither answer is bounded by how many were reached or how many are left.
+_UNREACHED = ("FROM incident_routes WHERE stage = ? AND disposition = ?"
+              " AND fault_id NOT IN (SELECT value FROM json_each(?))")
+
+
+def unreached_proposal(store, product, goal, reached):
+    """The outstanding proposal for this product's goal that is not among the reached ones, by
+    fault id, or None: one that may still move a defect held under that goal."""
+    if goal is None:
+        return None
+    row = store.one(
+        "SELECT fault_id " + _UNREACHED + " AND product_key = ? AND goal = ?"
+        " ORDER BY rowid LIMIT 1",
+        (products.STAGE_FILED, products.PROJECT_PROPOSAL, json.dumps(list(reached)),
+         product, goal))
+    return row["fault_id"] if row else None
+
+
+def unreached_count(store, reached) -> int:
+    """How many product goals have an outstanding proposal not among the reached ones."""
+    return store.one(
+        "SELECT COUNT(*) AS n FROM (SELECT DISTINCT product_key, goal " + _UNREACHED + ")",
+        (products.STAGE_FILED, products.PROJECT_PROPOSAL, json.dumps(list(reached))))["n"]
 
 
 def checked(db, fault_id):

@@ -26,8 +26,8 @@ PAGE = 100
 
 
 def _bind_created_projects(router, limit):
-    """(bound, unreached): outstanding project proposals whose create confirmed, bound before
-    anything is reported, and the (product, goal) of every outstanding proposal not reached.
+    """(bound, reached): outstanding project proposals whose create confirmed, bound before
+    anything is reported, and the ids of every proposal this digest checked.
 
     At most limit are checked, least recently checked first, and each checked one goes to the
     back of the rotation, so a proposal waiting on a slow create cannot keep a later confirmed
@@ -35,12 +35,12 @@ def _bind_created_projects(router, limit):
     proposal leaves the filed stage, so only the ones still waiting are read at all.
     """
     bound = []
-    reached, unreached = routes.outstanding_proposals(router.store, limit)
+    reached = routes.outstanding_proposals(router.store, limit)
     for route in reached:
         bound.extend(intake.reconcile_route(router, route)["bound"])
         with router.store.transaction() as db:
             routes.checked(db, route["fault_id"])
-    return bound, unreached
+    return bound, [route["fault_id"] for route in reached]
 
 
 def _entry(route, now):
@@ -63,7 +63,7 @@ def digest(router, *, limit=500, after=None) -> dict:
     limit, after = products.read_page(limit, after, ceiling=5000)
     port = router.port
     port.ready("route-digest")
-    bound, unreached = _bind_created_projects(router, limit)
+    bound, reached = _bind_created_projects(router, limit)
     linked = []
     severe, decisions, resolutions, routine = [], [], [], {}
     read, cursor = 0, after
@@ -83,7 +83,8 @@ def digest(router, *, limit=500, after=None) -> dict:
                 route = routes.get(router.store, route["fault_id"])
                 if (route["stage"] == products.STAGE_HELD
                         and route["target"]["hold"] == products.NO_PROJECT
-                        and (route["product_key"], route["goal"]) in unreached):
+                        and routes.unreached_proposal(router.store, route["product_key"],
+                                                      route["goal"], reached) is not None):
                     # A proposal for this defect's own goal that this digest did not reach may
                     # be about to move it; its hold is reported by the digest that reaches that
                     # proposal, not announced stale now. Every other hold is reported.
@@ -122,7 +123,7 @@ def digest(router, *, limit=500, after=None) -> dict:
     return {"quiet": not changed, "severe": severe, "decisions": decisions,
             "resolutions": resolutions, "routine": routine,
             "linked": linked, "projectsBound": bound,
-            "proposalsUnreached": len(unreached),
+            "proposalsUnreached": routes.unreached_count(router.store, reached),
             "read": read, "next": cursor,
             "limits": "routing's rows and the ledger's state in this store only. A queued write"
                       " is not an issue anybody has written; pass next as after to continue."}

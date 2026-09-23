@@ -430,6 +430,15 @@ def _record_reading(router, reading) -> dict:
                                     f" somebody, not another round")
                 adopt = None
                 if ids["mismatchRow"] is None:
+                    if not project:
+                        # The ledger adopts an issue only into a project's scope, and a
+                        # re-verification demand is never filed as a new issue: refused before
+                        # anything is written, with what would let it be recorded.
+                        products.refuse(
+                            RefusalReason.ROUTE_STATE_CONFLICT,
+                            f"{reading['subject']} is bound with no project and {product} has"
+                            f" no triage project; bind the subject with the project it is in,"
+                            f" or register a triage project, and hand the reading in again")
                     adopt = {"externalRef": reading["subject"], "scope": scope}
                 if project:
                     # The scope's owned target, as intake sets it before any record: the

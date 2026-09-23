@@ -1185,22 +1185,58 @@ class ProposalRotation(RouteRows):
             self.upsert(f"{n}" * 32, disposition=products.PROJECT_PROPOSAL,
                         stage=products.STAGE_FILED, goal=goal,
                         target=routes.plain_target(team="ALN"))
+        proposal = {"sync_a": "0" * 32, "sync_b": "1" * 32, "sync_c": "2" * 32}
         self.upsert("9" * 32, goal="sync_a")  # a held member, never a proposal
         seen = []
         for _ in range(3):
-            reached, unreached = routes.outstanding_proposals(self.store, 1)
+            reached = routes.outstanding_proposals(self.store, 1)
             (route,) = reached
             seen.append(route["goal"])
-            self.assertEqual({"sync_a", "sync_b", "sync_c"} - {route["goal"]},
-                             {goal for _, goal in unreached})
+            ids = [route["fault_id"]]
+            self.assertEqual(2, routes.unreached_count(self.store, ids))
+            for goal in ("sync_a", "sync_b", "sync_c"):
+                self.assertEqual(None if goal == route["goal"] else proposal[goal],
+                                 routes.unreached_proposal(self.store, "alpha-notes", goal, ids))
             with self.store.transaction() as db:
                 routes.checked(db, route["fault_id"])
         self.assertEqual(["sync_a", "sync_b", "sync_c"], seen)
         with self.store.transaction() as db:
             routes.settle(db, self.clock, "1" * 32, "created and bound")
-        reached, unreached = routes.outstanding_proposals(self.store, 5)
+        reached = routes.outstanding_proposals(self.store, 5)
         self.assertEqual({"sync_a", "sync_c"}, {r["goal"] for r in reached})
-        self.assertEqual(set(), unreached)
+        ids = [r["fault_id"] for r in reached]
+        self.assertEqual(0, routes.unreached_count(self.store, ids))
+        self.assertIsNone(routes.unreached_proposal(self.store, "alpha-notes", "sync_b", ids))
+        self.assertIsNone(routes.unreached_proposal(self.store, "alpha-notes", None, []))
+
+    def test_what_is_not_reached_is_answered_exactly_and_without_a_cap(self):
+        from codex_session_relay import routes
+
+        # More outstanding proposals than any one digest reaches, other products' included:
+        # every one of them is counted, and each held goal is answered for its own product.
+        for n in range(12):
+            self.upsert(f"{n:032x}", product="alpha-notes" if n % 2 else "beta-meter",
+                        disposition=products.PROJECT_PROPOSAL, stage=products.STAGE_FILED,
+                        goal=f"goal_{n}", target=routes.plain_target(team="ALN"))
+        reached = [r["fault_id"] for r in routes.outstanding_proposals(self.store, 3)]
+        self.assertEqual(9, routes.unreached_count(self.store, reached))
+        self.assertEqual(f"{11:032x}", routes.unreached_proposal(self.store, "alpha-notes",
+                                                                 "goal_11", reached))
+        self.assertIsNone(routes.unreached_proposal(self.store, "beta-meter", "goal_11", reached))
+
+    def test_a_goal_is_replaced_when_written_and_kept_when_not(self):
+        from codex_session_relay import routes
+
+        self.upsert("b" * 32, goal="offline_sync")
+        self.upsert("b" * 32, goal=None)  # the newest incident dropped its goal
+        self.assertIsNone(routes.get(self.store, "b" * 32)["goal"])
+        self.upsert("b" * 32, goal="fast_search")
+        with self.store.transaction() as db:
+            routes.upsert(db, self.clock, fault_id="b" * 32, product="alpha-notes",
+                          workspace="example-ws", disposition=products.HELD,
+                          stage=products.STAGE_HELD, target=routes.plain_target(team="ALN"),
+                          origin=products.OBSERVED, claimed_severity="degraded")  # no goal
+        self.assertEqual("fast_search", routes.get(self.store, "b" * 32)["goal"])
 
 
 class FinalReviewFindings(unittest.TestCase):

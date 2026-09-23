@@ -282,7 +282,11 @@ this check among what it took over. An approved scope reduction counts only with
 its reference. Anything else is **exception_unverified**.
 
 The subject must be an issue bound to the product as read back, because a mismatch is filed as a
-re-verification demand on the subject issue itself. It is a `completion_mismatch` record,
+re-verification demand on the subject issue itself. The ledger adopts an issue only into a
+project's scope, so a mismatch on a subject bound in no project, for a product with no triage
+project, is refused before anything is written. It could be linked nowhere, and it is never filed
+as a new issue instead. Binding the subject with the project it is in, or registering a triage
+project, lets the reading be handed in again. It is a `completion_mismatch` record,
 one per subject and check, adopted by the subject issue and recorded at degraded. The class
 declares a threshold of one, since a reading that looked for the evidence and did not find it is
 the whole proof. Under that default the first reading files, and its first write is a comment on
@@ -349,7 +353,10 @@ member as held in the same answer would announce a decision already made. It che
 rotation. A proposal waiting on a slow create therefore cannot keep a later confirmed one from
 being bound: successive digests reach every one. A defect held for want of a project whose own
 goal has an outstanding proposal this digest did not reach is reported by the digest that
-reaches it; `proposalsUnreached` counts those proposals. Then, for each route it reads, it
+reaches it; `proposalsUnreached` counts those proposals. Both are answered exactly, however many
+proposals there are, and against the defect's goal as its newest incident declares it: a route's
+goal is replaced by each new incident, so a defect that stopped declaring a goal waits on no
+proposal for it. Then, for each route it reads, it
 discharges what that route owes, reads the route again, and compares it with the snapshot it
 last reported. It answers only what changed: new severe records, new decisions,
 resolutions of records that owned an issue, and routine accumulation summarized per product.

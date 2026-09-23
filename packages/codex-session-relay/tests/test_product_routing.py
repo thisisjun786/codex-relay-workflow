@@ -349,6 +349,21 @@ class ControlGroups(ProductRoutingCase):
         self.assertNotIn(entry["faultId"],
                          [r["faultId"] for r in self.router.show(attention=True)["routes"]])
 
+    def test_a_mismatch_on_a_subject_with_no_project_to_be_in_is_refused_before_any_write(self):
+        # gamma-kit has no triage project and GMK-1 is bound in none: the demand could be
+        # linked nowhere, and it is never filed as a new issue instead.
+        self.router.bind(binding("gamma-kit", "issue", "GMK-1", state="done",
+                                 components=["cache"]))
+        before = self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"]
+        with self.assertRaises(products.RouteRefused) as caught:
+            self.router.check_completion(reading("GMK-1", product="gamma-kit",
+                                                 observed={"acceptance": "absent"}))
+        self.assertEqual("route_state_conflict", caught.exception.reason.value)
+        self.assertIn("triage project", str(caught.exception))
+        self.assertEqual(before, self.store.one("SELECT COUNT(*) AS n FROM fault_ledger")["n"])
+        self.assertEqual("consistent", self.router.check_completion(
+            reading("GMK-1", product="gamma-kit"))["verdict"])
+
     def test_a_recurrence_is_found_behind_a_long_remediation_history(self):
         self.router.bind(binding("alpha-notes", "issue", "ALN-12", components=["editor"],
                                  symptoms=["cursor_jump"], project="proj-aln-editor"))
@@ -647,6 +662,30 @@ class Projects(ProductRoutingCase):
                 self.router.evaluate_projects("gamma-kit")
         (again,) = self.router.port.publications(proposal, kind=projects.KIND)
         self.assertEqual((before["state"], before["payload"]), (again["state"], again["payload"]))
+
+    def test_a_member_that_drops_its_goal_is_not_left_waiting_on_that_goals_proposal(self):
+        self.router.set_policy(POLICY)
+        # An older proposal for another goal comes first in the digest's rotation.
+        for component, key in (("index", "f1"), ("ranking", "f2")):
+            self.route(product="gamma-kit", repository="example-org/gamma-kit",
+                       surface="real_use", phase="in_use", component=component,
+                       symptom="slow", occurrenceKey=key,
+                       goal={"key": "fast_search", "criteria": "results in a second"})
+        self.gamma("cache", "stale", "g1")
+        self.gamma("queue", "lost", "g2")
+        dropped = self.gamma("search", "slow", "g3")
+        self.gamma("search", "slow", "g3b", goal=False)  # its newest incident declares none
+        self.assertIsNone(routes.get(self.store, dropped["faultId"])["goal"])
+        # One proposal checked, fast_search's: offline_sync's is outstanding and unreached, and
+        # the defect that left that goal is reported now rather than deferred to it.
+        seq = self.store.one("SELECT rowid AS n FROM incident_routes WHERE fault_id = ?",
+                             (dropped["faultId"],))["n"]
+        answer = self.router.digest(limit=1, after=seq - 1)
+        self.assertEqual([(dropped["faultId"], "held_no_project")],
+                         [(d["faultId"], d["decision"]) for d in answer["decisions"]])
+        self.assertEqual(1, answer["proposalsUnreached"])
+        self.holder.run()
+        self.assertEqual(["GMK", "GMK"], [p["team"] for p in self.linear.projects.values()])
 
     def test_an_existing_suitable_project_is_reused(self):
         self.router.set_policy(POLICY)
