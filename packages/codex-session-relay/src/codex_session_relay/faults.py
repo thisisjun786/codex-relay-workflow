@@ -3063,27 +3063,7 @@ class FaultLedger:
                 "reason": reason}
 
     def _eligibility(self, db, identifier, moment) -> dict:
-        from . import supervision
-
-        fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
-                           (identifier,)).fetchone()
-        row = anchor_relationship(db, fault)
-        if row is None:
-            return {"eligible": True, "reason": "no relationship whose wishes apply"}
-        # Which relationship and parent the answer is about, and the contact reading it rests
-        # on, beside the answer: a deliverer that finds the reading unmeasured or stale can
-        # measure the parent the way delivery does and ask again. The rule is unchanged.
-        about = {"relationshipId": row["relationship_id"], "parentTaskId": row["parent_task_id"]}
-        if row["status"] in ("paused", "cancelled", "archived"):
-            return {**about, "eligible": False, "reason": f"the relationship is {row['status']}"}
-        contact = supervision.contactable(self.store, row["parent_task_id"], now=moment)
-        about["contact"] = contact
-        if contact.get("contactable") is False:
-            return {**about, "eligible": False, "reason": f"no contact: {contact.get('reason')}"}
-        if contact.get("contactable") is None and contact.get("asked", True):
-            return {**about, "eligible": False,
-                    "reason": f"contact unmeasured: {contact.get('reason')}"}
-        return {**about, "eligible": True, "reason": "reportable"}
+        return notification_eligibility(self.store, db, identifier, moment)
 
     def _lapse_notifications(self, db, moment, stamp):
         db.execute("UPDATE fault_notifications SET state = ?, token = NULL, updated_at = ?"
@@ -3304,6 +3284,34 @@ def _json(text):
 def _exists(db, identifier):
     return db.execute("SELECT 1 FROM fault_ledger WHERE fault_id = ?",
                       (identifier,)).fetchone() is not None
+
+
+def notification_eligibility(store, db, identifier, moment) -> dict:
+    """Whether this fault's notifications may be delivered now: the one rule for pause, archive
+    and no-contact, asked at reservation (reserve_notifications) and again where a notice's
+    transport starts (supervisorchannel._notice_now), so a pause committed in between is kept.
+    """
+    from . import supervision
+
+    fault = db.execute("SELECT * FROM fault_ledger WHERE fault_id = ?",
+                       (identifier,)).fetchone()
+    row = anchor_relationship(db, fault) if fault is not None else None
+    if row is None:
+        return {"eligible": True, "reason": "no relationship whose wishes apply"}
+    # Which relationship and parent the answer is about, and the contact reading it rests on,
+    # beside the answer: a deliverer that finds the reading unmeasured or stale can measure the
+    # parent the way delivery does and ask again. The rule is unchanged.
+    about = {"relationshipId": row["relationship_id"], "parentTaskId": row["parent_task_id"]}
+    if row["status"] in ("paused", "cancelled", "archived"):
+        return {**about, "eligible": False, "reason": f"the relationship is {row['status']}"}
+    contact = supervision.contactable(store, row["parent_task_id"], now=moment)
+    about["contact"] = contact
+    if contact.get("contactable") is False:
+        return {**about, "eligible": False, "reason": f"no contact: {contact.get('reason')}"}
+    if contact.get("contactable") is None and contact.get("asked", True):
+        return {**about, "eligible": False,
+                "reason": f"contact unmeasured: {contact.get('reason')}"}
+    return {**about, "eligible": True, "reason": "reportable"}
 
 
 def anchor_relationship(db, fault):

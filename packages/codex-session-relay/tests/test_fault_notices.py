@@ -624,3 +624,43 @@ class WhatTheFifthAuditFound(NoticeCase):
         self.tick(advance=1)
         self.assertEqual(len(self.upward()), 2)
         self.assertEqual(self.notification(fault)["state"], faults.DELIVERED)
+
+
+class WhatTheSixthAuditFound(NoticeCase):
+    """Plan audit, round six: the user's pause and no-contact are asked again where the
+    transport starts, so one committed after the reservation is kept (I-447, I-247)."""
+
+    def ticking_after(self, change):
+        original = channel_module.SupervisorChannel.attempt
+
+        def changed_first(channel, message_id, adapter, **kw):
+            change()
+            return original(channel, message_id, adapter, **kw)
+        with mock.patch.object(channel_module.SupervisorChannel, "attempt", changed_first):
+            self.tick()
+
+    def assert_kept_back(self, fault):
+        notification = self.notification(fault)
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(notification["state"], faults.PENDING)
+        self.assertEqual(self.budget_used(), 0, "the reservation that sent nothing gave it back")
+        attempts = notification["attempts"]
+        for _ in range(2):
+            self.tick(advance=3600)
+        self.assertEqual(self.upward(), [])
+        self.assertEqual(self.notification(fault)["attempts"], attempts,
+                         "not reserved again while the wish stands")
+
+    def test_a_pause_after_the_reservation_is_kept(self):
+        fault = self.broken()
+        self.ticking_after(lambda: self.registry.set_status(self.rid, "paused", actor="user"))
+        self.assert_kept_back(fault)
+
+    def test_a_parent_that_became_uncontactable_after_the_reservation_is_kept(self):
+        fault = self.broken()
+
+        def archive_parent():
+            self.adapter.threads[PARENT].archived = True
+            self.measure_parent()
+        self.ticking_after(archive_parent)
+        self.assert_kept_back(fault)

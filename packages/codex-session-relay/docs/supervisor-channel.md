@@ -589,7 +589,9 @@ A notice is owed only while its notification is reserved under a live lease, bec
 reservation is where the ledger decided its eligibility and spent its budget. That is its I-247
 check (`_notice_now`, through `_proposal_now` at the claim and again where the transport starts):
 a notice whose notification is pending, uncertain, delivered or lapsed is held
-(`superseded_by_report`), never sent, as is a blocking notice whose fault withdrew; one whose fault
+(`superseded_by_report`), never sent, as is a blocking notice whose fault withdrew and one the
+ledger's eligibility (`faults.notification_eligibility`, the rule its reservation asked) no longer
+allows - a pause or no-contact committed after the reservation; one whose fault
 is about another relationship now is not claimed (and a parked one stays parked) until its next
 staging re-addresses it; and a reserved one is recomposed from what the ledger says now and
 restated if its fault moved. A notice whose attempt sent nothing is parked under the same

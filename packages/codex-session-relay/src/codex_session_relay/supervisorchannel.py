@@ -1544,6 +1544,15 @@ class SupervisorChannel:
                     "detail": "fault " + repr(notice["faultId"]) + " withdrew - it cleared"
                     " before anything about it landed - so its blocking notice is no longer a"
                     " new serious block and does not go up"}
+        # The user's wishes, asked again where the transport starts: the same rule the
+        # reservation asked (faults.notification_eligibility), so a pause, an archive or a
+        # no-contact committed since then is kept and nothing is sent.
+        eligibility = faults.notification_eligibility(self.store, db, notice["faultId"],
+                                                      self.clock.now())
+        if not eligibility["eligible"]:
+            return {"kind": "obsolete", "live": live,
+                    "detail": "notification " + repr(row["obligation_id"]) + " is no longer"
+                    " eligible: " + eligibility["reason"]}
         if notice["relationshipId"] != row["relationship_id"]:
             # What the notification is about moved - ledger.move, an issue's relationship
             # superseded - since this row was addressed. Not sent to the old hierarchy: nothing

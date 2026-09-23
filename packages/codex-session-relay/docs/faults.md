@@ -103,6 +103,8 @@ a path that reaches the outcome without passing through that function is a defec
     `reconcile_notification(delivered=False)` give back that reservation's own budget unit and
     nothing earlier, and a deliverer's `deliverable` predicate is asked after eligibility and
     before any budget is spent, so a notification its transport cannot carry now is never reserved.
+    Eligibility is one rule (`notification_eligibility()`), asked again where a notice's transport
+    starts, so a pause or no-contact committed after the reservation is kept.
     A notification is never settled as not delivered while the supervisor channel holds an attempt
     of its message that may have sent.
     Enforced by `reserve_notifications()` and `_settle_notification()`.
