@@ -1458,8 +1458,9 @@ writers share, and the transition aliases it rather than keeping a second copy.
 ### Who registers the hook
 
 The plugin package declares this hook as well, and a host holding both registrations runs both
-on every Stop: each asks the guard, each journals, and the turn's one hold goes to whichever
-wins the reservation. `--owner` decides which registration exists.
+on every Stop: each leaves a row, but only the one that claims the event's accepted record asks
+the guard, and the other records itself as a duplicate (see [One accepted record per Stop
+event](#one-accepted-record-per-stop-event)). `--owner` decides which registration exists.
 
 `user` is the default and appends to the hook file as before. Its settings document is
 byte-identical to what installed hosts already hold -- the owner is written only when it is not
@@ -1635,6 +1636,76 @@ moved pointer and a file that cannot be executed are different repairs. An exit 
 relay's own error record is the relay declining a request it understood; an exit of 2 carrying
 nothing is its argument parser refusing before any command ran. Every one of these releases the
 turn and is recorded.
+
+## One accepted record per Stop event
+
+A turn can end more than once. When any Stop hook holds, the host appends a continuation to the
+same turn and fires Stop again; when a message was waiting, it appends that and does the same.
+Each of those is its own Stop event, and each one gets its own decision. Two registrations
+answering one Stop, or one Stop delivered twice, are a different thing: one event handled twice.
+The adapter keeps exactly one accepted record per event, asks the guard once for it, and still
+leaves a row for every invocation, so the two cases stay apart instead of being counted as one
+number per turn.
+
+### What identifies an event
+
+The host hands a Stop hook nine fields and no per-invocation identifier. None of them separates
+two events of one turn: `turn_id` is kept across a continuation chain, `stop_hook_active` is
+false on a turn's first Stop and true on every later one, and `last_assistant_message` can repeat
+word for word. An isolated run on Codex 0.154.0 produced three Stops in one turn whose second and
+third payloads were byte-identical. What differs is the transcript. Every sampling that ends in a
+Stop leaves one final answer, and before running Stop hooks the host records it in the file named
+by `transcript_path` as an `item_completed` `AgentMessage` carrying the turn id and an item id of
+its own. So an event is
+
+    (session_id, turn_id, stop_hook_active, answer item id)
+
+where the answer item is the newest `AgentMessage` recorded for that turn when the hook runs. It
+counts only when its text equals `last_assistant_message`, its thread is the delivered session,
+and no newer continuation or user message for the turn is recorded after it: an input with no
+answer yet means the transcript does not show this Stop's answer, and borrowing the previous one
+would merge two events. The key is a SHA-256 over those four values, so no host value becomes a
+path component and nothing is minted per invocation.
+
+The transcript is read backwards from its end, in bounded chunks, for at most 8 MiB and 0.75
+seconds, inside the margin the launcher keeps over the guard budget. A path that is missing,
+relative, not a regular file or unreadable, a scan that hits either bound, and a transcript that
+shows no answer, an answer without an id, a different text, a different thread or a newer input
+all leave the identity unestablished, with that reason on the row. An unestablished invocation is
+asked about exactly as before and is never deduplicated: the adapter does not know which event it
+is, so it cannot know that the event was already answered.
+
+### Accepted records and attempt rows
+
+The accepted record is a create-once file, `<journalRoot>/accepted/<key>.json`. Whichever
+invocation creates it owns the event; it asks the guard, writes its row, and then writes
+`accepted/<key>.outcome.json` naming the outcome and the row. An invocation that finds the file
+already there asks nothing, prints nothing and writes a row whose `adapterOutcome` is
+`duplicate_invocation`. Creating a file that must not exist is atomic on a local filesystem, so
+two registrations firing in the same instant produce one owner and one duplicate. The accepted
+records are state rather than invocation records: they are written under every `journalPolicy`,
+and a settings document with no `journalRoot` cannot claim (`unclaimable`) and asks the guard
+as before.
+
+Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
+existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
+(whether it was established, and why not), `acceptance` (`accepted`, `duplicate`,
+`unestablished`, `unclaimable` or `claim_failed`), `acceptedAs` and `guardInvoked`.
+`faults_only` suppresses a duplicate's row the way it suppresses an answered one.
+
+A claimant that dies between creating the accepted record and writing its outcome leaves a claim
+with no outcome. The event stays accepted once; a later delivery of it is a duplicate and is not
+answered again. That is the adapter's ordinary failure direction, a release with the reason on
+record, and a reading of the journal names such events rather than passing them.
+
+### Limits
+
+The guarantee holds within one journal root. Every registration the installer can produce on a
+host reads one settings file and so one root; two registrations pointed at different roots would
+each accept the same event, and only a reading that is given both roots can see it. That the host
+records the answer before running Stop hooks was observed in every isolated run and is consistent
+with every record in the live journal, but it is not a documented host contract. A sampling that
+ends with no answer at all was not observed.
 
 ## Registration is not firing
 
