@@ -7,14 +7,20 @@ creation path, and it does not restate bridge launch or the relay procedure, whi
 stay in [bridge.md](bridge.md) and [relay.md](relay.md).
 
 Every measured observation must carry its date, client and version, because a
-published default or a feature stage can change between builds. The measurements
-reported below come from two rounds, each dated where it appears. The creation,
-isolation, write-capability and relay observations were taken on 2026-09-15; the
-resume-surface and retention observations were taken on 2026-09-22. Both ran against
-Codex 0.154.0 on a remote-SSH Linux host from which no layer of that desktop client was
-read: not its bundle, not its profile, not its screen. Record your own environment
-beside your result, and name the layers you reached and the ones you did not, rather
-than one inspectable-or-not verdict for the whole client.
+published default or a feature stage can change between builds. Every measurement
+reported below ran against Codex 0.154.0 from a remote-SSH Linux host and is dated
+where it appears. The desktop client runs on a separate macOS machine, and the four
+sessions that produced these measurements reached different layers of it:
+
+| Session | Reported below | Client layers read | Not read |
+|---|---|---|---|
+| 2026-09-15 command-line round | Creation, isolation, write capability and relay | None recorded | Unrecorded; the round recorded the client as not inspectable from its host |
+| 2026-09-22 thread-record read | The thread record's git metadata | Bundle, profile and the client's enrollment account, over authorized SSH | The screen, where screen capture returned a no-display error |
+| 2026-09-22 first isolated-home round | Resume surfaces, the first retention round and the host's checkout snapshot | None | Every layer: the session recorded the client machine as unreachable from its environment |
+| 2026-09-22 second isolated-home round | Client inspection, project count, Loop activation, command-line delivery and its CI, second retention round and recovery | Bundle, profile and the client's own Codex store, over authorized SSH | The screen, and the rows of that store's enrollment table |
+
+Record your own environment beside your result, and name the layers you reached and
+the ones you did not, rather than one inspectable-or-not verdict for the whole client.
 
 Re-run the probe rather than inheriting a verdict, but only when the current scope
 authorizes what it does: this procedure creates and resumes tasks, writes and pushes,
@@ -62,19 +68,22 @@ keep each one inside what it can actually establish.
   permission. Confidence is per layer, not per surface: a bundle or profile finding
   that was already established keeps it when the screen turns out to be unreachable.
 
-Measured 2026-09-22 from a Linux host with authorized SSH access to the macOS client
-machine. All three non-screen layers were reachable, so the earlier round's "no layer
-was read" describes that round's access, not a property of the client. The bundle
-reported ChatGPT.app 26.901.51231 build 8109, the app was running, and the account
-layer showed two remote-control enrollments pointing at this Linux host, one of them
-named `Codex Desktop`. Record which layers YOUR access actually reached.
+Measured 2026-09-22 in the second isolated-home round, from a Linux host with authorized
+SSH access to the macOS client machine. The bundle and profile were read and the client's
+own Codex store opened, so where the table at the top of this reference records a session
+that read no layer, that describes the session's access, not a property of the client. The
+bundle reported ChatGPT.app 26.901.51231 build 8109 and the app was running. The store holds
+an enrollment table, but that round recorded none of its rows: the two remote-control
+enrollments pointing at this Linux host, one of them named `Codex Desktop`, were read from
+this host's own store, and the thread-record read that day matched the client's enrollment
+account to them. Record which layers YOUR access actually reached.
 
 Record the shape, not the secrets. Those enrollment rows also carry an account
 identifier, a server identifier and a websocket endpoint, and none of them is reproduced
-here or belongs in a repository document: the count and the product label carry the whole
-finding, which is that this client drives this host. The same restraint applies to every
-store you read during a probe. Publish the aggregate that supports the claim and keep the
-identifiers in the private receipt.
+here or belongs in a repository document: the finding needs only the count and the product
+label of this host's rows, and the fact that the client's own enrollment carries the same
+account. The same restraint applies to every store you read during a probe. Publish the
+aggregate that supports the claim and keep the identifiers in the private receipt.
 
 Two traps this round hit, both worth repeating:
 
@@ -644,6 +653,8 @@ four consecutive creations produced four surviving checkouts, and
 landed under the Codex home root. Neither key was set in the host configuration either.
 So the limit was not merely unobserved, it was absent from the path under test, and the
 trigger cannot be exercised from here. Close this condition on the surface that owns
+those settings, and record the effective limit and any exemption state next to the
+result, as the table above requires.
 
 A second round on 2026-09-22 closed the remaining doubt about `archive` and tightened
 this wording, on the same isolated home. The first round's `archive` had not
@@ -684,14 +695,13 @@ and none should be run — on a shared repository it reaches every worktree, not
 One residue: the Codex-side container directory above the checkout stays behind, empty. A
 count of the worktrees root therefore keeps counting a checkout that no longer exists, which
 matters if anyone builds a retention check on that count.
-those settings, and record the effective limit and any exemption state next to the
-result, as the table above requires.
 
 On the paths exercised above, then, Codex 0.154.0 removed no checkout on its own, and
 the risk to plan for is an accumulating leftover rather than a checkout that
 disappears. That is a statement about those commands at that version, not a policy for
 the surface, and it does not transfer to the desktop-app surface, which owns the
-documented policy above and was not reachable from the measuring host; its automatic
+documented policy above and whose worktree flow no session here drove, because driving it
+needs a process in the client machine's GUI login session; its automatic
 removal stays unverified. The distinction matters here because both surfaces are in
 use: of the 33 managed-worktree checkouts currently referenced by that host's thread
 store, 27 were created with `source=vscode` and 6 from the command line, and 7 threads
