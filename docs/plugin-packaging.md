@@ -284,9 +284,10 @@ outside the version cache by anything this package declares.
 
 ### What one replacement measured
 
-The two rows the host owns were measured on the user's host during one package replacement, from
-`0.4.0` to `0.4.0+1ed13de2edbb` on 2026-09-23 with `codex plugin add` at 11:17:06Z, by reading
-the App Server's child processes and the context each session recorded. The evidence is kept with
+The two rows the host owns were measured on the user's host, whose App Server was codex 0.154.0,
+during one package replacement from `0.4.0` to `0.4.0+1ed13de2edbb` on 2026-09-23, with
+`codex plugin add` at 11:17:06Z, by reading the App Server's child processes and the context each
+session recorded. The evidence is kept with
 the task record, outside this repository.
 
 About a minute after the add, while the Stop hook waited to be trusted again, the App Server started
@@ -460,33 +461,45 @@ making its first policy registration as well, and step 8 says what that changes.
    - `get_capabilities` in a fresh task and in the tasks that were loaded during the add: its
      `executionPolicy.digest` is the digest the record names, and a bridge with no policy reports
      `presence_only`;
-   - every running bridge whose process you can read, from `/proc`, the way the measured
-     replacement was read. A process you may not read is skipped silently, so run it as the user the
-     App Server runs as. This is an operator reading, not a command this repository ships:
+   - every running crw bridge, from `/proc`, the way the measured replacement was read. Run it as
+     the user the App Server runs as; a bridge process whose directory or environment you may not
+     read is listed as `UNREADABLE` rather than skipped. This is an operator reading, not a command
+     this repository ships:
 
      ```sh
      python3 - <<'EOF'
      import json, os, pathlib
      home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
+     cache = (home / "plugins" / "cache").resolve()
      record = json.loads((home / "crw-bridge-mcp.json").read_text())
      want = (record.get("executionPolicy") or {}).get("digest")
      key = b"CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST="
      for pid in sorted(filter(str.isdigit, os.listdir("/proc")), key=int):
          try:
              argv = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
-             cwd = os.readlink(f"/proc/{pid}/cwd")
-             env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
          except OSError:
              continue
-         if "/plugins/cache/crw/crw/" in cwd and any(a.endswith(b"codex-thread-bridge") for a in argv):
+         if not any(a.endswith(b"codex-thread-bridge") for a in argv):
+             continue
+         try:
+             cwd = pathlib.Path(os.readlink(f"/proc/{pid}/cwd"))
+             env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+         except OSError as error:
+             print(pid, "UNREADABLE", error.strerror)
+             continue
+         try:
+             marketplace, plugin, version = cwd.relative_to(cache).parts
+         except ValueError:
+             continue
+         if plugin == "crw":
              have = next((e[len(key):].decode() for e in env if e.startswith(key)), None)
              state = "policy" if have and have == want else "OTHER POLICY" if have else "NO POLICY"
-             print(pid, os.path.basename(cwd), state)
+             print(pid, marketplace + "/" + version, state)
      EOF
      ```
 
-     Each line is a bridge process, the version directory it runs from, and whether it carries the
-     recorded policy.
+     Each line is a bridge process, the marketplace and version directory it runs from, and whether
+     it carries the recorded policy.
 
    Preserve existing recovery evidence and compatibility paths until their readers are gone.
 7. Tasks that were loaded before the replacement:
