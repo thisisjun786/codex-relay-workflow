@@ -67,7 +67,9 @@ a path that reaches the outcome without passing through that function is a defec
     project its product owns, an owned issue is unlinked - awaiting a target - and never
     reported linked; nor is it reported linked while a `set_project` to another project is issued
     or uncertain, because that write may still land (`_moving_elsewhere()`, which reads at most
-    one row). A `set_project` is recognised by its payload's `op`, never by its trigger, and
+    one row), and no second `set_project` is queued beside such a write, whatever project the
+    issue reads back in: the issue waits unlinked, and the write's readback or, when it ends
+    with none, `relink()` takes it up again. A `set_project` is recognised by its payload's `op`, never by its trigger, and
     `update_record` is queued only through `request_update()`. Link state is decided when read, against the product's current owned target
     (`_link_state()` for `get()` and `snapshot()`, the same rule in `attention()`), so an issue a
     bounded relink batch has not reached yet is never reported linked. A target returning to the
@@ -414,9 +416,10 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   because it says nothing about the settings that were refused; three refusals for one reason are
   repetition whatever waited between them. A streak that ended is never counted again. Signature
   `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
-  answered a managed start without publishing a child (broken; clears when a later receipt for
-  that request is accepted - the registry replaces a non-publishing receipt - which is the only
-  transition the registry offers an armed request).
+  answered a managed start without publishing a child (broken; signature `{issueKey,
+  receiptStatus}`, so a rejection and a partial start are different faults; one clears when a
+  later receipt for that request is accepted or answers differently - the registry replaces a
+  non-publishing receipt - which is the only transition the registry offers an armed request).
 - No source emits an active and a clearing observation for one fault in one sweep: a reading
   batch is reduced to the last reading per relationship and turn BEFORE it is paged. A paused, archived,
   busy or waiting recipient is never a fault.
@@ -594,7 +597,7 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `report_omitted` | relationship and turn | `observation:<relationship>:<turn>` | a reading that says `reported` | broken |
 | `observation_unmeasured` | relationship and turn | `unmeasured:<relationship>:<turn>` | a later reading of the same turn that establishes something | notice |
 | `delivery_refused` | relationship and refusal reason | `refused:<journal seq>` | the streak ending: a send, the delivery settling, a pause, or another reason | degraded |
-| `managed_start_failed` | issue key | `managed:<request>:<receipt status>` | a later receipt for that request being accepted | broken |
+| `managed_start_failed` | issue key and receipt status | `managed:<request>:<receipt status>` | a later receipt for that request being accepted or answering differently | broken |
 
 A notice recorded per relationship before notices were per turn is still answered: any
 establishing reading of that relationship clears it, under one constant key, so the clear is

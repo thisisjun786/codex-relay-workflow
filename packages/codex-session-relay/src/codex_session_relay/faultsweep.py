@@ -667,7 +667,9 @@ def managed_start_faults(store, *, product, scope, limit=SWEEP_LIMIT, cursor=Non
     )
     observations = [faults.observation(
         product=product, fault_class="managed_start_failed", severity=faults.BROKEN,
-        signature={"issueKey": row["issue_key"]},
+        # The host's answer is the error type: a rejection and a partial start are different
+        # failures and never one record, and one that is replaced by another is recovered.
+        signature={"issueKey": row["issue_key"], "receiptStatus": row["receipt_status"]},
         occurrence_key=f"managed:{row['request_id']}:{row['receipt_status']}",
         scope={**dict(scope or {}), "issueKey": row["issue_key"]},
         detail=f"a managed start for {row['issue_key']} was answered"
@@ -1145,6 +1147,12 @@ def still_present(store, fault_class, signature) -> dict:
             "                 AND " + _in_streak("j") + ")",
             (signature.get("relationship"), *SETTLED_DELIVERY, signature.get("errorCode")))
     if fault_class == "managed_start_failed":
+        if signature.get("receiptStatus") is not None:
+            return store.one(
+                "SELECT 1 FROM managed_start_requests WHERE issue_key = ?"
+                "   AND state = 'create_armed' AND receipt_status = ? LIMIT 1",
+                (signature.get("issueKey"), signature.get("receiptStatus")))
+        # Recorded before the answer was part of identity: any unaccepted answer keeps it.
         return store.one(
             "SELECT 1 FROM managed_start_requests WHERE issue_key = ?"
             "   AND state = 'create_armed' AND receipt_status IS NOT NULL"

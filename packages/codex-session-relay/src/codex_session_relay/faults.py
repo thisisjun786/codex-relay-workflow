@@ -1945,6 +1945,15 @@ class FaultLedger:
             if live is not None:
                 return None
         self._cancel_stale_relinks(db, identifier, "superseded by a later target", now)
+        if self._moving_elsewhere(db, identifier, project_ref):
+            # A write to another project is issued or uncertain and may still land. Queuing this
+            # one beside it put two project writes on one issue at once. The issue waits,
+            # unlinked and aimed at the target: the outstanding write's readback re-evaluates it
+            # through _observe_link, and relink() takes it up again once nothing it waits on is
+            # outstanding - including when that write ends with no readback at all.
+            db.execute("UPDATE fault_links SET project_ref = ?, state = ?, updated_at = ?"
+                       " WHERE fault_id = ?", (project_ref, UNLINKED, now, identifier))
+            return None
         revision = link["revision"] + 1
         db.execute(
             "UPDATE fault_links SET project_ref = ?, state = ?, revision = ?, updated_at = ?"
@@ -1992,7 +2001,8 @@ class FaultLedger:
         """Relink owned issues whose link is not their product's current target project, and
         unlink those whose scope no longer targets any project their product owns."""
         clause = " AND f.scope_key = ?" if scope_key is not None else ""
-        params = (UNLINKED, UPDATE_RECORD, ISSUED, UNCERTAIN, UNLINKED,
+        params = (UNLINKED, UPDATE_RECORD, ISSUED, UNCERTAIN,
+                  UPDATE_RECORD, PENDING, CLAIMED, ISSUED, UNCERTAIN, FAILED, UNLINKED,
                   *(() if scope_key is None else (scope_key,)))
         query = (
             "SELECT f.fault_id, p.project_ref FROM fault_ledger f"
@@ -2002,15 +2012,15 @@ class FaultLedger:
             " WHERE f.external_ref IS NOT NULL"
             "   AND ((p.project_ref IS NOT NULL"
             "         AND (l.fault_id IS NULL OR l.project_ref IS NOT p.project_ref"
-            # Unlinked while a conflicting write was outstanding, with a readback that already
-            # matches: asked again, so it is linked once that write has been settled.
-            "              OR (l.state = ? AND l.observed_project_ref IS p.project_ref"
-            # ...but only once nothing it is waiting on is outstanding. An issued or uncertain
-            # set_project to another project may still land, so relinking cannot move it until
-            # that write settles - and its settling re-evaluates the link itself. Selected
-            # meanwhile, a hundred such rows at the head of the order took every batch and the
-            # issues behind them were never relinked. Every other selected row moves on when
-            # relinked: its link's project becomes the target.
+            # Unlinked while a conflicting write was outstanding: asked again once nothing it
+            # waits on is outstanding - to be linked when its readback already matches, or to
+            # get its write to the target when none is live (the write it waited on may have
+            # ended with no readback, so nothing else would ever relink it). While an issued or
+            # uncertain set_project to another project may still land it is passed over: that
+            # write's readback re-evaluates the link itself, and selected meanwhile, a hundred
+            # such rows at the head of the order took every batch and the issues behind them
+            # were never relinked. Every selected row leaves the selection when relinked.
+            "              OR (l.state = ?"
             "                  AND NOT EXISTS (SELECT 1 FROM fault_publications op"
             "                LEFT JOIN fault_publication_payloads opp"
             "                  ON opp.publication_id = op.publication_id"
@@ -2018,7 +2028,17 @@ class FaultLedger:
             "                 AND " + _SET_PROJECT.format(pp="opp") +
             "                 AND (CASE WHEN json_valid(opp.payload)"
             "                      THEN json_extract(opp.payload, '$.value') END)"
-            "                     IS NOT p.project_ref))))"
+            "                     IS NOT p.project_ref)"
+            "                  AND (l.observed_project_ref IS p.project_ref"
+            "                       OR NOT EXISTS (SELECT 1 FROM fault_publications tw"
+            "                LEFT JOIN fault_publication_payloads twp"
+            "                  ON twp.publication_id = tw.publication_id"
+            "               WHERE tw.fault_id = f.fault_id AND tw.kind = ?"
+            "                 AND tw.state IN (?,?,?,?,?)"
+            "                 AND " + _SET_PROJECT.format(pp="twp") +
+            "                 AND (CASE WHEN json_valid(twp.payload)"
+            "                      THEN json_extract(twp.payload, '$.value') END)"
+            "                     IS p.project_ref)))))"
             "        OR (p.project_ref IS NULL"
             "            AND (l.fault_id IS NULL OR l.project_ref IS NOT NULL OR l.state != ?)))"
             + clause)

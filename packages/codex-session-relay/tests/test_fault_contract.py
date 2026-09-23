@@ -377,7 +377,8 @@ class B5_AFailedManagedStartClearsWhenAccepted(RelayTestCase):
                  "create_armed", 2, "failed", "t", "t"))
         ledger = faults.FaultLedger(self.store, self.clock)
         faultsweep.record_all(ledger, faultsweep.sweep(self.store), store=self.store)
-        identifier = faults.fault_id(PRODUCT, "managed_start_failed", {"issueKey": "CRW-9"})
+        identifier = faults.fault_id(PRODUCT, "managed_start_failed",
+                                     {"issueKey": "CRW-9", "receiptStatus": "failed"})
         self.assertEqual(faults.OPEN, ledger.get(identifier)["state"])
         with self.store.transaction() as db:
             db.execute("UPDATE managed_start_requests SET receipt_status = 'accepted'")
@@ -1855,6 +1856,86 @@ class AProjectRequestConverges(ContractCase):
         self.publish(pub)
         with self.assertRaises(faults.FaultRefused):
             self.request(identifier, "P9")
+
+
+class NoProjectWriteBesideAnOutstandingOne(ContractCase):
+    """Final review round nine (invariant 11, the project-linkage correction).
+
+    While a set_project to another project is issued or uncertain, no second one is queued -
+    whatever project the issue reads back in. The issue waits unlinked; the outstanding write's
+    readback takes it up again, and relink() does when that write ends with none.
+    """
+
+    def updates(self, identifier, *states):
+        return [((entry["payload"] or {}).get("value"), entry["state"])
+                for entry in capability(self, self.ledger, "publications")(
+                    identifier, kind="update_record") if entry["state"] in states]
+
+    def waiting(self):
+        identifier, pub = self.opened()
+        self.publish(pub)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P2")
+        p2 = [entry["publication_id"] for entry in capability(self, self.ledger, "publications")(
+            identifier, kind="update_record") if entry["state"] == faults.PENDING][0]
+        claim, _ = self.created(p2)
+        self.ledger.set_target(product=PRODUCT, project="CRW", team=TEAM, project_ref="P3")
+        return identifier, p2, claim
+
+    def test_a_target_change_waits_while_a_write_elsewhere_may_land(self):
+        identifier, p2, claim = self.waiting()
+        self.assertEqual([], self.updates(identifier, faults.PENDING, faults.CLAIMED),
+                         "no write to P3 beside the one to P2")
+        self.ledger.relink()
+        self.assertEqual([], self.updates(identifier, faults.PENDING, faults.CLAIMED))
+        self.assertEqual(faults.UNLINKED,
+                         capability(self, self.ledger, "get")(identifier)["linkState"])
+        self.ledger.complete(p2, claim_token=claim["claimToken"],
+                             observed={"issue": "REL-1", "projectId": "P2"})
+        self.assertEqual([("P3", faults.PENDING)], self.updates(identifier, faults.PENDING),
+                         "the readback in P2 takes the issue up for P3")
+
+    def test_a_write_elsewhere_that_ends_without_a_readback_is_taken_up_by_relink(self):
+        identifier, p2, claim = self.waiting()
+        self.ledger.fail(p2, claim_token=claim["claimToken"], error="400 refused", ended=True)
+        self.ledger.reconcile(p2, searched=True, observed={"issue": "REL-1", "projectId": PROJECT},
+                              prior_ended=True,
+                              reason="the connector refused the request with a 400")
+        self.ledger.relink()
+        self.assertEqual([("P3", faults.PENDING)], self.updates(identifier, faults.PENDING))
+
+
+class ManagedStartAnswersAreTheirOwnFaults(RelayTestCase):
+    """Final review round nine (criterion 3): the host's answer is the error type."""
+
+    def test_a_changed_answer_is_another_fault_and_the_old_one_clears(self):
+        ledger = faults.FaultLedger(self.store, self.clock)
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO managed_start_requests (request_id, issue_key,"
+                " request_fingerprint, fingerprint_version, workspace, marker_root,"
+                " socket_identity, create_request_id, dispatch_request_id, state, revision,"
+                " receipt_status, created_at, updated_at)"
+                " VALUES ('req-1', 'CRW-9', 'fp', 'v1', '/w', '/m', 'sock', 'c', 'd',"
+                " 'create_armed', 2, 'rejected', 't', 't')")
+
+        def swept():
+            batch = faultsweep.sweep(self.store)
+            faultsweep.record_all(ledger, batch, store=self.store)
+            return [entry for entry in batch["observations"]
+                    if entry["faultClass"] == "managed_start_failed" and not entry["cleared"]]
+
+        first = swept()
+        self.assertEqual(1, len(first))
+        with self.store.transaction() as db:
+            db.execute("UPDATE managed_start_requests SET receipt_status = 'partial',"
+                       " revision = 3 WHERE request_id = 'req-1'")
+        second = swept()
+        self.assertEqual(1, len(second))
+        self.assertNotEqual(first[0]["signature"], second[0]["signature"],
+                            "a rejection and a partial start are different failures")
+        rejected = faults.fault_id(PRODUCT, "managed_start_failed", first[0]["signature"])
+        self.assertIsNotNone(ledger.get(rejected)["cleared_at"],
+                             "the answer that is gone is recovered")
 
 
 class LegacyScopeKeys(ContractCase):
