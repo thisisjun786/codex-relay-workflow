@@ -345,6 +345,8 @@ ACCEPTANCES = (ACCEPTED, DUPLICATE, UNESTABLISHED, UNCLAIMABLE, CLAIM_FAILED, UN
 
 DUPLICATE_INVOCATION = "duplicate_invocation"
 ARBITRATION_FAILED = "arbitration_failed"
+# The outcomes that may carry a settings path the system refused: it was never read through.
+SETTINGS_UNTRIED = (CONFIG_UNREADABLE, CONFIG_UNREACHABLE, ADAPTER_FAULTED)
 # What those two releases say, always in these words: neither has anything of its own to report.
 DUPLICATE_DETAIL = ("this Stop event already has its accepted record, so the guard was not asked"
                     " again")
@@ -382,6 +384,9 @@ UNESTABLISHED_REASONS = (IDENTITY_FIELDS_INCOMPLETE, TRANSCRIPT_PATH_MISSING,
                          ANSWER_PRECEDES_LATEST_INPUT, ANSWER_TEXT_MISMATCH, ANSWER_TEXT_AMBIGUOUS,
                          SESSION_MISMATCH)
 PATHLESS_REASONS = (IDENTITY_FIELDS_INCOMPLETE, TRANSCRIPT_PATH_MISSING)
+# The reasons given before the system was asked about the path, or by its refusing it: every other
+# one follows an lstat that reached the file or found it absent, so its path is one the system takes.
+PATH_UNTRIED_REASONS = PATHLESS_REASONS + (TRANSCRIPT_PATH_RELATIVE, TRANSCRIPT_UNREACHABLE)
 
 # The items that start a sampling. Met before any answer when reading newest-first, one of these
 # means the transcript does not yet show this Stop's answer.
@@ -1661,7 +1666,7 @@ def run(payload, codex_home=None, environ=None, settings=None):
         record["errno"] = ending.get("errno")
         record["stdoutReading"] = said
         record["guardElapsedMs"] = ending.get("elapsedMs")
-        record["guardStderr"] = (ending.get("stderr") or "")[:400]
+        record["guardStderr"] = (ending.get("stderr") or "")[:STDERR_LIMIT]
         outcome = outcome_of(ending, said, value)
         if outcome in ANSWERED:
             record["guardState"] = value.get("state")
@@ -1816,6 +1821,9 @@ def _row_fields_written(row):
     # As _settled() gives it: absolute and normalized.
     if (not isinstance(configuration, str) or not os.path.isabs(configuration)
             or configuration != os.path.normpath(configuration)
+            # Past a refusal to read them, the settings were read through this path.
+            or (row.get("adapterOutcome") not in SETTINGS_UNTRIED
+                and not _path_the_system_takes(configuration))
             or not _is_count(row.get("elapsedMs"), zero=True)
             or not (row.get("detail") is None or isinstance(row.get("detail"), str))):
         return False
@@ -1898,7 +1906,7 @@ def _call_recorded(row):
     elif code is not None or signal is not None or errno_name is not None:
         return False
     return (_is_count(row.get("guardElapsedMs"), zero=True)
-            and isinstance(row.get("guardStderr"), str))
+            and _stderr_kept(row.get("guardStderr")))
 
 
 def _could_answer(row):
@@ -1980,9 +1988,46 @@ HOST_CLAIMED_BY_FIELDS = ("pid", "journalRoot", "attemptRow")
 
 def _host_ledger_named(value):
     """Whether a claim names a host ledger in the form host_ledger() gives it: absolute,
-    normalized, and ending in the ledger's own two parts."""
+    normalized, ending in the ledger's own two parts, and one the system took, since the host's
+    file was made in it before the claim."""
     return (isinstance(value, str) and os.path.isabs(value) and value == os.path.normpath(value)
-            and tuple(Path(value).parts[-len(HOST_LEDGER_PARTS):]) == HOST_LEDGER_PARTS)
+            and tuple(Path(value).parts[-len(HOST_LEDGER_PARTS):]) == HOST_LEDGER_PARTS
+            and _path_the_system_takes(value))
+
+
+# How much of the guard's stderr a row keeps. _text() decodes it with replacement, so what is
+# kept is valid text: it never holds a surrogate.
+STDERR_LIMIT = 400
+
+
+def _stderr_kept(value):
+    """Whether a row's guardStderr is what run() keeps of a guard's stderr."""
+    if not isinstance(value, str) or len(value) > STDERR_LIMIT:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        return False
+    return True
+
+
+# The kernel's longest name and path (NAME_MAX, and PATH_MAX with its terminating NUL).
+NAME_LIMIT = 255
+PATH_LIMIT = 4096
+
+
+def _path_the_system_takes(path):
+    """Whether the operating system takes this path at all: encodable, no embedded NUL, no name
+    longer than NAME_MAX and the whole shorter than PATH_MAX. Judged on the path itself: asking
+    the file system would answer another question, whether the file is there now, and a
+    transcript or settings file may be gone, or out of this reader's reach, by the time the
+    journal is read."""
+    try:
+        encoded = os.fsencode(path)
+    except (UnicodeError, TypeError):
+        return False
+    return (b"\0" not in encoded and len(encoded) < PATH_LIMIT
+            and all(len(name) <= NAME_LIMIT for name in encoded.split(b"/")))
 
 
 def _fields_exactly(body, fields):
@@ -2062,6 +2107,8 @@ def _row_shape(row):
                 and identity.get("established") is True and identity.get("reason") is None
                 and isinstance(identity.get("transcriptPath"), str)
                 and os.path.isabs(identity["transcriptPath"])
+                # The transcript of an identified Stop was opened and read.
+                and _path_the_system_takes(identity["transcriptPath"])
                 and isinstance(row.get("stopHookActive"), bool)
                 and isinstance(identity.get("answerItem"), str) and bool(identity.get("answerItem"))
                 and key == event_key(row["sessionId"], row["turnId"], row["stopHookActive"],
@@ -2087,6 +2134,8 @@ def _row_shape(row):
             if path is not None:
                 return False
         elif not isinstance(path, str) or os.path.isabs(path) != (reason != TRANSCRIPT_PATH_RELATIVE):
+            return False
+        elif reason not in PATH_UNTRIED_REASONS and not _path_the_system_takes(path):
             return False
         item = identity.get("answerItem")
         if reason == SESSION_MISMATCH:

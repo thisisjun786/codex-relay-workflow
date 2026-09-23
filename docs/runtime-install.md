@@ -1874,6 +1874,13 @@ one key, an accepted row whose claim is missing, or a duplicate that asked the g
 - a path in a ledger record in a form its writer never gives it: a claim's host ledger that is not
   absolute, normalized and ending in `crw-completion-hook/stop-events`, or a host file's journal root
   that is not absolute (the settings require it);
+- a path the adapter had already used with the operating system that the system would never take
+  (an embedded NUL, a character it cannot encode, a name over 255 bytes or a path of 4096 or more):
+  the transcript of an identified Stop, or of any reason reached after its lstat, the settings
+  path of a row past reading them, and the host ledger a claim names. It is judged on the path
+  itself; whether the file is still there when the journal is read is not asked;
+- a guard's stderr the adapter could not have kept: more than the 400 characters it keeps, or not
+  valid text, since it decodes the stream with replacement;
 - a row version it does not know, an entry in a ledger that is not one of its records, or an entry
   in a journal root or a day directory that the adapter never writes there
   (`foreignJournalEntries`): the root holds only real day directories (never a link to one) and

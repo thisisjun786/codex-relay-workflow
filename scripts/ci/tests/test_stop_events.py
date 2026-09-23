@@ -1450,3 +1450,71 @@ class ReviewRoundThirteenControls(OneEventRecords, unittest.TestCase):
                 code, answer = verify(host.journal)
                 self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
                                  "a duplicate saying %r was vouched for" % (value,))
+
+
+class ReviewRoundFourteenControls(OneEventRecords, unittest.TestCase):
+    """Red-first controls for the fourteenth review round (CRW-212, PR #144).
+
+    A path the adapter has already used with the operating system is one the system takes: no
+    embedded NUL, encodable, within the name and path lengths. The transcript of an identified
+    Stop was opened, the settings of a row past them were read, and the ledger a claim names had
+    its host file made in it. Only a reason reached by the system refusing the path may carry one
+    it refuses.
+    """
+
+    def test_a_path_the_system_never_takes_is_not_vouched_for(self):
+        def nul(value):
+            return value + "\x00bad"
+        def long_name(value):
+            return value + "/" + "x" * 300
+        def unencodable(value):
+            return value + "\ud800"
+        cases = [
+            ("accepted", ("eventIdentity", "transcriptPath"), nul),
+            ("duplicate", ("eventIdentity", "transcriptPath"), nul),
+            ("accepted", ("eventIdentity", "transcriptPath"), long_name),
+            ("accepted", ("eventIdentity", "transcriptPath"), unencodable),
+            ("accepted", ("configuration",), nul),
+            ("duplicate", ("configuration",), long_name),
+        ]
+        for which, field, form in cases:
+            where = ".".join((which,) + field)
+            with self.subTest(field=where, form=form.__name__):
+                host, records = self.one_event()
+                def change(body):
+                    target = body
+                    for part in field[:-1]:
+                        target = target[part]
+                    target[field[-1]] = form(target[field[-1]])
+                self.change(records[which], change)
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 where + " in " + form.__name__ + " form was vouched for")
+
+    def test_only_a_refused_transcript_carries_a_path_the_system_refuses(self):
+        self.count += 1
+        root = self.base / ("refused-%d" % self.count)
+        root.mkdir()
+        host = Host(root)
+        payload = json.loads(at_stop(host, self.document, 0))
+        payload["transcript_path"] = str(host.transcript) + "\x00bad"
+        run_one(host.checkout(), json.dumps(payload).encode("utf-8"))
+        code, answer = verify(host.journal)
+        self.assertEqual(answer["unjudgedInvocations"], {"unestablished:transcript_unreachable": 1},
+                         "the row the adapter writes for a refused transcript was not counted")
+        self.change(host.row_paths()[0],
+                    lambda body: body["eventIdentity"].__setitem__("reason", "transcript_absent"))
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"], answer["unjudgedInvocations"]),
+                         (3, "UNREADABLE", {}),
+                         "a reason reached only through a path the system took was counted")
+
+    def test_stderr_is_what_the_adapter_keeps_of_it(self):
+        """The guard's stderr, decoded with replacement and cut at 400 characters."""
+        for label, value in (("longer than kept", "x" * 401), ("undecodable", "\ud800")):
+            with self.subTest(stderr=label):
+                host, records = self.one_event()
+                self.change(records["accepted"], lambda body: body.__setitem__("guardStderr", value))
+                code, answer = verify(host.journal)
+                self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                                 "stderr " + label + " was vouched for")
