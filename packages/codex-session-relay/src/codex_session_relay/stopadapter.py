@@ -150,6 +150,10 @@ LEDGER_NAME = re.compile(r"^[0-9a-f]{64}\.json$")
 OUTCOME_NAME = re.compile(r"^[0-9a-f]{64}\.outcome\.json$")
 OUTCOME_SUFFIX = ".outcome.json"
 LEDGER_VERSION = 1
+# Where the registrations of one host meet over a Stop event: a directory under the Codex home the
+# Stop fired in. Each registration's settings name its own journalRoot, and two registrations
+# reading different settings keep different roots; they share the host's Codex home.
+HOST_LEDGER_PARTS = ("crw-completion-hook", "stop-events")
 EVENT_KEY_TAG = "crw-stop-event/1"
 # Bounded so the scan stays inside the margin the packaged launcher keeps over the guard budget:
 # the launcher waits the budget plus two seconds, and this is at most three quarters of one. The
@@ -836,9 +840,18 @@ def event_identity(stop, started=None):
         identity["reason"] = SESSION_MISMATCH
         return None, identity
     identity["established"] = True
-    key = hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item_id],
-                                    separators=(",", ":")).encode("ascii")).hexdigest()
-    return key, identity
+    return event_key(session, turn, active, item_id), identity
+
+
+def event_key(session, turn, active, item):
+    """The key of one Stop event: a SHA-256 over the four values that identify it.
+
+    One function for the adapter that claims and the reader that checks, so a record whose own
+    session, turn, stop_hook_active and answer item do not hash to the key it is filed under is
+    noticed rather than read as a record of that event.
+    """
+    return hashlib.sha256(json.dumps([EVENT_KEY_TAG, session, turn, active, item],
+                                     separators=(",", ":")).encode("ascii")).hexdigest()
 
 
 def new_slot():
@@ -857,17 +870,73 @@ def _write_whole(handle, document):
         written += os.write(handle, payload[written:])
 
 
-def claim_event(config, key, identity, stop, slot):
+def host_ledger(codex_home=None, environ=None):
+    """Where this host's registrations arbitrate a Stop event, whatever journal root each keeps.
+
+    The Codex home of the process the Stop fired in, resolved the way the settings are when no
+    path is named: every registration the host starts for one Stop inherits that environment,
+    while the settings each one reads, and so its journal root, may differ.
+    """
+    environ = os.environ if environ is None else environ
+    home = codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")
+    return Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS)
+
+
+def _arbitrate(host, key, identity, stop, slot, root):
+    """The host-wide half of a claim: one create-once file per event under the Codex home.
+
+    Returns (None, None) when this invocation is the first on this host to reach the event,
+    (DUPLICATE, the file) when another already has, and (CLAIM_FAILED, None) when the file can be
+    neither created nor found. A claim in a journal root alone lets two registrations with two
+    roots each accept the same Stop; this file is the one they both meet. Like the claim, it is
+    never rewritten and a short write leaves it in place.
+    """
+    directory = Path(host)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    marker = directory / (key + ".json")
+    try:
+        handle = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        # Named relative to the Codex home, as the accepted record is relative to its root.
+        return DUPLICATE, "/".join(HOST_LEDGER_PARTS + (key + ".json",))
+    except (OSError, ValueError):
+        return CLAIM_FAILED, None
+    try:
+        _write_whole(handle, {"ledgerVersion": LEDGER_VERSION, "eventKey": key,
+                              "sessionId": stop.get("session_id"),
+                              "turnId": stop.get("turn_id"),
+                              "stopHookActive": stop.get("stop_hook_active"),
+                              "answerItem": identity.get("answerItem"), "claimedAt": now(),
+                              "claimedBy": {"pid": os.getpid(), "journalRoot": str(root),
+                                            "attemptRow": slot_name(slot)}})
+    except (OSError, ValueError):
+        pass
+    finally:
+        os.close(handle)
+    return None, None
+
+
+def claim_event(config, key, identity, stop, slot, host=None):
     """Create this event's accepted record, or learn that another invocation already has.
 
     Returns (acceptance, acceptedAs). Creating a file that must not exist is the whole mechanism:
-    two registrations firing in the same instant get one owner. The record is never rewritten, and
-    a short write leaves it where it is, because removing it would open the event to a second
-    acceptance. Written under every journalPolicy: this is state, not a record of an invocation.
+    two registrations firing in the same instant get one owner. The host's file (host, from
+    host_ledger) is created first, so registrations whose settings name different journal roots
+    still get one owner; the owner then creates the accepted record in its own root, where the
+    reading of the journal finds it beside the rows. Neither is ever rewritten, and a short write
+    leaves it where it is, because removing it would open the event to a second acceptance.
+    Written under every journalPolicy: this is state, not a record of an invocation.
     """
     root = config.get("journalRoot")
     if not root:
         return UNCLAIMABLE, None
+    if host is not None:
+        arbitrated, where = _arbitrate(host, key, identity, stop, slot, root)
+        if arbitrated is not None:
+            return arbitrated, where
     directory = Path(root).expanduser() / LEDGER_DIRECTORY
     named = LEDGER_DIRECTORY + "/" + key + ".json"
     try:
@@ -1030,7 +1099,8 @@ def run(payload, codex_home=None, environ=None, settings=None):
             # about exactly as before and never deduplicated.
             record["acceptance"] = UNESTABLISHED
         else:
-            acceptance, accepted_as = claim_event(config, key, identity, stop, slot)
+            acceptance, accepted_as = claim_event(config, key, identity, stop, slot,
+                                                  host_ledger(codex_home, environ))
             record["acceptance"] = acceptance
             record["acceptedAs"] = accepted_as
             if acceptance == DUPLICATE:

@@ -1690,19 +1690,29 @@ that begins without the turn's start (its earlier Stops are not there to compare
 last line, an unreadable line about the turn, and any failed condition above leave the identity
 unestablished, with the reason on the row. An unestablished invocation is asked about exactly as
 before and is never deduplicated: the adapter does not know which event it is, so it cannot know
-that the event was already answered.
+that the event was already answered, and a reading of the journal does not vouch for a window
+that holds one.
 
 ### Accepted records and attempt rows
 
-The accepted record is a create-once file, `<journalRoot>/accepted/<key>.json`. Whichever
-invocation creates it owns the event; it asks the guard, writes its row, and then writes
-`accepted/<key>.outcome.json` naming the session, the turn, the outcome, the row and the
-`journalPolicy`. An invocation that finds the claim already there asks nothing, prints nothing and
-writes a row whose `adapterOutcome` is `duplicate_invocation`. Creating a file that must not exist
-is atomic on a local filesystem, so two registrations firing in the same instant produce one
-owner and one duplicate. The accepted records are state rather than invocation records: they are
-written under every `journalPolicy`, and a settings document with no `journalRoot` cannot claim
-(`unclaimable`) and asks the guard as before.
+A claim is two create-once files. The first is the host's,
+`<CODEX_HOME>/crw-completion-hook/stop-events/<key>.json`, under the Codex home of the process the
+Stop fired in: every registration the host starts for one Stop inherits that environment, while
+the settings each one reads, and so its journal root, may differ, so this is the file two
+registrations of one host always meet. The second is the accepted
+record, `<journalRoot>/accepted/<key>.json`, beside the rows. Whichever invocation creates the
+host's file creates the accepted record in its own root and owns the event; it asks the guard,
+writes its row, and then writes `accepted/<key>.outcome.json` naming the session, the turn, the
+outcome, the row and the `journalPolicy`. An invocation that finds either file already there asks
+nothing, prints nothing and writes a row whose `adapterOutcome` is `duplicate_invocation`, with
+`acceptedAs` naming the file it found (the host's relative to the Codex home, the accepted record
+relative to the root). Creating a file that must not exist is atomic on a local filesystem, so two
+registrations firing in the same instant produce one owner and one duplicate, whichever roots
+their settings name. A claim that cannot be made (`claim_failed`) asks the guard as before; when
+the host's file was made and the root's was not, the host's file stays, so a later delivery of that
+event is a duplicate and it is still asked about once. The claim files are state rather than
+invocation records: they are written under every `journalPolicy`, and a settings document with no
+`journalRoot` cannot claim (`unclaimable`) and asks the guard as before.
 
 Rows keep their place and their name, `<journalRoot>/<YYYYMMDD>/<32 hex>.json`, and every
 existing count of them still counts invocations. Version 2 rows add `eventKey`, `eventIdentity`
@@ -1728,30 +1738,39 @@ one verdict. `FALSE` (exit 1) means an event was accepted more than once: claims
 two roots, two accepted rows for one key, an accepted row whose claim is missing, or a duplicate
 that asked the guard. `UNREADABLE` (exit 3) means the reading cannot vouch for what it read: a
 listing that failed (including an `accepted` path that is not a directory), a row or record that
-does not parse or lacks the fields its kind requires, a row version it does not know, an outcome
-without its claim, naming another session or turn than its claim, or without the accepted row it
-names (or with none under `every_invocation`), a claim without its outcome in the same root, a
-ledger written under `no_journal`, or nothing to judge. `TRUE` (exit 0) otherwise. Invocations whose identity was
-not established, and rows written by a runtime older than event identity, are counted beside the
-verdict and never judged. The superseded count of rows per (session, turn) is printed too,
+does not parse or lacks the fields its kind requires, a claim or row whose own session, turn,
+`stop_hook_active` and answer item do not hash to the key it names, a row version it does not
+know, an entry under `accepted` that is neither a claim nor an outcome, an outcome without its
+claim, naming another session or turn than its claim, or without the accepted row it names (or
+with none under `every_invocation`), a claim without its outcome in the same root, a duplicate
+whose event has no claim in any root read, a ledger written under `no_journal`, any invocation
+in the window it cannot judge, or nothing to judge. `TRUE` (exit 0) otherwise. The invocations it
+cannot judge are those whose identity was not established, that could not claim or that never
+reached an event, and rows written by a runtime older than event identity: each was answered
+without deduplication, so whether its Stop was answered once is not known. They are counted by
+reason (`unjudgedInvocations`, `legacyRows`), and a window that leaves them out can still read
+`TRUE`. The superseded count of rows per (session, turn) is printed too,
 labelled as superseded, so the two readings can be compared. `--since`, `--until`, `--session`
 and `--turn` narrow the window over claims, outcomes and rows alike, and a claim and its outcome
 are matched in their own root whichever side of the window the other falls on. `--journal-root`
-repeats for every root the host's registrations write to. The same reading is
+repeats for every root the host's registrations write to; a duplicate whose accepted record is in
+a root the reading was not given reads `UNREADABLE`. The same reading is
 `completion.stop_events()`.
 
 ### Limits
 
-The guarantee holds within one journal root. Every registration the installer can produce on a
-host reads one settings file and so one root; two registrations pointed at different roots would
-each accept the same event, and only a reading that is given both roots can see it. That the host
+The guarantee holds among the registrations of one Codex home, which is every registration one
+host starts for a Stop. Registrations that do not share it, or an adapter from before the host's
+file existed, each accept an event in their own root; a reading given both roots says `FALSE`.
+The claim files are never removed, like the rows. That the host
 records the answer before running Stop hooks was observed in every isolated run and is consistent
 with every record in the live journal, but it is not a documented host contract; a host that ran a
 Stop before recording both that sampling's continuation and its answer would show the previous
 Stop as the newest, and a Stop reporting the same text as an earlier one of the same kind would be
 taken for it. A sampling that
 ends with no answer at all was not observed. A turn whose Stops repeat the same text trades
-deduplication for safety: those Stops are asked about by every registration.
+deduplication for safety: those Stops are asked about by every registration, and a reading of a
+window that holds them is `UNREADABLE`.
 
 ## Registration is not firing
 

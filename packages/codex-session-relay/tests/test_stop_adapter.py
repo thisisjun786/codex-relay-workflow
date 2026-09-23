@@ -205,20 +205,32 @@ def stop_payload(stop, transcript, cwd):
     return json.dumps(payload).encode("utf-8")
 
 
+def host_environment(settings_path):
+    """The host's environment, whose Codex home is the directory the settings are in."""
+    return dict(os.environ, CODEX_HOME=str(Path(settings_path).parent))
+
+
 def fire(settings_path, payload):
     """One invocation through the entry point the launcher runs."""
     return subprocess.run([sys.executable, str(Path(stopadapter.__file__).resolve()),
                            str(settings_path)],
                           input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          timeout=60)
+                          env=host_environment(settings_path), timeout=60)
 
 
-def fire_together(settings_path, payload, count=2):
-    """Several invocations of one Stop, started before any of them is handed its payload."""
+def fire_together(settings_path, payload, count=2, *, each=None, home=None):
+    """Several invocations of one Stop, started before any of them is handed its payload.
+
+    each names one settings file per invocation instead of count copies of one, and home is the
+    Codex home they all run under (the directory of the first settings file by default)."""
+    paths = list(each) if each else [settings_path] * count
+    environment = (dict(os.environ, CODEX_HOME=str(home)) if home
+                   else host_environment(paths[0]))
+    count = len(paths)
     started = [subprocess.Popen([sys.executable, str(Path(stopadapter.__file__).resolve()),
-                                 str(settings_path)],
+                                 str(path)],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE) for _ in range(count)]
+                                stderr=subprocess.PIPE, env=environment) for path in paths]
     answers = [None] * count
     barrier = threading.Barrier(count)
 
@@ -292,6 +304,7 @@ class StopEventAcceptanceTests(unittest.TestCase):
             with self.subTest(round=round_number):
                 journal = self.home / "journal"
                 shutil.rmtree(journal, True)
+                shutil.rmtree(self.home / "crw-completion-hook", True)
                 (self.home / "guard-calls").unlink(missing_ok=True)
                 path = self.arrange()
                 answers = fire_together(path, payload)
@@ -301,6 +314,21 @@ class StopEventAcceptanceTests(unittest.TestCase):
                 self.assertEqual(sorted(str(r.get("acceptance")) for r in rows(self.home)),
                                  ["accepted", "duplicate"])
                 self.assertEqual(len(ledger(self.home)[0]), 1)
+
+    def test_two_registrations_with_their_own_journal_roots_accept_one_stop_once(self):
+        """Two registrations of one host whose settings name different journal roots: they share
+        the host's Codex home, and one of them owns the event."""
+        payload = self.at_stop(0)
+        relay = counting_guard(self.home)
+        other = self.home / "other"
+        other.mkdir()
+        answers = fire_together(None, payload, each=[settings(self.home, relay),
+                                                     settings(other, relay)], home=self.home)
+        self.assertEqual([code for code, _o, _e in answers], [0, 0])
+        self.assertEqual(len(guard_calls(self.home)), 1,
+                         "two registrations of one host both asked about one Stop")
+        claims = ledger(self.home)[0] + ledger(other)[0]
+        self.assertEqual(len(claims), 1, "one Stop was accepted in two journal roots")
 
     def test_distinct_stops_of_one_turn_are_each_accepted_and_answered(self):
         """The positive control. The guard holds on every call, so each event's hold must reach

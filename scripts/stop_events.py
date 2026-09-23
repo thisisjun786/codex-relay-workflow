@@ -9,8 +9,12 @@ the names of the files it reads, so the adapter and this command cannot disagree
     python3 scripts/stop_events.py --journal-root <root> [--journal-root <root>]...
         [--since <ISO-8601 Z>] [--until <ISO-8601 Z>] [--session <id>] [--turn <id>]
 
-Give every journal root the host's registrations write to: acceptance is create-once within one
-root, so an event accepted in two roots is only visible to a reading that is given both.
+Give every journal root the host's registrations write to. The registrations of one host meet in
+one file under its Codex home before they claim in their own roots, so an event is accepted in one
+root; a duplicate whose accepted record is in a root not given reads UNREADABLE, and an event
+accepted in two roots (registrations of different Codex homes) reads FALSE when both are given.
+TRUE means every invocation in the window was judged: one answered without an event identity, or a
+row from before event identity, keeps the window from TRUE.
 
 Prints the reading as JSON. Exit 0 TRUE, 1 FALSE, 3 UNREADABLE; 2 is a usage error.
 """

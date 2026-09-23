@@ -167,7 +167,7 @@ def drive(adapter, home, payload, *, document=None, settings_name="settings.json
         filled = dict(document)
         filled["journalRoot"] = str(journal)
         settings.write_text(json.dumps(filled, indent=2, sort_keys=True), encoding="utf-8")
-    returned = adapter.run(payload, settings=str(settings))
+    returned = adapter.run(payload, codex_home=str(root), settings=str(settings))
     return {"returned": returned, "written": journal_records(journal)}
 
 
@@ -608,7 +608,7 @@ def drive_steps(adapter, home, steps, document, *, journal=True, prepare=None):
         if lines is not None:
             (home / "rollout.jsonl").write_text("".join(line + "\n" for line in lines),
                                                 encoding="utf-8")
-        returned.append(adapter.run(payload, settings=str(settings)))
+        returned.append(adapter.run(payload, codex_home=str(root), settings=str(settings)))
     return {"returned": returned, "written": journal_records(journal_root),
             "ledger": ledger_records(journal_root), "calls": calls_made(home) - before}
 
@@ -694,6 +694,34 @@ class EventAcceptanceAgrees(unittest.TestCase):
 
     def acceptances(self, answer):
         return sorted(str(entry["record"].get("acceptance")) for entry in answer["written"])
+
+    def accepted_elsewhere_on_the_host(self):
+        """Stop 1, with the host's record of it already made, as another registration of this
+        host keeping another journal root would have left it before either copy runs."""
+        document = r1()
+        stop = document["stops"][0]
+        lines = document["transcriptLines"][:stop["linesAtStop"]]
+
+        def steps(home):
+            return [(stop_bytes(stop, home / "rollout.jsonl"), lines)]
+
+        def prepare(journal_root):
+            root = journal_root.parent
+            rollout = root.parent / "rollout.jsonl"
+            rollout.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+            key, _identity = completion.event_identity(json.loads(stop_bytes(stop, rollout)))
+            marker = root / "crw-completion-hook" / "stop-events" / (key + ".json")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps({"eventKey": key}), encoding="utf-8")
+
+        return steps, prepare
+
+    def test_a_stop_another_registration_of_the_host_accepted_is_a_duplicate_in_both(self):
+        steps, prepare = self.accepted_elsewhere_on_the_host()
+        answer = self.assert_agrees(steps, prepare=prepare)
+        self.assertEqual(answer["calls"], 0, "a Stop the host had accepted was asked about again")
+        self.assertEqual(self.acceptances(answer), ["duplicate"])
+        self.assertEqual(answer["ledger"], [], "a duplicate made an accepted record of its own")
 
     def test_a_replayed_event_is_accepted_once_in_both(self):
         answer = self.assert_agrees(self.replay())
@@ -849,13 +877,16 @@ class EventAcceptanceAgrees(unittest.TestCase):
         self.assertEqual(answer["calls"], 2)
 
     def test_a_ledger_that_cannot_be_created_fails_the_claim_in_both(self):
+        """A journal root that cannot hold the claim fails it, and that invocation asks the guard
+        as before. The host's record of the event was made first and stays, so the replay is a
+        duplicate and the event is still asked about once."""
         def occupied(journal_root):
             journal_root.mkdir(parents=True, exist_ok=True)
             (journal_root / "accepted").write_text("not a directory", encoding="utf-8")
 
         answer = self.assert_agrees(self.replay(), prepare=occupied)
-        self.assertEqual(self.acceptances(answer), ["claim_failed"] * 2)
-        self.assertEqual(answer["calls"], 2)
+        self.assertEqual(self.acceptances(answer), ["claim_failed", "duplicate"])
+        self.assertEqual(answer["calls"], 1)
 
     def test_no_journal_still_claims_and_records_the_outcome_in_both(self):
         answer = self.assert_agrees(self.replay(), policy=completion.NO_JOURNAL)
@@ -935,16 +966,29 @@ class EventMutationNoticed(unittest.TestCase):
 
     def test_a_copy_that_stops_claiming_is_noticed(self):
         copy = load_packaged()
-        copy.claim_event = lambda config, key, identity, stop, slot: (copy.ACCEPTED, None)
+        copy.claim_event = lambda config, key, identity, stop, slot, host=None: (copy.ACCEPTED,
+                                                                                None)
         found = self.noticed(copy, EventAcceptanceAgrees("run").replay())
+        self.assertTrue(any("guard calls" in line for line in found), found)
+
+    def test_a_copy_that_arbitrates_only_within_its_journal_root_is_noticed(self):
+        copy = load_packaged()
+        original = copy.claim_event
+
+        def rooted(config, key, identity, stop, slot, host=None):
+            return original(config, key, identity, stop, slot)
+
+        copy.claim_event = rooted
+        steps, prepare = EventAcceptanceAgrees("run").accepted_elsewhere_on_the_host()
+        found = self.noticed(copy, steps, prepare=prepare)
         self.assertTrue(any("guard calls" in line for line in found), found)
 
     def test_a_copy_that_asks_the_guard_about_a_duplicate_is_noticed(self):
         copy = load_packaged()
         original = copy.claim_event
 
-        def leaky(config, key, identity, stop, slot):
-            acceptance, where = original(config, key, identity, stop, slot)
+        def leaky(config, key, identity, stop, slot, host=None):
+            acceptance, where = original(config, key, identity, stop, slot, host)
             return (copy.CLAIM_FAILED if acceptance == copy.DUPLICATE else acceptance), where
 
         copy.claim_event = leaky

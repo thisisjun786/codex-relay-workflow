@@ -91,8 +91,25 @@ class Host:
         return (["/bin/sh", "-c", declared_command()], environment)
 
     def checkout(self):
-        """The user registration's command, as the installer writes it."""
-        return ([sys.executable, str(CHECKOUT), str(self.settings)], dict(os.environ))
+        """The user registration's command, as the installer writes it, started by this host:
+        every registration inherits the host's environment, and so its Codex home."""
+        return ([sys.executable, str(CHECKOUT), str(self.settings)],
+                dict(os.environ, CODEX_HOME=str(self.codex_home)))
+
+    def registration_with_its_own_root(self, name):
+        """Another user registration of this host, whose own settings name another journal root."""
+        journal = self.root / name
+        document = json.loads(self.settings.read_text(encoding="utf-8"))
+        document["journalRoot"] = str(journal)
+        settings = self.root / (name + ".json")
+        settings.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+        return journal, ([sys.executable, str(CHECKOUT), str(settings)],
+                         dict(os.environ, CODEX_HOME=str(self.codex_home)))
+
+    def row_paths(self):
+        return [entry for day in (sorted(self.journal.iterdir()) if self.journal.is_dir() else [])
+                if day.is_dir() and DAY.match(day.name)
+                for entry in sorted(day.iterdir()) if ROW.match(entry.name)]
 
     def calls_made(self):
         try:
@@ -317,8 +334,9 @@ class VerifierTests(unittest.TestCase):
         self.assertEqual(answer["eventsWithMoreThanOneAcceptance"], [])
 
     def test_one_event_accepted_in_two_journal_roots_reads_false_only_when_both_are_read(self):
-        """The per-root scope, stated and measured: two registrations writing to two roots each
-        accept the same Stop, and only a reading given both roots can see it."""
+        """Registrations that do not share a Codex home (two hosts handed one transcript, or an
+        adapter from before host arbitration) can each accept the same Stop in their own roots;
+        only a reading given both roots can see it, and that reading says FALSE."""
         first, second = self.fresh("first"), self.fresh("second")
         second.transcript = first.transcript
         payload = at_stop(first, self.document, 0)
@@ -337,7 +355,7 @@ class VerifierTests(unittest.TestCase):
         self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
         self.assertEqual(answer["roots"][1]["state"], "same_root_as_another_spelling")
 
-    def test_invocations_without_an_identity_are_counted_beside_the_verdict(self):
+    def test_invocations_without_an_identity_are_counted_and_keep_the_reading_from_true(self):
         host = self.fresh("unjudged")
         run_one(host.checkout(), at_stop(host, self.document, 0))
         loose = json.dumps({"session_id": "s", "turn_id": "t", "stop_hook_active": False,
@@ -345,7 +363,8 @@ class VerifierTests(unittest.TestCase):
         run_one(host.checkout(), loose)
         run_one(host.checkout(), loose)
         code, answer = verify(host.journal)
-        self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"),
+                         "two invocations were answered without being judged as events")
         self.assertEqual(answer["unjudgedInvocations"], {"unestablished:transcript_path_missing": 2})
 
     def test_rows_from_before_event_identity_are_legacy_and_never_judged(self):
@@ -660,3 +679,128 @@ class DevinRoundTwoControls(unittest.TestCase):
                        {"session": self.document["stops"][0]["payload"]["session_id"]}):
             with self.subTest(window=window):
                 self.assertNotEqual(verify(host.journal, **window)[0], 0)
+
+
+class ReviewRoundThreeControls(unittest.TestCase):
+    """Red-first controls for the third review round (CRW-212, PR #144).
+
+    Two registrations of one host are one host answering one Stop, whatever journal root each one's
+    settings name. And the reading says TRUE only about what it judged: an invocation answered
+    without an event, a row from before event identity, a record whose own fields are not its key's
+    or a ledger entry it does not know keeps the window from TRUE.
+    """
+
+    def setUp(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        self.base = Path(raw)
+        self.document = fixture()
+
+    def fresh(self, name, **kwargs):
+        root = self.base / name
+        root.mkdir()
+        return Host(root, **kwargs)
+
+    def claims_in(self, *journals):
+        return [path for journal in journals if (journal / "accepted").is_dir()
+                for path in sorted((journal / "accepted").iterdir()) if CLAIM.match(path.name)]
+
+    def test_two_registrations_with_their_own_journal_roots_accept_one_stop_once(self):
+        for round_number in range(10):
+            with self.subTest(round=round_number):
+                host = self.fresh("roots-%d" % round_number)
+                other, command = host.registration_with_its_own_root("other-journal")
+                answers = run_together([host.declared(), command], at_stop(host, self.document, 0))
+                for code, _out, err in answers:
+                    self.assertEqual((code, err), (0, b""))
+                self.assertEqual(host.calls_made(), 1,
+                                 "two registrations of one host both asked about one Stop")
+                self.assertEqual(len(self.claims_in(host.journal, other)), 1,
+                                 "one Stop was accepted in two journal roots")
+                code, answer = verify(host.journal, other)
+                self.assertEqual((code, answer["verdict"]), (0, "TRUE"))
+
+    def test_a_duplicate_whose_accepted_record_is_in_no_root_read_is_not_vouched_for(self):
+        host = self.fresh("half")
+        other, command = host.registration_with_its_own_root("other-journal")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.declared(), payload)
+        run_one(command, payload)
+        self.assertEqual(host.calls_made(), 1, "the second registration asked again")
+        code, answer = verify(other)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(len(answer["duplicatesWithoutClaim"]), 1)
+
+    def test_a_stop_answered_without_an_identity_keeps_the_reading_from_true(self):
+        """The fixture's third Stop cannot be told from a late delivery of its second, so both
+        registrations asked about it: that Stop was answered twice, and a reading that cannot see
+        it as one event does not vouch for the window it is in."""
+        host = self.fresh("ambiguous", decision="block")
+        for index in (0, 2, 4):
+            run_together([host.declared(), host.checkout()], at_stop(host, self.document, index))
+        self.assertEqual(host.calls_made(), 4)
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["unjudgedInvocations"],
+                         {"unestablished:answer_text_ambiguous": 2})
+        self.assertEqual(answer["events"], 2)
+
+    def test_rows_from_before_event_identity_keep_their_window_from_true(self):
+        host = self.fresh("mixed")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        day = host.journal / "20000101"
+        day.mkdir(parents=True)
+        (day / ("%032x.json" % 7)).write_text(json.dumps(
+            {"recordVersion": 1, "sessionId": "s", "turnId": "t", "at": "2000-01-01T00:00:00Z",
+             "stopHookActive": False}), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["legacyRows"], 1)
+        code, answer = verify(host.journal, since="2001-01-01T00:00:00Z")
+        self.assertEqual((code, answer["verdict"]), (0, "TRUE"),
+                         "a window after the legacy row judges everything in it")
+
+    def test_a_claim_whose_answer_is_not_its_keys_is_not_vouched_for(self):
+        host = self.fresh("claim-item")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        claim = host.journal / "accepted" / host.ledger()[0][0]
+        body = json.loads(claim.read_text(encoding="utf-8"))
+        body["answerItem"] = "msg_another_answer"
+        claim.write_text(json.dumps(body), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["ledgerUnreadable"], [str(claim)])
+
+    def test_an_accepted_row_about_another_session_is_not_vouched_for(self):
+        host = self.fresh("row-session")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        [path] = host.row_paths()
+        row = json.loads(path.read_text(encoding="utf-8"))
+        row["sessionId"] = "01a0cd4a-0000-7000-8000-000000000000"
+        path.write_text(json.dumps(row), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["rowsUnreadable"], [str(path)])
+
+    def test_a_duplicate_row_about_another_turn_is_not_vouched_for(self):
+        host = self.fresh("row-turn")
+        payload = at_stop(host, self.document, 0)
+        run_one(host.checkout(), payload)
+        run_one(host.checkout(), payload)
+        [path] = [p for p in host.row_paths()
+                  if json.loads(p.read_text(encoding="utf-8")).get("acceptance") == "duplicate"]
+        row = json.loads(path.read_text(encoding="utf-8"))
+        row["turnId"] = "01a0cd4a-0000-7000-8000-000000000001"
+        path.write_text(json.dumps(row), encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["rowsUnreadable"], [str(path)])
+
+    def test_an_entry_in_the_ledger_this_reader_does_not_know_is_not_vouched_for(self):
+        host = self.fresh("foreign")
+        run_one(host.checkout(), at_stop(host, self.document, 0))
+        stray = host.journal / "accepted" / "pending.json.tmp"
+        stray.write_text("", encoding="utf-8")
+        code, answer = verify(host.journal)
+        self.assertEqual((code, answer["verdict"]), (3, "UNREADABLE"))
+        self.assertEqual(answer["foreignLedgerEntries"], [str(stray)])
