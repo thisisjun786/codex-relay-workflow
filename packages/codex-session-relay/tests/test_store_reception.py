@@ -345,6 +345,31 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
                                           observation=self.observed())
         self.assertEqual(self.kinds(answer), [packets.STALE_CRITERIA])
 
+    def test_a_digest_a_block_states_is_held_to_the_registered_one(self):
+        # A block is not required to name a digest; one that does is held to it. The digest
+        # the child judged against was accepted as current after the criteria changed.
+        relationship = self.registered()
+        ledger = os.path.join(self.tmp, "parent-ledger.json")
+
+        def blocked(subject, digest):
+            return packets.compose(
+                direction=C2P, purpose="blocked", relation_id=relationship["relationshipId"],
+                sender=CHILD, recipient=PARENT, subject=subject, issue=ISSUE,
+                relation_revision=self.revision(relationship), criteria_digest=digest,
+                evidence=EVIDENCE)
+
+        old = self.digest()
+        _code, current = self.packet_check(blocked("blocked-current", old),
+                                           receiver_id=PARENT, ledger=ledger)
+        self.assertEqual(current["disposition"], packets.ACCEPTED, current)
+        self.criteria.register(relationship["relationshipId"], CRITERIA + [
+            {"id": "c2", "title": "a criterion added later", "required": True}])
+        _code, answer = self.packet_check(blocked("blocked-stale", old), receiver_id=PARENT,
+                                          ledger=ledger)
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertEqual(self.kinds(answer), [packets.STALE_CRITERIA])
+        self.assertFalse(answer["act"], answer)
+
     def test_a_head_that_moved_is_stale_and_an_unobserved_head_is_unchecked(self):
         relationship = self.registered()
         one = self.report(relationship, self.event(relationship))
@@ -1075,6 +1100,21 @@ class WhatTheStoreCannotAnswer(StoreReception):
                                           observation=self.observed())
         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
         self.assertEqual(self.gap_fields(answer), [packets.CRITERIA_DIGEST])
+
+    def test_a_digest_stated_unasked_is_unchecked_where_no_criteria_are_registered(self):
+        relationship = self.registered()
+        self.store.db.execute("DELETE FROM canonical_criteria WHERE relationship_id = ?",
+                              (relationship["relationshipId"],))
+        one = packets.compose(
+            direction=C2P, purpose="blocked", relation_id=relationship["relationshipId"],
+            sender=CHILD, recipient=PARENT, subject="blocked-unregistered", issue=ISSUE,
+            relation_revision=self.revision(relationship), criteria_digest=self.digest(),
+            evidence=EVIDENCE)
+        _code, answer = self.packet_check(one, receiver_id=PARENT,
+                                          ledger=os.path.join(self.tmp, "parent-ledger.json"))
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertEqual(self.gap_fields(answer), [packets.CRITERIA_DIGEST])
+        self.assertFalse(answer["act"], answer)
 
     def test_a_current_generation_no_dispatch_opened_leaves_the_tenure_unread(self):
         # Which dispatch opened the current generation is what says which tenure a packet

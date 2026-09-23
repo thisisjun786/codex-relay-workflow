@@ -545,6 +545,71 @@ class RequiredFieldSweep(_Reading):
                     self.assertTrue(answer["gaps"])
 
 
+# The fields a packet may state where its purpose does not require them, each with the value
+# the record agrees with, a stale one, the record key that answers it, the gap that key's
+# absence leaves and the mismatch a stale value is refused as.
+STATED = {
+    packets.GENERATION: ("generation", GENERATION, GENERATION + 1, "generation",
+                         "generation", packets.STALE_GENERATION),
+    packets.CRITERIA_DIGEST: ("criteria_digest", DIGEST, "e" * 64, "criteriaDigest",
+                              "criteriaDigest", packets.STALE_CRITERIA),
+    packets.ARTIFACT: ("artifact", a_pull_request(), a_pull_request(head="f" * 40), "headSha",
+                       "artifact.headSha", packets.STALE_HEAD),
+    packets.CALLBACK: ("callback", a_callback(), a_callback(pair=LEFT_PARENT_PAIR), "callback",
+                       "callback", packets.STALE_CALLBACK),
+    packets.POLICY: ("policy_record", a_policy(), a_policy(pair=LEFT_PARENT_PAIR), "policy",
+                     "policy", packets.STALE_POLICY),
+}
+
+
+def stated_rows():
+    """(direction, purpose, field) for every compared field an occasion may state unasked."""
+    return [(direction, purpose, name)
+            for direction, purpose in sorted(CANONICAL_REQUIRED)
+            for name in STATED if name not in CANONICAL_REQUIRED[(direction, purpose)]]
+
+
+class StatedFieldsAreHeldWhateverThePurpose(_Reading):
+    """A field a packet states is held to the record, required by its purpose or not.
+
+    The purpose table says what an occasion cannot do without; it does not license what an
+    occasion says. A blocked report naming the digest its sender judged against was accepted
+    after the criteria had been registered again, and accepted again when the store could not
+    read any digest at all, because only a required digest was compared. Stated is compared:
+    the current value agrees, a stale one is refused as that, and one the record cannot
+    answer is unavailable.
+    """
+
+    def test_the_current_value_agrees(self):
+        for direction, purpose, name in stated_rows():
+            keyword, current, _stale, _key, _gap, _kind = STATED[name]
+            with self.subTest(direction=direction, purpose=purpose, field=name):
+                answer = self.received(lambda: packets.compose(**packet_kwargs(
+                    direction, purpose, **{keyword: current})), a_record())
+                self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+
+    def test_a_stale_value_is_refused_as_stale(self):
+        for direction, purpose, name in stated_rows():
+            keyword, _current, stale, _key, _gap, kind = STATED[name]
+            with self.subTest(direction=direction, purpose=purpose, field=name):
+                answer = self.received(lambda: packets.compose(**packet_kwargs(
+                    direction, purpose, **{keyword: stale})), a_record())
+                self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+                self.assertIn(kind, self.kinds(answer))
+
+    def test_a_value_the_record_cannot_answer_is_unavailable(self):
+        for direction, purpose, name in stated_rows():
+            keyword, current, _stale, key, gap, _kind = STATED[name]
+            with self.subTest(direction=direction, purpose=purpose, field=name):
+                blind = a_record()
+                del blind[key]
+                answer = self.received(lambda: packets.compose(**packet_kwargs(
+                    direction, purpose, **{keyword: current})), blind)
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                self.assertEqual(answer["mismatches"], [])
+                self.assertIn(gap, self.gap_fields(answer))
+
+
 # A lone surrogate is a string JSON can carry and UTF-8 cannot encode.
 WRONG_SHAPES = ([], 7, "x", {}, True, "\ud800")
 
