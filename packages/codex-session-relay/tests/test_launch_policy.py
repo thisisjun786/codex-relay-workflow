@@ -28,7 +28,7 @@ from codex_session_relay.service import (
     LAUNCH_POLICY, LAUNCH_SETTLED_ENV, canonical_policy_path, owned_service, start_ticks,
 )
 
-from .test_rolepolicy import POLICY, write_policy
+from .test_rolepolicy import CHILD_EFFORT, CHILD_MODEL, POLICY, write_policy
 from .test_service import REPO, ServiceTestCase
 
 # A second, valid policy declaring a different parent pair, so the two files have different
@@ -37,7 +37,7 @@ OTHER_POLICY = {
     "roles": {
         "supervisor": {"expectation": "record"},
         "parent": {"model": "devin/swe-2", "reasoningEffort": "high"},
-        "child": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"},
+        "child": {"model": CHILD_MODEL, "reasoningEffort": CHILD_EFFORT},
     }
 }
 
