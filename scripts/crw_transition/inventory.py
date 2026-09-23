@@ -12,6 +12,7 @@ import random
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from crw_runtime import bridgerecord, codexconfig, completion, hooks, pointer, reading
@@ -742,6 +743,12 @@ def archive_key(path, stem):
     """
     matched = _ARCHIVE_NAME.fullmatch(str(Path(path).name)[len(stem):])
     if matched is None:
+        return None
+    # A stamp retire() takes from the clock is a real UTC moment; one that is not -- a month 99,
+    # a second 99 -- was never written by it and cannot be placed against the ones that were.
+    try:
+        datetime.strptime(matched.group(1), "%Y%m%dT%H%M%SZ")
+    except ValueError:
         return None
     return matched.group(1), int(matched.group(2) or 0)
 

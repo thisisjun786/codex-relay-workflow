@@ -855,6 +855,41 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
                          "no policy-free record is installed in its place")
 
+    def test_an_archive_stamp_that_is_no_moment_refuses_the_rebuild(self):
+        """Review of e538bfa1: a stamp of the right shape that no clock produces was accepted.
+
+        retire() takes a stamp from the clock or from an archive already there, so a month 99 was
+        never written by it; ranked as the newest, it restored a record with no policy.
+        """
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        bearing = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                        owner=bridgerecord.OWNER_PLUGIN,
+                                        execution_policy=reference)
+        free = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                     owner=bridgerecord.OWNER_PLUGIN)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20210101T000000Z")).write_text(json.dumps(bearing), encoding="utf-8")
+        (home / (stem + "99999999T999999Z")).write_text(json.dumps(free), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        answer = steps.mcp_record_install(host, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer, indent=2)[:2000])
+        self.assertIn("99999999T999999Z", json.dumps(answer))
+        self.assertFalse((home / bridgerecord.RECORD_NAME).exists(),
+                         "no policy-free record is installed")
+
     def test_a_newest_archive_that_became_a_directory_refuses(self):
         self._refuses_with_newest_archive_replaced(lambda path: path.mkdir())
 

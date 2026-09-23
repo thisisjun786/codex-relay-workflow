@@ -5289,8 +5289,8 @@ def _register_mcp_plugin_note(outcome, wrote):
                 " thread can start the bridge from it is not established; detail says what was"
                 " found.")
     if wrote:
-        return ("Refused after the write. The record this run wrote is in place and a new thread"
-                " cannot start the bridge from it; detail says why and repair says what to do.")
+        return ("Refused after the write, and this run removed nothing; detail says what was at"
+                " the record path when last read and repair says what to do.")
     return ("Refused. This run installed no record a new thread can start the bridge from;"
             " detail says what is at the record path now and repair says what to do.")
 
@@ -5422,10 +5422,11 @@ def _register_mcp_owned(args, codex_home):
               "preservedHow": "the Codex configuration was read and not written",
               "executionPolicy": policy,
               **({"activation": (
-                  "Codex starts this server for each thread it loads (observed on Codex Desktop"
-                  " 0.154.0), so a thread started after this record is written runs the bridge"
-                  " under it and a thread already running keeps the bridge it spawned. Read"
-                  " get_capabilities in a new thread to observe it.")}
+                  "Conditional, not observed by this run: once the crw plugin that declares this"
+                  " server is installed, enabled and loaded, Codex starts the server for each"
+                  " thread it loads (observed on Codex Desktop 0.154.0), so a thread started after"
+                  " that runs the bridge under this record and a thread already running keeps"
+                  " the bridge it spawned. Read get_capabilities in a new thread to observe it.")}
                  if answered in bridgerecord.SETTLED else {}),
               "note": _register_mcp_plugin_note(answered, written["wrote"])})
         return EXIT_OK if answered in bridgerecord.SETTLED else EXIT_REFUSED

@@ -422,15 +422,24 @@ def write(path, wanted, *, apply=False):
         hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
         back = read_json_without_blocking(path, "the bridge MCP record")
         stale = _policy_now(wanted) if back.usable and back.value == wanted else []
+        if stale:
+            # What is there now, read again rather than assumed: a writer that takes no lock can
+            # have replaced the record since the read-back, and the answer says only what it saw.
+            now = read_json_without_blocking(path, "the bridge MCP record")
     if stale:
         answer["outcome"] = POLICY_CHANGED
         answer["applied"] = True
         answer["wrote"] = True
+        if now.usable and now.value == wanted:
+            there = ("When last read, the record this run wrote was in place, and the launcher"
+                     " refuses to start the bridge from it at every start")
+        else:
+            there = ("When last read, " + str(path) + " no longer held the record this run wrote ("
+                     + str(now.state) + ")")
         answer["detail"] = ("the execution policy changed while this record was being written: "
-                            + "; ".join(stale) + ". The record is in place and the launcher"
-                            " refuses to start the bridge from it. It was not removed: a removal"
-                            " by path cannot exclude a writer that does not take the ownership"
-                            " lock, whose file it would delete")
+                            + "; ".join(stale) + ". " + there + ". This run removed nothing: a"
+                            " removal by path cannot exclude a writer that does not take the"
+                            " ownership lock, whose file it would delete")
         answer["repair"] = _POLICY_REPAIR.format(path=path)
         return answer
     answer["outcome"] = CREATED

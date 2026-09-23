@@ -976,6 +976,8 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertIs(emitted.get("wrote"), True, output)
         self.assertIn("aside", emitted.get("repair") or "", output)
         self.assertTrue((emitted.get("note") or "").startswith("Refused after the write"), output)
+        self.assertIn("the record this run wrote was in place", emitted.get("detail") or "",
+                      output)
         self.assertNotIn("activation", emitted, output)
         self.assertTrue(self.record.exists(), output)
 
@@ -1067,7 +1069,10 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertTrue(self.record.exists(), "another writer's record was deleted: "
                         + json.dumps(answer))
         self.assertEqual(self.record.read_text(encoding="utf-8"), theirs)
-        self.assertIn("was not removed", answer["detail"], answer)
+        # And it says what it saw rather than what it wrote: the record there is not this run's.
+        self.assertIn("no longer held the record this run wrote", answer["detail"], answer)
+        self.assertNotIn("was in place", answer["detail"], answer)
+        self.assertIn("removed nothing", answer["detail"], answer)
         self.assertEqual(list(self.record.parent.glob(self.record.name + ".policy-changed-*")),
                          [], "nothing is moved aside")
 
@@ -1081,7 +1086,9 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         note = emitted.get("note") or ""
         self.assertNotIn("was written", note, output)
         self.assertIn("already installed", note, output)
-        self.assertIn("activation", emitted, output)
+        # No crw package is installed here, so the activation claim can only be a condition.
+        self.assertTrue(emitted.get("activation", "").startswith("Conditional, not observed"),
+                        output)
 
     # register-mcp in a process whose record write lands truncated, so it cannot be read back.
     TRUNCATES_THE_RECORD = (
