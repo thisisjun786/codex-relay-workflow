@@ -58,14 +58,15 @@ step, and every comparison in both packages is exact string equality.
 The clearest case is the pair the parent row just left. The host's catalog reports SWE-2 at
 medium, high, max and ultra, and the parent ran on it at exactly `max` until 2026-09-23; Opus 5.5,
 which the parent and the child now share, runs at `xhigh`. A parent request stating `max` under
-Opus 5.5 is refused, and so is one stating `xhigh` under SWE-2. So is the old pair whole: this
-host still lists `devin/swe-2` at `max` under `allowed`, and a request naming `parent` on it is
-refused by the role question, which is asked before the allowlist, even though the allowlist
-would approve it. The allowlist says what the host may run; the role row says what that role
-runs. The interim grok pair shared `xhigh` with the child under a different model, and the
-current parent pair shares the child's whole pair; neither changed the rule. The pair the parent
-left differs from the current one in model and in effort, which is why the single-axis regression
-cases take one half of it at a time.
+Opus 5.5 has the right model and is refused on its effort. One stating `xhigh` under SWE-2 has
+the right effort name and is refused on its model, which is compared first. So is the old pair
+whole: this host still lists `devin/swe-2` at `max` under `allowed`, and a request naming
+`parent` on it is refused by the role question, which is asked before the allowlist, even though
+the allowlist would approve it. The allowlist says what the host may run; the role row says what
+that role runs. The interim grok pair shared `xhigh` with the child under a different model, and
+the current parent pair shares the child's whole pair; neither changed the rule. The pair the
+parent left differs from the current one in model and in effort, which is why the single-axis
+regression cases take one half of it at a time.
 
 The child's move is the other case. It kept `xhigh`, so the pair it left differs from the
 current one by model alone, and that superseded pair is the fixture proving a check cannot pass a
