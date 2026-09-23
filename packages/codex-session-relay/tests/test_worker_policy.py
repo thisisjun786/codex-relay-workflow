@@ -14,7 +14,7 @@ from codex_session_relay import rolepolicy
 from codex_session_relay import service as service_module
 from codex_session_relay.service import WORKER_POLICY, owned_service, start_ticks
 
-from .test_rolepolicy import POLICY, write_policy
+from .test_rolepolicy import PARENT_EFFORT, PARENT_MODEL, POLICY, SUPERSEDED_PARENT, write_policy
 from .test_service import HOLDER, REPO, ServiceTestCase
 
 
@@ -24,7 +24,9 @@ class WorkerPolicyEvidence(ServiceTestCase):
         self.addCleanup(rolepolicy.reset)
         self.policy_path = write_policy(Path(self.tmp))
         self.caller = rolepolicy.declared({rolepolicy.ENVIRONMENT_VARIABLE: self.policy_path})
-        self.requirements = [{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max"}]
+        self.requirements = [
+            {"role": "parent", "model": PARENT_MODEL, "reasoningEffort": PARENT_EFFORT}
+        ]
 
     def worker(self, service, *, configured=True):
         program = HOLDER.format(
@@ -173,12 +175,15 @@ sys.stdin.read()
     def test_role_pair_mismatch_and_unsupported_requirements_are_not_ready(self):
         service = self.service()
         self.worker(service)
+        # Each of the first four differs from the ready requirement in exactly one field, so that
+        # field is the only thing that can refuse it.
+        ready = self.requirements[0]
         for request in (
-            [{"role": "parent", "model": "different", "reasoningEffort": "max"}],
-            [{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "high"}],
-            [{"role": "supervisor", "model": "devin/swe-2", "reasoningEffort": "max"}],
-            [{"role": "parent", "model": "devin/swe-2", "reasoningEffort": "max", "exception": "x"}],
-            [], {"role": "parent"}, [None], [dict(self.requirements[0], model=False)],
+            [dict(ready, model=SUPERSEDED_PARENT[0])],
+            [dict(ready, reasoningEffort=SUPERSEDED_PARENT[1])],
+            [dict(ready, role="supervisor")],
+            [dict(ready, exception="x")],
+            [], {"role": "parent"}, [None], [dict(ready, model=False)],
         ):
             with self.subTest(request=request):
                 self.assertFalse(self.readiness(service, request)["ready"])

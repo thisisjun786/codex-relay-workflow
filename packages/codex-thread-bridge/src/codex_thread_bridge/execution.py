@@ -18,12 +18,13 @@ compared only where one exists, and every receipt says which of the two modes wa
 than letting a reader assume the stronger one.
 
 IS IT THIS ROLE'S PAIR? A later failure showed the first two questions can both be answered
-correctly by a task that is still on the wrong model, because CRW runs three levels and each is
-meant to run on a different pair. A caller may therefore name the role it is creating for, and a
-named role is checked against the pair this host's policy declares for it. Naming one is opt-in,
-so nothing that does not name a role behaves differently than before; but naming one this host
-does not declare is refused rather than defaulted, for the same reason an undeclared exception is:
-the point of asking is to be checked by someone other than yourself. See `roles`.
+correctly by a task that is still on the wrong model, because CRW runs three levels and each runs
+on the pair decided for its role, which may or may not be another role's pair. A caller may
+therefore name the role it is creating for, and a named role is checked against the pair this
+host's policy declares for it. Naming one is opt-in, so nothing that does not name a role behaves
+differently than before; but naming one this host does not declare is refused rather than
+defaulted, for the same reason an undeclared exception is: the point of asking is to be checked
+by someone other than yourself. See `roles`.
 
 The allowlist deliberately cannot be reached from a tool argument. It is read once, in the server's
 main(), from a file named by this process's own environment, and handed to the Bridge as a

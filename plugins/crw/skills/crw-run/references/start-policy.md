@@ -41,14 +41,16 @@ needs to recognise it as superseded rather than as a second valid answer. The de
 replaced it is CRW-165's of 2026-09-21.
 
 Recorded here, owned elsewhere, and unchanged by any of this: the initiative task runs the
-user-assigned Astra, a project parent runs devin/swe-2 at max, and an issue child runs
-anthropic/claude-opus-5-5 at xhigh. Both pairs have a history rather than one value, and this row
-carries the latest recorded decisions rather than an observation of what any task is running.
-swe-2 at max was the recorded parent pair until 2026-09-21, when Jun moved every parent to
-xai/grok-4.6 at xhigh; Jun's restoration decision later that same day puts swe-2 at max back. The
-child ran anthropic/claude-opus-5 at xhigh until 2026-09-23, when Jun moved it to
-anthropic/claude-opus-5-5 at the same effort. Each superseded step is kept so the transitions can
-be reproduced and recognised as superseded rather than as second valid answers.
+user-assigned Astra, and a project parent and an issue child both run anthropic/claude-opus-5-5
+at xhigh. Both pairs have a history rather than one value, and this row carries the latest
+recorded decisions rather than an observation of what any task is running. swe-2 at max was the
+recorded parent pair until 2026-09-21, when Jun moved every parent to xai/grok-4.6 at xhigh; Jun's
+restoration decision later that same day put swe-2 at max back, and on 2026-09-23 Jun moved the
+parent to anthropic/claude-opus-5-5 at xhigh. The child ran anthropic/claude-opus-5 at xhigh until
+2026-09-23, when Jun moved it to anthropic/claude-opus-5-5 at the same effort. Sharing a pair does
+not merge the roles: each is still checked against its own row. Each superseded step is kept so
+the transitions can be reproduced and recognised as superseded rather than as second valid
+answers.
 
 A single task may be excepted by name. The consolidated CRW-127 coordinator ran
 ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception, a bounded trial that has since
