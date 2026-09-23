@@ -694,6 +694,45 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertIsNone(host.record())
         self.assertIn("newest retired bridge record", json.dumps(answer["results"]))
 
+    def test_a_rebuild_takes_its_whole_identity_from_one_reading_of_the_newest_archive(self):
+        """A listing that misses the newest archive for a moment must not supply the record.
+
+        The transition read the archives twice: once to choose the executable and arguments, once
+        to check the newest. An archive gone from the first listing and back for the second let
+        an older, policy-free record through. Here the legacy listing is made to miss it.
+        """
+        import importlib
+        sys.path.insert(0, str(ROOT / "scripts"))
+        steps = importlib.import_module("crw_transition.steps")
+        inventory = importlib.import_module("crw_transition.inventory")
+        from crw_runtime import bridgerecord
+        home = self.host.home
+        reference = {"path": str(self.host.root / "execution-policy.json"), "digest": "a" * 64}
+        bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
+        older = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN)
+        newer = bridgerecord.document(command=bridge, name="codex-thread-bridge",
+                                      owner=bridgerecord.OWNER_PLUGIN, execution_policy=reference)
+        stem = bridgerecord.RECORD_NAME + ".superseded-"
+        (home / (stem + "20200101T000000Z")).write_text(json.dumps(older), encoding="utf-8")
+        (home / (stem + "20210101T000000Z")).write_text(json.dumps(newer), encoding="utf-8")
+        host = {"codexHome": str(home), "destination": str(self.host.destination),
+                "mcp": {"record": None, "registration": None, "recordOwner": None,
+                        "recordPath": str(home / bridgerecord.RECORD_NAME)}}
+        real = inventory.archives
+
+        def missing_the_newest(where, prefix):
+            return [path for path in real(where, prefix) if "20210101" not in path.name]
+
+        original = inventory.archives
+        inventory.archives = missing_the_newest
+        try:
+            answer = steps.mcp_record_install(host, {}, apply=False)
+        finally:
+            inventory.archives = original
+        self.assertEqual(answer["record"]["wanted"].get("executionPolicy"), reference,
+                         json.dumps(answer, indent=2)[:2000])
+
     def test_a_newest_archive_that_became_a_pipe_refuses(self):
         self._refuses_with_newest_archive_replaced(os.mkfifo)
 

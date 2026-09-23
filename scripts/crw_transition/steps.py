@@ -196,40 +196,51 @@ def _retired_record(host):
     return None
 
 
-def _newest_retired_refusal(host):
-    """Why the newest retired bridge record cannot be read, or None when it reads or none exists.
+def _newest_retired_bridge_record(host):
+    """(record, refusal): the newest retired bridge record, read once, or why it cannot be.
 
     _retired_record steps over an archive it cannot read and answers with an older one. For the
     executable and its arguments that is the recovery this module has always made. For an
     execution policy it is not: an older archive can predate the policy, and rebuilding from it
     installs a record that starts a bridge checking no role while the run reports success. So a
-    rebuild that would take its policy from the archives asks this first and refuses instead.
+    rebuild that takes its identity from the archives uses this instead: the newest entry under
+    the stem, whatever it is, read exactly once through a descriptor opened without blocking and
+    without following a link, and that one reading supplies the executable, the arguments and
+    the policy. Anything else -- a pipe, a directory, a link, an entry that vanished between the
+    listing and the read, a record that does not read as one -- is a refusal. (None, None) means
+    nothing was ever retired.
     """
     home = Path(host["codexHome"])
     stem = bridgerecord.RECORD_NAME + ".superseded-"
-    # Every entry under the stem, whatever it is. inventory.archives lists regular files only, so a
-    # newest archive that became a pipe, a directory or a dangling link would not be the newest in
-    # that listing, and the older record behind it would be read as though it were.
+    # Every entry under the stem. inventory.archives lists regular files only, so a newest
+    # archive that became a pipe, a directory or a dangling link would not be the newest there,
+    # and the older record behind it would be read as though it were.
     with os.scandir(str(home)) as scanning:
         found = [Path(item.path) for item in scanning if item.name.startswith(stem)]
     if not found:
-        return None
+        return None, None
     newest = max(found, key=lambda path: inventory.archive_order(path, stem))
-    if newest.is_symlink() or not newest.is_file():
-        return ("the newest retired bridge record, " + str(newest) + ", is not a regular file, so"
-                " whether it named an execution policy was not established. An older archive may"
-                " predate the policy, and a record rebuilt from it would start a bridge that"
-                " checks no role. Repair or remove that entry and rerun")
-    document, outcome, detail = bridgerecord.read(newest)
-    if document is not None:
-        return None
-    return ("the newest retired bridge record, " + str(newest) + ", could not be read ("
-            + str(outcome) + (": " + str(detail) if detail else "") + "), so whether it named an"
-            " execution policy was not established. An older archive may predate the policy, and"
-            " a record rebuilt from it would start a bridge that checks no role. Repair or remove"
-            " that archive and rerun")
+    reading_ = bridgerecord.read_json_without_blocking(newest, "the retired bridge record",
+                                                       follow=False)
+    why = None
+    if not reading_.usable or reading_.state == reading.ABSENT:
+        why = str(reading_.state) + (": " + str(reading_.detail) if reading_.detail else "")
+    else:
+        wrong = bridgerecord.complaints(reading_.value)
+        if wrong:
+            why = bridgerecord.MALFORMED + ": " + "; ".join(wrong)
+    if why is None:
+        return reading_.value, None
+    return None, ("the newest retired bridge record, " + str(newest) + ", could not be read ("
+                  + why + "), so whether it named an execution policy was not established. An"
+                  " older archive may predate the policy, and a record rebuilt from it would start"
+                  " a bridge that checks no role. Repair or remove that entry and rerun")
 
-def bridge_command(host):
+
+_UNREAD = object()
+
+
+def bridge_command(host, *, retired=_UNREAD):
     """The bridge the plugin record will name: what the host already used, or the pointer path."""
     record = (host["mcp"].get("record") or {})
     named = record.get("bridgeExecutable")
@@ -245,7 +256,8 @@ def bridge_command(host):
         # had already answered, and preflight then compared the live record with the invention
         # and refused, leaving the hook and the skill links unable to follow.
         return named
-    retired = _retired_record(host)
+    if retired is _UNREAD:
+        retired = _retired_record(host)
     if retired and retired.get("bridgeExecutable"):
         return retired["bridgeExecutable"]
     destination = host.get("destination")
@@ -1735,9 +1747,19 @@ def mcp_table_standdown(host, options, *, apply=False):
 
 
 def mcp_record_install(host, options, *, apply=False):
+    registration = host["mcp"].get("registration") or {}
+    live = host["mcp"].get("record") or {}
+    # With no live registration and no live plugin record, the archives are the only source of
+    # this record's identity, including its execution policy, so they are read once and strictly.
+    rebuilding = not registration and bridgerecord.owner_of(live) != bridgerecord.OWNER_PLUGIN
     try:
-        command = bridge_command(host)
-        retired = _retired_record(host)
+        if rebuilding:
+            retired, unreadable = _newest_retired_bridge_record(host)
+            if unreadable:
+                return _answer("mcp record install", REFUSED, unreadable)
+        else:
+            retired = _retired_record(host)
+        command = bridge_command(host, retired=retired)
     except OSError as error:
         # The archives are where a custom executable and its arguments survive an interrupted
         # run, so a listing this cannot do is not an empty one: writing the pointer default here
@@ -1748,7 +1770,6 @@ def mcp_record_install(host, options, *, apply=False):
                        " arguments survive, so nothing was written")
     if not command:
         return _answer("mcp record install", REFUSED, "no bridge executable could be named")
-    registration = host["mcp"].get("registration") or {}
     # After the table is removed the registration is gone, so an interrupted run would rebuild the
     # record with no arguments. The retired record is where they survive.
     # "args" absent and "args" empty are different answers: falling back on an empty live list
@@ -1764,22 +1785,11 @@ def mcp_record_install(host, options, *, apply=False):
     # record when it is the plugin's; otherwise, with no live registration, from the newest retired
     # record when that one was the plugin's -- a disable retires it and a later transition rebuilds
     # it. A user-owned record never carries one, so nothing is invented for a manual install.
-    live = host["mcp"].get("record") or {}
     if bridgerecord.owner_of(live) == bridgerecord.OWNER_PLUGIN:
         policy = live.get(bridgerecord.POLICY_FIELD)
-    elif not registration:
-        try:
-            unreadable = _newest_retired_refusal(host)
-        except OSError as error:
-            return _answer("mcp record install", REFUSED,
-                           "the retired records could not be listed (" + type(error).__name__
-                           + ": " + str(error) + "), so whether the newest named an execution"
-                           " policy was not established and nothing was written")
-        if unreadable:
-            return _answer("mcp record install", REFUSED, unreadable)
-        policy = (retired.get(bridgerecord.POLICY_FIELD)
-                  if retired is not None
-                  and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN else None)
+    elif rebuilding and retired is not None \
+            and bridgerecord.owner_of(retired) == bridgerecord.OWNER_PLUGIN:
+        policy = retired.get(bridgerecord.POLICY_FIELD)
     else:
         policy = None
     try:

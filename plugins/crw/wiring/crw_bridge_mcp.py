@@ -79,6 +79,25 @@ def fail(message):
     raise SystemExit(2)
 
 
+def read_regular(path):
+    """The bytes of a regular file, opened without blocking and judged on that descriptor.
+
+    Opening a FIFO for reading blocks until something writes to it, and a server that never
+    finishes starting is a worse answer than one that says why it will not. Raises OSError, with
+    a message naming the kind of file, for anything that is not a regular file.
+    """
+    descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError("not a regular file")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            return handle.read()
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def canonical(path):
     """One spelling of a file, for comparing two of them. The relay compares the same way."""
     try:
@@ -136,16 +155,7 @@ def policy_environment(record, reference):
              + " and this process was started with " + DIGEST_VARIABLE + "=" + expected
              + ". Unset the variable, or register the policy it names")
     try:
-        # Opened without blocking and judged on the descriptor that is then read. Opening a FIFO
-        # for reading blocks until something writes to it, and a server that never finishes
-        # starting is a worse answer than one that says why it will not.
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            os.close(descriptor)
-            fail("the execution policy the record at " + str(record) + " names, " + path
-                 + ", is not a regular file, so the bridge is not started without it." + repair)
-        with os.fdopen(descriptor, "rb") as handle:
-            actual = hashlib.sha256(handle.read()).hexdigest()
+        actual = hashlib.sha256(read_regular(path)).hexdigest()
     except OSError as error:
         fail("the execution policy the record at " + str(record) + " names could not be read ("
              + path + ": " + str(error) + "). The bridge is not started without it, because it"
@@ -165,7 +175,7 @@ def main():
     home, how = codex_home()
     record = home / RECORD_NAME
     try:
-        document = json.loads(record.read_bytes().decode("utf-8"))
+        document = json.loads(read_regular(record).decode("utf-8"))
     except FileNotFoundError:
         fail("no record at " + str(record) + " (resolved from " + how + "). Which command"
              " writes it depends on who owns this server. If this host registers the bridge"

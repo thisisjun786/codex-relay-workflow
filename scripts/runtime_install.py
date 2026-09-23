@@ -4830,6 +4830,31 @@ _POLICY_VARIABLES = ("CODEX_THREAD_BRIDGE_EXECUTION_POLICY",
 LAUNCHER_PROBE_SECONDS = 20
 
 
+def _write_probe_file(path, text):
+    """Write one file of the launcher probe, which only ever lives in its own private directory.
+
+    Through the same locked, replace-by-temp-file writer every other file this command writes
+    goes through, so the probe does not become the one writer the lock inventory has to excuse.
+    """
+    with hostrecord.Locked(path):
+        hostrecord.atomic_write(path, text)
+
+
+def _probe_launcher_once(launcher, root, policy, probe, recorded, proof, cwd):
+    """Run the launcher once against a record naming `recorded`; what the probe saw, or None."""
+    record = bridgerecord.document(
+        command=sys.executable, arguments=[str(probe), str(proof), *_POLICY_VARIABLES],
+        name=MCP_NAME, issue="probe", owner=bridgerecord.OWNER_PLUGIN,
+        execution_policy={"path": str(policy), "digest": recorded})
+    _write_probe_file(root / bridgerecord.RECORD_NAME, json.dumps(record))
+    done = subprocess.run([sys.executable, str(launcher)], cwd=str(cwd or root),
+                          env={"PATH": os.environ.get("PATH", ""), "CODEX_HOME": str(root)},
+                          stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                          timeout=LAUNCHER_PROBE_SECONDS)
+    seen = json.loads(proof.read_text(encoding="utf-8")) if proof.exists() else None
+    return done, seen
+
+
 def _launcher_honours_policy_records(launcher, *, cwd=None):
     """Why a launcher cannot be trusted with a record naming a policy, or None when it can.
 
@@ -4849,28 +4874,14 @@ def _launcher_honours_policy_records(launcher, *, cwd=None):
     root = Path(scratch)
     try:
         policy = root / "execution-policy.json"
-        data = b'{"roles": {"child": {"model": "probe", "reasoningEffort": "probe"}}}\n'
-        policy.write_bytes(data)
-        digest = hashlib.sha256(data).hexdigest()
+        text = '{"roles": {"child": {"model": "probe", "reasoningEffort": "probe"}}}\n'
+        _write_probe_file(policy, text)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         probe = root / "probe.py"
-        probe.write_text(_LAUNCHER_PROBE, encoding="utf-8")
-
-        def attempt(recorded, proof):
-            record = bridgerecord.document(
-                command=sys.executable, arguments=[str(probe), str(proof), *_POLICY_VARIABLES],
-                name=MCP_NAME, issue="probe", owner=bridgerecord.OWNER_PLUGIN,
-                execution_policy={"path": str(policy), "digest": recorded})
-            (root / bridgerecord.RECORD_NAME).write_text(json.dumps(record), encoding="utf-8")
-            done = subprocess.run([sys.executable, str(launcher)], cwd=str(cwd or root),
-                                  env={"PATH": os.environ.get("PATH", ""),
-                                       "CODEX_HOME": str(root)},
-                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                                  timeout=LAUNCHER_PROBE_SECONDS)
-            seen = json.loads(proof.read_text(encoding="utf-8")) if proof.exists() else None
-            return done, seen
-
+        _write_probe_file(probe, _LAUNCHER_PROBE)
         try:
-            done, seen = attempt(digest, root / "accepted.json")
+            done, seen = _probe_launcher_once(launcher, root, policy, probe, digest,
+                                              root / "accepted.json", cwd)
             if seen is None:
                 tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:]
                 return ("it did not start a bridge from a version-" + str(
@@ -4880,7 +4891,8 @@ def _launcher_honours_policy_records(launcher, *, cwd=None):
             if seen != wanted:
                 return ("it started the bridge without handing it the recorded policy (the bridge"
                         " saw " + json.dumps(seen) + ")")
-            done, seen = attempt("0" * 64, root / "mismatched.json")
+            done, seen = _probe_launcher_once(launcher, root, policy, probe, "0" * 64,
+                                              root / "mismatched.json", cwd)
             if seen is not None:
                 return ("it started the bridge under a policy whose digest no longer matches the"
                         " record")
@@ -4946,18 +4958,29 @@ def _policy_launcher_refusal(codex_home):
             + ", ".join(version.name for version in versions)
             + "), and which one a session loads is not readable from here")
     version = versions[0]
-    try:
-        manifest = json.loads((version / ".codex-plugin" / "plugin.json").read_text(
-            encoding="utf-8"))
-        named = manifest.get("mcpServers") if isinstance(manifest, dict) else None
-        if not (isinstance(named, str) and named.strip()):
-            return None
-        relative = named[2:] if text_prefix(named, "./", at="start") else named
-        document = json.loads((version / relative).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+
+    def unreadable(found):
         return LAUNCHER_NOT_ESTABLISHED, (
             "the cached crw package at " + str(version) + " could not be read ("
-            + type(error).__name__ + ": " + str(error) + ")")
+            + str(found.source) + ": " + str(found.state)
+            + (": " + str(found.detail) if found.detail else "") + ")")
+
+    # Both read without blocking, so a manifest or a declaration that is a pipe cannot hold the
+    # ownership lock this command decides under.
+    found = bridgerecord.read_json_without_blocking(version / ".codex-plugin" / "plugin.json",
+                                                    "the cached crw manifest")
+    if found.state != reading.PRESENT:
+        return unreadable(found)
+    manifest = found.value
+    named = manifest.get("mcpServers") if isinstance(manifest, dict) else None
+    if not (isinstance(named, str) and named.strip()):
+        return None
+    relative = named[2:] if text_prefix(named, "./", at="start") else named
+    found = bridgerecord.read_json_without_blocking(version / relative,
+                                                    "the cached crw MCP declaration")
+    if found.state != reading.PRESENT:
+        return unreadable(found)
+    document = found.value
     servers = document.get("mcpServers") if isinstance(document, dict) else None
     if not isinstance(servers, dict):
         return LAUNCHER_NOT_ESTABLISHED, (
@@ -4973,7 +4996,10 @@ def _policy_launcher_refusal(codex_home):
             "the cached crw package at " + str(version) + " declares " + MCP_NAME + " without a"
             " launcher this command can find")
     launcher = version / script[2:]
-    why = _launcher_honours_policy_records(launcher, cwd=version)
+    # A regular file before it is run. A launcher that becomes a pipe after this is still bounded:
+    # the probe gives it LAUNCHER_PROBE_SECONDS and then refuses.
+    why = (None if launcher.is_file() else "it is not a regular file") \
+        or _launcher_honours_policy_records(launcher, cwd=version)
     if why is None:
         return None
     return LAUNCHER_PREDATES_POLICY, (

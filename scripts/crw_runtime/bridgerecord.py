@@ -194,7 +194,7 @@ def complaints(found):
 
 def read(path):
     """Absent, unreadable and unusable stay three answers, because they are three repairs."""
-    found = reading.read_json(path, "the bridge MCP record")
+    found = read_json_without_blocking(path, "the bridge MCP record")
     if not found.usable:
         return None, found.state, found.detail
     if found.state == reading.ABSENT:
@@ -203,6 +203,32 @@ def read(path):
     if wrong:
         return None, MALFORMED, "; ".join(wrong)
     return found.value, None, None
+
+
+def read_json_without_blocking(path, what, *, follow=True):
+    """reading.read_json, through a descriptor opened without blocking.
+
+    read_json looks at the path and then opens it, and a FIFO put there in between blocks that
+    open until something writes to it -- inside a lock, for the writers of this record. Opened
+    here first, with O_NONBLOCK, the descriptor is what read_json judges and reads, so there is
+    no interval left. An open that fails is handed back to read_json on the path, which
+    classifies absence, a dangling link and an access error without opening anything; follow
+    False refuses a symbolic link outright, for an archive that has to be the file itself.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if not follow:
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(str(path), flags)
+    except (OSError, ValueError):
+        found = reading.read_json(path, what) if follow or not os.path.islink(str(path)) \
+            else reading.Reading(state=reading.UNREADABLE, source=path,
+                                 detail="a symbolic link, where the file itself is required")
+        return found
+    try:
+        return reading.read_json(path, what, descriptor=descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def owner_of(found):
@@ -262,7 +288,7 @@ def write(path, wanted, *, apply=False):
     if unusable:
         return {"record": str(path), "outcome": MALFORMED, "applied": False, "wrote": False,
                 "detail": "; ".join(unusable), "complaints": unusable}
-    found = reading.read_json(path, "the bridge MCP record")
+    found = read_json_without_blocking(path, "the bridge MCP record")
     outcome = outcome_for(wanted, found)
     answer = {"record": str(path), "outcome": outcome, "applied": False, "wrote": False}
     if not found.usable:
@@ -292,14 +318,14 @@ def write(path, wanted, *, apply=False):
         answer["detail"] = "would write this record; nothing was written"
         return answer
     with hostrecord.Locked(path):
-        again = reading.read_json(path, "the bridge MCP record")
+        again = read_json_without_blocking(path, "the bridge MCP record")
         if outcome_for(wanted, again) != outcome:
             answer["outcome"] = CHANGED_UNDERNEATH
             answer["detail"] = ("the record changed after it was read, so nothing was written;"
                                 " rerun to decide against the file as it now stands")
             return answer
         hostrecord.atomic_write(path, json.dumps(wanted, indent=2, sort_keys=True) + "\n")
-        back = reading.read_json(path, "the bridge MCP record")
+        back = read_json_without_blocking(path, "the bridge MCP record")
     answer["outcome"] = CREATED
     answer["applied"] = True
     answer["wrote"] = True

@@ -818,6 +818,40 @@ class BridgeRecordPolicyTest(unittest.TestCase):
         self.assertIn("encoded", why)
         self.assertNotEqual(bridgerecord.policy_path_complaints("/p\ud800"), [])
 
+    def test_reading_a_record_that_is_a_pipe_answers_without_blocking(self):
+        """Every reader of the record goes through this, register-mcp and the transition too."""
+        pipe = self.home.destination.parent / "record.fifo"
+        os.mkfifo(pipe)
+        done = subprocess.run(
+            [sys.executable, "-c",
+             "import sys\nsys.path.insert(0, sys.argv[1])\n"
+             "from crw_runtime import bridgerecord\n"
+             "for follow in (True, False):\n"
+             "    print(bridgerecord.read_json_without_blocking(sys.argv[2], 'x',"
+             " follow=follow).state)\n"
+             "print(bridgerecord.read(sys.argv[2])[1])\n",
+             str(ROOT / "scripts"), str(pipe)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.split(), ["UNREADABLE"] * 3, done.stdout)
+
+    @unittest.skipUnless(TOML_READER, "which crw package loads is read from the configuration")
+    def test_a_cached_manifest_that_is_a_pipe_is_refused_without_blocking(self):
+        launcher = self.install_package()
+        manifest = launcher.parent.parent / ".codex-plugin" / "plugin.json"
+        manifest.unlink()
+        os.mkfifo(manifest)
+        self.enable("crw@crw")
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "register-mcp", "--codex-home",
+             str(self.home.codex_home), "--bridge-command", str(self.bridge), "--owner",
+             "plugin", "--execution-policy", str(self.policy), "--apply"],
+            capture_output=True, text=True, timeout=60)
+        emitted = json.loads(finished.stdout)
+        self.assertEqual(finished.returncode, 1, finished.stdout + finished.stderr)
+        self.assertEqual(emitted["outcome"], "launcher_not_established")
+        self.assertFalse(self.record.exists())
+
     def test_the_user_owner_is_refused_a_policy_it_would_never_read(self):
         status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
                                       "--bridge-command", str(self.bridge),
@@ -1383,6 +1417,14 @@ class BridgeLauncherPolicyTest(unittest.TestCase):
         pipe = self.home / "policy.fifo"
         os.mkfifo(pipe)
         self.record(executionPolicy=self.reference(path=str(pipe)))
+        done = subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
+                              text=True, input="", timeout=30,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+        self.assert_refused(done, "not a regular file")
+
+    def test_a_record_that_is_a_pipe_is_refused_without_blocking(self):
+        (self.home / bridgerecord.RECORD_NAME).unlink(missing_ok=True)
+        os.mkfifo(self.home / bridgerecord.RECORD_NAME)
         done = subprocess.run([sys.executable, str(BRIDGE_LAUNCHER)], capture_output=True,
                               text=True, input="", timeout=30,
                               env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
