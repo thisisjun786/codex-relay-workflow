@@ -260,7 +260,8 @@ Either way:
 ### Move
 
 `move(fault_id, *, scope)` returns `{faultId, scopeKey, moved, repointed, repointPending, alias}`:
-at most 100 writes are re-pointed per call and `relink()` continues the rest. The same
+at most 100 writes are re-pointed per call and `relink()` continues the rest; a repeated move to
+the scope the fault is already in writes nothing and still reports `repointPending`. The same
 workspace, or out of `unassigned` into a real one (refused with `fault_scope_conflict` when a
 fault already exists under the id that workspace produces). Pending and failed writes follow the
 new target; uncertain ones stay; an owned issue whose linked project differs from the new target
@@ -444,7 +445,11 @@ follow it too.
 
 - `attention()` counts unsent writes - ready, awaiting target, held, claimed (live or lapsed
   lease), failed, uncertain, awaiting record, and pending ones past its classification bound as
-  `unclassified` - and returns a warning; `status` shows it under
+  `unclassified` - and returns a warning. An issued write in flight is counted (`issued`) without
+  a warning; one whose lease has lapsed, or that no holder leases, is counted as `issuedLapsed`
+  and warned about whether or not `expire_leases()` has run, because only a reconcile settles
+  it. A notification reservation whose lease has lapsed is likewise counted
+  (`notifications.reservedLapsed`) and warned about as uncertain before anything lapses it; `status` shows it under
   `faults`, and a daemon tick carries it as a note on the tick where it appears or changes.
 - Notifications are `blocking` (a broken fault opened), `decision` (a write became uncertain
   or failed for good) and `resolved`. `notifications(*, limit)` lists pending ones with their

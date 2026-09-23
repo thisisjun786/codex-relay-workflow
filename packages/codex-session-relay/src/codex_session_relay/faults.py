@@ -962,7 +962,9 @@ class FaultLedger:
             self._assign_scope_key(db, row["product"], key)
         stored = json.dumps(scope, ensure_ascii=False, sort_keys=True)
         if key == row["scope_key"] and stored == row["scope"]:
-            return 0, 0
+            # Unchanged, so nothing is written. What an earlier move left is still counted: a
+            # caller retrying a move whose answer was lost must not read the rest as done.
+            return 0, self._repoint_where(db, now, fault_id=row["fault_id"], limit=0)[1]
         db.execute("UPDATE fault_ledger SET scope = ?, scope_key = ?, updated_at = ?"
                    " WHERE fault_id = ?", (stored, key, now, row["fault_id"]))
         repointed = self._repoint_where(db, now, fault_id=row["fault_id"])
@@ -2835,6 +2837,12 @@ class FaultLedger:
             claimed = db.execute(
                 "SELECT COUNT(*) AS n, SUM(CASE WHEN lease_until <= ? THEN 1 ELSE 0 END) AS lapsed"
                 " FROM fault_publications WHERE state = ?", (moment, CLAIMED)).fetchone()
+            # An issued write in flight is normal and warns nobody. One whose lease has lapsed,
+            # or that no holder leases at all, may or may not have landed and only a reconcile
+            # settles it - whether or not anything has expired leases yet.
+            issued_lapsed = db.execute(
+                "SELECT COUNT(*) AS n FROM fault_publications WHERE state = ?"
+                " AND (lease_until IS NULL OR lease_until <= ?)", (ISSUED, moment)).fetchone()["n"]
             pending = {"ready": 0, "awaitingTarget": 0, "held": 0, "awaitingRecord": 0,
                        "scopeKeyContested": 0, "backingOff": 0, "kindUnregistered": 0,
                        "issueOwned": 0}
@@ -2857,17 +2865,25 @@ class FaultLedger:
             notifications = {state: db.execute(
                 "SELECT COUNT(*) AS n FROM fault_notifications WHERE state = ?",
                 (state,)).fetchone()["n"] for state in (PENDING, RESERVED, UNCERTAIN)}
+            # Uncertain already, though nothing has lapsed it yet: the same as an issued write
+            # whose lease ran out.
+            notifications["reservedLapsed"] = db.execute(
+                "SELECT COUNT(*) AS n FROM fault_notifications WHERE state = ?"
+                " AND (lease_until IS NULL OR lease_until <= ?)",
+                (RESERVED, moment)).fetchone()["n"]
         unsent = {**pending, "claimed": claimed["n"], "claimedLapsed": claimed["lapsed"] or 0,
-                  "issued": count[ISSUED], "failed": count[FAILED], "uncertain": count[UNCERTAIN]}
+                  "issued": count[ISSUED], "issuedLapsed": issued_lapsed,
+                  "failed": count[FAILED], "uncertain": count[UNCERTAIN]}
         total = sum(value for key, value in unsent.items()
                     if key not in ("claimedLapsed", "issued"))
         warning = None
-        if total or unlinked or notifications[UNCERTAIN]:
+        doubtful = notifications[UNCERTAIN] + notifications["reservedLapsed"]
+        if total or unlinked or doubtful:
             parts = [f"{value} {key}" for key, value in unsent.items() if value]
             if unlinked:
                 parts.append(f"{unlinked} issue(s) not in their project")
-            if notifications[UNCERTAIN]:
-                parts.append(f"{notifications[UNCERTAIN]} notification(s) uncertain")
+            if doubtful:
+                parts.append(f"{doubtful} notification(s) uncertain")
             warning = "fault writes need attention: " + ", ".join(parts)
         return {"unsent": unsent, "unlinked": unlinked, "notifications": notifications,
                 "warning": warning}

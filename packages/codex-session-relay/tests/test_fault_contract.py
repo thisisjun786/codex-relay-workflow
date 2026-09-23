@@ -1587,6 +1587,50 @@ class RepointingNeverDependsOnTheCallingProcess(ContractCase):
                   for entry in capability(self, self.ledger, "limits")(PRODUCT)}
         self.assertEqual(3, listed.get("external_kind_limit"))
 
+    def test_a_repeated_move_still_reports_what_is_left(self):
+        """Final review round five (invariant 14): a retried move is not a finished one."""
+        self.external("external_kind_many")
+        identifier = self.ledger.record(observation("k", severity=faults.NOTICE))["faultId"]
+        queue = capability(self, self.ledger, "queue")
+        extra = 1
+        for n in range(faults.RELINK_PER_CALL + extra):
+            queue(identifier, kind="external_kind_many", trigger=f"t{n}")
+        self.ledger.set_target(product=PRODUCT, project="OPS", team=TEAM, project_ref="proj-ops")
+        move = capability(self, self.ledger, "move")
+        first = move(identifier, scope={"projectKey": "OPS"})
+        self.assertEqual((faults.RELINK_PER_CALL, extra),
+                         (first["repointed"], first.get("repointPending")))
+        again = move(identifier, scope={"projectKey": "OPS"})
+        self.assertEqual((0, extra), (again["repointed"], again.get("repointPending")),
+                         "a retried move must not read the remaining writes as re-pointed")
+        self.ledger.relink()
+        done = move(identifier, scope={"projectKey": "OPS"})
+        self.assertEqual((0, 0), (done["repointed"], done.get("repointPending")))
+
+    def test_a_lapsed_issued_write_is_warned_about_before_any_expiry(self):
+        """Final review round five (criterion 7): an issued write nobody holds any more is
+        visible on the next status and tick, whether or not leases were expired."""
+        _, pub = self.opened()
+        self.created(pub)
+        attention = capability(self, self.ledger, "attention")
+        self.assertIsNone(attention()["warning"], "a write in flight warns nobody")
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        lapsed = attention()
+        self.assertIsNotNone(lapsed["warning"])
+        self.assertEqual(1, lapsed["unsent"].get("issuedLapsed"))
+
+    def test_a_lapsed_notification_reservation_is_warned_about_before_any_lapse(self):
+        """The same class for notifications: a reservation nobody holds is uncertain."""
+        identifier = self.ledger.record(observation("k", severity=faults.NOTICE))["faultId"]
+        capability(self, self.ledger, "raise_notification")(identifier, reason="classification")
+        self.assertEqual(1, len(self.ledger.reserve_notifications(owner="w", limit=1)["reserved"]))
+        attention = capability(self, self.ledger, "attention")
+        self.assertIsNone(attention()["warning"], "a live reservation warns nobody")
+        self.clock.advance(faults.LEASE_SECONDS + 1)
+        lapsed = attention()
+        self.assertIsNotNone(lapsed["warning"])
+        self.assertEqual(1, lapsed["notifications"].get("reservedLapsed"))
+
 
 class LegacyScopeKeys(ContractCase):
     """Invariants 7 and 8 against a store written before products were restricted."""
