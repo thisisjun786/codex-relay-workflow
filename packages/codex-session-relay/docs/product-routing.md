@@ -217,4 +217,3 @@ target, move, update or queue go through `ledger_port.py`. That adapter binds to
 CRW-205 ledger contract, and every one of its methods refuses with `route_ledger_pending` until
 then. Nothing here is evidence about an installed runtime, a live service, or anything written to
 Linear.
-
