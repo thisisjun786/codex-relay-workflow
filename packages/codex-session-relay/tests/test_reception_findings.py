@@ -142,7 +142,7 @@ def a_record(**overrides):
                                           "sandbox": {"type": "dangerFullAccess"},
                                           "approval": "never"},
               "callback": a_callback(), "mode": "loop", "workflow": "CXC Loop",
-              "refusedPolicies": [], "tenureGeneration": 1,
+              "refusedPolicies": [], "refusedCallbackPolicies": [], "tenureGeneration": 1,
               "tenureDispatchRequestId": DISPATCH}
     record.update(overrides)
     return record
@@ -187,7 +187,7 @@ class RB1FirstAssignmentLifecycle(_Reading):
 
     def test_before_registration_it_is_unavailable_rather_than_refused(self):
         before = {"parentTaskId": PARENT, "issue": ISSUE, "criteriaDigest": DIGEST,
-                  "callback": a_callback(), "refusedPolicies": [],
+                  "callback": a_callback(), "refusedPolicies": [], "refusedCallbackPolicies": [],
                   "policy": {"model": CHILD_PAIR[0], "effort": CHILD_PAIR[1]}}
         answer = self.received(self.first_assignment, before)
         self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
@@ -310,6 +310,32 @@ class RB3CallbackAndPolicy(_Reading):
                 answer = self.received(self.assignment, a_record(refusedPolicies=held))
                 self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
                 self.assertIn("policy", self.gap_fields(answer))
+
+    def test_a_callback_pair_the_policy_refuses_for_the_parent_is_refused(self):
+        # The parent's own record can still hold the pair it left: nothing re-records it when
+        # the policy moves. The reading judges that recorded pair against the current policy
+        # for the parent's role, and a callback naming a pair refused there is stale - the
+        # agreement with the record does not make it current.
+        left = {"model": LEFT_PARENT_PAIR[0], "effort": LEFT_PARENT_PAIR[1],
+                "reason": "the parent role runs another pair now"}
+        record = a_record(callback=a_callback(pair=LEFT_PARENT_PAIR),
+                          refusedCallbackPolicies=[left])
+        answer = self.received(
+            lambda: self.assignment(callback=a_callback(pair=LEFT_PARENT_PAIR)), record)
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertEqual([(m["kind"], m["field"]) for m in answer["mismatches"]],
+                         [("stale_callback", "callback.model/effort")])
+
+    def test_an_unread_callback_refusal_list_leaves_the_callback_unchecked(self):
+        for held in ("absent", None, [7], {}, [{"model": 7, "effort": "max"}],
+                     [{"model": " ", "effort": "max"}]):
+            with self.subTest(held=held):
+                record = a_record(refusedCallbackPolicies=held)
+                if held == "absent":
+                    del record["refusedCallbackPolicies"]
+                answer = self.received(self.assignment, record)
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                self.assertIn("callback", self.gap_fields(answer))
 
     def test_a_stated_workflow_is_compared_with_the_one_the_receiver_holds(self):
         resume = lambda workflow: packets.compose(**packet_kwargs(  # noqa: E731
@@ -488,7 +514,7 @@ def _read_keys(direction, purpose):
     if packets.ARTIFACT in required:
         keys.update(("repository", "prNumber", "headSha"))
     if packets.CALLBACK in required:
-        keys.add("callback")
+        keys.update(("callback", "refusedCallbackPolicies"))
     if packets.POLICY in required:
         keys.update(("policy", "refusedPolicies", "mode", "workflow"))
         if direction in (P2C, C2P):

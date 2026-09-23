@@ -119,7 +119,7 @@ def a_record(**overrides):
             "tenureGeneration": 1, "tenureDispatchRequestId": DISPATCH,
             "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh",
                        "sandbox": {"type": "dangerFullAccess"}, "approval": "never"},
-            "callback": a_callback()}
+            "callback": a_callback(), "refusedCallbackPolicies": []}
     base.update(overrides)
     return base
 

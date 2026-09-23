@@ -25,7 +25,8 @@ from codex_session_relay.registry import record_settings
 
 from .support import CHILD, DISPATCH_TURN, HOST, PARENT, DeliveryTestCase, task_settings
 from .test_rolepolicy import (
-    CHILD_EFFORT, CHILD_MODEL, PARENT_EFFORT, PARENT_MODEL, SUPERSEDED_PARENT, write_policy)
+    CHILD_EFFORT, CHILD_MODEL, PARENT_EFFORT, PARENT_MODEL, POLICY, SUPERSEDED_PARENT,
+    write_policy)
 
 P2C, C2P = envelope.PARENT_TO_CHILD, envelope.CHILD_TO_PARENT
 PROJECT = "CRW-PROJECT"
@@ -247,7 +248,7 @@ class TheReceiversOwnReading(StoreReception):
                     "criteriaDigest": self.digest(), "callback": self.a_callback(),
                     "policy": {"model": CHILD_MODEL, "effort": CHILD_EFFORT,
                                "sandbox": {"type": "workspaceWrite"}, "approval": "never"},
-                    "refusedPolicies": [], "tenureGeneration": 1,
+                    "refusedPolicies": [], "refusedCallbackPolicies": [], "tenureGeneration": 1,
                     "tenureDispatchRequestId": "dispatch-1"}
         code, answer = self.packet_check(assignment, record=agreeing)
         self.assertEqual((code, answer["disposition"]), (0, packets.ACCEPTED), answer)
@@ -554,6 +555,39 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
                          ["callback.effort", "callback.model"])
         self.assertEqual(answer["provenance"]["callback"],
                          "relationships.parent_task_id + authorized_settings[" + PARENT + "]")
+
+    def test_a_callback_the_parents_own_record_still_holds_is_refused_once_the_policy_moved(self):
+        # The parent's settings were recorded under the pair it ran then, and the role policy
+        # has since moved the parent role on. Nothing re-records the parent, so its record and
+        # a correction naming the old pair agree - and the pair is still one the parent is no
+        # longer authorised to run. The reading judges the parent's recorded pair against the
+        # current policy for its role, as it does the child's.
+        relationship = self.registered()
+        roles = {**POLICY["roles"], "parent": {"model": SUPERSEDED_PARENT[0],
+                                               "reasoningEffort": SUPERSEDED_PARENT[1]}}
+        write_policy(Path(self.tmp), {"roles": roles})
+        record_settings(self.store, self.clock, PARENT,
+                        task_settings("/parent", model=SUPERSEDED_PARENT[0],
+                                      reasoningEffort=SUPERSEDED_PARENT[1]),
+                        source="user_transition")
+        write_policy(Path(self.tmp), POLICY)
+        ledger = os.path.join(self.tmp, "child-ledger.json")
+        stale = self.correction(relationship, generation=1,
+                                callback=self.a_callback(pair=SUPERSEDED_PARENT))
+        code, answer = self.packet_check(stale, receiver_id=CHILD, observation=self.observed(),
+                                         ledger=ledger)
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+        self.assertEqual(self.kinds(answer), [packets.STALE_CALLBACK])
+        self.assertEqual([m["field"] for m in answer["mismatches"]], ["callback.model/effort"])
+        self.assertFalse(answer["act"], answer)
+        # The pair the policy names now is not what the parent's record holds, so it is not
+        # accepted either: the receiver cannot read that the parent runs it.
+        current = self.correction(relationship, generation=1, subject="evt-current-pair",
+                                  callback=self.a_callback())
+        _code, answer = self.packet_check(current, receiver_id=CHILD,
+                                          observation=self.observed(), ledger=ledger)
+        self.assertNotEqual(answer["disposition"], packets.ACCEPTED, answer)
 
     def test_a_policy_naming_permissions_the_task_was_not_created_with_is_refused(self):
         # Recorded: a workspaceWrite sandbox with its defaults, and approval never.
