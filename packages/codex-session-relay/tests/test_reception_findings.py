@@ -137,7 +137,9 @@ def a_record(**overrides):
               "supervisorTaskId": SUPERVISOR, "issue": ISSUE, "relationRevision": REVISION,
               "relationStatus": "active", "generation": GENERATION, "criteriaDigest": DIGEST,
               "dispatchRequestId": DISPATCH, "repository": REPOSITORY, "prNumber": 107,
-              "headSha": HEAD, "policy": {"model": CHILD_PAIR[0], "effort": CHILD_PAIR[1]},
+              "headSha": HEAD, "policy": {"model": CHILD_PAIR[0], "effort": CHILD_PAIR[1],
+                                          "sandbox": {"type": "dangerFullAccess"},
+                                          "approval": "never"},
               "callback": a_callback(), "mode": "loop", "refusedPolicies": []}
     record.update(overrides)
     return record
@@ -237,6 +239,26 @@ class RB3CallbackAndPolicy(_Reading):
 
     def assignment(self, **overrides):
         return packets.compose(**packet_kwargs(P2C, "assignment", **overrides))
+
+    def test_a_policy_naming_another_sandbox_or_approval_is_refused(self):
+        cases = (("policy.sandbox", "read-only", "never"),
+                 ("policy.sandbox", {"type": "workspaceWrite"}, "never"),
+                 ("policy.approval", "danger-full-access", "on-request"))
+        for field, sandbox, approval in cases:
+            with self.subTest(sandbox=sandbox, approval=approval):
+                stated = {**a_policy(), "sandbox": sandbox, "approval": approval}
+                answer = self.received(lambda: self.assignment(policy_record=stated),
+                                       a_record())
+                self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+                self.assertEqual([(m["kind"], m["field"]) for m in answer["mismatches"]],
+                                 [("stale_policy", field)])
+
+    def test_a_record_holding_no_sandbox_leaves_a_stated_one_unchecked(self):
+        blind = a_record(policy={"model": CHILD_PAIR[0], "effort": CHILD_PAIR[1],
+                                 "approval": "never"})
+        answer = self.received(self.assignment, blind)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertIn("policy.sandbox", self.gap_fields(answer))
 
     def test_the_pair_the_parent_left_is_refused_as_a_stale_callback(self):
         answer = self.received(

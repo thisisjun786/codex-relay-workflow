@@ -116,7 +116,8 @@ def a_record(**overrides):
             "repository": "thisisjun786/codex-relay-workflow", "prNumber": 107,
             "refusedPolicies": [], "relationRevision": REVISION, "relationStatus": "active",
             "dispatchRequestId": DISPATCH, "mode": packets.LOOP,
-            "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh"},
+            "policy": {"model": "anthropic/claude-opus-5", "effort": "xhigh",
+                       "sandbox": {"type": "dangerFullAccess"}, "approval": "never"},
             "callback": a_callback()}
     base.update(overrides)
     return base

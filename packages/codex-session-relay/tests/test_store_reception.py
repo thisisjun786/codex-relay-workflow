@@ -115,9 +115,12 @@ class StoreReception(DeliveryTestCase):
     def a_callback(self, pair=(PARENT_MODEL, PARENT_EFFORT)):
         return packets.callback(task_id=PARENT, model=pair[0], effort=pair[1])
 
-    def a_policy(self, mode=packets.LOOP, workflow="CXC Loop"):
+    def a_policy(self, mode=packets.LOOP, workflow="CXC Loop", sandbox="workspace-write",
+                 approval="never"):
+        # The permissions task_settings records for every task here: a workspaceWrite sandbox
+        # and approval never.
         return packets.policy(model=CHILD_MODEL, effort=CHILD_EFFORT, workflow=workflow,
-                              mode=mode, sandbox="danger-full-access", approval="never")
+                              mode=mode, sandbox=sandbox, approval=approval)
 
     def report(self, relationship, event, **overrides):
         base = dict(direction=C2P, purpose="review_ready",
@@ -378,6 +381,33 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
         self.assertEqual(answer["provenance"]["callback"],
                          "relationships.parent_task_id + authorized_settings[" + PARENT + "]")
 
+    def test_a_policy_naming_permissions_the_task_was_not_created_with_is_refused(self):
+        # Recorded: a workspaceWrite sandbox with its defaults, and approval never.
+        self.registered()
+        cases = (("policy.sandbox", {"sandbox": "danger-full-access"}),
+                 ("policy.sandbox", {"sandbox": {"type": "workspaceWrite",
+                                                 "networkAccess": True}}),
+                 ("policy.approval", {"approval": "on-request"}))
+        for number, (field, change) in enumerate(cases, 1):
+            with self.subTest(change=change):
+                one = self.first_assignment(dispatch="dispatch-1", issue=ISSUE,
+                                            subject="assign-%d" % number,
+                                            policy_record=self.a_policy(**change))
+                _code, answer = self.packet_check(one, receiver_id=CHILD)
+                self.assertEqual(answer["disposition"], packets.REFUSAL, answer)
+                self.assertEqual(self.kinds(answer), [packets.STALE_POLICY])
+                self.assertEqual([m["field"] for m in answer["mismatches"]], [field])
+        # The recorded object with its defaults left out, and the mode spelling, are the same.
+        for sandbox in ({"type": "workspaceWrite"}, "workspace-write"):
+            with self.subTest(sandbox=sandbox):
+                one = self.first_assignment(dispatch="dispatch-1", issue=ISSUE,
+                                            subject="assign-same",
+                                            policy_record=self.a_policy(sandbox=sandbox))
+                _code, answer = self.packet_check(one, receiver_id=CHILD)
+                self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+                self.assertEqual(answer["provenance"]["policy"],
+                                 "authorized_settings[" + CHILD + "]")
+
     def test_a_non_pull_request_audit_passes_without_being_asked_for_a_head(self):
         relationship = self.registered()
         audit = packets.locator(path="/state/crw/crw-149/evidence/audit.md", digest="9" * 64)
@@ -424,6 +454,26 @@ class AFirstAssignmentThroughCreateAndRegister(StoreReception):
         _code, answer = self.packet_check(self.first_assignment(dispatch="dispatch-other"),
                                           receiver_id=self.CREATED)
         self.assertEqual(self.kinds(answer), [packets.WRONG_RELATION])
+
+    def test_a_shared_child_takes_the_first_assignment_its_dispatch_opened(self):
+        # One child task in two live relationships: the dispatch id a first assignment carries
+        # names no relationship, so it has to select the one whose generation it opened. A
+        # project scope binds a task to one issue, so the shared child is an unscoped one.
+        self.registered(child=self.CREATED, issue="REL-A", dispatch="dispatch-a",
+                        turn="turn-a", project=None)
+        self.registered(child=self.CREATED, issue="REL-B", dispatch="dispatch-b",
+                        turn="turn-b", project=None)
+        for issue, dispatch in (("REL-A", "dispatch-a"), ("REL-B", "dispatch-b")):
+            with self.subTest(dispatch=dispatch):
+                one = self.first_assignment(dispatch=dispatch, issue=issue, subject=issue)
+                _code, answer = self.packet_check(one, receiver_id=self.CREATED)
+                self.assertEqual(answer["disposition"], packets.ACCEPTED, answer)
+                self.assertEqual(answer["record"]["dispatchRequestId"], dispatch)
+                self.assertEqual(answer["record"]["issue"], issue)
+        _code, other = self.packet_check(
+            self.first_assignment(dispatch="dispatch-c", issue="REL-A", subject="REL-A"),
+            receiver_id=self.CREATED)
+        self.assertNotEqual(other["disposition"], packets.ACCEPTED, other)
 
     def test_a_later_packet_cannot_redefine_the_mode_the_ledger_holds(self):
         relationship = self.registered(child=self.CREATED, issue="REL-FIRST",
@@ -542,6 +592,30 @@ class WhatTheStoreCannotAnswer(StoreReception):
                                          receiver_id=CHILD, ledger=ledger)
         self.assertEqual(code, cli.EXIT_USAGE)
         self.assertIn("01someone-else", answer["detail"])
+
+    def test_a_ledger_whose_entries_are_not_entries_is_refused_rather_than_failing(self):
+        relationship = self.registered()
+        one = self.correction(relationship, generation=1)
+        rid, message = relationship["relationshipId"], one["envelope"]["messageId"]
+        broken = (("answered", message, 7),
+                  ("answered", "msg-other", {"contentDigest": "", "disposition": "accepted"}),
+                  ("answered", "msg-other", {"contentDigest": "d" * 64, "disposition": "maybe"}),
+                  ("answered", "msg-other", {"contentDigest": "d" * 64,
+                                             "disposition": "accepted", "applied": "yes"}),
+                  ("assignments", rid, 7),
+                  ("assignments", rid, {"mode": 3, "workflow": "CXC Loop",
+                                        "messageId": "m", "dispatchRequestId": None}))
+        for number, (part, key, entry) in enumerate(broken, 1):
+            with self.subTest(part=part, entry=entry):
+                ledger = os.path.join(self.tmp, "broken-%d.json" % number)
+                document = receiver.empty_ledger(CHILD)
+                document[part][key] = entry
+                with open(ledger, "w", encoding="utf-8") as handle:
+                    json.dump(document, handle)
+                code, answer = self.packet_check(one, receiver_id=CHILD,
+                                                 observation=self.observed(), ledger=ledger)
+                self.assertEqual(code, cli.EXIT_USAGE, answer)
+                self.assertIn(repr(key), answer.get("detail", ""))
 
 
 class TheSevenStatesAsTheStoreHoldsThem(StoreReception):
