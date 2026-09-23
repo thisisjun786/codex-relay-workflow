@@ -408,6 +408,30 @@ class TheControlsThatMustNotPassTheReceiveStep(StoreReception):
                 self.assertEqual(answer["provenance"]["policy"],
                                  "authorized_settings[" + CHILD + "]")
 
+    def test_a_recorded_setting_of_another_shape_is_unread_rather_than_agreed_with(self):
+        # The parent's recorded model is a number, and the packet's callback names its
+        # spelling. Compared as strings the two agreed and the packet came back accepted.
+        relationship = self.registered()
+        self.store.db.execute(
+            "UPDATE authorized_settings SET settings = json_set(settings, '$.model', 123)"
+            " WHERE task_id = ?", (PARENT,))
+        one = self.correction(relationship, generation=1,
+                              callback=self.a_callback(pair=("123", PARENT_EFFORT)))
+        code, answer = self.packet_check(one, receiver_id=CHILD, observation=self.observed())
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+        self.assertEqual(self.gap_fields(answer), ["callback.model"])
+
+    def test_an_envelope_of_the_wrong_shape_is_refused_as_a_packet(self):
+        relationship = self.registered()
+        for name, value in (("sender", []), ("recipient", 7), ("sender", "01parent-task")):
+            with self.subTest(name=name, value=value):
+                one = self.correction(relationship, generation=1)
+                one["envelope"][name] = value
+                code, answer = self.packet_check(one, receiver_id=CHILD,
+                                                 observation=self.observed())
+                self.assertEqual(code, cli.EXIT_REFUSED, answer)
+
     def test_a_non_pull_request_audit_passes_without_being_asked_for_a_head(self):
         relationship = self.registered()
         audit = packets.locator(path="/state/crw/crw-149/evidence/audit.md", digest="9" * 64)

@@ -12,6 +12,7 @@ field missing is a refusal naming it, and every field the receiver's record is r
 when the record cannot answer it, is unavailable rather than accepted.
 """
 
+import json
 import unittest
 
 from codex_session_relay import envelope, packets, report
@@ -269,6 +270,24 @@ class RB3CallbackAndPolicy(_Reading):
                 detail = self.refusal(lambda: packets.check(one))
                 self.assertIn(name, detail)
 
+    def test_a_record_value_of_another_shape_is_a_gap_not_agreement(self):
+        # Each of these agreed once both sides were turned into strings.
+        cases = (("callback.model", lambda: self.assignment(callback=a_callback(pair=("123", "xhigh"))),
+                  {"callback": {"taskId": PARENT, "model": 123, "effort": "xhigh"}}),
+                 ("generation", lambda: packets.compose(**packet_kwargs(P2C, "revision_request")),
+                  {"generation": str(GENERATION)}),
+                 ("relationRevision", lambda: packets.compose(**packet_kwargs(P2C, "revision_request")),
+                  {"relationRevision": str(REVISION)}),
+                 ("policy.model", lambda: self.assignment(policy_record={**a_policy(pair=("123", "xhigh"))}),
+                  {"policy": {"model": 123, "effort": "xhigh",
+                              "sandbox": {"type": "dangerFullAccess"}, "approval": "never"}}))
+        for field, build, change in cases:
+            with self.subTest(field=field):
+                answer = self.received(build, a_record(**change))
+                self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
+                self.assertIn(field, self.gap_fields(answer))
+
+
     def test_the_pair_the_parent_left_is_refused_as_a_stale_callback(self):
         answer = self.received(
             lambda: self.assignment(callback=a_callback(pair=LEFT_PARENT_PAIR)), a_record())
@@ -478,6 +497,41 @@ class RequiredFieldSweep(_Reading):
                     self.assertEqual(answer["disposition"], packets.UNAVAILABLE, answer)
                     self.assertEqual(answer["mismatches"], [])
                     self.assertTrue(answer["gaps"])
+
+
+WRONG_SHAPES = ([], 7, "x", {}, True)
+
+
+class NoShapeEscapesAsAHostFailure(_Reading):
+    """Every field of every purpose, replaced by each wrong shape: an answer or a refusal.
+
+    A packet read back from disk can hold anything JSON can. Whatever it holds, reception
+    either answers or refuses as a packet; any other exception is a host failure standing in
+    for telling the producer what it sent.
+    """
+
+    def test_every_field_of_every_purpose_in_every_wrong_shape(self):
+        escaped = []
+        for direction, purpose in sorted(CANONICAL_REQUIRED):
+            base = packets.compose(**packet_kwargs(direction, purpose))
+            paths = [(name,) for name in base] + [("envelope", name) for name in base["envelope"]]
+            paths += [(name, inner) for name in base if isinstance(base[name], dict)
+                      and name != "envelope" for inner in base[name]]
+            for path in paths:
+                for shape in WRONG_SHAPES:
+                    one = json.loads(json.dumps(base))
+                    holder = one
+                    for step in path[:-1]:
+                        holder = holder[step]
+                    holder[path[-1]] = shape
+                    try:
+                        packets.reception(one, a_record())
+                    except RelayError:
+                        pass
+                    except Exception as fault:  # noqa: BLE001 - the class under test
+                        escaped.append((direction, purpose, path, repr(shape),
+                                        type(fault).__name__))
+        self.assertEqual(escaped, [])
 
 
 if __name__ == "__main__":
