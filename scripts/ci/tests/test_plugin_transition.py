@@ -10,6 +10,7 @@ skills, and that running it twice changes nothing the second time.
 """
 
 import errno
+import hashlib
 import importlib.util
 import json
 import os
@@ -661,6 +662,46 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         self.assertEqual(host.record()["executionPolicy"], reference)
         self.assertEqual(host.record()["recordVersion"], 2)
 
+    def _rebuilt_after_disable_with(self, change, reason):
+        """Devin, PR #137: the rebuild carried the archived reference without asking the file.
+
+        The launcher hashes the file at every start and refuses a record whose digest no longer
+        matches, so a rebuilt stale reference is a record no new thread can start from, reported
+        as settled. Dropping the reference would start a bridge that checks no role instead.
+        """
+        host, reference = self.with_policy()
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 0, json.dumps(answer, indent=2)[:2000])
+        change(Path(reference["path"]))
+        code, answer = host.transition("--apply")
+        results = json.dumps(answer["results"])
+        self.assertNotEqual(code, 0, results[:2000])
+        # Preflight asks the record step first, so the refusal lands before anything is removed.
+        self.assertEqual(host.outcomes(answer)["preflight"], "refused", results[:2000])
+        self.assertIn(reason, results)
+        self.assertIsNone(host.record())
+
+    def test_a_policy_edited_after_a_disable_is_not_restored_as_a_dead_record(self):
+        self._rebuilt_after_disable_with(
+            lambda policy: policy.write_text(json.dumps({"roles": {"child": {
+                "model": "anthropic/claude-opus-5-5", "reasoningEffort": "high"}}}),
+                encoding="utf-8"),
+            "now hashes to")
+
+    def test_a_policy_removed_after_a_disable_is_not_restored_as_a_dead_record(self):
+        self._rebuilt_after_disable_with(lambda policy: policy.unlink(), "could not be opened")
+
+    def test_a_live_record_whose_policy_was_edited_is_not_confirmed(self):
+        host, reference = self.with_policy()
+        before = (host.home / "crw-bridge-mcp.json").read_bytes()
+        Path(reference["path"]).write_text("{}", encoding="utf-8")
+        code, answer = host.transition("--apply")
+        results = json.dumps(answer["results"])
+        self.assertNotEqual(code, 0, results[:2000])
+        self.assertEqual(host.outcomes(answer)["preflight"], "refused", results[:2000])
+        self.assertIn("now hashes to", results)
+        self.assertEqual((host.home / "crw-bridge-mcp.json").read_bytes(), before)
+
     def test_a_newest_archive_that_cannot_be_read_refuses_rather_than_dropping_the_policy(self):
         """Stepping over it to an older archive would rebuild a record that checks no role."""
         host, reference = self.with_policy()
@@ -707,7 +748,12 @@ class ARecordedPolicySurvivesTheTransition(TransitionCase):
         inventory = importlib.import_module("crw_transition.inventory")
         from crw_runtime import bridgerecord
         home = self.host.home
-        reference = {"path": str(self.host.root / "execution-policy.json"), "digest": "a" * 64}
+        policy = self.host.root / "execution-policy.json"
+        policy.write_text(json.dumps({"roles": {
+            "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}),
+            encoding="utf-8")
+        reference = {"path": str(policy),
+                     "digest": hashlib.sha256(policy.read_bytes()).hexdigest()}
         bridge = str(self.host.destination / "current" / "bin" / "codex-thread-bridge")
         older = bridgerecord.document(command=bridge, name="codex-thread-bridge",
                                       owner=bridgerecord.OWNER_PLUGIN)

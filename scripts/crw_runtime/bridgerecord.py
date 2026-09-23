@@ -21,9 +21,11 @@ under, and never what the file says: the bridge still parses the policy itself, 
 what lets the launcher and the bridge refuse a file that changed after it was registered.
 """
 
+import hashlib
 import json
 import os
 import re
+import stat as stat_module
 from pathlib import Path
 
 from . import hostrecord, reading
@@ -113,6 +115,46 @@ def policy_complaints(reference):
     if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
         wrong.append(POLICY_FIELD + " digest must be 64 lowercase hexadecimal characters")
     return wrong
+
+
+def policy_file_complaints(reference):
+    """Why the packaged launcher would refuse this reference as its file now stands, or [].
+
+    The launcher's own two questions, asked before a record naming the reference is written or
+    confirmed: the path opens as a regular file, and its bytes hash to the recorded digest. A
+    record that fails either starts no bridge on any new thread, so writing one and reporting it
+    settled is an outage reported as success. Opened without blocking and judged on that
+    descriptor, as the launcher does. The contents are not parsed again: bytes that hash to the
+    recorded digest are the bytes register-mcp parsed when it recorded it, and the installed
+    bridge parses them again at every start.
+    """
+    wrong = policy_complaints(reference)
+    if wrong:
+        return wrong
+    path, recorded = reference["path"], reference["digest"]
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except OSError as error:
+        return ["the execution policy " + path + " could not be opened ("
+                + type(error).__name__ + ": " + str(error) + ")"]
+    try:
+        if not stat_module.S_ISREG(os.fstat(descriptor).st_mode):
+            return ["the execution policy " + path + " is not a regular file"]
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                break
+            digest.update(chunk)
+    except OSError as error:
+        return ["the execution policy " + path + " could not be read ("
+                + type(error).__name__ + ": " + str(error) + ")"]
+    finally:
+        os.close(descriptor)
+    if digest.hexdigest() != recorded:
+        return ["the execution policy " + path + " now hashes to " + digest.hexdigest()
+                + ", not the recorded " + recorded]
+    return []
 
 
 def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUGIN,

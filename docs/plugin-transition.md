@@ -268,6 +268,13 @@ The newest archive has to read as a record for that carry-forward. When it canno
 not a regular file at all, the rebuild is refused rather than taken from an older archive, because
 an older one can predate the policy.
 
+The file the carried reference names is read too, the way the launcher reads it at every start: it
+has to open as a regular file whose bytes hash to the recorded digest. A policy edited or removed
+since it was recorded, whether after a `disable` or under a live record, makes preflight refuse and
+name the repair (restore the file, or register the policy as it now stands). Writing the stale
+reference would leave a record no new thread's launcher starts, reported as settled, and dropping
+it would start a bridge that checks no role.
+
 ## Update
 
 Nothing here migrates a session. The settings record the adapter, the interpreter and the relay

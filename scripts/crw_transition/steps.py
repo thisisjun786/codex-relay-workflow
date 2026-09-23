@@ -1792,6 +1792,20 @@ def mcp_record_install(host, options, *, apply=False):
         policy = retired.get(bridgerecord.POLICY_FIELD)
     else:
         policy = None
+    if policy is not None:
+        # Carried only while the launcher would accept it. A policy file edited or removed since
+        # it was recorded -- after a disable retired the record, or under a live one -- gives a
+        # record every new thread's launcher refuses, so writing or confirming it would report an
+        # outage as settled. Dropping the reference instead would start a bridge that checks no
+        # role and says nothing, so this refuses and names the repair.
+        stale = bridgerecord.policy_file_complaints(policy)
+        if stale:
+            return _answer("mcp record install", REFUSED,
+                           "; ".join(stale) + ". The launcher refuses to start the bridge on a"
+                           " record naming this policy, so nothing was written. Restore the"
+                           " file, or register the policy as it now stands with runtime_install.py"
+                           " register-mcp --owner plugin --execution-policy <file> --apply, moving"
+                           " a live record that names the old one aside first")
     try:
         wanted = bridgerecord.document(command=command, arguments=arguments,
                                        name=inventory.SERVER_NAME, issue="CRW-115",
