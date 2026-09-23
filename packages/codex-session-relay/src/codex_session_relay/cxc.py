@@ -352,6 +352,14 @@ DECISION_BOUNDARY = "DECISION BOUNDARY"
 # the recipient's own judgment ends is the one answered by improvisation.
 DISPATCH_SECTIONS = DISPATCH_FIELDS + (DECISION_BOUNDARY,)
 
+# What a correction cannot do without, from CRW-149's criterion for a revision or a steer: the
+# original criterion the work does not meet, what is different from what the child was working
+# to, the bounded part it may change, the work and evidence that stay, and what to check again
+# and when to hand back. The reproduction or review it rests on travels as the packet's
+# evidence and the request it corrects is the envelope's subject, so neither is a section here.
+CORRECTION_SECTIONS = ("VIOLATED CRITERION", "WHAT CHANGED", "FIX SCOPE", "PRESERVE",
+                       "REVERIFY AND RETURN")
+
 
 def dispatch_problems(body) -> list:
     """Which of the sections DISPATCH-TASK-01 fixes this instruction does not carry.
@@ -360,6 +368,17 @@ def dispatch_problems(body) -> list:
     PROOF is something the sender has to decide, a missing MUST NOT is a boundary nobody
     drew - and one word for all of them tells a producer that something is wrong without
     telling it which thing to fix.
+    """
+    return section_problems(body, DISPATCH_SECTIONS)
+
+
+def correction_problems(body) -> list:
+    """Which of the correction's sections this body does not carry, read the same way."""
+    return section_problems(body, CORRECTION_SECTIONS)
+
+
+def section_problems(body, sections) -> list:
+    """Which of these line-anchored sections the body does not carry.
 
     Matched at the start of a line rather than anywhere in the text, so a sentence mentioning
     a section does not satisfy it and SUBTASK: does not answer for TASK:. Leading list and
@@ -371,7 +390,7 @@ def dispatch_problems(body) -> list:
     line before the next heading.
     """
     if not isinstance(body, str):
-        return list(DISPATCH_SECTIONS)
+        return list(sections)
     seen, current = set(), None
     for line in body.splitlines():
         stripped = line.strip().lstrip("-*#>").strip()
@@ -379,7 +398,7 @@ def dispatch_problems(body) -> list:
         # for a section heading, not rendering Markdown, and an unmatched marker is not an
         # error worth raising out of a readability check.
         heading = stripped.strip("*`_").upper()
-        opened = next((name for name in DISPATCH_SECTIONS
+        opened = next((name for name in sections
                        if heading.startswith(name + ":") or heading == name), None)
         if opened is not None:
             rest = heading[len(opened):].lstrip(":").strip()
@@ -392,7 +411,7 @@ def dispatch_problems(body) -> list:
         if current is not None and stripped:
             seen.add(current)
             current = None
-    return [name for name in DISPATCH_SECTIONS if name not in seen]
+    return [name for name in sections if name not in seen]
 
 # Which owner to re-read when a message resumes work, rather than reloading everything.
 SKILL_POINTERS = {
